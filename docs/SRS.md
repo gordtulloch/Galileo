@@ -80,7 +80,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 
 | ID | Requirement | Priority |
 |---|---|---|
-| EXT-010 | The system shall provide a graphical desktop user interface as the sole primary interface; no requirement exists for a CLI or headless mode in v1. | MVP |
+| EXT-010 | The system shall provide a graphical desktop user interface as the sole primary *interactive* interface for equipment control, sequencing, and other live workflows; there is no requirement for these interactive workflows to be CLI- or headless-driven in v1. Specific domain-core batch functions that don't require interactive equipment control — e.g. repository ingest (`LoadRepo`-equivalent, `LIB-010`) and calibration-frame creation/application (`Calibrate`-equivalent, `LIB-050`/`LIB-060`) — shall be selectively exposed as standalone command-line utilities to facilitate scheduled/automated batch processes, per `EXT-140`. | MVP |
 | EXT-020 | The system shall connect to device drivers only via an INDI server (TCP, INDI XML protocol) or an Alpaca device (HTTP/REST, JSON, per the ASCOM Alpaca specification, including UDP discovery). | MVP |
 | EXT-030 | The system shall support connecting to an INDI server or Alpaca device on the local machine or over a LAN/WAN network address. | MVP |
 | EXT-040 | The system shall interoperate with external plate-solving engines via their documented command-line or local HTTP interfaces (e.g. ASTAP, astrometry.net local solve, PlateSolve2-compatible solvers), configurable per installation. | MVP |
@@ -93,6 +93,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EXT-110 | The system shall query the Simbad astronomical database for target coordinate/magnitude lookup where not already available from the AAVSO catalog data. | MVP |
 | EXT-120 | The system shall retrieve calibrated FITS images from a remote-telescope data server via SFTP, in addition to the FTP/FTPS access already required by `EXT-080`. | MVP |
 | EXT-130 | The system shall query the Open-Meteo API for location geocoding and weather-forecast data. | P2 |
+| EXT-140 | The system shall provide standalone command-line programs for selected batch/automation functions that don't require interactive equipment control — at minimum repository ingest (`LIB-010`/`LIB-130`), calibration-frame creation/application (`LIB-050`/`LIB-060`/`LIB-130`), and cloud sync (`LIB-120`) — matching the pattern of AstroFiler's own `commands/` utilities (e.g. `LoadRepo`, `Calibrate`; Project Scope Document, Section 6.2), runnable independent of the GUI (e.g. from a cron job or systemd timer on a headless Raspberry Pi at the Pier). | P2 |
 
 ---
 
@@ -146,7 +147,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-FP-010 | The system shall control an electroluminescent/flat-panel device's cover open/close (where supported) and brightness level. | MVP |
 | EQP-WX-010 | The system shall poll and display weather-device readings (e.g. cloud cover, wind, humidity, temperature, rain) at a configurable interval. | P2 |
 | EQP-DOME-010 | The system shall issue dome slew-to-azimuth, open/close-shutter, and park commands and display current azimuth and shutter state. | P2 |
-| EQP-SAFE-010 | The system shall poll a connected safety-monitor device's is-safe state at a configurable interval and surface state changes to the sequencer (traces to `SAFE-010`). | P2 |
+| EQP-SAFE-010 | The system shall poll a connected safety-monitor device's SAFE/NOT-SAFE state, and its accompanying human-readable explanation string where the driver provides one, at a configurable interval, and surface state changes (with explanation) to the sequencer (traces to `SAFE-010`). | P2 |
 
 ### 4.3 `PROF` — Equipment Profiles (Piers)
 
@@ -348,6 +349,11 @@ Within a multi-Pier Observatory, a dome may be Pier-scoped (independent) or Obse
 
 Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independent) or Observatory-scoped (shared, triggering all member Piers per `OBS-040`) per `OBS-030`.
 
+**Device tiers (reinforces `EXT-020`: all device I/O via INDI or Alpaca, no exceptions).** Every safety-monitor input — hardware or software-computed — connects as a standard INDI or Alpaca Safety Monitor device through the ordinary device-abstraction layer (`ARCH-010`), never through a bespoke in-process integration. Two tiers, distinguished by what's behind the driver, not by how Galileo talks to them:
+- **Tier 1** — a hardware sensor with its own INDI/Alpaca driver (e.g. a rain sensor via an existing driver such as `indi-hydreon`).
+- **Tier 2** — a software/ML-computed safety signal with no single physical sensor behind it (e.g. all-sky-camera cloud classification), which must itself be exposed as a standard INDI or Alpaca Safety Monitor device (e.g. by a dedicated driver process) to be usable — Galileo has no separate "plugin provides a safety reading" code path.
+- Both tiers report the same minimum interface: a SAFE/NOT SAFE state plus a human-readable explanation string, and both are equally trusted for automated abort decisions (`SAFE-010`) — the tier is about the underlying data source, not about how much Galileo trusts it.
+
 | ID | Requirement | Priority |
 |---|---|---|
 | SAFE-010 | The system shall abort or pause a running sequence and park equipment when a connected safety-monitor device reports an unsafe condition, per configured policy. | P2 |
@@ -356,8 +362,8 @@ Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independen
 | SAFE-040 | The system shall prevent automatic sequence resumption after a safety abort until conditions are confirmed safe and, where configured, a user confirms resumption. | P2 |
 | SAFE-050 | The system shall optionally display an internet-sourced weather forecast (traces to `EXT-130`) as a planning aid. This data source is advisory only and shall never be used as the sole basis for an automated safety abort — automated abort decisions (`SAFE-010`) shall be driven only by a connected safety-monitor device. | P2 |
 | SAFE-060 | The system shall provide an independent heartbeat-timeout watchdog that, if the application stops sending heartbeats for a configurable period (e.g. due to a crash, hang, or lost network connection to a remote imaging host), autonomously parks the mount and then closes/parks the dome — distinct from, and in addition to, the weather-triggered abort path (`SAFE-010`). | MVP |
-| SAFE-070 | The system shall support a serial rain-sensor input (e.g. Hydreon RG-11-class) as an additional safety-monitor source feeding automated abort decisions (`SAFE-010`), on the same trust tier as a connected INDI/Alpaca weather device since it is a local physical sensor. | P2 |
-| SAFE-080 | The system shall support cloud-cover detection via ML image classification of an all-sky camera frame as an additional safety-monitor source feeding automated abort decisions (`SAFE-010`), on the same trust tier as a connected weather device since it reads a local physical camera. The classification shall require a configurable number of consecutive consistent readings before changing safety state, to avoid state-flapping on a single borderline frame. | MVP |
+| SAFE-070 | The system shall connect to a Tier 1 hardware safety-monitor device (e.g. a rain sensor) exclusively via its INDI or Alpaca driver, per `EQP-SAFE-010`, and treat its SAFE/NOT-SAFE state as fully trusted input to automated abort decisions (`SAFE-010`). | P2 |
+| SAFE-080 | The system shall connect to a Tier 2 software-computed safety-monitor device (e.g. an ML-based all-sky-camera cloud classifier exposed as an INDI/Alpaca Safety Monitor device) via the same device-abstraction path as Tier 1 (`EQP-SAFE-010`), with no plugin-based or in-process bypass, and treat its SAFE/NOT-SAFE state as equally trusted for automated abort decisions (`SAFE-010`). Debouncing against a single borderline reading (avoiding state-flapping) is the reporting device's own responsibility, not Galileo's, since Galileo consumes only the device's already-settled state. | MVP |
 | SAFE-090 | The system shall optionally display an aurora activity estimate (e.g. via a Kp-index data source) as a planning aid, on the same advisory-only tier as `SAFE-050` — an internet API, not a local sensor, so it shall never drive an automated abort. | P3 |
 | SAFE-100 | The system shall optionally display a smoke/transparency estimate (e.g. via a smoke-polygon data source) as a planning aid, on the same advisory-only tier as `SAFE-050` — an internet API, not a local sensor, so it shall never drive an automated abort. | P3 |
 
@@ -390,13 +396,18 @@ Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independen
 
 ### 4.19 `PLUG` — Plugin Framework
 
+Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo, e.g. `VST`/`VST-AN`) from **third-party plugins** (discovered/installed from a repository, `PLUG-030`). The former requires only `PLUG-010`/`020`/`040`/`050`/`060`/`070`/`080` — the loader and extension-point mechanism — which is therefore MVP; the plugin *marketplace* (`PLUG-030`) is not needed for pre-loaded plugins and stays P2.
+
 | ID | Requirement | Priority |
 |---|---|---|
-| PLUG-010 | The system shall expose a documented API allowing a plugin to register a new device backend implementing the `ARCH-010` abstraction. | P2 |
-| PLUG-020 | The system shall expose a documented API allowing a plugin to register a new sequencer instruction, condition, or trigger type (traces to `SEQ-ADV-070`). | P2 |
-| PLUG-030 | The system shall provide an in-app plugin manager to browse, install, update, and remove plugins from a configured plugin repository. | P2 |
-| PLUG-040 | The system shall load and unload plugins without requiring a full application rebuild, and shall isolate a plugin failure from crashing the core application. | P2 |
-| PLUG-050 | The system shall version-check a plugin against the running application's plugin API version and warn on incompatibility. | P2 |
+| PLUG-010 | The system shall expose a documented API allowing a plugin to register a new device backend implementing the `ARCH-010` abstraction. | MVP |
+| PLUG-020 | The system shall expose a documented API allowing a plugin to register a new sequencer instruction, condition, or trigger type (traces to `SEQ-ADV-070`), or a new top-level or nested UI panel. | MVP |
+| PLUG-030 | The system shall provide an in-app plugin manager to browse, install, update, and remove third-party plugins from a configured plugin repository. | P2 |
+| PLUG-040 | The system shall load and unload plugins without requiring a full application rebuild, and shall isolate a plugin failure from crashing the core application. | MVP |
+| PLUG-050 | The system shall version-check a plugin against the running application's plugin API version and warn on incompatibility. | MVP |
+| PLUG-060 | The system shall ship one or more first-party plugins pre-loaded (not requiring download/install), each independently enabled or disabled by the user; a disabled pre-loaded plugin shall be fully inert (no UI, no background activity), and an enabled one shall be functionally indistinguishable from an equivalent capability built into core. | MVP |
+| PLUG-070 | The system shall allow a plugin's registered UI panel to be inserted at either the primary navigation level (a top-level tab/section, peer to built-in ones) or the secondary level (nested within an existing section), as declared by the plugin. | MVP |
+| PLUG-080 | The system shall expose, via `PluginContext`, a documented API for a plugin to invoke specific core services it has been granted access to (e.g. submitting a job to the `SCHED` queue) without those services being otherwise part of the plugin extension-point surface (`PLUG-010`/`020`). | MVP |
 
 ### 4.20 `UI` — Customization & Theming
 
@@ -419,7 +430,7 @@ Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independen
 
 | ID | Requirement | Priority |
 |---|---|---|
-| LIB-010 | The system shall recursively scan a configured repository location, ingest discovered FITS files, and extract their header metadata into a catalog. | MVP |
+| LIB-010 | The system shall recursively scan a configured repository location, ingest discovered FITS files, and extract their header metadata into a catalog. XISF files shall also be ingested, converted best-effort to FITS at ingest time (Galileo's sole internal/output format per `EXT-060`) — an XISF file whose metadata or pixel data cannot be fully mapped shall still be converted with a logged warning identifying what was lost, rather than silently dropped or rejected outright. | MVP |
 | LIB-020 | The system shall detect duplicate files within the repository via SHA-256 content hashing and allow the user to review and remove duplicates. | MVP |
 | LIB-030 | The system shall automatically rename and organize ingested files into a configurable folder structure derived from FITS metadata (e.g. object, date, filter, session). | MVP |
 | LIB-040 | The system shall automatically group and link related frames into sessions based on matching camera, binning, and temperature, plus acquisition date. | MVP |
@@ -431,12 +442,14 @@ Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independen
 | LIB-100 | The system shall browse and selectively download files from an iTelescope network share over FTPS (traces to `EXT-080`). | P2 |
 | LIB-110 | The system shall browse and selectively download files from a DWARF smart telescope over FTP (traces to `EXT-080`), as an experimental capability. | P3 |
 | LIB-120 | The system shall synchronize repository contents bidirectionally with Google Cloud Storage (traces to `EXT-090`), using content-hash comparison to avoid redundant transfer, with at least "complete," "backup only," and "on demand" sync profiles. | P2 |
-| LIB-130 | The system shall expose repository scanning and cloud sync as command-line-invocable operations, independent of the GUI, for scheduled/automated execution. | P2 |
+| LIB-130 | The system shall expose repository scanning (`LIB-010`), calibration-frame creation/application (`LIB-050`/`LIB-060`), and cloud sync (`LIB-120`) as command-line-invocable operations, independent of the GUI, for scheduled/automated execution — matching AstroFiler's own `LoadRepo`/`Calibrate`/`CloudSync` command-line utilities (Project Scope Document, Section 6.2), which this requirement generalizes (traces to `EXT-140`). | P2 |
 | LIB-140 | The system shall verify file integrity via stored content hashes on demand, flagging any repository file whose content no longer matches its recorded hash. | P2 |
+| LIB-150 | The system shall automatically register each frame into the repository catalog as it is written to disk during a running sequence (`SEQ`/`SEQ-ADV`), rather than requiring a separate manual or scheduled scan (`LIB-010`) to discover it. | MVP |
+| LIB-160 | The system shall automatically create a session container grouping every frame acquired during one sequence-step execution, distinct from `LIB-040`'s post-hoc heuristic (camera/binning/temperature/date) grouping of files already in the repository — a sequence-step session container is authoritative because it comes directly from the sequencer, not inferred from file metadata. | MVP |
 
 ### 4.23 `VST` — Variable Star Target Planning (merged from VSTarget)
 
-Presented as a peer-level UI section to the Sky Atlas (`SKY`), not nested beneath it.
+Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-060`), not a core-compiled module — enabling it is functionally equivalent to having it built into core. Presented as a peer-level UI section to the Sky Atlas (`SKY`) at the primary navigation level (`PLUG-070`), not nested beneath it, when enabled.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -448,8 +461,11 @@ Presented as a peer-level UI section to the Sky Atlas (`SKY`), not nested beneat
 | VST-060 | The system shall generate an ACP-compatible observing script, with targets ordered by right ascension, for execution on a supported remote-telescope network (iTelescope in v1). | MVP |
 | VST-070 | The system shall persist observation plans across application restarts. | MVP |
 | VST-080 | The system shall look up a target's coordinates/magnitude via a Simbad query (traces to `EXT-110`) when not already present in the synced AAVSO catalog data. | MVP |
+| VST-090 | The system shall allow a variable-star target, with its observation-plan parameters, to be submitted directly to the `SCHED` job queue (`SCHED-010`) from within the `VST` plugin's own interface, without switching to the Scheduler UI first (traces to `PLUG-080`). | MVP |
 
 ### 4.24 `VST-AN` — Variable Star Analysis & Photometry (merged from VSTarget)
+
+Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-060`), paired with but separable from `VST` — a user can run `VST` for planning/scheduling without `VST-AN`'s analysis pipeline, or vice versa.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -559,11 +575,11 @@ Presented as a peer-level UI section to the Sky Atlas (`SKY`), not nested beneat
 | HIST | 4 | 0 | 3 | 1 |
 | META | 5 | 3 | 1 | 1 |
 | NOTIF | 3 | 0 | 1 | 2 |
-| PLUG | 5 | 0 | 5 | 0 |
+| PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 4 | 3 | 1 | 0 |
-| LIB | 14 | 9 | 4 | 1 |
-| VST | 8 | 7 | 1 | 0 |
+| LIB | 16 | 11 | 4 | 1 |
+| VST | 9 | 8 | 1 | 0 |
 | VST-AN | 9 | 5 | 4 | 0 |
 | NFR-PERF | 3 | 3 | 0 | 0 |
 | NFR-REL | 4 | 3 | 1 | 0 |
@@ -574,7 +590,7 @@ Presented as a peer-level UI section to the Sky Atlas (`SKY`), not nested beneat
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **227** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **233** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

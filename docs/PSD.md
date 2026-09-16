@@ -36,8 +36,7 @@ Several further same-author tools are being folded in for v1:
 
 - [VSTarget](https://github.com/gordtulloch/VSTarget) — a GPL-3.0, Python/PySide6 AAVSO variable-star observation planner and photometric analysis tool (target selection from the AAVSO Target Tool API, remote-telescope observing-script generation, plate-solve/stack/aperture-photometry analysis, and AAVSO WebObs report generation). It runs on the same stack as Galileo and AstroFiler, and is being merged as a peer-level UI domain to the Sky Atlas (Section 4, G8), not a bolt-on feature.
 - [Obsy](https://github.com/gordtulloch/obsy) — a Django-based observatory management/scheduling system built as a layer over KStars/EKOS. It is being retired in favor of Galileo; its FITS-management functionality has already been superseded by AstroFiler, its scheduling capability was only cursory and is explicitly not being carried forward, but its target/visibility-computation logic (rise/transit/set via `astroplan`, DSS-cutout thumbnail caching) is being ported directly into Galileo's `SKY`/`FRAME` domains. Obsy has since been relicensed to GPL-3.0 (Section 11, C6), removing the earlier CC BY-NC-ND 4.0 constraint that required clean-room reimplementation — direct porting is now the norm here, same as AstroFiler/VSTarget, though Obsy's Django architecture still limits *practical* reuse to specific functions/algorithms rather than whole modules, since Galileo's equivalents are PySide6/Qt desktop code with no Django counterpart to port into.
-- [mlCloudDetect](https://github.com/gordtulloch/mlCloudDetect) (GPL-3.0) — a Keras/TensorFlow ML image classifier that determines cloud cover from all-sky camera imagery, reading either a configured image file or the latest frame from an [indi-allsky](https://github.com/aaronwmorris/indi-allsky) SQLite database. It is being reimplemented (clean-room, informed by its documented architecture, not copied) as `plugins/mlclouddetect/` — a real, standalone plugin serving as the reference implementation of Galileo's plugin architecture (`PLUG-010`), not just a scope addition.
-- [MCP](https://github.com/gordtulloch/MCP) ("Master Control Programs for Observatories and Telescopes," part of the Obsy ecosystem, license unspecified — Section 11, C8) — a set of observatory-automation scripts that pull in mlCloudDetect for cloud detection alongside independent rain (Hydreon RG-11 serial sensor), aurora (NOAA OVATION/Kp-index API), and smoke (NOAA HMS smoke-polygon API) detection modules. Its safety-sensor modules inform new `SAFE` domain requirements (Section 8); its EKOS-DBus/MQTT/dome-client orchestration modules are EKOS-specific and not applicable to Galileo's own architecture, so they are not harvested.
+- [MCP](https://github.com/gordtulloch/MCP) ("Master Control Programs for Observatories and Telescopes," part of the Obsy ecosystem, **relicensed to GPL-3.0** — Section 11, C8) — a set of observatory-automation scripts providing independent rain (Hydreon RG-11 serial sensor), aurora (NOAA OVATION/Kp-index API), and smoke (NOAA HMS smoke-polygon API) detection modules. Its safety-sensor logic is now ported directly, not reimplemented clean-room, into new `SAFE` domain requirements (Section 8); its EKOS-DBus/MQTT/dome-client orchestration modules are EKOS-specific and not applicable to Galileo's own architecture, so they are still not harvested.
 - [AstroLlama](https://github.com/gordtulloch/AstroLlama) (specifically its [MCP (Model Context Protocol — unrelated to the "MCP" repo above) server tools](https://github.com/gordtulloch/AstroLlama/tree/main/mcp_server/tools)) — a GPL-3.0 AI-assistant project whose MCP tool functions include a working, standalone INDI/Alpaca device-abstraction-and-profile-registry pattern, an ASTAP plate-solving adapter, an Alpaca slew/capture/plate-solve/park orchestration tool, AAVSO comparison-star and finder-chart generation, and location geocoding/weather lookups via Open-Meteo. This is a third, narrower integration pattern (Section 6.5): only the astronomy-device/imaging-specific functions are selectively harvested into Galileo's existing domains (`ARCH`, `PROF`, `PLT`, `VST-AN`, `SKY`, `SAFE`); AstroLlama's generic AI-assistant tools (news/wiki/YouTube/web search, arXiv, Wolfram Alpha, chat orchestration) are explicitly excluded — they have nothing to do with Galileo.
 
 ## 3. Vision Statement
@@ -46,25 +45,25 @@ Several further same-author tools are being folded in for v1:
 
 ## 4. Goals and Objectives
 
-G1–G6 deliver pillar 1 (Section 2): a modern, guided, cross-platform imaging workflow. G7–G14 deliver pillar 2: consolidating the author's prior work into one cohesive application. G16 stands apart from both — a capability (multi-mount observatory management) that deliberately goes beyond what NINA or EKOS themselves offer.
+G1–G6 deliver pillar 1 (Section 2): a modern, guided, cross-platform imaging workflow. G7–G14 deliver pillar 2: consolidating the author's prior work into one cohesive application. G16 and G17 stand apart from both — capabilities (multi-mount observatory management; strict device-abstraction purity for safety devices) that go beyond what NINA or EKOS themselves offer, or enforce more strictly than this document's own earlier drafts did.
 
 | # | Goal |
 |---|---|
 | G1 | Deliver functional parity with a modern deep-sky imaging workflow — equipment control, sequencing, autofocus, plate solving, calibration, sky navigation — of the kind established imaging suites (NINA among them) provide |
-| G2 | Run natively on Windows, macOS, and Linux from a single codebase, with installers for each |
+| G2 | Run natively on Windows, macOS, and Linux from a single codebase, with installers for each — explicitly including Raspberry Pi 5-class ARM SBCs running Debian as a first-class target, not just x86 desktops |
 | G3 | Support device control exclusively through INDI and ASCOM Alpaca, avoiding OS-specific driver binding |
 | G4 | Adopt a modern, guided UI/UX design approach for the imaging tab, the advanced sequencer's instruction/condition/trigger model, and the framing/sky atlas workflow — informed by well-regarded existing imaging suites, NINA's included, rather than any single one |
 | G5 | Provide an extensible plugin architecture, in the spirit of established imaging suites' plugin ecosystems, so the community can add device support and workflow instructions without forking core |
 | G6 | Be reliable enough for unattended, multi-hour overnight imaging sessions |
-| G7 | Merge AstroFiler's repository scanning, cataloging, deduplication, smart-telescope ingestion, master-calibration-frame, and quality-metric capabilities into Galileo as its image-library and calibration-processing foundation, delivered in v1 |
-| G8 | Merge VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) and photometric analysis/AAVSO-reporting workflow into Galileo as a peer-level UI domain to the Sky Atlas, delivered in v1 |
+| G7 | Merge AstroFiler's repository scanning, cataloging, deduplication, smart-telescope ingestion, master-calibration-frame, and quality-metric capabilities into Galileo as its image-library and calibration-processing foundation, delivered in v1 — extended with best-effort XISF-to-FITS import, live auto-registration of frames during acquisition, sequence-step-scoped session containers, and standalone CLI batch utilities matching AstroFiler's own command-line tools |
+| G8 | Merge VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) and photometric analysis/AAVSO-reporting workflow into Galileo, delivered in v1 as two separate, pre-loaded, independently-disableable first-party plugins (`VST`, `VST-AN`) rather than core-compiled modules — a peer-level UI domain to the Sky Atlas when enabled, able to submit targets directly into the Scheduler from its own interface |
 | G9 | Port Obsy's target-visibility and sky-survey-thumbnail logic directly into the `SKY`/`FRAME` domains (GPL-3.0, Section 11, C6); retire Obsy itself, excluding its scheduling functionality |
 | G10 | Selectively harvest AstroLlama's astronomy-device MCP tool functions (device abstraction/profile registry, ASTAP adapter, Alpaca imaging orchestration, AAVSO comparison-star/finder-chart generation, geocoding/weather lookup) into the relevant existing domains, excluding all of its non-astronomy generic AI-assistant tooling |
 | G11 | Add a live, interactive star-map/planetarium view (`SKYMAP`) as a peer domain to the catalog-based Sky Atlas (`SKY`) and the Framing Assistant (`FRAME`), closing a gap identified against KStars/EKOS (Section 6.6) |
 | G12 | Add a multi-night observatory `SCHED`uler modeled on EKOS's (prioritized job queue, altitude/moon/twilight/horizon constraints, weather-gated startup, multi-night progress tracking), in full v1 scope — supersedes the earlier Obsy-driven exclusion of scheduling (Section 5) |
-| G13 | Ship a real, standalone mlCloudDetect plugin (`plugins/mlclouddetect/`) as the reference implementation demonstrating Galileo's plugin architecture end-to-end (`PLUG-010`) |
 | G14 | Harvest MCP's rain/cloud/aurora/smoke detection approach into the `SAFE` domain as additional safety-monitor input sources, distinguishing local-sensor inputs (rain sensor, all-sky-camera cloud classification — trusted for automated abort) from internet-API inputs (aurora Kp-index, smoke polygons — advisory only, same tier as `SAFE-050`) |
 | G16 | Support a single Galileo instance managing multiple independent mounts/telescopes ("Piers") grouped into an "Observatory," with `SCHED` coordinating jobs across them and shared resources (dome/roof, safety monitoring) scoped at the Observatory or Pier level — deliberately exceeding EKOS's own single-mount-per-instance limitation (Section 6.6) |
+| G17 | Enforce a strict Tier 1 (hardware)/Tier 2 (software-computed) safety-device model in which *every* safety-monitor input — including an ML-based cloud classifier — connects exclusively via INDI or Alpaca like any other device, with no in-process or plugin-based bypass, reinforcing `EXT-020` without exception |
 
 ## 5. Non-Goals (Explicitly Out of Scope)
 
@@ -113,6 +112,7 @@ Compiled from [github.com/gordtulloch/astrofiler-gui](https://github.com/gordtul
 - **Quality analysis:** SEP-based star detection and quality metrics (FWHM, HFR, eccentricity, SNR)
 - **Cloud sync:** bidirectional Google Cloud Storage sync with MD5-based dedup and multiple sync profiles, including command-line automation
 - **Statistics:** repository statistics dashboard, session management/analysis tools
+- **Command-line utilities:** standalone scripts exposing specific batch functions independent of the GUI — e.g. `LoadRepo` (repository scan/ingest) and `Calibrate` (master-frame creation/application) — for scheduled/automated execution (Section 8, `EXT-140`/`LIB-130`)
 
 ### 6.3 VSTarget Feature Inventory
 
@@ -167,15 +167,25 @@ A gap review against [KStars/EKOS](https://kstars.kde.org/) — the other major 
 | Multiple instruments on one mount: EKOS supports this via a lead/follower model — one optical train's job sets the target/criteria, others follow, with slew/dither/align/meridian-flip synchronized across all trains | `PROF-080` (multiple optical trains) existed but lacked the concrete coordination mechanism | **Resolved: adopted directly.** `SEQ-090` now specifies the lead/follower model explicitly (SDD `galileo.sequencer.basic`, Section 4.6) |
 | Multiple independent telescopes/mounts in one observatory: **EKOS's own Scheduler explicitly does not support this** — its community-documented workaround is running separate KStars/EKOS application instances, one per mount, each against its own INDI server on a different port. There is no single-instance multi-mount scheduling to copy | Not addressed in prior scope; genuinely exceeds what EKOS itself does, rather than a gap versus it | **Resolved: Galileo goes beyond EKOS here**, deliberately. A single Galileo instance manages multiple mounts ("Piers") grouped into an "Observatory," with `SCHED` coordinating across them and shared resources (dome/roof, safety monitor) scoped at the Observatory or Pier level. New `OBS` domain (Section 8, G16) |
 
-### 6.7 mlCloudDetect + MCP Feature Inventory
+### 6.7 MCP Feature Inventory
 
-Compiled from [github.com/gordtulloch/mlCloudDetect](https://github.com/gordtulloch/mlCloudDetect) and [github.com/gordtulloch/MCP](https://github.com/gordtulloch/MCP).
+Compiled from [github.com/gordtulloch/MCP](https://github.com/gordtulloch/MCP), GPL-3.0 (Section 11, C8) — ported directly, not reimplemented clean-room.
 
-- **Cloud detection (mlCloudDetect, GPL-3.0):** Keras/TensorFlow image classifier (224×224 RGB input), trained to distinguish clear vs. cloudy sky from all-sky camera imagery. Two image-source modes: a directly configured file path, or the latest frame queried from an indi-allsky SQLite database (`SELECT image.filename FROM image JOIN camera ON camera.id = image.camera_id WHERE camera.id = ? ORDER BY image.createDate DESC LIMIT 1`, resolved against the indi-allsky image root). Uses a pending/hysteresis counter so a single borderline frame doesn't flip roof-safety state.
 - **Rain detection (MCP):** Hydreon RG-11 rain sensor via serial/Arduino, polled with a status query, boolean raining/dry result.
 - **Aurora estimate (MCP):** NOAA Space Weather Prediction Center OVATION and Planetary K-index APIs; returns current Kp index and a boolean threshold-exceeded flag for a configured location.
 - **Smoke estimate (MCP):** NOAA Hazard Mapping System smoke-polygon KML data; returns a heavy/medium/light/clear/no-data rating for a configured location.
 - **Other MCP modules not harvested:** EKOS D-Bus integration, MQTT messaging, live-stacking/post-processing hooks, dome/scope client orchestration — these are EKOS-specific automation, not applicable to Galileo's own architecture.
+
+### 6.8 Reference Test Environment
+
+Galileo's test environment is a real, physical multi-Pier Observatory (`OBS`, Section 8), not a hypothetical one — this directly grounds the `OBS` domain's design rather than leaving it purely speculative:
+
+- **Enclosure:** a roll-off-roof shed, controlled via [indi-rolloffino](https://github.com/wtnate/indi-rolloffino) (an Arduino-based INDI roof-controller driver) — the `DOME` domain's roof-control requirements (`DOME-010`–`030`) are validated against this specific driver, and since the roof covers both Piers, it is configured Observatory-scoped (`OBS-050`).
+- **Weather station:** [indi-argentweather](https://github.com/rlancaste/indi-argentweather), an INDI weather-device driver — the `EQP-WX-010`/`SAFE` Tier 1 weather input, Observatory-scoped (`OBS-030`) since one station serves the whole enclosure.
+- **Rain monitor:** [indi-hydreon](https://github.com/mconway67/indi-hydreon) for the Hydreon RG-11 rain sensor — the concrete Tier 1 device behind `SAFE-070`.
+- **Two Piers:** a Seestar S30 and a Seestar S30 Pro, both connected via **ASCOM Alpaca**, not INDI — confirming both device-abstraction backends need to work side by side in one Observatory (`ARCH-020`), and giving `OBS`'s multi-Pier design a concrete two-Pier validation case with genuinely independent mounts (each Seestar is a self-contained smart telescope, not a shared-mount multi-train rig).
+
+This environment is referenced from Section 7 (Raspberry Pi 5/Debian target platform) as the author's own deployment target.
 
 ## 7. Target Platforms and Distribution
 
@@ -184,6 +194,7 @@ Compiled from [github.com/gordtulloch/mlCloudDetect](https://github.com/gordtull
 | Windows | Windows 10/11 (x64), self-contained installer (MSI or equivalent), built via the same Nuitka/CI pipeline as the other platforms (SDD Section 2.4) |
 | macOS | Current and prior macOS major version (Apple Silicon + Intel), signed/notarized `.dmg` or `.pkg` installer |
 | Linux | Major distributions used by the astro community (Debian/Ubuntu, Fedora, Arch) via AppImage/Flatpak/native packages, since INDI itself is Linux-native |
+| Linux (ARM SBC) | Raspberry Pi 5-class single-board computers running Debian, as a first-class supported target, not just a theoretical one — see Section 6.8 for the author's own reference deployment on this class of hardware |
 
 Installers for all platforms are a first-class deliverable, not an afterthought — this is a primary differentiator versus Windows-only tools such as NINA. Every platform ships a single, self-contained artifact the user can download and run directly, with no separate tool or manual dependency setup required; AstroFiler's own installation scripts (Section 2) are harvested as implementation inspiration for the build pipeline itself (auto-update behavior, desktop integration), not as an external tool Galileo depends on at install time.
 
@@ -216,10 +227,10 @@ Each domain below will decompose into individually numbered SRS requirements und
 | `HIST` | Session History & Statistics | Per-session logging of HFR, star count, guiding RMS, and other quality metrics over time, with review UI | Phase 2 |
 | `META` | Image Metadata | FITS-only file output (including tile-compressed FITS) with comprehensive header keyword population matching community tooling expectations | MVP |
 | `NOTIF` | Notifications | Configurable alerts (in-app and external, e.g., push/email) on sequence events, errors, and safety triggers | Phase 3 |
-| `PLUG` | Plugin Framework | Documented extension API for adding device drivers, sequencer instructions, and UI panels without modifying core | Phase 2 |
+| `PLUG` | Plugin Framework | Documented extension API for adding device drivers, sequencer instructions, and UI panels (at the primary or secondary navigation level) without modifying core. Distinguishes first-party pre-loaded plugins (`VST`/`VST-AN`, enable/disable only, functionally equivalent to core when on) from third-party repository-installed ones | MVP (loader); Phase 2 (third-party marketplace) |
 | `UI` | Customization & Theming | Configurable color themes and imaging-tab layout, matching the flexibility users of modern imaging suites expect | Phase 2 |
 | `LOG` | Diagnostics & Logging | Structured application/session logs, in-app log viewer, crash reporting to aid troubleshooting across all supported platforms | MVP |
-| `LIB` | Image Library & Repository Management (merged from AstroFiler) | Cross-session FITS repository scanning, cataloging, hash-based deduplication, metadata-driven auto-organization, smart-telescope/network ingestion, master calibration-frame creation and application, quality-metric computation, cloud sync | MVP |
+| `LIB` | Image Library & Repository Management (merged from AstroFiler) | Cross-session FITS/XISF (XISF converted best-effort to FITS on ingest) repository scanning, cataloging, hash-based deduplication, metadata-driven auto-organization, smart-telescope/network ingestion, master calibration-frame creation and application, quality-metric computation, cloud sync; live auto-registration of frames as they're acquired, with sequence-step-scoped session containers; CLI utilities for batch actions | MVP |
 
 ## 9. Non-Functional Requirement Domains
 
@@ -257,7 +268,7 @@ Each domain below will decompose into individually numbered SRS requirements und
 - **C5** — VSTarget is GPL-3.0 licensed and runs on the same Python/PySide6/AstroPy stack as Galileo and AstroFiler, so its merge follows the same pattern as AstroFiler's (C4) with no new license tension: all of VSTarget's dependencies (astroquery, paramiko, astroalign, photutils, pandas, matplotlib — see SDD Section 4.24/4.25) are GPL-3.0-compatible.
 - **C6 (resolved)** — Obsy was originally licensed **CC BY-NC-ND 4.0**, which required treating its contribution as architectural reference to be reimplemented clean-room rather than code to vendor or copy verbatim. **Obsy has since been relicensed to GPL-3.0**, removing that constraint entirely: its rise/transit/set (`astroplan`-based) and DSS-cutout thumbnail-fetch logic can now be ported directly into Galileo, the same as AstroFiler/VSTarget's code, with no license tension. This is a license change only, not an architecture one — Obsy is still a Django web application with no structural counterpart in Galileo's PySide6/Qt modules, so in practice direct porting applies at the function/algorithm level (the rise/transit/set computation, the thumbnail-fetch helper), not wholesale module reuse. If Obsy ever had contributors other than the author, that should still be confirmed before reuse, independent of the license change.
 - **C7** — AstroLlama is GPL-3.0 licensed, so its selectively harvested tool functions (Section 6.5) carry no license tension. Its geocoding/weather tools depend on the Open-Meteo API, which requires no API key for non-commercial-scale use and has no license/data-rights conflict with GPL-3.0 distribution — Galileo only calls the API at runtime, it does not redistribute Open-Meteo's data.
-- **C8** — mlCloudDetect is GPL-3.0 licensed (direct reuse, no tension). MCP's repository-level license is unspecified by the author (null on GitHub) — unlike Obsy (C6), it has not been relicensed, so MCP's code is still reimplemented clean-room from documented behavior rather than copied verbatim, and this should be confirmed/formalized (e.g. by adding an explicit license to the MCP repo) before any literal MCP source is vendored rather than reimplemented.
+- **C8 (resolved)** — MCP was originally unlicensed (null on GitHub) but **has since been relicensed to GPL-3.0**, same as Obsy (C6) — its rain/aurora/smoke detection logic can now be ported directly rather than reimplemented clean-room. If MCP ever had contributors other than the author, that should still be confirmed before reuse, independent of the license. (mlCloudDetect — also GPL-3.0 — is removed from scope for now; see Section 6.7.)
 
 ## 12. Risks
 
@@ -327,9 +338,7 @@ Each domain below will decompose into individually numbered SRS requirements und
 - Obsy (retired; GPL-3.0, ported directly into `SKY`/`FRAME` domains): https://github.com/gordtulloch/obsy
 - AstroLlama MCP tools (selectively harvested into `ARCH`/`PROF`/`PLT`/`VST-AN`/`SKY`/`SAFE`): https://github.com/gordtulloch/AstroLlama/tree/main/mcp_server/tools
 - KStars/EKOS (comparative gap review, Section 6.6, not affiliated/reused code): https://kstars.kde.org/, handbook at https://kstars-docs.kde.org/en/user_manual/ekos.html, release notes at https://knro.blogspot.com/
-- mlCloudDetect (reimplemented as `plugins/mlclouddetect/`, the reference plugin): https://github.com/gordtulloch/mlCloudDetect
-- MCP (rain/aurora/smoke detection harvested into `SAFE`): https://github.com/gordtulloch/MCP
-- indi-allsky (third-party; database schema referenced by the mlCloudDetect plugin's DB-read mode): https://github.com/aaronwmorris/indi-allsky
+- MCP (GPL-3.0; rain/aurora/smoke detection ported into `SAFE`): https://github.com/gordtulloch/MCP
 
 ## 17. Future Considerations (Not V1)
 

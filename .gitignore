@@ -217,5 +217,3 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Galileo-specific: trained ML model files (e.g. the mlclouddetect plugin's Keras model)
-*.h5
