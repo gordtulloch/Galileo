@@ -554,11 +554,11 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 
 | Domain | Requirement Count | MVP | P2 | P3 |
 |---|---|---|---|---|
-| ARCH | 8 | 7 | 1 | 0 |
+| ARCH | 8 | 6 | 2 | 0 |
 | OBS | 8 | 0 | 8 | 0 |
 | EQP (generic + device) | 25 | 17 | 8 | 0 |
 | PROF | 9 | 8 | 1 | 0 |
-| IMG | 10 | 8 | 2 | 0 |
+| IMG | 10 | 7 | 3 | 0 |
 | SEQ | 9 | 8 | 0 | 1 |
 | SEQ-ADV | 10 | 0 | 9 | 1 |
 | SKY | 9 | 6 | 3 | 0 |
