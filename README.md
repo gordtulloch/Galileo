@@ -54,9 +54,9 @@ Galileo consolidates and builds on several of the author's existing projects:
 
 - [AstroFiler](https://github.com/gordtulloch/astrofiler-gui) — image cataloging and calibration processing (merged in full)
 - [VSTarget](https://github.com/gordtulloch/VSTarget) — AAVSO variable-star planning and photometry (merged in full)
+- [Obsy](https://github.com/gordtulloch/obsy) — target-visibility and sky-survey-thumbnail logic (retired as an app, its GPL-3.0 code ported directly into the Sky Atlas/Framing Assistant)
 - [mlCloudDetect](https://github.com/gordtulloch/mlCloudDetect) — all-sky-camera cloud detection (reimplemented as this repo's reference plugin)
 - [AstroLlama](https://github.com/gordtulloch/AstroLlama) and [MCP](https://github.com/gordtulloch/MCP) — selectively harvested for specific device-abstraction and safety-sensor functionality
-- [Obsy](https://github.com/gordtulloch/obsy) — retired, used only as design reference for sky-visibility computation
 
 See the PSD's Background section for the full picture of what's merged, harvested, or kept as reference only, and why.
 
