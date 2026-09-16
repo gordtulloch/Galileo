@@ -1,0 +1,21 @@
+# Copy to config.toml and edit. Two mutually exclusive image_source modes:
+
+# --- Mode 1: direct file (a path continuously overwritten with the latest frame) ---
+[mlclouddetect]
+image_source = "file"
+allsky_file = "/home/pi/allsky/tmp/image.jpg"
+model_path = "keras_model.h5"
+labels_path = "labels.txt"
+cloudy_label = "Cloudy"
+pending_count = 3
+
+# --- Mode 2: read the latest frame from an indi-allsky SQLite database ---
+# [mlclouddetect]
+# image_source = "indi_allsky_db"
+# indi_allsky_db_path = "/var/lib/indi-allsky/indi-allsky.sqlite"
+# indi_allsky_image_root = "/var/www/html/allsky/images/"
+# camera_id = 1
+# model_path = "keras_model.h5"
+# labels_path = "labels.txt"
+# cloudy_label = "Cloudy"
+# pending_count = 3

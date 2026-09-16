@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "galileo-plugin-mlclouddetect"
+version = "0.1.0"
+description = "Galileo safety-monitor plugin: cloud-cover detection via ML classification of all-sky camera imagery"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "Pillow",
+]
+
+[project.optional-dependencies]
+inference = ["tensorflow"]
+dev = ["pytest"]
+
+[project.entry-points."galileo.plugins"]
+mlclouddetect = "mlclouddetect_plugin.plugin:create_plugin"
+
+[tool.setuptools]
+py-modules = ["galileo_plugin_api"]
+
+[tool.setuptools.packages.find]
+include = ["mlclouddetect_plugin*"]
