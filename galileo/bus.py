@@ -25,20 +25,28 @@ class Event:
     def __repr__(self) -> str:
         return f"{type(self).__name__}(source={self.source!r}, payload={self.payload})"
 
+    def __getattr__(self, name: str):
+        # Falls back to the payload dict so e.g. DeviceErrorEvent(recoverable=True)
+        # is readable as both event.payload["recoverable"] and event.recoverable.
+        try:
+            return self.payload[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
 
 # --- Domain event types ---------------------------------------------------
 
 class DeviceConnectedEvent(Event):
-    timestamp: str = ""
+    timestamp: str
 
 class DeviceDisconnectedEvent(Event):
-    timestamp: str = ""
+    timestamp: str
 
 class DeviceErrorEvent(Event):
-    timestamp: str = ""
+    timestamp: str
 
 class SafetyUnsafeEvent(Event):
-    explanation: str = ""
+    explanation: str
 
 class SequenceCompleteEvent(Event):
     pass
@@ -50,7 +58,7 @@ class SequenceAbortEvent(Event):
     pass
 
 class WeatherReadingEvent(Event):
-    timestamp: str = ""
+    timestamp: str
 
 
 # --- Bus implementation ---------------------------------------------------

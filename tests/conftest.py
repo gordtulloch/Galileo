@@ -57,6 +57,8 @@ def mock_indi_camera():
         pixel_size_x=5.86,
         pixel_size_y=5.86,
     )
+    cam.connect = AsyncMock()
+    cam.disconnect = AsyncMock()
     cam.start_exposure = AsyncMock()
     cam.abort_exposure = AsyncMock()
     cam.get_image_array = AsyncMock(return_value=None)
@@ -350,38 +352,41 @@ def event_bus():
 
 @pytest.fixture(scope="session", autouse=True)
 def _bootstrap_sky_atlas_catalog(tmp_path_factory):
-    """Pre-populate the sky atlas catalog cache with 10 K synthetic objects so
-    offline tests (TC-SKY-010) pass without network access."""
-    try:
-        from galileo.platform import get_cache_dir
-        from galileo.planning.sky_atlas import _CATALOG_FILENAME, ObjectType
-        cache_dir = get_cache_dir()
-        catalog_path = cache_dir / _CATALOG_FILENAME
-        if catalog_path.exists() and catalog_path.stat().st_size > 10_000:
-            return  # already populated
+    """Pre-populate an isolated sky atlas catalog cache with 10 K synthetic
+    objects so offline tests (TC-SKY-010) pass without network access.
 
-        # Include a few real Messier/NGC designations so catalog search tests pass
-        key_objects = [
-            {"n": "M42", "d": ["M42", "NGC 1976", "Orion Nebula"],
-             "r": 83.8221, "c": -5.3911, "t": "Nebula", "m": 4.0, "s": 85.0},
-            {"n": "M31", "d": ["M31", "NGC 224", "Andromeda Galaxy"],
-             "r": 10.6847, "c": 41.2692, "t": "Galaxy", "m": 3.4, "s": 189.0},
-            {"n": "M45", "d": ["M45", "Pleiades"],
-             "r": 56.8750, "c": 24.1167, "t": "OpenCluster", "m": 1.6, "s": 110.0},
-        ]
-        objects = key_objects[:]
-        types = [t.value for t in ObjectType]
-        for i in range(10_500):
-            objects.append({
-                "n": f"NGC {i + 1}",
-                "d": [f"NGC {i + 1}"],
-                "r": (i * 360.0 / 10_500) % 360.0,
-                "c": -90.0 + (i % 180),
-                "t": types[i % len(types)],
-                "m": 6.0 + (i % 8),
-                "s": 1.0 + (i % 20),
-            })
-        catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        catalog_path.write_text(json.dumps(objects), encoding="utf-8")
-    except Exception:
-        pass  # non-fatal; tests that need the catalog will fail informatively
+    Uses a session-scoped tmp directory (not the real per-user cache dir) so
+    test runs are deterministic and never leak generated data onto the
+    machine running them, and never see a stale catalog from a prior run.
+    """
+    import galileo.planning.sky_atlas as sky_atlas_mod
+    from galileo.planning.sky_atlas import ObjectType
+
+    cache_dir = tmp_path_factory.mktemp("sky_atlas_cache")
+    catalog_path = cache_dir / sky_atlas_mod._CATALOG_FILENAME
+
+    # Include a few real Messier/NGC designations so catalog search tests pass
+    key_objects = [
+        {"n": "M42", "d": ["M42", "NGC 1976", "Orion Nebula"],
+         "r": 83.8221, "c": -5.3911, "t": "Nebula", "m": 4.0, "s": 85.0},
+        {"n": "M31", "d": ["M31", "NGC 224", "Andromeda Galaxy"],
+         "r": 10.6847, "c": 41.2692, "t": "Galaxy", "m": 3.4, "s": 189.0},
+        {"n": "M45", "d": ["M45", "Pleiades"],
+         "r": 56.8750, "c": 24.1167, "t": "OpenCluster", "m": 1.6, "s": 110.0},
+    ]
+    objects = key_objects[:]
+    types = [t.value for t in ObjectType]
+    for i in range(10_500):
+        objects.append({
+            "n": f"NGC {i + 1}",
+            "d": [f"NGC {i + 1}"],
+            "r": (i * 360.0 / 10_500) % 360.0,
+            "c": -90.0 + (i % 180),
+            "t": types[i % len(types)],
+            "m": 6.0 + (i % 8),
+            "s": 1.0 + (i % 20),
+        })
+    catalog_path.write_text(json.dumps(objects), encoding="utf-8")
+
+    # Point every SkyAtlas() instance at this catalog for the whole session.
+    sky_atlas_mod._catalog_cache_path = lambda: catalog_path

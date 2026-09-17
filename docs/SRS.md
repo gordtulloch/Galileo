@@ -421,10 +421,12 @@ Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo, e.g. `V
 
 | ID | Requirement | Priority |
 |---|---|---|
-| LOG-010 | The system shall write structured, timestamped application and session logs to a per-platform standard log directory. | MVP |
+| LOG-010 | The system shall run a runtime logging service that writes structured, timestamped application and session logs — capturing all runtime log output across every module and severity, not only curated diagnostic events — to a datestamped file under the application's own `logs/` directory. | MVP |
 | LOG-020 | The system shall provide an in-app log viewer with severity filtering (info/warning/error). | MVP |
 | LOG-030 | The system shall capture unhandled exceptions to the log with sufficient detail (stack trace, active sequence step, connected-device state) to diagnose post-hoc. | MVP |
 | LOG-040 | The system shall allow exporting a support bundle (recent logs plus non-sensitive configuration) for bug reports. | P2 |
+| LOG-050 | The logging service shall reset (start a new, truncated) datestamped log file at the beginning of every application run, rather than appending to a prior run's log. | MVP |
+| LOG-060 | The system shall display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer. | P2 |
 
 ### 4.22 `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -577,7 +579,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NOTIF | 3 | 0 | 1 | 2 |
 | PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
-| LOG | 4 | 3 | 1 | 0 |
+| LOG | 6 | 4 | 2 | 0 |
 | LIB | 16 | 11 | 4 | 1 |
 | VST | 9 | 8 | 1 | 0 |
 | VST-AN | 9 | 5 | 4 | 0 |
@@ -590,7 +592,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **233** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **235** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

@@ -26,6 +26,7 @@ dependencies = [
     # Device protocols
     # "pyindi-client>=0.1",   # optional: INDI device support
     # "alpyca>=0.1",          # optional: Alpaca device support
+    "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
     # Image processing
     "sep>=1.2",               # Source Extractor Python (star detection / HFR)
     # Image registration / photometry

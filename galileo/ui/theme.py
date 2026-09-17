@@ -16,12 +16,38 @@ class Theme(str, Enum):
     SYSTEM = "system"
 
 
+# Palette tokens sampled from N.I.N.A.'s default dark theme, so Galileo's
+# shell reads as visually consistent with the imaging-software family it
+# follows (UI-010). Accent is user-customizable (UI-030); everything else is
+# fixed per theme.
+_PALETTE = {
+    Theme.DARK: {
+        "bg": "#263238",
+        "surface": "#2a2c31",
+        "surface_alt": "#1c2126",
+        "border": "#37474f",
+        "text": "#d7dadd",
+        "text_dim": "#8a949c",
+        "text_bright": "#ffffff",
+    },
+    Theme.LIGHT: {
+        "bg": "#eef1f3",
+        "surface": "#e2e6e9",
+        "surface_alt": "#d3d8db",
+        "border": "#b7bec3",
+        "text": "#20262a",
+        "text_dim": "#5b656b",
+        "text_bright": "#000000",
+    },
+}
+
+
 class ThemeManager:
     """Manages application-wide theme and accent colour (UI-010, UI-030)."""
 
     def __init__(self) -> None:
         self._theme = Theme.DARK
-        self._accent_color = "#3399FF"
+        self._accent_color = "#12877b"  # N.I.N.A.-style teal
 
     def available_themes(self) -> list[Theme]:
         return [Theme.LIGHT, Theme.DARK]
@@ -42,6 +68,127 @@ class ThemeManager:
     def accent_color(self) -> str:
         return self._accent_color
 
+    def palette(self) -> dict:
+        """Return the colour tokens for the current theme (SYSTEM resolves to DARK)."""
+        return _PALETTE[self._theme if self._theme in _PALETTE else Theme.DARK]
+
+    def stylesheet(self) -> str:
+        """Build the Qt stylesheet for the current theme + accent colour."""
+        p = self.palette()
+        accent = self._accent_color
+        return f"""
+        QWidget {{
+            background: {p['bg']};
+            color: {p['text']};
+            font-size: 12px;
+            selection-background-color: {accent};
+        }}
+        QMainWindow, QStackedWidget, QWidget#ContentArea, QWidget#EquipmentPage {{
+            background: {p['bg']};
+        }}
+        QWidget#Sidebar, QWidget#SecondarySidebar {{
+            background: {p['surface']};
+        }}
+        QWidget#Sidebar {{ border-right: 1px solid {p['border']}; }}
+        QWidget#SecondarySidebar {{ border-right: 1px solid {p['border']}; }}
+        QWidget#CriteriaPanel {{ border-right: 1px solid {p['border']}; }}
+        QWidget#TopBar {{
+            background: {p['surface']};
+            border-bottom: 1px solid {p['border']};
+        }}
+        QPlainTextEdit#LogPane {{
+            background: {p['surface_alt']};
+            color: {p['text_dim']};
+            border: 1px solid {p['border']};
+            border-radius: 3px;
+        }}
+        QLabel#CriteriaHeading {{
+            font-size: 14px;
+            font-weight: 600;
+            color: {p['text_bright']};
+        }}
+        QToolButton#NavButton {{
+            background: transparent;
+            border: none;
+            border-left: 3px solid transparent;
+            color: {p['text_dim']};
+            padding: 10px 2px 8px 2px;
+        }}
+        QToolButton#NavButton:hover {{
+            color: {p['text_bright']};
+            background: rgba(255, 255, 255, 15);
+        }}
+        QToolButton#NavButton:checked {{
+            color: {accent};
+            border-left: 3px solid {accent};
+            background: rgba(255, 255, 255, 8);
+        }}
+        QToolButton#SecondaryNavButton {{
+            background: transparent;
+            border: none;
+            border-left: 3px solid transparent;
+            color: {p['text_dim']};
+            padding: 8px 2px 6px 2px;
+        }}
+        QToolButton#SecondaryNavButton:hover {{
+            color: {p['text_bright']};
+            background: rgba(255, 255, 255, 12);
+        }}
+        QToolButton#SecondaryNavButton:checked {{
+            color: {accent};
+            border-left: 3px solid {accent};
+            background: rgba(255, 255, 255, 6);
+        }}
+        QLabel#PageTitle {{
+            font-size: 21px;
+            font-weight: 600;
+            color: {p['text_bright']};
+        }}
+        QLabel#PageSubtitle {{
+            color: {p['text_dim']};
+        }}
+        QStatusBar#StatusBar {{
+            background: {p['surface']};
+            color: {p['text_dim']};
+            border-top: 1px solid {p['border']};
+        }}
+        QPushButton {{
+            background: {p['surface_alt']};
+            border: 1px solid {p['border']};
+            border-radius: 3px;
+            padding: 5px 12px;
+        }}
+        QPushButton:hover {{ border-color: {accent}; }}
+        QPushButton#AccentButton {{
+            background: {accent};
+            color: {p['text_bright']};
+            border: none;
+            font-weight: 600;
+        }}
+        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+            background: {p['surface_alt']};
+            border: 1px solid {p['border']};
+            border-radius: 3px;
+            padding: 3px 6px;
+        }}
+        QTabWidget::pane {{ border: 1px solid {p['border']}; }}
+        QTabBar::tab:selected {{ color: {accent}; }}
+        QScrollBar:vertical {{
+            background: {p['bg']};
+            width: 10px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {p['border']};
+            border-radius: 4px;
+            min-height: 24px;
+        }}
+        QToolTip {{
+            background: {p['surface']};
+            color: {p['text']};
+            border: 1px solid {p['border']};
+        }}
+        """
+
     def _apply(self) -> None:
         """Apply theme to the Qt application stylesheet (no-op when Qt unavailable)."""
         try:
@@ -49,7 +196,7 @@ class ThemeManager:
             app = QApplication.instance()
             if app is None:
                 return
-            # Stylesheet application would go here
+            app.setStyleSheet(self.stylesheet())
         except ImportError:
             pass
 

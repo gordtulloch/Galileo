@@ -114,3 +114,52 @@ class Observatory:
             *(pier.sequence_runner.run() for pier in self.piers if pier.sequence_runner),
             return_exceptions=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Persisted settings (master records)
+# ---------------------------------------------------------------------------
+#
+# The Observatory/Pier classes above are live, in-process runtime objects
+# (device pools, sequence runners) and are never serialized. The functions
+# below persist just the settings a user configures once per Observatory/Pier
+# — the "which Observatory/Pier am I working with" the UI's top-bar selectors
+# save to and reload across restarts — as Peewee master records in the same
+# project-wide database used by galileo.library/galileo.history (ADR-002).
+
+def list_observatories() -> list["ObservatoryRecord"]:
+    """Return every saved Observatory, alphabetically by name."""
+    from galileo.library.models.observatory import ObservatoryRecord
+    return list(ObservatoryRecord.select().order_by(ObservatoryRecord.name))
+
+
+def create_observatory(
+    name: str,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    timezone: str | None = None,
+    physical_address: str | None = None,
+    owner: str | None = None,
+) -> "ObservatoryRecord":
+    """Create and persist a new Observatory settings record."""
+    from galileo.library.models.observatory import ObservatoryRecord
+    return ObservatoryRecord.create(
+        name=name,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone,
+        physical_address=physical_address,
+        owner=owner,
+    )
+
+
+def list_piers(observatory: "ObservatoryRecord") -> list["PierRecord"]:
+    """Return every saved Pier belonging to *observatory*, alphabetically by name."""
+    from galileo.library.models.observatory import PierRecord
+    return list(PierRecord.select().where(PierRecord.observatory == observatory).order_by(PierRecord.name))
+
+
+def create_pier(observatory: "ObservatoryRecord", name: str) -> "PierRecord":
+    """Create and persist a new Pier settings record under *observatory*."""
+    from galileo.library.models.observatory import PierRecord
+    return PierRecord.create(observatory=observatory, name=name)

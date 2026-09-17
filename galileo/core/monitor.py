@@ -41,9 +41,13 @@ class ConnectionMonitor:
         from galileo.bus import DeviceDisconnectedEvent, DeviceErrorEvent
 
         name = getattr(self._backend, "name", "unknown")
+        getter = self._backend.get_properties
         try:
             async with asyncio.timeout(self.timeout_s):
-                await asyncio.to_thread(self._backend.get_properties)
+                if asyncio.iscoroutinefunction(getter):
+                    await getter()
+                else:
+                    await asyncio.to_thread(getter)
         except asyncio.TimeoutError:
             logger.warning("Device %r timed out during health check", name)
             if self._event_bus:

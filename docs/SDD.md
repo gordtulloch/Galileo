@@ -335,9 +335,10 @@ Each module lists its responsibility, key design elements, external libraries, a
 
 ### 4.22 `galileo.diagnostics` — Logging & Diagnostics
 
-- **Responsibility:** Structured logging, in-app log viewer, unhandled-exception capture, support-bundle export.
-- **Libraries:** standard library `logging`, structured to a per-platform log directory (`platformdirs`).
-- **Satisfies:** `LOG-010`–`LOG-040`.
+- **Responsibility:** Runtime logging service capturing all application log output, in-app log viewer (including a per-device-screen live tail), unhandled-exception capture, support-bundle export.
+- **Key design:** `DiagnosticsService` sets the root `logging` logger to `DEBUG` and attaches a `logging.FileHandler` writing to a datestamped file under `logs/` in the application's own root directory (`default_log_dir()`, not a per-platform user directory — a deliberate departure from `NFR-INSTALL`-style per-OS conventions, made so the current run's log is always found next to the application itself) — opened in truncate mode (`LOG-050`) so each run starts a fresh file rather than appending to a prior run's. Because the root logger's level and handler are process-wide, every module's own `logging.getLogger(__name__)` calls are captured, not only ones routed through `DiagnosticsService`'s own `log_info`/`log_warning`/`log_error`/`log_exception` convenience methods (`LOG-010`'s "all runtime log output" clause) — this includes third-party library logging (e.g. Peewee's own SQL debug output) picked up along the way. A second handler (`_TailBufferHandler`) feeds a bounded, process-wide in-memory ring buffer exposed via `get_recent_log_lines(n)`, independent of any particular `DiagnosticsService` instance; `galileo.ui.app_window`'s Equipment device-category pages each embed a small read-only, auto-scrolling `QPlainTextEdit` (fixed to a 10-line viewport, scrollable back through a larger buffer) polling that function on a shared timer (`LOG-060`) — a lightweight, always-visible alternative to opening a dedicated Log Viewer for `LOG-020`.
+- **Libraries:** standard library `logging` only (no `platformdirs` — the log directory is resolved directly, matching the application-root placement above).
+- **Satisfies:** `LOG-010`–`LOG-060`.
 
 ### 4.23 `galileo.library` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -380,7 +381,7 @@ Each module lists its responsibility, key design elements, external libraries, a
 | Scheduler job queue and per-job multi-night progress | Peewee models in the same database (ADR-002) | Per-platform user data directory |
 | Session history (HFR/star-count/guide-RMS trend data) | Peewee models in the same database as the repository catalog, not a separate SQLite file | Per-platform user data directory |
 | Captured images | FITS (plain or tile-compressed — Rice/GZIP/HCOMPRESS) | User-configured capture directory |
-| Application/session logs | Structured text (JSON-lines) | Per-platform log directory |
+| Application/session logs | Timestamped structured text, one datestamped file reset per run (`LOG-010`/`LOG-050`) | `logs/` under the application's own root directory (not a per-platform user directory — see Section 4.22) |
 | Plugin manifest | JSON/TOML declared via package `entry_points` | Installed with plugin package |
 
 All schema-validated formats (`pydantic` models) double as the machine-checkable contract for `EXT-060`, `META-010`–`META-030`, and the profile/sequence persistence requirements — schema validation failures surface as the "recoverable error" path required by `SEQ-080`/`PROF-060` rather than a crash.

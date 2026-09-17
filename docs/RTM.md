@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 247 requirements (233 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 249 requirements (235 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -341,6 +341,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LOG-020` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-020` |
 | `LOG-030` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-030` |
 | `LOG-040` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-040` |
+| `LOG-050` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-050` |
+| `LOG-060` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-060` |
 
 ### `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -486,7 +488,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NOTIF` | 3 | 0 | 1 | 2 |
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
-| `LOG` | 4 | 3 | 1 | 0 |
+| `LOG` | 6 | 4 | 2 | 0 |
 | `LIB` | 16 | 11 | 4 | 1 |
 | `VST` | 9 | 8 | 1 | 0 |
 | `VST-AN` | 9 | 5 | 4 | 0 |
@@ -499,4 +501,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **247** | **146** | **88** | **13** |
+| **Total** | **249** | **147** | **89** | **13** |

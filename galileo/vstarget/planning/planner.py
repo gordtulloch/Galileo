@@ -5,6 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from galileo.vstarget.planning.database import PlanDatabase
 
 logger = logging.getLogger(__name__)
 

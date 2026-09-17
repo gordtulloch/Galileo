@@ -106,6 +106,11 @@ class DevicePool:
         """Return properties for the named device; returns {} on error (ARCH-060)."""
         device = self._devices.get(device_name)
         if device is None:
+            for candidate in self._devices.values():
+                if getattr(candidate, "name", None) == device_name:
+                    device = candidate
+                    break
+        if device is None:
             return {}
         try:
             return device.get_properties()

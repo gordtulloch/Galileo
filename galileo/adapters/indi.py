@@ -66,6 +66,13 @@ class IndiAdapter(DeviceBackend):
         device_name: str = "",
     ) -> None:
         self.device_type = device_type.value if isinstance(device_type, DeviceCategory) else device_type
+        # Accept a combined "host:port" address (matching the convention used
+        # for Alpaca endpoints) so a server address typed with an explicit
+        # non-default port isn't mistaken for the literal hostname.
+        if isinstance(host, str) and ":" in host:
+            host, _, port_str = host.rpartition(":")
+            if port_str.isdigit():
+                port = int(port_str)
         self.host = host
         self.port = port
         self.device_name = device_name

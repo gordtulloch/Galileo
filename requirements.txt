@@ -10,6 +10,7 @@ astropy>=5.0
 # Device protocols (optional — enable the backend(s) you need)
 # pyindi-client>=0.1   # INDI device support
 # alpyca>=0.1          # ASCOM Alpaca device support
+zeroconf>=0.130.0      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
 
 # Image processing
 sep>=1.2               # Source Extractor Python (star detection / HFR)

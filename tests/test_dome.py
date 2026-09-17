@@ -54,7 +54,7 @@ async def test_tc_dome_020_sync_shutter_park_with_sequence_events(dome_service, 
 
 @pytest.mark.requirement("TC-DOME-030")
 @pytest.mark.priority("P2")
-def test_tc_dome_030_disable_slaving_for_third_party_hardware(dome_service):
+async def test_tc_dome_030_disable_slaving_for_third_party_hardware(dome_service):
     """DOME-030: Allow dome slaving to be disabled for domes controlled by independent third-party slaving hardware."""
     dome_service.set_slaving(enabled=True)
     assert dome_service.slaving_enabled is True
@@ -64,6 +64,5 @@ def test_tc_dome_030_disable_slaving_for_third_party_hardware(dome_service):
     # When disabled, sync_to_mount must be a no-op
     dome_service._dome.slew_to_azimuth.reset_mock()
 
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(dome_service.sync_to_mount())
+    await dome_service.sync_to_mount()
     dome_service._dome.slew_to_azimuth.assert_not_called()

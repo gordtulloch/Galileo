@@ -95,10 +95,12 @@ def test_tc_prof_040_persist_last_used_profile(minimal_profile, tmp_path):
 def test_tc_prof_050_export_import_portable_file(minimal_profile, tmp_path):
     """PROF-050: Export a profile to a portable file and import it back."""
     profiles = pytest.importorskip("galileo.equipment.profiles")
-    mgr = profiles.ProfileManager(storage_dir=tmp_path)
+    mgr = profiles.ProfileManager(storage_dir=tmp_path / "storage")
     mgr.save(minimal_profile)
 
-    export_path = tmp_path / "TestSetup.gpf"
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    export_path = export_dir / "TestSetup.gpf"
     mgr.export("TestSetup", export_path)
     assert export_path.exists()
 

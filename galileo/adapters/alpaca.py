@@ -36,6 +36,7 @@ def get_adapter_class(category: DeviceCategory) -> type[DeviceBackend]:
         DeviceCategory.SWITCH: AlpacaSwitchAdapter,
         DeviceCategory.WEATHER_STATION: AlpacaWeatherAdapter,
         DeviceCategory.GUIDER: AlpacaGuiderAdapter,
+        DeviceCategory.FLAT_PANEL: AlpacaFlatPanelAdapter,
     }
     cls = _MAP.get(category)
     if cls is None:
@@ -82,6 +83,86 @@ class AlpacaDiscovery:
         return await loop.run_in_executor(None, _broadcast)
 
 
+_MDNS_TIMEOUT_MS = 3000
+
+
+def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str:
+    """Resolve a ``.local`` mDNS hostname to an IP address.
+
+    Windows does not resolve ``.local`` names through the normal DNS
+    resolver unless Bonjour/Apple software is installed, so a request to
+    e.g. ``http://seestar.local:32323`` fails at the name-lookup stage on
+    Windows — surfacing as a connection error that looks like the address
+    is unreachable even though the host/port are correct. Querying mDNS
+    directly via ``zeroconf`` sidesteps that (mirrors the approach proven
+    in this author's VSTarget project's ``alpaca_client.py``).
+    """
+    try:
+        from zeroconf import AddressResolver, Zeroconf
+    except ImportError as exc:
+        raise RuntimeError(
+            f"Cannot resolve '{host}': the 'zeroconf' package is required to "
+            "resolve .local hostnames (Windows does not do this on its own "
+            "without Bonjour installed). Install it with 'pip install "
+            "zeroconf', or use the device's IP address directly."
+        ) from exc
+
+    name = host if host.endswith(".") else f"{host}."
+    zc = Zeroconf()
+    try:
+        resolver = AddressResolver(name)
+        if not resolver.request(zc, timeout_ms):
+            raise RuntimeError(
+                f"Could not resolve '{host}' via mDNS within {timeout_ms / 1000:g}s. "
+                "Make sure the device is powered on and on the same network, "
+                "or use its IP address directly."
+            )
+        addresses = resolver.parsed_addresses()
+        if not addresses:
+            raise RuntimeError(f"mDNS lookup for '{host}' returned no address.")
+        return addresses[0]
+    finally:
+        zc.close()
+
+
+async def resolve_mdns_host(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str:
+    """Async wrapper around :func:`resolve_mdns_host_sync` (zeroconf is synchronous)."""
+    return await asyncio.to_thread(resolve_mdns_host_sync, host, timeout_ms)
+
+
+async def get_configured_devices(host: str, port: int, protocol: str = "http") -> list[dict]:
+    """Query an Alpaca server's Management API for its configured devices.
+
+    This is the standard Alpaca discovery step (``GET /management/v1/configureddevices``)
+    that a client is expected to call before talking to any specific device's
+    ``/api/v1/{devicetype}/{devicenumber}/...`` endpoint — the same sequence
+    used by AstroLlama's ``alpaca_server_status`` tool via ``alpyca``'s
+    ``alpaca.management.configureddevices()`` helper. Each returned dict has
+    ``DeviceType``, ``DeviceName``, ``DeviceNumber``, and ``UniqueID`` keys.
+    """
+    if isinstance(host, str) and ":" in host:
+        host, _, port_str = host.rpartition(":")
+        if port_str.isdigit():
+            port = int(port_str)
+    if host.lower().endswith(".local"):
+        host = await resolve_mdns_host(host)
+
+    url = f"{protocol}://{host}:{port}/management/v1/configureddevices"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={"ClientID": 1, "ClientTransactionID": 1})
+            resp.raise_for_status()
+            data = resp.json()
+    except ImportError:
+        import urllib.request
+        import urllib.parse
+        query = urllib.parse.urlencode({"ClientID": 1, "ClientTransactionID": 1})
+        with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
+            data = json.loads(r.read())
+    return data.get("Value") or []
+
+
 # ---------------------------------------------------------------------------
 # Base Alpaca adapter
 # ---------------------------------------------------------------------------
@@ -103,6 +184,15 @@ class AlpacaAdapter(DeviceBackend):
         device_number: int = 0,
     ) -> None:
         self.device_type = device_type.value if isinstance(device_type, DeviceCategory) else str(device_type)
+        # Alpaca endpoints are conventionally given as a single "host:port"
+        # string (this is what alpyca's Camera/Telescope/management helpers
+        # expect) — accept that form here too, so a server address typed as
+        # e.g. "seestar.local:32323" isn't mistaken for the literal hostname
+        # with the default port appended after it.
+        if isinstance(host, str) and ":" in host:
+            host, _, port_str = host.rpartition(":")
+            if port_str.isdigit():
+                port = int(port_str)
         self.host = host
         self.port = port
         self.device_number = device_number
@@ -110,11 +200,23 @@ class AlpacaAdapter(DeviceBackend):
         self._properties: dict[str, Any] = {}
         self._client_id = 1
         self._transaction_id = 0
+        self._resolved_host: str | None = None
+
+    async def _ensure_resolved(self) -> None:
+        """Resolve a ``.local`` mDNS hostname to an IP address, once, and
+        cache it — Windows can't resolve ``.local`` names without Bonjour
+        installed, so every real network call must go through this first."""
+        if self._resolved_host is None:
+            if self.host.lower().endswith(".local"):
+                self._resolved_host = await resolve_mdns_host(self.host)
+            else:
+                self._resolved_host = self.host
 
     @property
     def base_url(self) -> str:
         alpaca_type = self.device_type.lower().replace(" ", "")
-        return f"http://{self.host}:{self.port}/api/v1/{alpaca_type}/{self.device_number}"
+        effective_host = self._resolved_host or self.host
+        return f"http://{effective_host}:{self.port}/api/v1/{alpaca_type}/{self.device_number}"
 
     @property
     def is_connected(self) -> bool:
@@ -128,6 +230,7 @@ class AlpacaAdapter(DeviceBackend):
 
     async def _get(self, attribute: str) -> Any:
         """HTTP GET an Alpaca device attribute."""
+        await self._ensure_resolved()
         self._transaction_id += 1
         url = f"{self.base_url}/{attribute}"
         params = {
@@ -151,6 +254,7 @@ class AlpacaAdapter(DeviceBackend):
 
     async def _put(self, attribute: str, **body: Any) -> None:
         """HTTP PUT an Alpaca device attribute."""
+        await self._ensure_resolved()
         self._transaction_id += 1
         url = f"{self.base_url}/{attribute}"
         body.update({"ClientID": self._client_id, "ClientTransactionID": self._transaction_id})
@@ -177,8 +281,15 @@ class AlpacaAdapter(DeviceBackend):
         self._properties[name] = value
 
     async def list_available_devices(self, category: DeviceCategory) -> list[str]:
-        """Return device names from this Alpaca server for *category*."""
-        return []
+        """Return device names from this Alpaca server for *category*, via the
+        server's Management API (``get_configured_devices``)."""
+        wanted = (category.value if isinstance(category, DeviceCategory) else str(category)).lower()
+        devices = await get_configured_devices(self.host, self.port)
+        return [
+            f"{d.get('DeviceName', '?')} (#{d.get('DeviceNumber', 0)})"
+            for d in devices
+            if str(d.get("DeviceType", "")).lower() == wanted
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -358,3 +469,22 @@ class AlpacaWeatherAdapter(AlpacaAdapter):
 class AlpacaGuiderAdapter(AlpacaAdapter):
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.GUIDER, host, port, **kwargs)
+
+
+class AlpacaFlatPanelAdapter(AlpacaAdapter):
+    def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
+        super().__init__(DeviceCategory.FLAT_PANEL, host, port, **kwargs)
+        self.cover_state = "Closed"
+        self.brightness = 0
+
+    async def open_cover(self) -> None:
+        await self._put("opencover")
+        self.cover_state = "Open"
+
+    async def close_cover(self) -> None:
+        await self._put("closecover")
+        self.cover_state = "Closed"
+
+    async def set_brightness(self, level: int) -> None:
+        await self._put("brightness", Brightness=level)
+        self.brightness = level

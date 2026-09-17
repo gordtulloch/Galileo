@@ -12,7 +12,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class ProfileManager:
     async def load(
         self,
         name: str,
-        connect_fn: "Callable[[dict], None] | None" = None,
+        connect_fn: "Callable[[dict], Awaitable[None]] | None" = None,
     ) -> EquipmentProfile:
         """Load profile *name*, calling *connect_fn* for each device config."""
         profile = self.get(name)

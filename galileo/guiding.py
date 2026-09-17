@@ -54,11 +54,10 @@ class GuidingService:
         """Issue StartGuiding and wait for confirmation."""
         if self._client is not None:
             await self._client.start_guiding()
-            return
-        await self._send_command("guide", {"settle": {"pixels": 0.5, "time": 10, "timeout": 60}})
+        else:
+            await self._send_command("guide", {"settle": {"pixels": 0.5, "time": 10, "timeout": 60}})
         self._is_guiding = True
-        if hasattr(self, "_wait_for_guiding_state"):
-            await self._wait_for_guiding_state()
+        await self._wait_for_guiding_state()
 
     async def stop_guiding(self) -> None:
         if self._client is not None:

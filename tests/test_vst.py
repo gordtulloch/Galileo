@@ -39,11 +39,13 @@ async def test_tc_vst_010_sync_from_aavso_target_tool(vst_planner):
 @pytest.mark.priority("MVP")
 def test_tc_vst_020_sortable_searchable_target_list(vst_planner):
     """VST-020: Sortable, searchable variable-star target list with priority indication and solar-conjunction warnings."""
-    vst_planner._targets = [
-        MagicMock(name="R Leo", priority=2, solar_conjunction=False),
-        MagicMock(name="Chi Cyg", priority=1, solar_conjunction=True),
-        MagicMock(name="Mira", priority=1, solar_conjunction=False),
-    ]
+    r_leo = MagicMock(priority=2, solar_conjunction=False)
+    r_leo.name = "R Leo"
+    chi_cyg = MagicMock(priority=1, solar_conjunction=True)
+    chi_cyg.name = "Chi Cyg"
+    mira = MagicMock(priority=1, solar_conjunction=False)
+    mira.name = "Mira"
+    vst_planner._targets = [r_leo, chi_cyg, mira]
 
     sorted_targets = vst_planner.sorted_targets(key="priority")
     assert sorted_targets[0].priority <= sorted_targets[-1].priority
