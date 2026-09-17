@@ -48,7 +48,7 @@ python -m venv .venv
 .\run.ps1       # Windows PowerShell
 ```
 
-Both launch scripts locate the project's `.venv` automatically and start the app maximized. `requirements-dev.txt` additionally installs `pytest`/`ruff`/`mypy` for development.
+Both launch scripts locate the project's `.venv` automatically and start the app maximized. `requirements-dev.txt` additionally installs `pytest`/`ruff`/`mypy` for development. This is temporary, a full multiplatform installer is planned.
 
 ### Running the tests
 
