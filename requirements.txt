@@ -1,0 +1,39 @@
+# Core runtime dependencies for Galileo.
+# Mirrors [project.dependencies] in pyproject.toml.
+# Install with: pip install -r requirements.txt
+# For test/dev tooling, also install: pip install -r requirements-dev.txt
+
+# Core scientific stack
+numpy>=1.24
+astropy>=5.0
+
+# Device protocols (optional — enable the backend(s) you need)
+# pyindi-client>=0.1   # INDI device support
+# alpyca>=0.1          # ASCOM Alpaca device support
+
+# Image processing
+sep>=1.2               # Source Extractor Python (star detection / HFR)
+
+# Image registration / photometry
+astroalign>=2.4
+photutils>=1.5
+astroquery>=0.4.6
+pandas>=1.5
+
+# Persistence
+peewee>=3.17
+peewee-migrate>=1.12
+
+# Network adapters
+requests>=2.28
+paramiko>=3.0          # SFTP
+
+# Cloud sync (optional)
+# google-cloud-storage>=2.0
+# google-auth>=2.0
+
+# UI
+PySide6>=6.5
+
+# Async
+qasync>=0.27

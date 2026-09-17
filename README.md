@@ -1,5 +1,7 @@
 # Galileo
 
+![Galileo logo](logo.png)
+
 ![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
 ![Status: Pre-alpha](https://img.shields.io/badge/status-pre--alpha%20%E2%80%94%20design%20phase-orange.svg)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)

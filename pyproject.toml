@@ -1,0 +1,68 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "requirement(tc_id): RTM Test Case ID, e.g. TC-ARCH-010",
+    "priority(level): Requirement priority — MVP, P2, or P3",
+    "soak: Requires extended runtime (hours); excluded from normal CI runs",
+    "hardware: Requires physical INDI/Alpaca hardware to be reachable on the LAN",
+    "integration: Requires a running external service (INDI server, PHD2, solver, etc.)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[project]
+name = "galileo"
+version = "0.1.0"
+description = "Cross-Platform Astrophotography Imaging Suite"
+requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+dependencies = [
+    # Core scientific stack
+    "numpy>=1.24",
+    "astropy>=5.0",
+    # Device protocols
+    # "pyindi-client>=0.1",   # optional: INDI device support
+    # "alpyca>=0.1",          # optional: Alpaca device support
+    # Image processing
+    "sep>=1.2",               # Source Extractor Python (star detection / HFR)
+    # Image registration / photometry
+    "astroalign>=2.4",
+    "photutils>=1.5",
+    "astroquery>=0.4.6",
+    "pandas>=1.5",
+    # Persistence
+    "peewee>=3.17",
+    "peewee-migrate>=1.12",
+    # Network adapters
+    "requests>=2.28",
+    "paramiko>=3.0",          # SFTP
+    # Notifications
+    # "google-cloud-storage>=2.0",   # optional: GCS cloud sync
+    # "google-auth>=2.0",
+    # UI
+    "PySide6>=6.5",
+    # Async
+    "qasync>=0.27",
+]
+
+[project.scripts]
+galileo = "galileo.app:main"
+galileo-load-repo = "galileo.commands.load_repo:main"
+galileo-calibrate = "galileo.commands.calibrate:main"
+galileo-cloud-sync = "galileo.commands.cloud_sync:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "numpy",
+    "astropy",
+]
+dev = [
+    "ruff",
+    "mypy",
+]
