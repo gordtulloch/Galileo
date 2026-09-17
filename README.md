@@ -101,7 +101,7 @@ Python 3 with [PySide6](https://doc.qt.io/qtforpython/) (Qt for Python), chosen 
 
 ## Reference Test Environment
 
-Galileo's design is validated against the author's own physical multi-Pier Observatory, not a hypothetical one: a roll-off-roof shed ([indi-rolloffino](https://github.com/wtnate/indi-rolloffino)), an INDI weather station ([indi-argentweather](https://github.com/rlancaste/indi-argentweather)) and rain monitor ([indi-hydreon](https://github.com/mconway67/indi-hydreon)), and two independent Piers — a Seestar S30 and a Seestar S30 Pro, both connected via ASCOM Alpaca. See [PSD Section 6.8](docs/PSD.md) for details.
+Galileo's design is validated against the author's own physical multi-Pier Observatory, not a hypothetical one: a roll-off-roof shed ([indi-rolloffino](https://github.com/wotalota/indi-rolloffino)), an INDI weather station ([indi-argentweather](https://github.com/gordtulloch/indi-argentweather)) and rain monitor ([indi-hydreon](https://github.com/gordtulloch/indi-hydreon)), and two independent Piers — a Seestar S30 and a Seestar S30 Pro, both connected via ASCOM Alpaca. See [PSD Section 6.8](docs/PSD.md) for details.
 
 ## License
 
