@@ -8,8 +8,6 @@
 
 A cross-platform astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) instead of Windows-only ASCOM/COM device drivers.
 
-Galileo is not affiliated with, derived from, or endorsed by the [N.I.N.A.](https://nighttime-imaging.eu/) project.
-
 ## Why Galileo
 
 Two things motivate this project:
