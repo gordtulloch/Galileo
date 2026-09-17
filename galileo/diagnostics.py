@@ -50,6 +50,11 @@ def _ensure_tail_handler() -> None:
         return
     handler = _TailBufferHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    # The on-screen log panes (fed by get_recent_log_lines) are meant for a
+    # user glancing at what the app is doing, not for debugging internals —
+    # DEBUG-level records still reach the on-disk file via the root logger's
+    # own DEBUG level and the separate FileHandler, just not this buffer.
+    handler.setLevel(logging.INFO)
     logging.getLogger().addHandler(handler)
     _tail_handler_installed = True
 

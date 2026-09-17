@@ -13,10 +13,14 @@ from galileo.library.models.fits_session import FitsSession
 from galileo.library.models.mapping import PathMapping
 from galileo.library.models.masters import MasterFrame
 from galileo.library.models.observatory import ObservatoryRecord, PierRecord
+from galileo.library.models.device_config import DeviceConfigRecord
 
 logger = logging.getLogger(__name__)
 
-_ALL_TABLES = [FitsFile, FitsSession, MasterFrame, PathMapping, ObservatoryRecord, PierRecord]
+_ALL_TABLES = [
+    FitsFile, FitsSession, MasterFrame, PathMapping,
+    ObservatoryRecord, PierRecord, DeviceConfigRecord,
+]
 
 
 def init_db(path: "Path | str | None" = None) -> None:

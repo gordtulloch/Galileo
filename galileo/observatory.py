@@ -163,3 +163,77 @@ def create_pier(observatory: "ObservatoryRecord", name: str) -> "PierRecord":
     """Create and persist a new Pier settings record under *observatory*."""
     from galileo.library.models.observatory import PierRecord
     return PierRecord.create(observatory=observatory, name=name)
+
+
+def get_device_config(
+    pier: "PierRecord", category: str, slot: str = "primary"
+) -> "DeviceConfigRecord | None":
+    """Return the saved device configuration for *category*/*slot* on *pier*,
+    or ``None`` if it has never been saved for this Pier. *slot* distinguishes
+    multiple devices sharing one category and connection — currently only
+    Camera, where any number of additional non-guide cameras (e.g. a Seestar
+    S30 Pro's wide-field camera) are saved as ``"camera_2"``, ``"camera_3"``,
+    … alongside the always-present ``"primary"`` slot."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    return DeviceConfigRecord.get_or_none(
+        (DeviceConfigRecord.pier == pier)
+        & (DeviceConfigRecord.category == category)
+        & (DeviceConfigRecord.slot == slot)
+    )
+
+
+def save_device_config(
+    pier: "PierRecord",
+    category: str,
+    driver: str,
+    server: str,
+    port: int,
+    device_name: str | None = None,
+    slot: str = "primary",
+    pixel_size_um: float | None = None,
+    sensor_width_px: int | None = None,
+    sensor_height_px: int | None = None,
+    sensor_name: str | None = None,
+) -> "DeviceConfigRecord":
+    """Create or update the saved device configuration for *category*/*slot*
+    on *pier* (the Equipment page's per-device Save button)."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    record = DeviceConfigRecord.get_or_none(
+        (DeviceConfigRecord.pier == pier)
+        & (DeviceConfigRecord.category == category)
+        & (DeviceConfigRecord.slot == slot)
+    )
+    fields = dict(
+        driver=driver, server=server, port=port, device_name=device_name,
+        pixel_size_um=pixel_size_um, sensor_width_px=sensor_width_px,
+        sensor_height_px=sensor_height_px, sensor_name=sensor_name,
+    )
+    if record is None:
+        return DeviceConfigRecord.create(pier=pier, category=category, slot=slot, **fields)
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+    return record
+
+
+def delete_device_config(pier: "PierRecord", category: str, slot: str = "primary") -> None:
+    """Delete the saved device configuration for *category*/*slot* on *pier*,
+    if any (used to prune a camera slot removed with the Camera page's "+"
+    list, once the remaining slots no longer reach that far)."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    DeviceConfigRecord.delete().where(
+        (DeviceConfigRecord.pier == pier)
+        & (DeviceConfigRecord.category == category)
+        & (DeviceConfigRecord.slot == slot)
+    ).execute()
+
+
+def list_device_config_slots(pier: "PierRecord", category: str) -> list[str]:
+    """Return every slot name saved for *category* on *pier* — used by the
+    Camera page on load to know how many additional camera panels (beyond
+    the always-present "primary") to rebuild."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    rows = DeviceConfigRecord.select(DeviceConfigRecord.slot).where(
+        (DeviceConfigRecord.pier == pier) & (DeviceConfigRecord.category == category)
+    )
+    return [row.slot for row in rows]

@@ -155,6 +155,24 @@ class IndiCameraAdapter(IndiAdapter):
     async def warm_up(self) -> None:
         self._properties["TARGET_TEMP"] = 20.0
 
+    async def get_sensor_info(self) -> dict:
+        """Live-query this camera's sensor configuration from INDI's standard
+        ``CCD_INFO`` property vector (``CCD_PIXEL_SIZE``, ``CCD_MAX_X``,
+        ``CCD_MAX_Y``) — the "Download Info" action on the Equipment Camera
+        page. This adapter's INDI transport is currently a lightweight stub
+        (see module docstring), so against real hardware this only returns
+        values once a future pyindi-client property-fetch is wired in here;
+        until then it reflects whatever ``self._properties`` already holds,
+        so callers must treat missing fields as "not available" rather than
+        "zero", and the UI must fall back to manual entry."""
+        props = self.get_properties()
+        return {
+            "pixel_size_um": props.get("CCD_PIXEL_SIZE"),
+            "sensor_width_px": props.get("CCD_MAX_X"),
+            "sensor_height_px": props.get("CCD_MAX_Y"),
+            "sensor_name": props.get("CCD_NAME"),
+        }
+
 
 class IndiCameraSimulator(IndiCameraAdapter):
     """Simulator camera backend for development without hardware (EQP-CAM-040)."""
@@ -234,12 +252,36 @@ class IndiFocuserAdapter(IndiAdapter):
         self.position = 5000
         self.temperature = 15.0
         self.is_moving = False
+        self.is_settling = False
+        self.max_increment = 5000
+        self.max_step = 100000
+        self.temp_comp = False
 
     async def move_to(self, position: int) -> None:
         self.position = position
 
     async def move_by(self, steps: int) -> None:
         self.position += steps
+
+    async def set_temp_comp(self, enabled: bool) -> None:
+        self.temp_comp = enabled
+
+    async def get_status(self) -> dict:
+        """Live-query this focuser's status. This adapter's INDI transport is
+        currently a lightweight stub (see module docstring), so against real
+        hardware this reflects driver-reported ``ABS_FOCUS_POSITION``/
+        ``FOCUS_TEMPERATURE``/``FOCUS_MAX``-equivalent properties only once a
+        future pyindi-client property-fetch is wired in here; until then it
+        reports this instance's own tracked state."""
+        return {
+            "is_moving": self.is_moving,
+            "is_settling": self.is_settling,
+            "max_increment": self.max_increment,
+            "max_step": self.max_step,
+            "position": self.position,
+            "temp_comp": self.temp_comp,
+            "temperature": self.temperature,
+        }
 
 
 class IndiRotatorAdapter(IndiAdapter):

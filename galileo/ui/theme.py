@@ -171,6 +171,11 @@ class ThemeManager:
             border-radius: 3px;
             padding: 3px 6px;
         }}
+        QFrame#DeviceSlotPanel {{
+            border: 1px solid {p['border']};
+            border-radius: 4px;
+            background: {p['surface']};
+        }}
         QTabWidget::pane {{ border: 1px solid {p['border']}; }}
         QTabBar::tab:selected {{ color: {accent}; }}
         QScrollBar:vertical {{

@@ -324,6 +324,36 @@ class AlpacaCameraAdapter(AlpacaAdapter):
     async def warm_up(self) -> None:
         await self._put("cooleron", CoolerOn=False)
 
+    async def get_sensor_info(self) -> dict:
+        """Live-query this camera's sensor configuration from the standard
+        ASCOM Camera properties (PixelSizeX/Y, CameraXSize/YSize, SensorName)
+        — the "Download Info" action on the Equipment Camera page. Every
+        Alpaca-compliant camera exposes these, including a Seestar's second
+        (wide-field) camera device, so no device-specific handling is needed
+        here beyond already targeting the right device_number/base_url."""
+        info: dict[str, "float | int | str | None"] = {
+            "pixel_size_um": None, "sensor_width_px": None,
+            "sensor_height_px": None, "sensor_name": None,
+        }
+        try:
+            pixel_size_x = await self._get("pixelsizex")
+            info["pixel_size_um"] = float(pixel_size_x) if pixel_size_x is not None else None
+        except Exception:
+            logger.exception("Could not read PixelSizeX from %s", self.base_url)
+        try:
+            width = await self._get("cameraxsize")
+            height = await self._get("cameraysize")
+            info["sensor_width_px"] = int(width) if width is not None else None
+            info["sensor_height_px"] = int(height) if height is not None else None
+        except Exception:
+            logger.exception("Could not read CameraXSize/YSize from %s", self.base_url)
+        try:
+            info["sensor_name"] = await self._get("sensorname")
+        except Exception:
+            # SensorName is optional in the ASCOM spec — many drivers omit it.
+            pass
+        return info
+
 
 # ---------------------------------------------------------------------------
 # Mount
@@ -393,6 +423,46 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
 
     async def move_by(self, steps: int) -> None:
         await self.move_to(self.position + steps)
+
+    async def set_temp_comp(self, enabled: bool) -> None:
+        await self._put("tempcomp", TempComp=enabled)
+
+    async def get_status(self) -> dict:
+        """Live-query this focuser's status from the standard ASCOM
+        ``IFocuserV3`` properties — the Focuser page's per-panel status
+        display (Is Moving, Max Increment, Max Step, Position, Temp Comp,
+        Temperature). ASCOM has no standard "is settling" property, so that
+        field is always reported ``False`` here."""
+        status: dict[str, "bool | int | float | None"] = {
+            "is_moving": None, "is_settling": False, "max_increment": None,
+            "max_step": None, "position": None, "temp_comp": None, "temperature": None,
+        }
+        try:
+            status["is_moving"] = bool(await self._get("ismoving"))
+        except Exception:
+            logger.exception("Could not read IsMoving from %s", self.base_url)
+        try:
+            status["position"] = int(await self._get("position"))
+        except Exception:
+            logger.exception("Could not read Position from %s", self.base_url)
+        try:
+            status["max_increment"] = int(await self._get("maxincrement"))
+        except Exception:
+            logger.exception("Could not read MaxIncrement from %s", self.base_url)
+        try:
+            status["max_step"] = int(await self._get("maxstep"))
+        except Exception:
+            logger.exception("Could not read MaxStep from %s", self.base_url)
+        try:
+            status["temp_comp"] = bool(await self._get("tempcomp"))
+        except Exception:
+            # TempComp is only present when TempCompAvailable is True.
+            pass
+        try:
+            status["temperature"] = float(await self._get("temperature"))
+        except Exception:
+            pass
+        return status
 
 
 class AlpacaRotatorAdapter(AlpacaAdapter):
