@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Galileo is a cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class ARM) astrophotography imaging application, built on INDI and ASCOM Alpaca device protocols rather than Windows-only ASCOM/COM drivers. It consolidates three of the author's prior projects — AstroFiler (image library/calibration), VSTarget (AAVSO variable-star planning/photometry), and Obsy (sky-atlas/framing logic) — into one PySide6 desktop app.
 
-**Note on repo state:** `README.md` still describes the project as "pre-alpha, no code written yet," but `galileo/` and `tests/` now contain a substantial implementation and test suite. Trust the code over the README's status claims; the design docs in `docs/` are the authoritative source for intended architecture.
+**Note on repo state:** `README.md`'s Status section and `CHANGELOG.md` are kept up to date as of each change (see below) — check both for what's actually implemented versus still a placeholder. The design docs in `docs/` are the authoritative source for intended architecture, which is not the same thing as current implementation status.
+
+## Changelog
+
+**Every change to this repository — code, tests, or docs — must add an entry to [`CHANGELOG.md`](CHANGELOG.md) in the same turn the change is made**, under the `## [Unreleased]` heading, in the appropriate `Added`/`Changed`/`Fixed`/`Removed` subsection ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). Write entries for someone who wasn't watching the session — state what changed and why it matters, not a diff summary. Don't batch this up for later; a change without a changelog entry is not done.
 
 ## Design documents (read these before making architectural changes)
 
