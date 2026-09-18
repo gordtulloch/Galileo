@@ -183,11 +183,17 @@ def test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column(tmp_path
         db.close()
 
 
-def _open_section(window, text):
-    """Click a primary-sidebar button, as a user switching tabs would (long labels wrap onto two lines)."""
+def _open_section(window, section_id):
+    """Click a primary-sidebar button, as a user switching tabs would.
+
+    Found by section id (its label comes from ``PRIMARY_SECTIONS``), so renaming a tab doesn't break
+    the tests; long labels wrap onto two lines, hence the whitespace normalisation.
+    """
+    from galileo.ui.app_window import PRIMARY_SECTIONS
+    label = next(label for sid, label, _icon in PRIMARY_SECTIONS if sid == section_id)
     sidebar = next(c for c in window._nav_columns if c.objectName() == "Sidebar")
     buttons = sidebar.findChildren(QtWidgets.QToolButton)
-    next(b for b in buttons if " ".join(b.text().split()) == text).click()
+    next(b for b in buttons if " ".join(b.text().split()) == label).click()
 
 
 def _optics_selector_shown(window):
@@ -199,11 +205,11 @@ def _optics_selector_shown(window):
 def test_tc_prof_110_optics_selector_only_on_framing_and_imaging(window):
     """PROF-110: the top-bar Optics selector is shown on Framing and Imaging, and nowhere else."""
     shown = {}
-    for section in ("Equipment", "Sky Atlas", "Framing", "Imaging", "Sequence"):
+    for section in ("equipment", "sky_atlas", "framing", "imaging", "sequencer"):
         _open_section(window, section)
         shown[section] = _optics_selector_shown(window)
     assert shown == {
-        "Equipment": False, "Sky Atlas": False, "Framing": True, "Imaging": True, "Sequence": False,
+        "equipment": False, "sky_atlas": False, "framing": True, "imaging": True, "sequencer": False,
     }
 
 
@@ -215,7 +221,7 @@ def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window
         {"name": "Newt 8in", "focal_length_mm": 1000, "aperture_mm": 200},
         {"focal_length_mm": 400},
     ])
-    _open_section(window, "Imaging")
+    _open_section(window, "imaging")
     combo = window._optics_combo
     assert [combo.itemText(i) for i in range(combo.count())] == ["Newt 8in — 1000 mm f/5.0", "Optical Tube 2"]
     assert combo.isEnabled()
@@ -224,7 +230,7 @@ def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window
     combo.setCurrentIndex(1)
     combo.activated.emit(1)
     assert window.active_optical_tube().focal_length_mm == 400
-    _open_section(window, "Framing")  # the choice survives a tab switch
+    _open_section(window, "framing")  # the choice survives a tab switch
     assert combo.currentIndex() == 1
 
 
@@ -232,7 +238,7 @@ def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window
 @pytest.mark.priority("MVP")
 def test_tc_prof_110_selector_is_disabled_when_no_tubes_are_defined(window):
     """PROF-110: with no tubes, the selector stays visible but disabled and there is no active tube."""
-    _open_section(window, "Framing")
+    _open_section(window, "framing")
     assert _optics_selector_shown(window)
     assert not window._optics_combo.isEnabled()
     assert window.active_optical_tube() is None

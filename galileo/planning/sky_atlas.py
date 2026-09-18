@@ -1,15 +1,17 @@
 """Sky atlas — offline DSO catalog search and visibility (SKY-010 … SKY-090).
 
-The catalog loads from a bundled compressed JSON dataset on first import.
-If the bundled dataset is not yet available, ``SkyAtlas.download_catalog()``
-fetches it from VizieR and caches it locally.
+The catalog is OpenNGC (NGC/IC objects with their Messier and Caldwell
+numbers), fetched from GitHub on first use and cached locally.
 """
 
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -23,7 +25,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CATALOG_FILENAME = "galileo_dso_catalog.json"
+# v1 was built from a VizieR query that lost every object's position, type and
+# magnitude, so it is abandoned (and deleted) rather than read.
+_CATALOG_FILENAME = "galileo_dso_catalog_v2.json"
+_LEGACY_CATALOG_FILENAME = "galileo_dso_catalog.json"
 
 
 class ObjectType(str, Enum):
@@ -81,14 +86,48 @@ class LocationManager:
 # Catalog loader
 # ---------------------------------------------------------------------------
 
+# The catalogs a user can pick between on the Star Atlas. An object belongs to
+# one if any of its designations is in that catalog's numbering.
+DSO_CATALOGS: tuple[str, ...] = ("Messier", "Caldwell", "NGC")
+_CATALOG_PATTERNS = {
+    "Messier": re.compile(r"^M\s?\d+$", re.IGNORECASE),
+    "Caldwell": re.compile(r"^(?:C|Caldwell)\s?\d+$", re.IGNORECASE),
+    "NGC": re.compile(r"^NGC\s?\d+", re.IGNORECASE),
+}
+
+
+def catalogs_of(obj: DeepSkyObject) -> set[str]:
+    """Which of :data:`DSO_CATALOGS` *obj* belongs to."""
+    names = [obj.primary_name, *obj.designations]
+    return {cat for cat, pat in _CATALOG_PATTERNS.items() if any(pat.match(n.strip()) for n in names)}
+
+
+_OPENNGC_URL = "https://raw.githubusercontent.com/mattiaverga/OpenNGC/master/database_files/"
+_OPENNGC_TYPES = {
+    "G": ObjectType.GALAXY, "GPair": ObjectType.GALAXY, "GTrpl": ObjectType.GALAXY, "GGroup": ObjectType.GALAXY,
+    "OCl": ObjectType.OPEN_CLUSTER, "GCl": ObjectType.GLOBULAR_CLUSTER, "Cl+N": ObjectType.CLUSTER,
+    "PN": ObjectType.PLANETARY_NEBULA, "SNR": ObjectType.SUPERNOVA_REMNANT,
+    "HII": ObjectType.NEBULA, "DrkN": ObjectType.NEBULA, "EmN": ObjectType.NEBULA,
+    "Neb": ObjectType.NEBULA, "RfN": ObjectType.NEBULA,
+    "*": ObjectType.STAR, "Nova": ObjectType.STAR, "**": ObjectType.DOUBLE_STAR, "*Ass": ObjectType.ASTERISM,
+    "Other": ObjectType.OTHER,
+}
+_OPENNGC_SKIP = {"Dup", "NonEx"}        # duplicate and non-existent entries
+_DESIGNATION_RE = re.compile(r"^([A-Za-z]+?)0*(\d+)([A-Za-z]*)$")
+
+
 def _catalog_cache_path() -> Path:
     from galileo.platform import get_cache_dir
     return get_cache_dir() / _CATALOG_FILENAME
 
 
 def _load_catalog() -> list[DeepSkyObject]:
-    """Load the DSO catalog, building from VizieR if the cache is absent."""
+    """Load the DSO catalog, building it from OpenNGC if the cache is absent."""
     cache = _catalog_cache_path()
+    try:
+        cache.with_name(_LEGACY_CATALOG_FILENAME).unlink(missing_ok=True)
+    except OSError:
+        pass
     if cache.exists():
         try:
             raw = json.loads(cache.read_text("utf-8"))
@@ -96,12 +135,11 @@ def _load_catalog() -> list[DeepSkyObject]:
         except Exception:
             logger.exception("Failed to load cached catalog; regenerating")
 
-    # Attempt to build from astroquery
-    objects = _fetch_catalog_from_vizier()
+    objects = _fetch_catalog_online()
     if objects:
         try:
             cache.write_text(
-                json.dumps([_obj_to_dict(o) for o in objects], indent=1),
+                json.dumps([_obj_to_dict(o) for o in objects]),
                 encoding="utf-8",
             )
         except Exception:
@@ -109,42 +147,67 @@ def _load_catalog() -> list[DeepSkyObject]:
     return objects
 
 
-def _fetch_catalog_from_vizier() -> list[DeepSkyObject]:
-    """Query VizieR for the OpenNGC catalog (~13 K objects)."""
-    try:
-        from astroquery.vizier import Vizier
-        import astropy.units as u
+def _sexagesimal_to_deg(text: str, hours: bool) -> float:
+    sign = -1.0 if text.strip().startswith("-") else 1.0
+    d, m, sec = (float(v) for v in text.strip().lstrip("+-").split(":"))
+    value = sign * (d + m / 60.0 + sec / 3600.0)
+    return value * 15.0 if hours else value
 
-        v = Vizier(columns=["*"], row_limit=-1)
-        result = v.get_catalogs("VII/118/ngc2000")   # NGC 2000 catalogue
-        if not result:
-            return []
-        tbl = result[0]
 
-        objects = []
-        for row in tbl:
+def _designation(name: str) -> str:
+    """OpenNGC's zero-padded names → the usual form: NGC0224 → "NGC 224", M040 → "M40"."""
+    m = _DESIGNATION_RE.match(name.strip())
+    if not m:
+        return name.strip()
+    prefix, number, suffix = m.groups()
+    return f"{prefix}{number}{suffix}" if prefix == "M" else f"{prefix} {number}{suffix}"
+
+
+def _parse_openngc(*tables: str) -> list[DeepSkyObject]:
+    """Build the catalog from OpenNGC's ``NGC.csv`` and ``addendum.csv`` text
+    (semicolon-separated). Messier numbers come from the ``M`` column and
+    Caldwell numbers from ``Identifiers`` (or the addendum's own ``C###`` names)."""
+    objects: list[DeepSkyObject] = []
+    for table in tables:
+        for row in csv.DictReader(io.StringIO(table), delimiter=";"):
             try:
-                ra = float(row["_RA.icrs"]) if "_RA.icrs" in tbl.colnames else 0.0
-                dec = float(row["_DE.icrs"]) if "_DE.icrs" in tbl.colnames else 0.0
-                name = str(row.get("Name", row.get("NGC", ""))).strip()
-                type_str = str(row.get("Type", "")).strip()
-                mag = float(row.get("Mag", 99.0) or 99.0)
-                size = float(row.get("Diam", 0.0) or 0.0)
-                obj_type = _type_from_str(type_str)
+                if row["Type"] in _OPENNGC_SKIP or not row["RA"] or not row["Dec"]:
+                    continue
+                designations = [_designation(row["Name"])]
+                messier = row.get("M", "").strip()
+                if messier.isdigit() and f"M{int(messier)}" not in designations:
+                    designations.insert(0, f"M{int(messier)}")
+                for extra in row.get("Identifiers", "").split(","):
+                    extra = re.sub(r"^C 0+(?=\d)", "C ", extra.strip())      # "C 020" → "C 20"
+                    if extra and extra not in designations:
+                        designations.append(extra)
+                designations.extend(c.strip() for c in row.get("Common names", "").split(",") if c.strip())
+                mag = next((float(row[k]) for k in ("V-Mag", "B-Mag") if row.get(k)), 99.0)
                 objects.append(DeepSkyObject(
-                    primary_name=name,
-                    designations=[name],
-                    ra_deg=ra,
-                    dec_deg=dec,
-                    object_type=obj_type,
+                    primary_name=designations[0],
+                    designations=designations,
+                    ra_deg=_sexagesimal_to_deg(row["RA"], hours=True),
+                    dec_deg=_sexagesimal_to_deg(row["Dec"], hours=False),
+                    object_type=_OPENNGC_TYPES.get(row["Type"], ObjectType.OTHER),
                     magnitude=mag,
-                    size_arcmin=size,
+                    size_arcmin=float(row["MajAx"]) if row.get("MajAx") else 0.0,
                 ))
-            except Exception:
+            except (ValueError, KeyError):
                 continue
-        return objects
+    return objects
+
+
+def _fetch_catalog_online() -> list[DeepSkyObject]:
+    """Fetch OpenNGC (~14 K NGC/IC objects with Messier and Caldwell cross-references)."""
+    try:
+        import urllib.request
+        tables = []
+        for filename in ("NGC.csv", "addendum.csv"):
+            with urllib.request.urlopen(_OPENNGC_URL + filename, timeout=30) as resp:     # noqa: S310 — fixed https URL
+                tables.append(resp.read().decode("utf-8"))
+        return _parse_openngc(*tables)
     except Exception:
-        logger.info("Could not fetch catalog from VizieR; returning empty catalog")
+        logger.info("Could not fetch the deep-sky catalog; returning empty catalog", exc_info=True)
         return []
 
 

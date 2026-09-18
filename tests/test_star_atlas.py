@@ -5,8 +5,8 @@ numpy and is tested directly; the view and page are built offscreen. Catalog
 loading is patched to the built-in offline star list so no test touches the
 network. Requirement IDs are the SKYMAP ones the planetarium partly satisfies
 (SKYMAP-010 render, SKYMAP-020 identify / centre-and-track, SKYMAP-030 constellation
-boundaries); constellation figures/art
-lines, comets/asteroids/satellites and the FOV/mount overlay are not built.
+boundaries and outlines); constellation art, comets/asteroids/satellites and the
+FOV/mount overlay are not built.
 """
 
 from __future__ import annotations
@@ -171,6 +171,48 @@ def test_star_atlas_boundaries_cached_and_offline_empty(tmp_path, monkeypatch):
     assert sa.load_constellation_boundaries().names == ["Ursa Major"] and len(calls) == 1
 
 
+@pytest.mark.requirement("TC-SKYMAP-030")
+@pytest.mark.priority("MVP")
+def test_star_atlas_constellation_lines_are_densified_along_great_circles():
+    """SKYMAP-030: outline segments are sampled along the great circle, RA -180..180 is normalised, and short/degenerate lines are dropped."""
+    lines = sa.build_constellation_lines([[[-10.0, 0.0], [10.0, 0.0]], [[5.0, 5.0]]])
+    assert len(lines) == 1
+    ra, dec = lines.ra[lines.polyline(0)], lines.dec[lines.polyline(0)]
+    assert ra[0] == pytest.approx(350.0) and ra[-1] == pytest.approx(10.0)
+    assert 11 <= len(ra) <= 12                              # 20° at a 2° step (float round-off may add one), plus the end point
+    assert np.abs((np.diff(ra) + 180.0) % 360.0 - 180.0).max() <= 2.0 + 1e-6
+    assert dec == pytest.approx(np.zeros(len(dec)), abs=1e-9)   # the equator is a great circle
+    assert len(sa.build_constellation_lines([])) == 0
+
+
+@pytest.mark.requirement("TC-SKYMAP-030")
+@pytest.mark.priority("MVP")
+def test_star_atlas_constellation_lines_cached_and_offline_empty(tmp_path, monkeypatch):
+    """SKYMAP-030: fetched outlines are cached and rebuilt from the cache; offline with no cache draws none."""
+    monkeypatch.setattr(sa, "_lines_cache_path", lambda: tmp_path / "lines.json")
+    monkeypatch.setattr(sa, "_fetch_constellation_lines", lambda: None)
+    assert len(sa.load_constellation_lines()) == 0
+    assert not (tmp_path / "lines.json").exists()
+    calls = []
+    monkeypatch.setattr(sa, "_fetch_constellation_lines",
+                        lambda: calls.append(1) or [[[80.0, 0.0], [85.0, 5.0], [90.0, 0.0]]])
+    assert len(sa.load_constellation_lines()) == 1
+    monkeypatch.setattr(sa, "_fetch_constellation_lines", lambda: pytest.fail("should read the cache"))
+    assert len(sa.load_constellation_lines()) == 1 and len(calls) == 1
+
+
+@pytest.mark.requirement("TC-SKYMAP-030")
+@pytest.mark.priority("MVP")
+def test_star_atlas_boundaries_carry_iau_abbreviations():
+    """SKYMAP-030: each outline keeps its three-letter IAU abbreviation next to its name (both Serpens parts are SER)."""
+    codes = ["ORI"] * 4 + ["SER1"] * 4 + ["SER2"] * 4
+    ra = [80.0, 90.0, 90.0, 80.0] * 3
+    dec = [0.0, 0.0, 10.0, 10.0] * 3
+    b = sa.build_boundaries(codes, ra, dec)
+    assert b.codes == ["ORI", "SER", "SER"] and b.names == ["Orion", "Serpens", "Serpens"]
+    assert sa.ConstellationBoundaries.empty().codes == []
+
+
 def test_star_atlas_every_boundary_code_has_a_name():
     """The IAU name table covers all 88 constellations (Serpens is two outlines)."""
     assert len(set(sa.CONSTELLATION_NAMES.values())) == 88
@@ -236,6 +278,30 @@ def test_star_atlas_view_draws_constellation_boundaries_when_enabled(view):
     assert boundary_pixels() > 100
     view.set_option("show_boundaries", False)
     assert boundary_pixels() == 0
+
+
+@pytest.mark.requirement("TC-SKYMAP-030")
+@pytest.mark.priority("MVP")
+def test_star_atlas_constellation_names_shown_without_boundaries_or_outlines(view):
+    """SKYMAP-030: constellation names are labels, so they stay when the boundary and outline layers are off — until Labels is switched off."""
+    codes, ra, dec = _box(ra0=270.0, ra1=290.0, dec0=30.0, dec1=48.0)
+    view.set_catalogs(sa._fallback_catalog(), [], sa.build_boundaries(codes, ra, dec))
+    view.show_grid = False
+    view.show_boundaries = False
+    view.show_lines = False
+    view.center_on_altaz(view._bnd_center_alt[0], view._bnd_center_az[0])
+    view.set_fov(60.0)
+
+    def label_pixels() -> int:
+        """Pixels with the constellation-label purple (red and blue both well above green)."""
+        image = view.grab().toImage()
+        return sum(1 for x in range(0, 800, 1) for y in range(0, 600, 1)
+                   if (c := image.pixelColor(x, y)).red() - c.green() > 25 and c.blue() - c.green() > 25)
+
+    view.show_labels = True
+    assert label_pixels() > 0
+    view.show_labels = False
+    assert label_pixels() == 0
 
 
 @pytest.mark.requirement("TC-SKYMAP-010")
@@ -340,3 +406,113 @@ def test_star_atlas_page_shows_the_sky_at_the_observatory_site(window):
     assert len(views) == 1
     assert views[0].latitude == pytest.approx(-33.9) and views[0].longitude == pytest.approx(151.2)
     assert views[0].grab().toImage().width() > 0
+
+
+@pytest.mark.requirement("TC-SKYMAP-030")
+@pytest.mark.priority("MVP")
+def test_star_atlas_view_draws_constellation_lines_independently_of_boundaries(view):
+    """SKYMAP-030: constellation outlines are drawn, and their toggle is independent of the boundary toggle."""
+    lines = sa.build_constellation_lines([[[270.0, 35.0], [280.0, 45.0], [290.0, 35.0]]])
+    view.set_catalogs(sa._fallback_catalog(), [], None, lines)
+    view.show_grid = False
+    view.show_labels = False
+    alt, az = view._altaz_arrays(np.array([280.0]), np.array([40.0]))
+    view.center_on_altaz(float(alt[0]), float(az[0]))
+    view.set_fov(60.0)
+
+    def line_pixels() -> int:
+        """Pixels with the outline's teal hue (green and blue well above red); stars, sky and horizon never have it."""
+        image = view.grab().toImage()
+        count = 0
+        for x in range(0, 800, 2):
+            for y in range(0, 600, 2):
+                c = image.pixelColor(x, y)
+                if c.green() - c.red() > 40 and c.blue() - c.red() > 30:
+                    count += 1
+        return count
+
+    assert line_pixels() > 50
+    view.set_option("show_boundaries", False)
+    assert line_pixels() > 50                       # outlines don't depend on the boundary toggle
+    view.set_option("show_lines", False)
+    assert line_pixels() == 0
+
+
+_NGC_CSV = """Name;Type;RA;Dec;Const;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pm-RA;Pm-Dec;RadVel;Redshift;Cstar U-Mag;Cstar B-Mag;Cstar V-Mag;M;NGC;IC;Cstar Names;Identifiers;Common names;NED notes;OpenNGC notes;Sources
+NGC0224;G;00:42:44.35;+41:16:08.6;And;177.83;69.66;35;4.29;3.44;;;;;;;;;;;;;;031;;;;UGC 00454;Andromeda Galaxy;;;
+NGC7000;HII;20:59:17.14;+44:31:43.6;Cep;120.00;30.00;;4.00;;;;;;;;;;;;;;;;;;;C 020,LBN 373;North America Nebula;;;
+NGC0001;G;00:07:15.84;+27:42:29.1;Peg;1.57;1.07;112;13.69;;;;;;;;;;;;;;;;;;;;;;;
+NGC0002;Dup;00:07:16.00;+27:42:00.0;Peg;;;;;;;;;;;;;;;;;;;;;;;;;;;
+IC0001;**;00:08:27.05;+27:43:03.6;Peg;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+"""
+_ADDENDUM_CSV = """Name;Type;RA;Dec;Const;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pm-RA;Pm-Dec;RadVel;Redshift;Cstar U-Mag;Cstar B-Mag;Cstar V-Mag;M;NGC;IC;Cstar Names;Identifiers;Common names;NED notes;OpenNGC notes;Sources
+C099;DrkN;12:31:19.0;-63:44:36;Cru;;;;;;;;;;;;;;;;;;;;;;;;Coalsack Nebula;;;
+M040;**;12:22:16.1;+58:05:04;UMa;;;;;8.00;;;;;;;;;;;;;;040;;;;WDS J12222+5805AB;;;;
+"""
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_deep_sky_catalog_parses_openngc_with_messier_and_caldwell():
+    """SKYMAP-010: the deep-sky catalog keeps real positions, types and magnitudes, and tags Messier/Caldwell/NGC membership."""
+    from galileo.planning import sky_atlas as sky
+    objs = {o.primary_name: o for o in sky._parse_openngc(_NGC_CSV, _ADDENDUM_CSV)}
+    assert "NGC 2" not in objs and "IC 1" in objs           # duplicates are skipped
+    m31 = objs["M31"]
+    assert m31.designations[:2] == ["M31", "NGC 224"] and "Andromeda Galaxy" in m31.designations
+    assert m31.ra_deg == pytest.approx(10.6848, abs=1e-3) and m31.dec_deg == pytest.approx(41.2686, abs=1e-3)
+    assert m31.object_type is sky.ObjectType.GALAXY and m31.magnitude == 3.44 and m31.size_arcmin == 177.83
+    assert objs["NGC 1"].magnitude == 13.69                 # falls back to the B magnitude
+    assert "C 20" in objs["NGC 7000"].designations          # "C 020" normalised
+    assert sky.catalogs_of(m31) == {"Messier", "NGC"}
+    assert sky.catalogs_of(objs["NGC 7000"]) == {"Caldwell", "NGC"}
+    assert sky.catalogs_of(objs["C 99"]) == {"Caldwell"} and sky.catalogs_of(objs["M40"]) == {"Messier"}
+    assert sky.catalogs_of(objs["IC 1"]) == set()
+    assert objs["M40"].designations.count("M40") == 1
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_view_draws_only_the_selected_deep_sky_catalogs(view):
+    """SKYMAP-010: only deep-sky objects from the chosen catalogs are drawn; objects with no magnitude survive only in Messier/Caldwell."""
+    from galileo.planning.sky_atlas import DeepSkyObject, ObjectType
+
+    def dso(name, designations, mag):
+        return DeepSkyObject(name, designations, 279.0, 40.0, ObjectType.GALAXY, mag, 5.0)
+
+    dsos = [dso("M1", ["M1", "NGC 1952"], 8.0), dso("C 9", ["C 9"], 99.0),
+            dso("NGC 500", ["NGC 500"], 10.0), dso("NGC 501", ["NGC 501"], 99.0)]
+    view.set_catalogs(sa._fallback_catalog(), dsos)
+    assert view.dso_catalogs == {"Messier"}                  # Messier is on by default
+    assert view.dso_catalog_counts() == {"Messier": 1, "Caldwell": 1, "NGC": 2}
+    assert len(view._dsos) == 3                               # NGC 501 has no magnitude and is in no curated list
+    view.dso_mag_limit = 16.0
+    view.center_on_altaz(85.0, 0.0)
+    view.set_fov(150.0)
+
+    def drawn() -> set[str]:
+        idx, _, _ = view._sets(view._viewport())["dsos"]
+        return {view._dsos[i].primary_name for i in idx}
+
+    view.show_ground = False
+    assert drawn() == {"M1"}
+    view.set_dso_catalogs({"Messier", "Caldwell"})
+    assert drawn() == {"M1", "C 9"}
+    view.set_dso_catalogs({"NGC"})
+    assert drawn() == {"M1", "NGC 500"}                       # M1 is also NGC 1952
+    view.set_dso_catalogs(set())
+    assert drawn() == set()
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_page_catalog_list_adds_and_removes_catalogs(window):
+    """SKYMAP-010: the Star Atlas panel has a Catalogs label with a "+" button; a listed catalog can be removed again."""
+    from galileo.ui.star_atlas import StarAtlasView
+    view = window._window.findChildren(StarAtlasView)[0]
+    buttons = window._window.findChildren(QtWidgets.QToolButton)
+    add = next(b for b in buttons if b.text() == "+" and b.toolTip().startswith("Add a deep-sky catalog"))
+    assert add.isEnabled() and view.dso_catalogs == {"Messier"}
+    remove = next(b for b in buttons if b.text() == "×" and b.toolTip() == "Remove Messier from the map")
+    remove.click()
+    assert view.dso_catalogs == set()

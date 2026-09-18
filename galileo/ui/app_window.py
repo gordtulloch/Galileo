@@ -4332,8 +4332,9 @@ class AppWindow:
         from PySide6.QtCore import QDateTime, Qt
         from PySide6.QtWidgets import (
             QCheckBox, QDateTimeEdit, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
-            QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
+            QLabel, QLineEdit, QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget,
         )
+        from galileo.planning.sky_atlas import DSO_CATALOGS
         from galileo.ui.star_atlas import StarAtlasView, format_dec, format_ra
 
         page = QWidget()
@@ -4396,6 +4397,8 @@ class AppWindow:
         form.addRow("Deep-sky magnitude limit", dso_mag_spin)
 
         toggles = (("Coordinate grid", "show_grid"), ("Constellation boundaries", "show_boundaries"),
+                   ("Constellation outlines", "show_lines"),
+                   ("Abbreviate constellation names", "abbreviate_constellations"),
                    ("Deep-sky objects", "show_dsos"),
                    ("Sun, Moon && planets", "show_bodies"), ("Labels", "show_labels"),
                    ("Ground", "show_ground"), ("Daylight sky", "daylight_sky"))
@@ -4409,6 +4412,55 @@ class AppWindow:
         status.setObjectName("StatusHint")
         status.setWordWrap(True)
         form.addRow(status)
+
+        # Deep-sky catalogs: the "+" adds one to the map, each listed catalog has a "×" to remove it.
+        catalogs_header = QHBoxLayout()
+        catalogs_header.addWidget(QLabel("Catalogs"))
+        catalogs_header.addStretch(1)
+        add_catalog_btn = QToolButton()
+        add_catalog_btn.setText("+")
+        add_catalog_btn.setToolTip("Add a deep-sky catalog to the map")
+        catalogs_header.addWidget(add_catalog_btn)
+        form.addRow(catalogs_header)
+        catalog_rows = QVBoxLayout()
+        catalog_rows.setSpacing(2)
+        form.addRow(catalog_rows)
+
+        def refresh_catalog_rows() -> None:
+            while catalog_rows.count():
+                item = catalog_rows.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
+            counts = view.dso_catalog_counts()
+            for cat in DSO_CATALOGS:
+                if cat not in view.dso_catalogs:
+                    continue
+                row = QWidget()
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.addWidget(QLabel(f"{cat} ({counts[cat]:,})" if counts else cat))
+                row_layout.addStretch(1)
+                remove = QToolButton()
+                remove.setText("×")
+                remove.setToolTip(f"Remove {cat} from the map")
+                remove.clicked.connect(lambda _=False, c=cat: set_catalogs(view.dso_catalogs - {c}))
+                row_layout.addWidget(remove)
+                catalog_rows.addWidget(row)
+            add_catalog_btn.setEnabled(any(c not in view.dso_catalogs for c in DSO_CATALOGS))
+
+        def set_catalogs(chosen) -> None:
+            view.set_dso_catalogs(chosen)
+            refresh_catalog_rows()
+
+        def show_catalog_menu() -> None:
+            menu = QMenu(add_catalog_btn)
+            for cat in DSO_CATALOGS:
+                if cat not in view.dso_catalogs:
+                    menu.addAction(cat, lambda c=cat: set_catalogs(view.dso_catalogs | {c}))
+            menu.exec(add_catalog_btn.mapToGlobal(add_catalog_btn.rect().bottomLeft()))
+
+        add_catalog_btn.clicked.connect(show_catalog_menu)
+        refresh_catalog_rows()
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -4545,11 +4597,12 @@ class AppWindow:
         view.viewChanged.connect(lambda: (sync_time_field() if live_check.isChecked() else None, refresh_altaz()))
         def show_catalog_status(stars: int, dsos: int) -> None:
             text = f"{stars:,} stars · {dsos:,} deep-sky objects"
-            offline = stars < 200 or len(view._bounds) == 0
+            offline = stars < 200 or dsos == 0 or len(view._bounds) == 0 or len(view._lines) == 0
             if offline:
-                text += (" (offline — connect to the internet once to load the full star catalog"
-                         " and constellation boundaries)")
+                text += (" (offline — connect to the internet once to load the full star and"
+                         " deep-sky catalogs, constellation boundaries and outlines)")
             status.setText(text)
+            refresh_catalog_rows()
 
         view.catalogsLoaded.connect(show_catalog_status)
 

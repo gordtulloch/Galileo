@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from galileo.planning import star_atlas as sa
+from galileo.planning.sky_atlas import DSO_CATALOGS, catalogs_of
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ _GRID_COLOR = QColor(70, 110, 160, 110)
 _HORIZON_COLOR = QColor(200, 170, 90, 200)
 _LABEL_COLOR = QColor(170, 195, 225)
 _BOUNDARY_COLOR = QColor(190, 130, 210, 170)
+_LINES_COLOR = QColor(110, 190, 170, 200)
 _CONSTELLATION_LABEL_COLOR = QColor(190, 140, 215, 200)
 _DSO_COLOR = QColor(120, 200, 150)
 _BODY_COLOR = QColor(255, 214, 120)
@@ -59,7 +61,7 @@ class StarAtlasView(QWidget):
     objectSelected = Signal(dict)
     viewChanged = Signal()
     catalogsLoaded = Signal(int, int)
-    _catalogsReady = Signal(object, object, object)
+    _catalogsReady = Signal(object, object, object, object)
 
     LIVE_INTERVAL_MS = 10_000
     HIT_RADIUS_PX = 12
@@ -79,7 +81,10 @@ class StarAtlasView(QWidget):
         self.dso_mag_limit = 9.0
         self.show_grid = True
         self.show_boundaries = True
+        self.show_lines = True
+        self.abbreviate_constellations = False
         self.show_dsos = True
+        self.dso_catalogs: set[str] = {"Messier"}      # which of sky_atlas.DSO_CATALOGS are drawn
         self.show_bodies = True
         self.show_labels = True
         self.show_ground = True
@@ -92,7 +97,9 @@ class StarAtlasView(QWidget):
         self._stars: sa.StarCatalog = sa._fallback_catalog()
         self._dsos: list = []
         self._bounds: sa.ConstellationBoundaries = sa.ConstellationBoundaries.empty()
+        self._lines: sa.ConstellationLines = sa.ConstellationLines.empty()
         self._dso_ra = self._dso_dec = self._dso_mag = np.empty(0)
+        self._dso_members: dict[str, np.ndarray] = {}
         self._bodies: list[dict[str, Any]] = []
         self._sun_alt = -30.0
         self._lst = 0.0
@@ -131,21 +138,49 @@ class StarAtlasView(QWidget):
                 logger.exception("Could not load the constellation boundaries")
                 bounds = sa.ConstellationBoundaries.empty()
             try:
-                self._catalogsReady.emit(stars, dsos, bounds)
+                lines = sa.load_constellation_lines()
+            except Exception:
+                logger.exception("Could not load the constellation lines")
+                lines = sa.ConstellationLines.empty()
+            try:
+                self._catalogsReady.emit(stars, dsos, bounds, lines)
             except RuntimeError:
                 pass  # widget was destroyed while loading
         threading.Thread(target=work, name="star-atlas-catalogs", daemon=True).start()
 
     def set_catalogs(self, stars: "sa.StarCatalog", dsos: list,
-                     boundaries: "sa.ConstellationBoundaries | None" = None) -> None:
+                     boundaries: "sa.ConstellationBoundaries | None" = None,
+                     lines: "sa.ConstellationLines | None" = None) -> None:
         self._stars = stars
         self._bounds = boundaries if boundaries is not None else sa.ConstellationBoundaries.empty()
-        self._dsos = [d for d in dsos if d.magnitude < 90.0]
+        self._lines = lines if lines is not None else sa.ConstellationLines.empty()
+        member_sets = [catalogs_of(d) for d in dsos]
+        # An object with no known magnitude is dropped, unless it is in a curated
+        # list (Messier / Caldwell — e.g. the Coalsack), where it is always shown.
+        keep = [i for i, d in enumerate(dsos) if d.magnitude < 90.0 or member_sets[i] & {"Messier", "Caldwell"}]
+        self._dsos = [dsos[i] for i in keep]
         self._dso_ra = np.array([d.ra_deg for d in self._dsos])
         self._dso_dec = np.array([d.dec_deg for d in self._dsos])
-        self._dso_mag = np.array([d.magnitude for d in self._dsos])
+        self._dso_mag = np.array([d.magnitude if d.magnitude < 90.0 else 0.0 for d in self._dsos])
+        self._dso_members = {cat: np.array([cat in member_sets[i] for i in keep], dtype=bool) for cat in DSO_CATALOGS}
         self._recompute()
         self.update()
+
+    def dso_catalog_counts(self) -> dict[str, int]:
+        """Number of loaded deep-sky objects in each catalog."""
+        return {cat: int(mask.sum()) for cat, mask in self._dso_members.items()}
+
+    def set_dso_catalogs(self, catalogs) -> None:
+        """Choose which deep-sky catalogs are drawn."""
+        self.dso_catalogs = set(catalogs)
+        self.update()
+
+    def _dso_selected(self) -> np.ndarray:
+        selected = np.zeros(len(self._dsos), dtype=bool)
+        for cat in self.dso_catalogs:
+            if cat in self._dso_members:
+                selected |= self._dso_members[cat]
+        return selected
 
     def set_location(self, latitude: float, longitude: float) -> None:
         self.latitude, self.longitude = latitude, longitude
@@ -222,6 +257,7 @@ class StarAtlasView(QWidget):
         self._star_alt, self._star_az = self._altaz_arrays(self._stars.ra, self._stars.dec)
         self._dso_alt, self._dso_az = self._altaz_arrays(self._dso_ra, self._dso_dec)
         self._bnd_alt, self._bnd_az = self._altaz_arrays(self._bounds.ra, self._bounds.dec)
+        self._line_alt, self._line_az = self._altaz_arrays(self._lines.ra, self._lines.dec)
         self._bnd_center_alt, self._bnd_center_az = self._altaz_arrays(self._bounds.center_ra, self._bounds.center_dec)
         self._bodies = sa.solar_system_positions(self.when)
         if self._bodies:
@@ -260,8 +296,8 @@ class StarAtlasView(QWidget):
     def _tick_live(self) -> None:
         self.set_time(_dt.datetime.now(_dt.timezone.utc))
 
-    def _on_catalogs(self, stars, dsos, bounds) -> None:
-        self.set_catalogs(stars, dsos, bounds)
+    def _on_catalogs(self, stars, dsos, bounds, lines) -> None:
+        self.set_catalogs(stars, dsos, bounds, lines)
         self.catalogsLoaded.emit(len(self._stars), len(self._dsos))
 
     def effective_mag_limit(self) -> float:
@@ -310,7 +346,8 @@ class StarAtlasView(QWidget):
 
     def _sets(self, vp) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
         sets = {"stars": self._visible(self._star_alt, self._star_az, self._stars.mag <= self.effective_mag_limit(), vp)}
-        sets["dsos"] = (self._visible(self._dso_alt, self._dso_az, self._dso_mag <= self.dso_mag_limit, vp)
+        sets["dsos"] = (self._visible(self._dso_alt, self._dso_az,
+                                    (self._dso_mag <= self.dso_mag_limit) & self._dso_selected(), vp)
                         if self.show_dsos else (np.empty(0, dtype=int), np.empty(0), np.empty(0)))
         sets["bodies"] = (self._visible(self._body_alt, self._body_az, np.ones(len(self._bodies), dtype=bool), vp)
                           if self.show_bodies else (np.empty(0, dtype=int), np.empty(0), np.empty(0)))
@@ -335,6 +372,8 @@ class StarAtlasView(QWidget):
             self._draw_grid(p, vp)
         if self.show_boundaries:
             self._draw_boundaries(p, vp)
+        if self.show_lines:
+            self._draw_lines(p, vp)
 
         sets = self._sets(vp)
         self._draw_dsos(p, vp, sets["dsos"])
@@ -393,6 +432,19 @@ class StarAtlasView(QWidget):
             xs, ys, vs = x[s], y[s], vis[s]
             if not (vs & (xs > -50) & (xs < vp.width + 50) & (ys > -50) & (ys < vp.height + 50)).any():
                 continue        # nothing of this outline is on screen (edges may still cross, but only when zoomed out)
+            self._polyline(p, xs, ys, vs)
+
+    def _draw_lines(self, p: QPainter, vp) -> None:
+        if len(self._lines) == 0:
+            return
+        x, y, vis = vp.project(self._line_alt, self._line_az)
+        p.setPen(QPen(_LINES_COLOR, 1.3))
+        p.setBrush(Qt.NoBrush)
+        for i in range(len(self._lines)):
+            s = self._lines.polyline(i)
+            xs, ys, vs = x[s], y[s], vis[s]
+            if not (vs & (xs > -50) & (xs < vp.width + 50) & (ys > -50) & (ys < vp.height + 50)).any():
+                continue
             self._polyline(p, xs, ys, vs)
 
     def _draw_stars(self, p: QPainter, star_set) -> None:
@@ -508,7 +560,7 @@ class StarAtlasView(QWidget):
         idx, xs, ys = sets["bodies"]
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
             p.drawText(QPointF(x + 10, y - 4), self._bodies[i]["name"])
-        if self.show_boundaries and len(self._bounds):
+        if len(self._bounds):       # names don't depend on the boundary lines being shown
             self._draw_constellation_names(p, vp)
 
     def _draw_constellation_names(self, p: QPainter, vp) -> None:
@@ -519,7 +571,7 @@ class StarAtlasView(QWidget):
             if not vis[i] or self._bnd_center_alt[i] < -0.5 and self.show_ground:
                 continue
             if 0 <= x[i] <= vp.width and 0 <= y[i] <= vp.height:
-                text = name.upper()
+                text = self._bounds.codes[i] if self.abbreviate_constellations else name.upper()
                 p.drawText(QPointF(x[i] - metrics.horizontalAdvance(text) / 2.0, y[i]), text)
 
     def _draw_selection(self, p: QPainter, vp) -> None:

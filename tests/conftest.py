@@ -423,11 +423,13 @@ def _isolate_star_atlas_catalogs(tmp_path_factory):
     network and out of the real per-user cache: every ``AppWindow`` builds that
     page and starts a background load, so without this each test window would
     fetch from VizieR. Loads fall back to the built-in offline star list and no
-    boundaries."""
+    boundaries or outlines."""
     import galileo.planning.star_atlas as star_atlas_mod
 
     cache_dir = tmp_path_factory.mktemp("star_atlas_cache")
     star_atlas_mod._cache_path = lambda: cache_dir / star_atlas_mod._CATALOG_FILENAME
     star_atlas_mod._boundary_cache_path = lambda: cache_dir / star_atlas_mod._BOUNDARY_FILENAME
     star_atlas_mod._fetch_bsc = lambda: None
+    star_atlas_mod._lines_cache_path = lambda: cache_dir / star_atlas_mod._LINES_FILENAME
     star_atlas_mod._fetch_boundaries = lambda: None
+    star_atlas_mod._fetch_constellation_lines = lambda: None

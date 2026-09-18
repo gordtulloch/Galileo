@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -200,14 +200,16 @@ class ConstellationBoundaries:
     """The 88 IAU constellation outlines as closed J2000 polylines.
 
     ``ra``/``dec`` hold every outline back to back; outline *i* is
-    ``[starts[i]:starts[i + 1]]``. ``names``/``center_ra``/``center_dec`` are
-    parallel to the outlines (Serpens is two outlines, Caput and Cauda)."""
+    ``[starts[i]:starts[i + 1]]``. ``names``/``codes``/``center_ra``/``center_dec``
+    are parallel to the outlines (Serpens is two outlines, Caput and Cauda;
+    ``codes`` are the three-letter IAU abbreviations, both Serpens parts being SER)."""
     ra: np.ndarray
     dec: np.ndarray
     starts: list[int]
     names: list[str]
     center_ra: np.ndarray
     center_dec: np.ndarray
+    codes: list[str] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.names)
@@ -246,7 +248,7 @@ def build_boundaries(codes: list[str], ra1875, dec1875) -> ConstellationBoundari
             runs.append((code, [i]))
     all_ra: list[np.ndarray] = []
     all_dec: list[np.ndarray] = []
-    starts, names = [0], []
+    starts, names, abbrevs = [0], [], []
     centers = []
     for code, idx in runs:
         pts_ra, pts_dec = [], []
@@ -264,12 +266,13 @@ def build_boundaries(codes: list[str], ra1875, dec1875) -> ConstellationBoundari
         all_dec.append(dec_j)
         starts.append(starts[-1] + len(ra_j))
         names.append(CONSTELLATION_NAMES.get(code, code))
+        abbrevs.append(code[:3])
         mean = _unit_vectors(ra_j, dec_j).mean(axis=1)
         centers.append((np.degrees(np.arctan2(mean[1], mean[0])) % 360.0,
                         np.degrees(np.arcsin(np.clip(mean[2] / np.linalg.norm(mean), -1.0, 1.0)))))
     return ConstellationBoundaries(
         np.concatenate(all_ra), np.concatenate(all_dec), starts, names,
-        np.array([c[0] for c in centers]), np.array([c[1] for c in centers]),
+        np.array([c[0] for c in centers]), np.array([c[1] for c in centers]), abbrevs,
     )
 
 
@@ -317,6 +320,117 @@ def load_constellation_boundaries() -> ConstellationBoundaries:
     except Exception:
         logger.exception("Could not build the constellation boundaries")
         return ConstellationBoundaries.empty()
+
+
+# ---------------------------------------------------------------------------
+# Constellation outlines (stick figures)
+# ---------------------------------------------------------------------------
+
+_LINES_FILENAME = "galileo_constellation_lines.json"
+_LINES_URL = "https://raw.githubusercontent.com/ofrohn/d3-celestial/master/data/constellations.lines.json"
+_LINES_STEP_DEG = 2.0           # segments are densified so they curve with the projection instead of cutting corners
+
+
+@dataclass
+class ConstellationLines:
+    """Constellation stick figures as J2000 polylines.
+
+    ``ra``/``dec`` hold every polyline back to back; polyline *i* is
+    ``[starts[i]:starts[i + 1]]``."""
+    ra: np.ndarray
+    dec: np.ndarray
+    starts: list[int]
+
+    def __len__(self) -> int:
+        return len(self.starts) - 1
+
+    def polyline(self, i: int) -> slice:
+        return slice(self.starts[i], self.starts[i + 1])
+
+    @classmethod
+    def empty(cls) -> "ConstellationLines":
+        return cls(np.empty(0), np.empty(0), [0])
+
+
+def build_constellation_lines(polylines: list[list[list[float]]]) -> ConstellationLines:
+    """Build the figures from raw ``[[ra, dec], ...]`` polylines (RA may be
+    -180..180; consecutive vertices are joined along the great circle, sampled
+    every ``_LINES_STEP_DEG`` so the segments follow the curved projection)."""
+    all_ra: list[np.ndarray] = []
+    all_dec: list[np.ndarray] = []
+    starts = [0]
+    for line in polylines:
+        if len(line) < 2:
+            continue
+        pts = np.asarray(line, dtype=float)
+        vec = _unit_vectors(pts[:, 0], pts[:, 1])
+        seg_ra, seg_dec = [], []
+        for a, b in zip(range(len(pts) - 1), range(1, len(pts))):
+            va, vb = vec[:, a], vec[:, b]
+            angle = float(np.degrees(np.arccos(np.clip(va @ vb, -1.0, 1.0))))
+            n = max(1, int(np.ceil(angle / _LINES_STEP_DEG)))
+            if n == 1 or angle < 1e-9:
+                pts_v = va[:, None]
+            else:
+                t = np.arange(n) / n
+                w = np.radians(angle)
+                pts_v = (np.sin((1 - t) * w)[None, :] * va[:, None] + np.sin(t * w)[None, :] * vb[:, None]) / np.sin(w)
+            seg_ra.append(np.degrees(np.arctan2(pts_v[1], pts_v[0])) % 360.0)
+            seg_dec.append(np.degrees(np.arcsin(np.clip(pts_v[2], -1.0, 1.0))))
+        seg_ra.append(np.array([pts[-1, 0] % 360.0]))
+        seg_dec.append(np.array([pts[-1, 1]]))
+        ra, dec = np.concatenate(seg_ra), np.concatenate(seg_dec)
+        all_ra.append(ra)
+        all_dec.append(dec)
+        starts.append(starts[-1] + len(ra))
+    if not all_ra:
+        return ConstellationLines.empty()
+    return ConstellationLines(np.concatenate(all_ra), np.concatenate(all_dec), starts)
+
+
+def _lines_cache_path():
+    from galileo.platform import get_cache_dir
+    return get_cache_dir() / _LINES_FILENAME
+
+
+def _fetch_constellation_lines() -> list[list[list[float]]] | None:
+    """Fetch the constellation stick figures (d3-celestial, BSD-3, J2000 lon/lat)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(_LINES_URL, timeout=20) as resp:     # noqa: S310 — fixed https URL
+            data = json.loads(resp.read().decode("utf-8"))
+        lines = [[[float(lon), float(lat)] for lon, lat in line]
+                 for feature in data["features"] for line in feature["geometry"]["coordinates"]]
+        return lines or None
+    except Exception:
+        logger.info("Could not fetch the constellation lines", exc_info=True)
+        return None
+
+
+def load_constellation_lines() -> ConstellationLines:
+    """Load the cached constellation figures, fetching and caching the raw
+    polylines on first use. Empty (none drawn) if unavailable offline."""
+    path = _lines_cache_path()
+    raw = None
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text("utf-8"))
+        except Exception:
+            logger.exception("Failed to read the cached constellation lines; refetching")
+    if raw is None:
+        raw = _fetch_constellation_lines()
+        if raw is None:
+            logger.warning("Constellation lines unavailable offline — none will be drawn.")
+            return ConstellationLines.empty()
+        try:
+            path.write_text(json.dumps(raw), encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to cache the constellation lines")
+    try:
+        return build_constellation_lines(raw)
+    except Exception:
+        logger.exception("Could not build the constellation lines")
+        return ConstellationLines.empty()
 
 
 # ---------------------------------------------------------------------------
