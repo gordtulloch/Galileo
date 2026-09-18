@@ -148,6 +148,178 @@ def _fetch_catalog_from_vizier() -> list[DeepSkyObject]:
         return []
 
 
+def _object_type_from_simbad_otype(otype: str) -> ObjectType:
+    """Map a Simbad ``otype`` code to our closed :class:`ObjectType` set."""
+    t = (otype or "").strip().lower()
+    if t.startswith("gal") or t == "agn":
+        return ObjectType.GALAXY
+    if t.startswith("glc") or "globular" in t:
+        return ObjectType.GLOBULAR_CLUSTER
+    if t.startswith("opc") or "opencluster" in t.replace(" ", ""):
+        return ObjectType.OPEN_CLUSTER
+    if t.startswith("pn"):
+        return ObjectType.PLANETARY_NEBULA
+    if t.startswith("snr"):
+        return ObjectType.SUPERNOVA_REMNANT
+    if "neb" in t or t == "hii":
+        return ObjectType.NEBULA
+    if t == "**":
+        return ObjectType.DOUBLE_STAR
+    if t == "*":
+        return ObjectType.STAR
+    return ObjectType.OTHER
+
+
+def _simbad_row_to_object(row) -> DeepSkyObject:
+    """Convert one Simbad result-table row into a :class:`DeepSkyObject`,
+    mirroring the field mapping in Obsy's ``target_query`` (``targets/views.py``,
+    ADR-005) — main ID, coordinates, type — adapted to the lowercase
+    ``main_id``/``ra``/``dec``/``otype`` columns the currently-installed
+    astroquery returns (Obsy's ``MAIN_ID``/``RA``/``DEC``/``OTYPE_main`` and
+    its ``SkyCoord`` sexagesimal-string parse are from an older Simbad
+    response format; this astroquery version already returns ``ra``/``dec``
+    as decimal degrees, so no coordinate parsing is needed). Magnitude is
+    *not* read here — see :func:`_search_simbad_sync` for why it's a
+    separate, best-effort lookup rather than part of this primary query."""
+    main_id = str(row["main_id"]).strip()
+    name = main_id.replace(" ", "")
+    otype = str(row["otype"]) if "otype" in row.colnames else ""
+    return DeepSkyObject(
+        primary_name=name,
+        designations=[name, main_id] if main_id != name else [name],
+        ra_deg=float(row["ra"]),
+        dec_deg=float(row["dec"]),
+        object_type=_object_type_from_simbad_otype(otype),
+        magnitude=99.0,
+    )
+
+
+def _simbad_magnitude_sync(name: str) -> float:
+    """Best-effort V-magnitude lookup for one already-resolved Simbad object
+    name, kept deliberately separate from the primary name/type/coordinate
+    query in :func:`_search_simbad_sync`: requesting the ``V`` votable field
+    on that primary query silently drops *any* object with no cataloged V
+    magnitude — which includes most nebulae and clusters (M42, M45, the
+    Orion Nebula, ...) — turning a plain name search for them into zero
+    results with no error, confirmed against the live Simbad service. A
+    failed/empty lookup here just leaves the object's magnitude unknown
+    (``99.0``) rather than losing the match entirely."""
+    try:
+        from astroquery.simbad import Simbad  # type: ignore[import]
+
+        simbad = Simbad()
+        simbad.TIMEOUT = 8
+        simbad.add_votable_fields("V")
+        table = simbad.query_object(name, wildcard=False)
+        if table is None or len(table) == 0:
+            return 99.0
+        value = float(table[0]["V"])
+        return value if value == value else 99.0  # NaN check
+    except Exception:
+        return 99.0
+
+
+def _search_simbad_sync(query: str) -> list[DeepSkyObject]:
+    """Blocking Simbad object-name query (ported from Obsy's ``target_query``,
+    ADR-005). Run off the UI thread via ``asyncio.to_thread`` by
+    :meth:`SkyAtlas.search_online` — astroquery's Simbad client has no async
+    API of its own.
+
+    Only passes ``wildcard=True`` when *query* itself contains a ``*``/``?``
+    wildcard character: Obsy always set ``wildcard=True``, but against the
+    currently-installed astroquery/Simbad, wildcard mode requires the pattern
+    to match Simbad's own identifier spacing (e.g. ``"M31"`` finds nothing,
+    only ``"M31*"`` or ``"M 31"`` do) — confirmed against the live service —
+    so a plain name is looked up via Simbad's normal alias-resolving lookup
+    instead, which correctly resolves ``"M31"``, and wildcard search is still
+    available whenever a caller actually wants a pattern match.
+    """
+    from astroquery.simbad import Simbad  # type: ignore[import]
+
+    simbad = Simbad()
+    simbad.TIMEOUT = 8
+    simbad.add_votable_fields("otype")
+    use_wildcard = any(ch in query for ch in "*?")
+    table = simbad.query_object(query, wildcard=use_wildcard)
+    if table is None:
+        return []
+    objects = []
+    for row in table:
+        try:
+            objects.append(_simbad_row_to_object(row))
+        except Exception:
+            logger.debug("Could not parse Simbad result row for %r", query, exc_info=True)
+    # Enrich with magnitude only when there are few enough results that a
+    # per-object follow-up query stays cheap — a wildcard search can return
+    # thousands of rows (e.g. "M31*"), which would otherwise turn one
+    # search into thousands of extra network round trips.
+    if 0 < len(objects) <= 10:
+        for obj in objects:
+            obj.magnitude = _simbad_magnitude_sync(obj.primary_name)
+    return objects
+
+
+def constellation_for(ra_deg: float, dec_deg: float) -> str:
+    """Return the IAU constellation name containing (*ra_deg*, *dec_deg*)
+    (ported from Obsy's ``get_constellation`` usage in ``target_query``,
+    ADR-005) — uses ``astropy.coordinates.get_constellation`` directly
+    rather than Simbad, since Simbad doesn't return constellation as one of
+    its queryable fields."""
+    from astropy.coordinates import SkyCoord, get_constellation
+
+    coord = SkyCoord(ra=ra_deg, dec=dec_deg, unit="deg", frame="icrs")
+    return get_constellation(coord)
+
+
+_DSS_CUTOUT_URL = "https://archive.stsci.edu/cgi-bin/dss_search"
+
+
+def _fetch_dss_thumbnail_sync(
+    ra_deg: float,
+    dec_deg: float,
+    width_arcmin: float = 15.0,
+    height_arcmin: float = 15.0,
+    size_px: int = 150,
+) -> bytes:
+    """Blocking DSS cutout fetch + FITS-to-JPEG conversion (ported from
+    Obsy's ``Target.save()``, ``targets/models.py``, ADR-005): request a
+    FITS cutout centered on (*ra_deg*, *dec_deg*) from STScI's DSS search
+    service, min/max-normalize the pixel data to 0..255, and resize to a
+    *size_px* square JPEG. Run off the UI/event-loop thread via
+    ``asyncio.to_thread`` by :meth:`SkyAtlas._fetch_thumbnail`. Returns
+    ``b""`` on any failure rather than raising, since a missing thumbnail
+    is never fatal to the caller."""
+    import io
+
+    try:
+        import numpy as np
+        import requests
+        from astropy.io import fits
+        from PIL import Image
+
+        url = (
+            f"{_DSS_CUTOUT_URL}?r={ra_deg}&d={dec_deg}"
+            f"&w={width_arcmin}&h={height_arcmin}&e=J2000"
+        )
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        with fits.open(io.BytesIO(resp.content)) as hdul:
+            image_data = hdul[0].data.astype(np.float64)
+        image_data = image_data - np.min(image_data)
+        max_value = np.max(image_data)
+        if max_value > 0:
+            image_data = image_data / max_value * 255.0
+        image = Image.fromarray(image_data.astype(np.uint8)).resize((size_px, size_px))
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG")
+        return buf.getvalue()
+    except Exception:
+        logger.debug(
+            "Could not fetch DSS thumbnail for RA=%s Dec=%s", ra_deg, dec_deg, exc_info=True
+        )
+        return b""
+
+
 def _type_from_str(type_str: str) -> ObjectType:
     t = type_str.lower()
     if "gal" in t:
@@ -215,6 +387,28 @@ class SkyAtlas:
             or any(q in d.lower() for d in o.designations)
         ]
 
+    async def search_online(self, query: str) -> list[DeepSkyObject]:
+        """Search for *query* via Simbad first — a live, comprehensive
+        name/alias resolution beyond what the bundled/cached catalog holds,
+        ported from Obsy's ``target_query`` (ADR-005) — falling back to the
+        offline catalog (:meth:`search`) when Simbad is unreachable, times
+        out, or finds nothing for *query*. This is the entry point the Sky
+        Atlas page's search box calls; :meth:`search` itself stays local-only
+        so core search still works with no internet (SKY-070/NFR-OFFLINE-010)."""
+        q = query.strip()
+        if not q:
+            return list(self._catalog)
+        try:
+            online_results = await asyncio.to_thread(_search_simbad_sync, q)
+        except Exception:
+            logger.info("Simbad search for %r failed; falling back to local catalog", q, exc_info=True)
+            online_results = []
+        if online_results:
+            logger.info("Simbad search for %r found %d object(s)", q, len(online_results))
+            return online_results
+        logger.info("Simbad search for %r found no results; falling back to local catalog", q)
+        return self.search(q)
+
     def get_by_designation(self, designation: str) -> DeepSkyObject:
         """Return the object matching *designation* exactly, or raise KeyError."""
         for o in self._catalog:
@@ -270,10 +464,16 @@ class SkyAtlas:
         data = await self._fetch_thumbnail(obj)
         if data:
             safe_name = obj.primary_name.replace(" ", "_")
-            (cache_dir / f"{safe_name}_thumbnail.png").write_bytes(data)
+            (cache_dir / f"{safe_name}_thumbnail.jpg").write_bytes(data)
 
     async def _fetch_thumbnail(self, obj: DeepSkyObject) -> bytes:
-        return b""
+        """Fetch a DSS sky-survey cutout thumbnail for *obj* from STScI
+        (SKY-080), ported from Obsy's ``Target.save()`` (``targets/models.py``,
+        ADR-005): a 15x15 arcmin FITS cutout, normalized and resized to a
+        150x150 JPEG. Returns ``b""`` on any failure (no internet, malformed
+        FITS, ...) so a missing thumbnail never blocks add-to-target-list or
+        the Sky Atlas page's result-detail display."""
+        return await asyncio.to_thread(_fetch_dss_thumbnail_sync, obj.ra_deg, obj.dec_deg)
 
     # --- Geocoding (SKY-090) ----------------------------------------------
 

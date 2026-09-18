@@ -141,6 +141,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-FW-020 | The system shall allow per-filter focus-offset configuration for use by the autofocus and filter-change workflows. | MVP |
 | EQP-FOC-010 | The system shall issue absolute and relative focuser move commands and display current position and temperature (where supported). | MVP |
 | EQP-FOC-020 | The system shall support configurable focuser backlash compensation applied to move commands. | P2 |
+| EQP-FOC-030 | The system shall clamp absolute and relative focuser move commands to the device's valid travel range (0 to the backend-reported MaxStep), rather than issuing an out-of-range command unchecked, regardless of whether the underlying transport is known to protect itself. | MVP |
 | EQP-ROT-010 | The system shall issue rotator move-to-angle commands and display current mechanical/sky position angle. | P2 |
 | EQP-GDR-010 | The system shall expose guider connect/start-guiding/stop-guiding/dither controls, delegating to the external guiding interface (`GUIDE` domain). | MVP |
 | EQP-SW-010 | The system shall enumerate switch/relay devices and their read/write state, supporting both boolean and analog (variable) switches. | P2 |
@@ -237,6 +238,7 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | SKY-070 | The system shall operate using a locally cached catalog with no live internet dependency for core search/filter/chart functions (traces to `NFR-OFFLINE`). | MVP |
 | SKY-080 | The system shall fetch and cache a sky-survey cutout thumbnail image (e.g. via a DSS/STScI cutout service) for a catalog object when it is added to a user's active target list, for offline reference thereafter. | P2 |
 | SKY-090 | The system shall resolve a location name/address to latitude, longitude, and timezone via a geocoding lookup (traces to `EXT-130`), as a convenience when configuring an observing location (`SKY-060`). | P2 |
+| SKY-100 | The system shall resolve an object-name search primarily via a live Simbad lookup when internet is available (ported from Obsy's target-selection code, ADR-005), falling back to the offline catalog search (`SKY-010`) when Simbad is unreachable, times out, or finds no match — the offline catalog remains the fallback, not the primary source, without weakening `SKY-070`'s requirement that core search still work with no internet present. | MVP |
 
 ### 4.8 `FRAME` — Framing Assistant
 

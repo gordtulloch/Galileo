@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 _MANUAL_URL = "https://github.com/gordtulloch/Galileo/tree/main/docs"
 
 try:
-    from PySide6.QtWidgets import QMainWindow, QWidget
+    from PySide6.QtCore import QThread, Signal
+    from PySide6.QtWidgets import QMainWindow, QPlainTextEdit, QWidget
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False
@@ -87,6 +88,28 @@ def _category_enum_map() -> dict:
 _CATEGORY_ENUM = _category_enum_map()
 
 
+def _camera_slot_label(slot: str) -> str:
+    """Friendly name for a camera DeviceConfigRecord slot id, matching the
+    Camera page's own panel numbering (_build_camera_page's _renumber_panels:
+    "Primary Camera" for slot "primary", "Camera N" for slot "camera_N")."""
+    if slot == "primary":
+        return "Primary Camera"
+    if slot.startswith("camera_"):
+        return f"Camera {slot.rsplit('_', 1)[1]}"
+    return slot
+
+
+def _camera_backend_key_for_slot(slot: str) -> str:
+    """Map a camera DeviceConfigRecord slot id to its ``_camera_backends``
+    dict key, which uses the Camera page's own auto-connect slot labels
+    ("primary camera", "camera 2", ...) rather than the DB slot id."""
+    if slot == "primary":
+        return "primary camera"
+    if slot.startswith("camera_"):
+        return f"camera {slot.rsplit('_', 1)[1]}"
+    return slot
+
+
 def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
     """Extract the Alpaca device number from a scan-result label such as
     "ZWO ASI294MM Pro (#0)" (see AlpacaAdapter.list_available_devices)."""
@@ -95,6 +118,32 @@ def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
     import re
     match = re.search(r"\(#(\d+)\)\s*$", device_name)
     return int(match.group(1)) if match else None
+
+
+def _format_hms(hours: "float | None") -> str:
+    """Format an hour-angle-like value (Right Ascension, Sidereal Time,
+    time-to-meridian) as ``HH:MM:SS`` — the Mount page's status display
+    convention, matching how these are conventionally shown in N.I.N.A."""
+    if hours is None:
+        return "—"
+    total_seconds = round((hours % 24.0) * 3600.0)
+    h, rem = divmod(total_seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _format_dms(degrees: "float | None") -> str:
+    """Format a degree value (Declination, Altitude, Azimuth, Site
+    Latitude/Longitude) as ``±DD° MM' SS"`` — the Mount page's status
+    display convention, matching how these are conventionally shown in
+    N.I.N.A."""
+    if degrees is None:
+        return "—"
+    sign = "-" if degrees < 0 else ""
+    total_seconds = round(abs(degrees) * 3600.0)
+    d, rem = divmod(total_seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{sign}{d:02d}° {m:02d}' {s:02d}\""
 
 
 class AppWindow:
@@ -113,6 +162,9 @@ class AppWindow:
         self._log_panes: list = []
         self._device_pages: dict[str, dict] = {}
         self._camera_backends: dict[str, object] = {}
+        self._imaging_capture_thread = None
+        self._current_primary_section = "equipment"
+        self._active_camera_slot = "primary"
 
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
         self._window = QMainWindow()
@@ -179,6 +231,21 @@ class AppWindow:
         self._pier_combo.setEnabled(False)
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
+
+        layout.addSpacing(16)
+
+        # Only shown on the Imaging screen, and only when the selected Pier
+        # has more than one configured camera (e.g. a Seestar S30 Pro's
+        # primary + wide-field second camera) — with a single camera there's
+        # nothing to choose between, so it stays out of the way.
+        self._camera_label = QLabel("Camera:")
+        self._camera_label.setVisible(False)
+        layout.addWidget(self._camera_label)
+        self._camera_combo = QComboBox()
+        self._camera_combo.setMinimumWidth(180)
+        self._camera_combo.setVisible(False)
+        self._camera_combo.activated.connect(self._on_camera_activated)
+        layout.addWidget(self._camera_combo)
 
         layout.addStretch(1)
         self._load_observatories()
@@ -373,6 +440,52 @@ class AppWindow:
         idx = combo.findText(self._current_pier.name)
         return idx if idx >= 0 else combo.count() - 1
 
+    # --- Top bar: Camera selection (Imaging screen, multi-camera Piers) -----
+
+    def _refresh_camera_combo(self) -> None:
+        """Show the top-bar Camera selector only while on the Imaging screen
+        and only when the current Pier has more than one configured camera
+        slot — otherwise there is nothing to choose between."""
+        from galileo.observatory import list_device_config_slots, get_device_config
+
+        combo = self._camera_combo
+        slots: list[str] = []
+        if self._current_pier is not None:
+            try:
+                slots = list_device_config_slots(self._current_pier, "camera")
+            except Exception:
+                logger.exception("Could not load camera slots for Pier %r", self._current_pier.name)
+
+        combo.blockSignals(True)
+        combo.clear()
+        for slot in slots:
+            label = _camera_slot_label(slot)
+            cfg = None
+            if self._current_pier is not None:
+                try:
+                    cfg = get_device_config(self._current_pier, "camera", slot=slot)
+                except Exception:
+                    cfg = None
+            if cfg is not None and cfg.device_name:
+                label = f"{label} — {cfg.device_name}"
+            combo.addItem(label, slot)
+
+        if self._active_camera_slot not in slots:
+            self._active_camera_slot = slots[0] if slots else "primary"
+        idx = slots.index(self._active_camera_slot) if self._active_camera_slot in slots else -1
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+        show = len(slots) > 1 and self._current_primary_section == "imaging"
+        combo.setVisible(show)
+        self._camera_label.setVisible(show)
+
+    def _on_camera_activated(self, index: int) -> None:
+        slot = self._camera_combo.itemData(index)
+        if slot:
+            self._active_camera_slot = slot
+
     # --- Primary sidebar ----------------------------------------------------
 
     def _build_primary_nav(self):
@@ -384,6 +497,7 @@ class AppWindow:
             "equipment": self._build_equipment_page,
             "sky_atlas": self._build_sky_atlas_page,
             "framing": self._build_framing_page,
+            "imaging": self._build_imaging_page,
         }
         pages: dict[str, int] = {}
         for section_id, label, icon_name in PRIMARY_SECTIONS:
@@ -394,6 +508,11 @@ class AppWindow:
         options_page = self._build_placeholder_page(OPTIONS_SECTION[1])
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
 
+        def _on_section_selected(section_id: str) -> None:
+            self._current_primary_section = section_id
+            stack.setCurrentIndex(pages[section_id])
+            self._refresh_camera_combo()
+
         sidebar = _NavColumn(
             object_name="Sidebar",
             button_object_name="NavButton",
@@ -403,7 +522,7 @@ class AppWindow:
             button_min_height=64,
             accent=self._theme.accent_color,
             dim_color=self._theme.palette()["text_dim"],
-            on_select=lambda section_id: stack.setCurrentIndex(pages[section_id]),
+            on_select=_on_section_selected,
             power_action=self._request_quit,
             utility_actions=[
                 ("theme", "Toggle dark/light theme", self._toggle_theme),
@@ -461,6 +580,10 @@ class AppWindow:
                 page_widget = self._build_camera_page()
             elif cat_id == "focuser":
                 page_widget = self._build_focuser_page()
+            elif cat_id == "mount":
+                page_widget = self._build_mount_page()
+            elif cat_id == "filter_wheel":
+                page_widget = self._build_filter_wheel_page()
             else:
                 page_widget = self._build_device_config_page(cat_id, label)
             device_pages[cat_id] = device_stack.addWidget(page_widget)
@@ -497,7 +620,7 @@ class AppWindow:
         from PySide6.QtWidgets import QPlainTextEdit
         from PySide6.QtGui import QFontDatabase
 
-        pane = QPlainTextEdit()
+        pane = _LogPane()
         pane.setObjectName("LogPane")
         pane.setReadOnly(True)
         pane.setUndoRedoEnabled(False)
@@ -1108,6 +1231,7 @@ class AppWindow:
                 "position_value": position_value, "target_position": target_position,
                 "move_btn": move_btn, "temp_comp_check": temp_comp_check,
                 "temperature_value": temperature_value, "adapter": None,
+                "_last_is_moving": None, "_last_is_settling": None,
             }
 
         def _renumber_panels() -> None:
@@ -1161,17 +1285,38 @@ class AppWindow:
             temperature = status.get("temperature")
             panel["temperature_value"].setText("—" if temperature is None else f"{temperature:.1f} °C")
 
-        def _refresh_panel_status(panel: dict) -> None:
+        def _log_status_transitions(panel: dict, status: dict) -> None:
+            """Log is_moving/is_settling *changes* at INFO — the result side
+            of a move transaction — rather than every 2-second poll, which
+            would otherwise flood the log while a move is in progress."""
+            title = panel["title_label"].text()
+            position = status.get("position")
+            was_moving, is_moving = panel["_last_is_moving"], status.get("is_moving")
+            was_settling, is_settling = panel["_last_is_settling"], status.get("is_settling")
+            if is_moving and not was_moving:
+                logger.info("Focuser %s: started moving (target position %s)", title, panel["target_position"].value())
+            elif was_moving and not is_moving:
+                logger.info("Focuser %s: stopped moving at position %s", title, position)
+            if is_settling and not was_settling:
+                logger.info("Focuser %s: settling at position %s", title, position)
+            elif was_settling and not is_settling:
+                logger.info("Focuser %s: finished settling at position %s", title, position)
+            panel["_last_is_moving"] = is_moving
+            panel["_last_is_settling"] = is_settling
+
+        def _refresh_panel_status(panel: dict) -> "dict | None":
             adapter = panel.get("adapter")
             if adapter is None:
-                return
+                return None
             import asyncio
             try:
                 status = asyncio.run(adapter.get_status())
             except Exception:
                 logger.exception("Could not refresh status for %s", panel["title_label"].text())
-                return
+                return None
+            _log_status_transitions(panel, status)
             _apply_status(panel, status)
+            return status
 
         def _do_connect(panel: dict, device_name: str, slot_label: str) -> None:
             from galileo.core.devices import DeviceCategory
@@ -1199,6 +1344,8 @@ class AppWindow:
                 QMessageBox.information(self._window, "Not connected", "Connect this focuser first.")
                 return
             target = panel["target_position"].value()
+            title = panel["title_label"].text()
+            logger.info("Focuser %s: move requested to position %s", title, target)
             import asyncio
             try:
                 asyncio.run(adapter.move_to(target))
@@ -1401,6 +1548,951 @@ class AppWindow:
 
         state = {"reload": reload_page, "autoconnect": autoconnect_page}
         self._device_pages["focuser"] = state
+        reload_page()
+        autoconnect_page()
+
+        return page
+
+    def _build_mount_page(self) -> "QWidget":
+        """Mount device-category page: a live ASCOM/INDI status display
+        (Name/Description/Driver info/version, Site latitude/longitude/
+        elevation, Sidereal time, Epoch, time-to-meridian, Right Ascension/
+        Declination, Altitude/Azimuth, Side of Pier, Tracking — EQP-MNT-020)
+        plus manual RA/Dec and Alt/Az coordinate slewing, tracking-rate
+        selection, N/S/E/W jog with Stop, Home/Park, and axis-reversal
+        controls (EQP-MNT-010), matching the field set of the reference
+        N.I.N.A. Mount screen (assets/samples/mount.png) laid out with this
+        app's own Driver/Server/Port/Scan connection convention rather than
+        its icon toolbar."""
+        from PySide6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QFrame,
+            QLabel, QTableWidget, QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox,
+            QPushButton, QCheckBox, QHeaderView, QMessageBox, QScrollArea,
+        )
+        from PySide6.QtCore import QTimer
+
+        page = QWidget()
+        page.setObjectName("MountPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        heading = QLabel("Mount")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        # --- connection row --------------------------------------------
+        table = QTableWidget(1, 4)
+        table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.setMaximumHeight(70)
+        table.setSelectionMode(QTableWidget.NoSelection)
+
+        driver_combo = QComboBox()
+        driver_combo.addItems(["Alpaca", "INDI"])
+        table.setCellWidget(0, 0, driver_combo)
+
+        server_edit = QLineEdit()
+        server_edit.setPlaceholderText("FQDN or IP, e.g. seestar.local or 192.168.1.50")
+        server_edit.setMaxLength(40)
+        table.setCellWidget(0, 1, server_edit)
+
+        port_spin = QSpinBox()
+        port_spin.setRange(1, 65535)
+        port_spin.setValue(_DEFAULT_PORTS["Alpaca"])
+        port_spin.setToolTip(
+            "Alpaca has no single standard port — 32323 for a Seestar's "
+            "Alpaca bridge, 11111 for ASCOM Remote/simulators, or whatever "
+            "your device's own driver documents."
+        )
+
+        def _apply_default_port(driver_name: str) -> None:
+            port_spin.setValue(_DEFAULT_PORTS.get(driver_name, _DEFAULT_PORTS["Alpaca"]))
+
+        driver_combo.currentTextChanged.connect(_apply_default_port)
+        table.setCellWidget(0, 2, port_spin)
+
+        scan_btn = QPushButton("Scan")
+        scan_btn.setObjectName("AccentButton")
+        table.setCellWidget(0, 3, scan_btn)
+
+        layout.addWidget(table)
+
+        device_row = QHBoxLayout()
+        device_row.addWidget(QLabel("Device"))
+        device_combo = QComboBox()
+        device_combo.setEditable(True)
+        device_combo.addItem("")
+        device_row.addWidget(device_combo, 1)
+        connect_btn = QPushButton("Connect")
+        connect_btn.setObjectName("AccentButton")
+        device_row.addWidget(connect_btn)
+        layout.addLayout(device_row)
+
+        # --- status (left) + manual coordinates/control (right), scrollable
+        # so a shorter window scrolls just this region rather than clipping
+        # the Settings/Save/Log below it (which stay fixed at the bottom of
+        # the page, always visible, matching the Camera/Focuser pages).
+        main_content = QWidget()
+        main_row = QHBoxLayout(main_content)
+        main_row.setContentsMargins(0, 0, 0, 0)
+        main_row.setSpacing(24)
+
+        status_frame = QFrame()
+        status_frame.setObjectName("DeviceSlotPanel")
+        status_row = QHBoxLayout(status_frame)
+        form_left = QFormLayout()
+        form_right = QFormLayout()
+        status_row.addLayout(form_left)
+        status_row.addLayout(form_right)
+
+        def _status_row(form: "QFormLayout", label: str) -> "QLabel":
+            value = QLabel("—")
+            form.addRow(label, value)
+            return value
+
+        name_value = _status_row(form_left, "Name")
+        description_value = _status_row(form_left, "Description")
+        driver_info_value = _status_row(form_left, "Driver info")
+        site_latitude_value = _status_row(form_left, "Site latitude")
+        site_elevation_value = _status_row(form_left, "Site elevation")
+        sidereal_time_value = _status_row(form_left, "Sidereal time")
+        right_ascension_value = _status_row(form_left, "Right Ascension")
+        altitude_value = _status_row(form_left, "Altitude")
+        side_of_pier_value = _status_row(form_left, "Side of pier")
+
+        driver_version_value = _status_row(form_right, "Driver version")
+        site_longitude_value = _status_row(form_right, "Site longitude")
+        epoch_value = _status_row(form_right, "Epoch")
+        meridian_in_value = _status_row(form_right, "Meridian in")
+        declination_value = _status_row(form_right, "Declination")
+        azimuth_value = _status_row(form_right, "Azimuth")
+        tracking_value = _status_row(form_right, "Tracking")
+
+        main_row.addWidget(status_frame, 1)
+
+        controls_col = QVBoxLayout()
+        controls_col.setSpacing(4)
+
+        coords_heading = QLabel("Manual Coordinates")
+        coords_heading.setObjectName("CriteriaHeading")
+        controls_col.addWidget(coords_heading)
+
+        def _hms_spins() -> tuple:
+            h = QSpinBox(); h.setRange(0, 23); h.setSuffix(" h")
+            m = QSpinBox(); m.setRange(0, 59); m.setSuffix(" m")
+            s = QDoubleSpinBox(); s.setRange(0.0, 59.999); s.setDecimals(1); s.setSuffix(" s")
+            return h, m, s
+
+        def _dms_spins() -> tuple:
+            d = QSpinBox(); d.setRange(-359, 359); d.setSuffix(" d")
+            m = QSpinBox(); m.setRange(0, 59); m.setSuffix(" m")
+            s = QSpinBox(); s.setRange(0, 59); s.setSuffix(" s")
+            return d, m, s
+
+        ra_h, ra_m, ra_s = _hms_spins()
+        dec_d, dec_m, dec_s = _dms_spins()
+        alt_d, alt_m, alt_s = _dms_spins()
+        az_d, az_m, az_s = _dms_spins()
+
+        # Single-spaced, one row each, with each row's own Slew button
+        # beside it (rather than one button spanning two rows) — keeps
+        # this block as short as possible so the N/S/E/W jog pad below
+        # has room without the whole page needing to scroll.
+        coords_grid = QGridLayout()
+        coords_grid.setVerticalSpacing(4)
+
+        def _coord_row(row: int, label: str, spins: tuple) -> "QPushButton":
+            coords_grid.addWidget(QLabel(label), row, 0)
+            for i, spin in enumerate(spins):
+                coords_grid.addWidget(spin, row, 1 + i)
+            slew_btn = QPushButton("Slew")
+            slew_btn.setObjectName("AccentButton")
+            coords_grid.addWidget(slew_btn, row, 1 + len(spins))
+            return slew_btn
+
+        ra_slew_btn = _coord_row(0, "Target RA", (ra_h, ra_m, ra_s))
+        dec_slew_btn = _coord_row(1, "Target Dec", (dec_d, dec_m, dec_s))
+        alt_slew_btn = _coord_row(2, "Target Alt", (alt_d, alt_m, alt_s))
+        az_slew_btn = _coord_row(3, "Target Az", (az_d, az_m, az_s))
+        controls_col.addLayout(coords_grid)
+
+        controls_col.addSpacing(8)
+
+        manual_heading = QLabel("Manual control")
+        manual_heading.setObjectName("CriteriaHeading")
+        controls_col.addWidget(manual_heading)
+
+        tracking_rate_row = QHBoxLayout()
+        set_rate_btn = QPushButton("Set tracking rate")
+        set_rate_btn.setObjectName("AccentButton")
+        tracking_rate_row.addWidget(set_rate_btn)
+        tracking_rate_combo = QComboBox()
+        tracking_rate_combo.addItems(["Sidereal", "Lunar", "Solar", "King"])
+        tracking_rate_row.addWidget(tracking_rate_combo)
+        tracking_rate_row.addStretch(1)
+        controls_col.addLayout(tracking_rate_row)
+
+        rates_form = QFormLayout()
+        rates_form.setVerticalSpacing(2)
+        primary_rate_spin = QDoubleSpinBox()
+        primary_rate_spin.setRange(0.01, 10.0)
+        primary_rate_spin.setDecimals(2)
+        primary_rate_spin.setValue(1.0)
+        rates_form.addRow("Primary rate", primary_rate_spin)
+        secondary_rate_spin = QDoubleSpinBox()
+        secondary_rate_spin.setRange(0.01, 10.0)
+        secondary_rate_spin.setDecimals(2)
+        secondary_rate_spin.setValue(1.0)
+        rates_form.addRow("Secondary rate", secondary_rate_spin)
+        controls_col.addLayout(rates_form)
+
+        pad_row = QHBoxLayout()
+        pad_grid = QGridLayout()
+        north_btn = QPushButton("N")
+        west_btn = QPushButton("W")
+        stop_btn = QPushButton("Stop")
+        east_btn = QPushButton("E")
+        south_btn = QPushButton("S")
+        for btn in (north_btn, west_btn, stop_btn, east_btn, south_btn):
+            btn.setObjectName("AccentButton")
+            btn.setFixedSize(44, 44)
+        pad_grid.addWidget(north_btn, 0, 1)
+        pad_grid.addWidget(west_btn, 1, 0)
+        pad_grid.addWidget(stop_btn, 1, 1)
+        pad_grid.addWidget(east_btn, 1, 2)
+        pad_grid.addWidget(south_btn, 2, 1)
+        pad_row.addLayout(pad_grid)
+        pad_row.addStretch(1)
+        home_park_col = QVBoxLayout()
+        home_btn = QPushButton("Home")
+        park_btn = QPushButton("Park")
+        park_btn.setObjectName("AccentButton")
+        home_park_col.addWidget(home_btn)
+        home_park_col.addWidget(park_btn)
+        home_park_col.addStretch(1)
+        pad_row.addLayout(home_park_col)
+        controls_col.addLayout(pad_row)
+
+        reversed_row = QHBoxLayout()
+        primary_reversed_check = QCheckBox("Primary reversed")
+        secondary_reversed_check = QCheckBox("Secondary reversed")
+        reversed_row.addWidget(primary_reversed_check)
+        reversed_row.addWidget(secondary_reversed_check)
+        reversed_row.addStretch(1)
+        controls_col.addLayout(reversed_row)
+
+        controls_col.addStretch(1)
+        main_row.addLayout(controls_col, 1)
+
+        main_scroll = QScrollArea()
+        main_scroll.setWidgetResizable(True)
+        main_scroll.setFrameShape(QFrame.NoFrame)
+        main_scroll.setWidget(main_content)
+        layout.addWidget(main_scroll, 1)
+
+        settings_row = QHBoxLayout()
+        settings_heading = QLabel("Settings")
+        settings_heading.setObjectName("CriteriaHeading")
+        settings_row.addWidget(settings_heading)
+        settings_row.addWidget(QLabel("None"))
+        settings_row.addStretch(1)
+        layout.addLayout(settings_row)
+
+        state: dict = {"adapter": None, "at_park": None}
+
+        def _apply_status(status: dict) -> None:
+            name_value.setText(status.get("name") or "—")
+            description_value.setText(status.get("description") or "—")
+            driver_info_value.setText(status.get("driver_info") or "—")
+            driver_version_value.setText(status.get("driver_version") or "—")
+            site_latitude_value.setText(_format_dms(status.get("site_latitude")))
+            site_longitude_value.setText(_format_dms(status.get("site_longitude")))
+            elevation = status.get("site_elevation")
+            site_elevation_value.setText("—" if elevation is None else f"{elevation:.1f} m")
+            epoch_value.setText(status.get("equatorial_system") or "—")
+            lst = status.get("sidereal_time")
+            sidereal_time_value.setText(_format_hms(lst))
+            ra = status.get("right_ascension")
+            right_ascension_value.setText(_format_hms(ra))
+            declination_value.setText(_format_dms(status.get("declination")))
+            altitude_value.setText(_format_dms(status.get("altitude")))
+            azimuth_value.setText(_format_dms(status.get("azimuth")))
+            side_of_pier_value.setText(status.get("side_of_pier") or "—")
+            tracking = status.get("tracking")
+            tracking_value.setText("—" if tracking is None else ("Tracking" if tracking else "Stopped"))
+            meridian_in_value.setText(_format_hms((ra - lst) % 24.0) if ra is not None and lst is not None else "—")
+            at_park = status.get("at_park")
+            state["at_park"] = at_park
+            park_btn.setText("Unpark" if at_park else "Park")
+
+        def _refresh_status() -> "dict | None":
+            adapter = state.get("adapter")
+            if adapter is None:
+                return None
+            import asyncio
+            try:
+                status = asyncio.run(adapter.get_status())
+            except Exception:
+                logger.exception("Could not refresh mount status")
+                return None
+            _apply_status(status)
+            return status
+
+        def _do_connect(device_name: str) -> None:
+            from galileo.core.devices import DeviceCategory
+            adapter = self._connect_device_adapter(
+                DeviceCategory.MOUNT, driver_combo.currentText(),
+                server_edit.text().strip() or "localhost", port_spin.value(), device_name,
+            )
+            if adapter is None:
+                self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
+                return
+            state["adapter"] = adapter
+            self._window.statusBar().showMessage(f"Connected to Mount {device_name!r}.", 4000)
+            _refresh_status()
+
+        def _connect_clicked() -> None:
+            device_name = device_combo.currentText().strip()
+            if not device_name:
+                QMessageBox.information(self._window, "No device selected", "Select a mount device first.")
+                return
+            _do_connect(device_name)
+
+        connect_btn.clicked.connect(_connect_clicked)
+
+        def run_scan() -> None:
+            server = server_edit.text().strip() or "localhost"
+            port = port_spin.value()
+            driver = driver_combo.currentText()
+            from galileo.core.devices import DeviceCategory
+            devices: list[str] = []
+            try:
+                import asyncio
+                if driver == "INDI":
+                    from galileo.adapters.indi import get_adapter_class
+                    adapter = get_adapter_class(DeviceCategory.MOUNT)(host=server, port=port)
+                else:
+                    from galileo.adapters.alpaca import get_adapter_class
+                    adapter = get_adapter_class(DeviceCategory.MOUNT)(host=server, port=port)
+                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.MOUNT))
+            except Exception:
+                logger.exception("Mount scan failed on %s:%s", server, port)
+                self._window.statusBar().showMessage("Mount scan failed — see log.", 6000)
+                devices = []
+            current = device_combo.currentText()
+            device_combo.blockSignals(True)
+            device_combo.clear()
+            device_combo.addItem("")
+            for name in devices:
+                device_combo.addItem(name)
+            if current and device_combo.findText(current) < 0:
+                device_combo.addItem(current)
+            idx = device_combo.findText(current)
+            device_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            device_combo.blockSignals(False)
+            if devices:
+                logger.info(
+                    "Detected %d %s mount device(s) at %s:%s: %s",
+                    len(devices), driver, server, port, ", ".join(devices),
+                )
+                self._window.statusBar().showMessage(f"Found {len(devices)} mount device(s) — see log.", 4000)
+            else:
+                logger.info("No %s mount devices found at %s:%s.", driver, server, port)
+                self._window.statusBar().showMessage(f"No {driver} mount devices found at {server}:{port}.", 4000)
+
+        scan_btn.clicked.connect(run_scan)
+
+        def _target_ra_dec() -> tuple:
+            ra_hours = ra_h.value() + ra_m.value() / 60.0 + ra_s.value() / 3600.0
+            dec_mag = abs(dec_d.value()) + dec_m.value() / 60.0 + dec_s.value() / 3600.0
+            dec_deg = -dec_mag if dec_d.value() < 0 else dec_mag
+            return ra_hours, dec_deg
+
+        def _target_alt_az() -> tuple:
+            alt_mag = abs(alt_d.value()) + alt_m.value() / 60.0 + alt_s.value() / 3600.0
+            alt_deg = -alt_mag if alt_d.value() < 0 else alt_mag
+            az_deg = az_d.value() + az_m.value() / 60.0 + az_s.value() / 3600.0
+            return alt_deg, az_deg
+
+        def _slew_radec_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            ra_hours, dec_deg = _target_ra_dec()
+            import asyncio
+            try:
+                asyncio.run(adapter.slew_to_coordinates(ra_hours * 15.0, dec_deg))
+            except Exception:
+                logger.exception("Mount slew-to-coordinates failed")
+                self._window.statusBar().showMessage("Slew failed — see log.", 6000)
+                return
+            logger.info("Mount: slew requested to RA %.4fh Dec %.4f°", ra_hours, dec_deg)
+
+        ra_slew_btn.clicked.connect(_slew_radec_clicked)
+        dec_slew_btn.clicked.connect(_slew_radec_clicked)
+
+        def _slew_altaz_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            alt_deg, az_deg = _target_alt_az()
+            import asyncio
+            try:
+                asyncio.run(adapter.slew_to_altaz(alt_deg, az_deg))
+            except Exception:
+                logger.exception("Mount slew-to-altaz failed")
+                self._window.statusBar().showMessage("Slew failed — see log.", 6000)
+                return
+            logger.info("Mount: slew requested to Alt %.4f° Az %.4f°", alt_deg, az_deg)
+
+        alt_slew_btn.clicked.connect(_slew_altaz_clicked)
+        az_slew_btn.clicked.connect(_slew_altaz_clicked)
+
+        def _move_axis(axis: int, rate: float) -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.move_axis(axis, rate))
+            except Exception:
+                logger.exception("Mount move_axis failed (axis=%s rate=%s)", axis, rate)
+
+        def _jog(direction: str) -> None:
+            primary_rate = primary_rate_spin.value() * (-1.0 if primary_reversed_check.isChecked() else 1.0)
+            secondary_rate = secondary_rate_spin.value() * (-1.0 if secondary_reversed_check.isChecked() else 1.0)
+            if direction == "N":
+                _move_axis(1, secondary_rate)
+            elif direction == "S":
+                _move_axis(1, -secondary_rate)
+            elif direction == "E":
+                _move_axis(0, primary_rate)
+            elif direction == "W":
+                _move_axis(0, -primary_rate)
+
+        north_btn.clicked.connect(lambda: _jog("N"))
+        south_btn.clicked.connect(lambda: _jog("S"))
+        east_btn.clicked.connect(lambda: _jog("E"))
+        west_btn.clicked.connect(lambda: _jog("W"))
+
+        def _stop_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.move_axis(0, 0.0))
+                asyncio.run(adapter.move_axis(1, 0.0))
+                asyncio.run(adapter.abort_slew())
+            except Exception:
+                logger.exception("Mount stop failed")
+            logger.info("Mount: Stop requested")
+
+        stop_btn.clicked.connect(_stop_clicked)
+
+        def _home_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.find_home())
+            except Exception:
+                logger.exception("Mount find_home failed")
+                self._window.statusBar().showMessage("Find Home failed — see log.", 6000)
+                return
+            logger.info("Mount: Find Home requested")
+            _refresh_status()
+
+        home_btn.clicked.connect(_home_clicked)
+
+        def _park_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                if state.get("at_park"):
+                    asyncio.run(adapter.unpark())
+                    logger.info("Mount: Unpark requested")
+                else:
+                    asyncio.run(adapter.park())
+                    logger.info("Mount: Park requested")
+            except Exception:
+                logger.exception("Mount park/unpark failed")
+                self._window.statusBar().showMessage("Park/Unpark failed — see log.", 6000)
+                return
+            _refresh_status()
+
+        park_btn.clicked.connect(_park_clicked)
+
+        def _set_tracking_rate_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            mode = tracking_rate_combo.currentText()
+            import asyncio
+            try:
+                asyncio.run(adapter.set_tracking_rate_mode(mode))
+            except Exception:
+                logger.exception("Mount set_tracking_rate_mode failed")
+                self._window.statusBar().showMessage("Set tracking rate failed — see log.", 6000)
+                return
+            logger.info("Mount: tracking rate set to %s", mode)
+
+        set_rate_btn.clicked.connect(_set_tracking_rate_clicked)
+
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        save_btn.setToolTip("Save this device's settings under the selected Observatory and Pier.")
+        save_row.addWidget(save_btn)
+        layout.addLayout(save_row)
+
+        log_heading = QLabel("Log")
+        log_heading.setObjectName("CriteriaHeading")
+        layout.addWidget(log_heading)
+        log_pane = self._build_log_pane()
+        self._log_panes.append(log_pane)
+        layout.addWidget(log_pane)
+
+        def save_mount_config() -> None:
+            if self._current_pier is None:
+                QMessageBox.warning(
+                    self._window, "No Pier selected",
+                    "Select (or create) an Observatory and Pier before saving equipment settings.",
+                )
+                return
+            from galileo.observatory import save_device_config
+            save_device_config(
+                self._current_pier, "mount",
+                driver=driver_combo.currentText(), server=server_edit.text().strip(),
+                port=port_spin.value(), device_name=device_combo.currentText().strip() or None,
+            )
+            self._window.statusBar().showMessage(
+                f"Saved mount settings for Pier {self._current_pier.name!r}.", 4000
+            )
+
+        save_btn.clicked.connect(save_mount_config)
+
+        def reload_page() -> None:
+            cfg = None
+            if self._current_pier is not None:
+                from galileo.observatory import get_device_config
+                try:
+                    cfg = get_device_config(self._current_pier, "mount")
+                except Exception:
+                    logger.exception("Could not load saved mount config")
+
+            driver_combo.blockSignals(True)
+            server_edit.blockSignals(True)
+            port_spin.blockSignals(True)
+            device_combo.blockSignals(True)
+            try:
+                device_combo.clear()
+                device_combo.addItem("")
+                if cfg is not None:
+                    idx = driver_combo.findText(cfg.driver)
+                    if idx >= 0:
+                        driver_combo.setCurrentIndex(idx)
+                    server_edit.setText(cfg.server)
+                    port_spin.setValue(cfg.port)
+                    if cfg.device_name:
+                        device_combo.addItem(cfg.device_name)
+                        device_combo.setCurrentText(cfg.device_name)
+                else:
+                    driver_combo.setCurrentIndex(0)
+                    server_edit.clear()
+                    port_spin.setValue(_DEFAULT_PORTS.get(driver_combo.currentText(), _DEFAULT_PORTS["Alpaca"]))
+            finally:
+                driver_combo.blockSignals(False)
+                server_edit.blockSignals(False)
+                port_spin.blockSignals(False)
+                device_combo.blockSignals(False)
+            state["adapter"] = None
+            _apply_status({})
+
+        def autoconnect_page() -> None:
+            device_name = device_combo.currentText().strip()
+            if device_name:
+                _do_connect(device_name)
+
+        status_timer = QTimer(page)
+        status_timer.timeout.connect(_refresh_status)
+        status_timer.start(2000)
+
+        state["reload"] = reload_page
+        state["autoconnect"] = autoconnect_page
+        self._device_pages["mount"] = state
+        reload_page()
+        autoconnect_page()
+
+        return page
+
+    def _build_filter_wheel_page(self) -> "QWidget":
+        """Filter Wheel device-category page: a live status display
+        (Name/Description/Driver info/version — EQP-FW-010/020) plus a
+        current-filter selector with an explicit Change action, and a
+        Filters list showing every filter the wheel reports with the
+        current one highlighted, matching the reference N.I.N.A. Filter
+        Wheel screen (assets/samples/wheel.png) laid out with this app's
+        own Driver/Server/Port/Scan connection convention rather than its
+        icon toolbar."""
+        from PySide6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame,
+            QLabel, QTableWidget, QComboBox, QLineEdit, QSpinBox,
+            QPushButton, QHeaderView, QMessageBox, QListWidget, QListWidgetItem,
+        )
+        from PySide6.QtCore import QTimer
+
+        page = QWidget()
+        page.setObjectName("FilterWheelPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        heading = QLabel("Filter Wheel")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        # --- connection row --------------------------------------------
+        table = QTableWidget(1, 4)
+        table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.setMaximumHeight(70)
+        table.setSelectionMode(QTableWidget.NoSelection)
+
+        driver_combo = QComboBox()
+        driver_combo.addItems(["Alpaca", "INDI"])
+        table.setCellWidget(0, 0, driver_combo)
+
+        server_edit = QLineEdit()
+        server_edit.setPlaceholderText("FQDN or IP, e.g. seestar.local or 192.168.1.50")
+        server_edit.setMaxLength(40)
+        table.setCellWidget(0, 1, server_edit)
+
+        port_spin = QSpinBox()
+        port_spin.setRange(1, 65535)
+        port_spin.setValue(_DEFAULT_PORTS["Alpaca"])
+        port_spin.setToolTip(
+            "Alpaca has no single standard port — 32323 for a Seestar's "
+            "Alpaca bridge, 11111 for ASCOM Remote/simulators, or whatever "
+            "your device's own driver documents."
+        )
+
+        def _apply_default_port(driver_name: str) -> None:
+            port_spin.setValue(_DEFAULT_PORTS.get(driver_name, _DEFAULT_PORTS["Alpaca"]))
+
+        driver_combo.currentTextChanged.connect(_apply_default_port)
+        table.setCellWidget(0, 2, port_spin)
+
+        scan_btn = QPushButton("Scan")
+        scan_btn.setObjectName("AccentButton")
+        table.setCellWidget(0, 3, scan_btn)
+
+        layout.addWidget(table)
+
+        device_row = QHBoxLayout()
+        device_row.addWidget(QLabel("Device"))
+        device_combo = QComboBox()
+        device_combo.setEditable(True)
+        device_combo.addItem("")
+        device_row.addWidget(device_combo, 1)
+        connect_btn = QPushButton("Connect")
+        connect_btn.setObjectName("AccentButton")
+        device_row.addWidget(connect_btn)
+        layout.addLayout(device_row)
+
+        # --- status (left) + filters list (right) ------------------------
+        main_row = QHBoxLayout()
+        main_row.setSpacing(24)
+
+        left_col = QVBoxLayout()
+
+        status_frame = QFrame()
+        status_frame.setObjectName("DeviceSlotPanel")
+        status_form = QFormLayout(status_frame)
+
+        name_value = QLabel("—")
+        name_value.setWordWrap(True)
+        status_form.addRow("Name", name_value)
+        description_value = QLabel("—")
+        description_value.setWordWrap(True)
+        status_form.addRow("Description", description_value)
+
+        driver_row = QHBoxLayout()
+        driver_info_form = QFormLayout()
+        driver_info_value = QLabel("—")
+        driver_info_form.addRow("Driver info", driver_info_value)
+        driver_row.addLayout(driver_info_form)
+        driver_version_form = QFormLayout()
+        driver_version_value = QLabel("—")
+        driver_version_form.addRow("Driver version", driver_version_value)
+        driver_row.addLayout(driver_version_form)
+        status_form.addRow(driver_row)
+
+        left_col.addWidget(status_frame)
+
+        current_row = QHBoxLayout()
+        filter_combo = QComboBox()
+        current_row.addWidget(filter_combo, 1)
+        change_btn = QPushButton("Change")
+        change_btn.setObjectName("AccentButton")
+        current_row.addWidget(change_btn, 3)
+        left_col.addLayout(current_row)
+
+        left_col.addStretch(1)
+        main_row.addLayout(left_col, 1)
+
+        right_col = QVBoxLayout()
+        filters_heading = QLabel("Filters")
+        filters_heading.setObjectName("PageTitle")
+        right_col.addWidget(filters_heading)
+        filters_list_heading = QLabel("Filter name")
+        filters_list_heading.setObjectName("CriteriaHeading")
+        right_col.addWidget(filters_list_heading)
+        filters_list = QListWidget()
+        right_col.addWidget(filters_list, 1)
+        main_row.addLayout(right_col, 1)
+
+        layout.addLayout(main_row, 1)
+
+        settings_heading = QLabel("Settings")
+        settings_heading.setObjectName("CriteriaHeading")
+        layout.addWidget(settings_heading)
+        layout.addWidget(QLabel("None"))
+
+        state: dict = {"adapter": None}
+
+        def _apply_status(status: dict) -> None:
+            name_value.setText(status.get("name") or "—")
+            description_value.setText(status.get("description") or "—")
+            driver_info_value.setText(status.get("driver_info") or "—")
+            driver_version_value.setText(status.get("driver_version") or "—")
+            names = status.get("filter_names") or []
+            position = status.get("position")
+
+            current = filter_combo.currentText()
+            filter_combo.blockSignals(True)
+            filter_combo.clear()
+            filter_combo.addItems(names)
+            if position is not None and 0 <= position < len(names):
+                filter_combo.setCurrentIndex(position)
+            elif current and filter_combo.findText(current) >= 0:
+                filter_combo.setCurrentText(current)
+            filter_combo.blockSignals(False)
+
+            filters_list.clear()
+            for i, filter_name in enumerate(names):
+                item = QListWidgetItem(filter_name)
+                filters_list.addItem(item)
+                if i == position:
+                    filters_list.setCurrentItem(item)
+
+        def _refresh_status() -> "dict | None":
+            adapter = state.get("adapter")
+            if adapter is None:
+                return None
+            import asyncio
+            try:
+                status = asyncio.run(adapter.get_status())
+            except Exception:
+                logger.exception("Could not refresh filter wheel status")
+                return None
+            _apply_status(status)
+            return status
+
+        def _do_connect(device_name: str) -> None:
+            from galileo.core.devices import DeviceCategory
+            adapter = self._connect_device_adapter(
+                DeviceCategory.FILTER_WHEEL, driver_combo.currentText(),
+                server_edit.text().strip() or "localhost", port_spin.value(), device_name,
+            )
+            if adapter is None:
+                self._window.statusBar().showMessage(f"Could not connect to Filter Wheel {device_name!r} — see log.", 6000)
+                return
+            state["adapter"] = adapter
+            self._window.statusBar().showMessage(f"Connected to Filter Wheel {device_name!r}.", 4000)
+            _refresh_status()
+
+        def _connect_clicked() -> None:
+            device_name = device_combo.currentText().strip()
+            if not device_name:
+                QMessageBox.information(self._window, "No device selected", "Select a filter wheel device first.")
+                return
+            _do_connect(device_name)
+
+        connect_btn.clicked.connect(_connect_clicked)
+
+        def run_scan() -> None:
+            server = server_edit.text().strip() or "localhost"
+            port = port_spin.value()
+            driver = driver_combo.currentText()
+            from galileo.core.devices import DeviceCategory
+            devices: list[str] = []
+            try:
+                import asyncio
+                if driver == "INDI":
+                    from galileo.adapters.indi import get_adapter_class
+                    adapter = get_adapter_class(DeviceCategory.FILTER_WHEEL)(host=server, port=port)
+                else:
+                    from galileo.adapters.alpaca import get_adapter_class
+                    adapter = get_adapter_class(DeviceCategory.FILTER_WHEEL)(host=server, port=port)
+                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.FILTER_WHEEL))
+            except Exception:
+                logger.exception("Filter wheel scan failed on %s:%s", server, port)
+                self._window.statusBar().showMessage("Filter wheel scan failed — see log.", 6000)
+                devices = []
+            current = device_combo.currentText()
+            device_combo.blockSignals(True)
+            device_combo.clear()
+            device_combo.addItem("")
+            for name in devices:
+                device_combo.addItem(name)
+            if current and device_combo.findText(current) < 0:
+                device_combo.addItem(current)
+            idx = device_combo.findText(current)
+            device_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            device_combo.blockSignals(False)
+            if devices:
+                logger.info(
+                    "Detected %d %s filter wheel device(s) at %s:%s: %s",
+                    len(devices), driver, server, port, ", ".join(devices),
+                )
+                self._window.statusBar().showMessage(f"Found {len(devices)} filter wheel device(s) — see log.", 4000)
+            else:
+                logger.info("No %s filter wheel devices found at %s:%s.", driver, server, port)
+                self._window.statusBar().showMessage(f"No {driver} filter wheel devices found at {server}:{port}.", 4000)
+
+        scan_btn.clicked.connect(run_scan)
+
+        def _filters_list_clicked(item: "QListWidgetItem") -> None:
+            idx = filters_list.row(item)
+            if idx < 0:
+                return
+            filter_combo.setCurrentIndex(idx)
+
+        filters_list.itemClicked.connect(_filters_list_clicked)
+
+        def _change_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the filter wheel first.")
+                return
+            index = filter_combo.currentIndex()
+            if index < 0:
+                return
+            filter_name = filter_combo.currentText()
+            import asyncio
+            try:
+                asyncio.run(adapter.move_to(index))
+            except Exception:
+                logger.exception("Filter wheel move_to failed (index=%s)", index)
+                self._window.statusBar().showMessage("Filter change failed — see log.", 6000)
+                return
+            logger.info("Filter wheel: changed to %r (#%d)", filter_name, index)
+            _refresh_status()
+
+        change_btn.clicked.connect(_change_clicked)
+
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        save_btn.setToolTip("Save this device's settings under the selected Observatory and Pier.")
+        save_row.addWidget(save_btn)
+        layout.addLayout(save_row)
+
+        log_heading = QLabel("Log")
+        log_heading.setObjectName("CriteriaHeading")
+        layout.addWidget(log_heading)
+        log_pane = self._build_log_pane()
+        self._log_panes.append(log_pane)
+        layout.addWidget(log_pane)
+
+        def save_filter_wheel_config() -> None:
+            if self._current_pier is None:
+                QMessageBox.warning(
+                    self._window, "No Pier selected",
+                    "Select (or create) an Observatory and Pier before saving equipment settings.",
+                )
+                return
+            from galileo.observatory import save_device_config
+            save_device_config(
+                self._current_pier, "filter_wheel",
+                driver=driver_combo.currentText(), server=server_edit.text().strip(),
+                port=port_spin.value(), device_name=device_combo.currentText().strip() or None,
+            )
+            self._window.statusBar().showMessage(
+                f"Saved filter wheel settings for Pier {self._current_pier.name!r}.", 4000
+            )
+
+        save_btn.clicked.connect(save_filter_wheel_config)
+
+        def reload_page() -> None:
+            cfg = None
+            if self._current_pier is not None:
+                from galileo.observatory import get_device_config
+                try:
+                    cfg = get_device_config(self._current_pier, "filter_wheel")
+                except Exception:
+                    logger.exception("Could not load saved filter wheel config")
+
+            driver_combo.blockSignals(True)
+            server_edit.blockSignals(True)
+            port_spin.blockSignals(True)
+            device_combo.blockSignals(True)
+            try:
+                device_combo.clear()
+                device_combo.addItem("")
+                if cfg is not None:
+                    idx = driver_combo.findText(cfg.driver)
+                    if idx >= 0:
+                        driver_combo.setCurrentIndex(idx)
+                    server_edit.setText(cfg.server)
+                    port_spin.setValue(cfg.port)
+                    if cfg.device_name:
+                        device_combo.addItem(cfg.device_name)
+                        device_combo.setCurrentText(cfg.device_name)
+                else:
+                    driver_combo.setCurrentIndex(0)
+                    server_edit.clear()
+                    port_spin.setValue(_DEFAULT_PORTS.get(driver_combo.currentText(), _DEFAULT_PORTS["Alpaca"]))
+            finally:
+                driver_combo.blockSignals(False)
+                server_edit.blockSignals(False)
+                port_spin.blockSignals(False)
+                device_combo.blockSignals(False)
+            state["adapter"] = None
+            _apply_status({})
+
+        def autoconnect_page() -> None:
+            device_name = device_combo.currentText().strip()
+            if device_name:
+                _do_connect(device_name)
+
+        status_timer = QTimer(page)
+        status_timer.timeout.connect(_refresh_status)
+        status_timer.start(2000)
+
+        state["reload"] = reload_page
+        state["autoconnect"] = autoconnect_page
+        self._device_pages["filter_wheel"] = state
         reload_page()
         autoconnect_page()
 
@@ -1632,6 +2724,7 @@ class AppWindow:
             autoconnect = state.get("autoconnect")
             if autoconnect is not None:
                 autoconnect()
+        self._refresh_camera_combo()
 
     def _connect_device_adapter(self, category, driver: str, server: str, port: int, device_name: str):
         """Instantiate and connect one device backend for *category*, or
@@ -1672,13 +2765,313 @@ class AppWindow:
         self._camera_backends[slot_label] = adapter
         self._window.statusBar().showMessage(f"Connected to {slot_label} {device_name!r}.", 4000)
 
+    # --- Imaging page (live preview / histogram / stats / manual capture) ---
+
+    def _build_imaging_page(self) -> "QWidget":
+        """Imaging tab (IMG-010 … IMG-100): a live, pan/zoomable auto-stretch
+        preview with histogram and per-frame statistics, plus manual
+        single-exposure capture — modeled on the classic CCD-capture-tool
+        split of capture settings on the left against preview/progress/log
+        on the right (see assets/samples/ccd.png). Sequencing itself lives
+        in the separate Sequence section; this page is for live preview and
+        one-off manual shots, not a queue."""
+        from PySide6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QGroupBox,
+            QComboBox, QDoubleSpinBox, QPushButton, QCheckBox, QProgressBar,
+            QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame,
+            QFileDialog, QMessageBox,
+        )
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtGui import QPixmap, QImage
+
+        from galileo.ui.imaging import ImagingService
+
+        page = QWidget()
+        page.setObjectName("ImagingPage")
+        root = QHBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # --- left: capture + view settings ----------------------------------
+        settings_panel = QFrame()
+        settings_panel.setObjectName("ImagingSettingsPanel")
+        settings_panel.setFixedWidth(300)
+        settings_layout = QVBoxLayout(settings_panel)
+        settings_layout.setContentsMargins(16, 16, 16, 16)
+        settings_layout.setSpacing(10)
+
+        heading = QLabel("Imaging")
+        heading.setObjectName("PageTitle")
+        settings_layout.addWidget(heading)
+
+        capture_group = QGroupBox("Capture Settings")
+        capture_form = QFormLayout(capture_group)
+
+        exposure_spin = QDoubleSpinBox()
+        exposure_spin.setRange(0.001, 3600.0)
+        exposure_spin.setDecimals(3)
+        exposure_spin.setValue(5.0)
+        exposure_spin.setSuffix(" s")
+        capture_form.addRow("Exposure", exposure_spin)
+
+        frame_type_combo = QComboBox()
+        frame_type_combo.addItems(["Light", "Dark", "Flat", "Bias"])
+        capture_form.addRow("Type", frame_type_combo)
+
+        filter_combo = QComboBox()
+        filter_combo.setEditable(True)
+        filter_combo.addItems(["", "L", "R", "G", "B", "H_Alpha", "OIII", "SII"])
+        capture_form.addRow("Filter", filter_combo)
+
+        settings_layout.addWidget(capture_group)
+
+        capture_btn = QPushButton("Capture")
+        capture_btn.setObjectName("AccentButton")
+        capture_btn.setToolTip("Manual single exposure, independent of any running sequence (IMG-070).")
+        settings_layout.addWidget(capture_btn)
+
+        save_frame_btn = QPushButton("Save Frame…")
+        save_frame_btn.setToolTip("Save the currently displayed frame independently of the sequence save path (IMG-100).")
+        save_frame_btn.setEnabled(False)
+        settings_layout.addWidget(save_frame_btn)
+
+        view_group = QGroupBox("View")
+        view_form = QFormLayout(view_group)
+
+        star_overlay_check = QCheckBox("Star overlay")
+        star_overlay_check.setToolTip("Overlay stars detected for HFR computation (IMG-050).")
+        view_form.addRow(star_overlay_check)
+
+        zoom_spin = QDoubleSpinBox()
+        zoom_spin.setRange(0.1, 8.0)
+        zoom_spin.setSingleStep(0.1)
+        zoom_spin.setValue(1.0)
+        zoom_spin.setSuffix("x")
+        view_form.addRow("Zoom", zoom_spin)
+
+        reset_view_btn = QPushButton("Reset View")
+        view_form.addRow(reset_view_btn)
+
+        settings_layout.addWidget(view_group)
+
+        stats_group = QGroupBox("Statistics")
+        stats_form = QFormLayout(stats_group)
+        stats_labels: dict = {}
+        for key, label_text in (
+            ("mean", "Mean"), ("median", "Median"), ("min", "Min"),
+            ("max", "Max"), ("star_count", "Star count"), ("hfr", "HFR"),
+        ):
+            value_label = QLabel("—")
+            stats_labels[key] = value_label
+            stats_form.addRow(label_text, value_label)
+        settings_layout.addWidget(stats_group)
+
+        settings_layout.addStretch(1)
+        root.addWidget(settings_panel)
+
+        # --- right: live preview, histogram, progress, log ------------------
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 20, 24, 20)
+        content_layout.setSpacing(10)
+
+        scene = QGraphicsScene()
+        pixmap_item = QGraphicsPixmapItem()
+        scene.addItem(pixmap_item)
+        preview_view = QGraphicsView(scene)
+        preview_view.setObjectName("ImagingPreview")
+        preview_view.setDragMode(QGraphicsView.ScrollHandDrag)
+        preview_view.setBackgroundBrush(Qt.black)
+        content_layout.addWidget(preview_view, 1)
+
+        histogram = _HistogramWidget()
+        histogram.setFixedHeight(80)
+        histogram.set_color(self._theme.accent_color)
+        content_layout.addWidget(histogram)
+
+        progress_row = QHBoxLayout()
+        status_label = QLabel("Idle")
+        progress_row.addWidget(status_label)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 1000)
+        progress_bar.setValue(0)
+        progress_bar.setTextVisible(False)
+        progress_row.addWidget(progress_bar, 1)
+        content_layout.addLayout(progress_row)
+
+        log_heading = QLabel("Log")
+        log_heading.setObjectName("CriteriaHeading")
+        content_layout.addWidget(log_heading)
+        log_pane = self._build_log_pane()
+        self._log_panes.append(log_pane)
+        content_layout.addWidget(log_pane)
+
+        root.addWidget(content, 1)
+
+        # --- wiring -----------------------------------------------------------
+        def _selected_camera_backend():
+            # Reads the top-bar Camera selector (shown only when the current
+            # Pier has more than one configured camera) fresh each time,
+            # rather than caching it at page-build time.
+            key = _camera_backend_key_for_slot(self._active_camera_slot)
+            return self._camera_backends.get(key)
+
+        service = ImagingService(camera=_selected_camera_backend())
+
+        def _refresh_preview() -> None:
+            import numpy as np
+            data = service.current_preview
+            if data is None:
+                return
+            arr = np.ascontiguousarray(data)
+            h, w = arr.shape[:2]
+            image = QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+            pixmap_item.setPixmap(QPixmap.fromImage(image))
+            scene.setSceneRect(0, 0, w, h)
+            preview_view.resetTransform()
+            preview_view.scale(zoom_spin.value(), zoom_spin.value())
+
+        def _refresh_stats() -> None:
+            stats = service.get_frame_stats()
+            for key, value_label in stats_labels.items():
+                value = stats.get(key)
+                if value is None:
+                    value_label.setText("—")
+                elif isinstance(value, float):
+                    value_label.setText(f"{value:.2f}")
+                else:
+                    value_label.setText(str(value))
+
+        def _refresh_histogram() -> None:
+            hist = service.get_histogram()
+            histogram.set_data(hist.get("counts", []))
+
+        def apply_zoom(factor: float) -> None:
+            service.set_zoom(factor)
+            preview_view.resetTransform()
+            preview_view.scale(factor, factor)
+
+        zoom_spin.valueChanged.connect(apply_zoom)
+
+        def reset_view() -> None:
+            service.reset_view()
+            zoom_spin.blockSignals(True)
+            zoom_spin.setValue(1.0)
+            zoom_spin.blockSignals(False)
+            preview_view.resetTransform()
+
+        reset_view_btn.clicked.connect(reset_view)
+
+        star_overlay_check.toggled.connect(service.set_star_overlay)
+
+        countdown = {"timer": None, "start": 0.0, "duration": 0.0}
+
+        def _tick_countdown() -> None:
+            import time
+            elapsed = time.monotonic() - countdown["start"]
+            remaining = max(0.0, countdown["duration"] - elapsed)
+            progress_bar.setValue(int(min(1.0, elapsed / countdown["duration"]) * 1000) if countdown["duration"] else 1000)
+            if remaining > 0:
+                status_label.setText(f"Exposing… {remaining:0.1f}s left")
+            else:
+                status_label.setText("Downloading…")
+
+        def on_capture_finished() -> None:
+            timer = countdown["timer"]
+            if timer is not None:
+                timer.stop()
+            capture_btn.setEnabled(True)
+            progress_bar.setValue(1000)
+            status_label.setText("Complete")
+            _refresh_preview()
+            _refresh_stats()
+            _refresh_histogram()
+            save_frame_btn.setEnabled(service.current_frame is not None)
+            self._window.statusBar().showMessage("Capture complete.", 4000)
+            self._imaging_capture_thread = None
+
+        def on_capture_failed(message: str) -> None:
+            timer = countdown["timer"]
+            if timer is not None:
+                timer.stop()
+            capture_btn.setEnabled(True)
+            status_label.setText("Idle")
+            progress_bar.setValue(0)
+            logger.error("Manual capture failed: %s", message)
+            self._window.statusBar().showMessage("Capture failed — see log.", 6000)
+            self._imaging_capture_thread = None
+
+        def do_capture() -> None:
+            service._camera = _selected_camera_backend()
+            if service._camera is None:
+                QMessageBox.information(
+                    self._window, "No camera connected",
+                    "Connect a camera on the Camera equipment page first.",
+                )
+                return
+
+            duration = exposure_spin.value()
+            frame_type = frame_type_combo.currentText()
+            filter_name = filter_combo.currentText().strip()
+
+            import time
+            countdown["start"] = time.monotonic()
+            countdown["duration"] = duration
+            capture_btn.setEnabled(False)
+            progress_bar.setValue(0)
+            status_label.setText(f"Exposing… {duration:0.1f}s left")
+
+            timer = QTimer(page)
+            timer.timeout.connect(_tick_countdown)
+            timer.start(100)
+            countdown["timer"] = timer
+
+            thread = _CaptureThread(service, duration, filter_name, frame_type, page)
+            thread.finished_ok.connect(on_capture_finished)
+            thread.failed.connect(on_capture_failed)
+            self._imaging_capture_thread = thread
+            thread.start()
+
+        capture_btn.clicked.connect(do_capture)
+
+        def save_frame() -> None:
+            if service.current_frame is None:
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self._window, "Save Frame", "frame.fits", "FITS files (*.fits *.fit)",
+            )
+            if not path:
+                return
+            try:
+                service.save_current_frame(path)
+            except Exception:
+                logger.exception("Could not save frame to %s", path)
+                self._window.statusBar().showMessage("Could not save frame — see log.", 6000)
+                return
+            self._window.statusBar().showMessage(f"Saved frame to {path}.", 4000)
+
+        save_frame_btn.clicked.connect(save_frame)
+
+        return page
+
     # --- Sky Atlas page (secondary panel = search criteria, not icons) ------
 
     def _build_sky_atlas_page(self) -> "QWidget":
+        """Sky Atlas page (SKY-010 … SKY-100): search criteria on the left, a
+        results list plus a per-result details panel on the right — Type,
+        Magnitude, Constellation, RA/Dec and a downloaded DSS sky-survey
+        thumbnail image, matching what Obsy's target search was set up to
+        show for a Simbad hit (its ``target_query`` view plus
+        ``Target.save()``'s DSS-cutout fetch, ADR-005). Selecting a result
+        fetches its thumbnail on demand rather than up front for every
+        match, since that's a real network request per object."""
         from PySide6.QtWidgets import (
             QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QComboBox,
-            QDoubleSpinBox, QPushButton, QListWidget, QFormLayout,
+            QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
+            QFrame, QApplication,
         )
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
 
         page = QWidget()
         layout = QHBoxLayout(page)
@@ -1723,17 +3116,106 @@ class AppWindow:
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
+        results_row = QHBoxLayout()
+        results_row.setSpacing(24)
+
         results = QListWidget()
-        content_layout.addWidget(results, 1)
+        results_row.addWidget(results, 1)
+
+        details_frame = QFrame()
+        details_frame.setObjectName("DeviceSlotPanel")
+        details_layout = QVBoxLayout(details_frame)
+
+        thumbnail_label = QLabel("Select a result to view details.")
+        thumbnail_label.setWordWrap(True)
+        thumbnail_label.setAlignment(Qt.AlignCenter)
+        thumbnail_label.setFixedSize(220, 220)
+        details_layout.addWidget(thumbnail_label, 0, Qt.AlignHCenter)
+
+        details_form = QFormLayout()
+        detail_name_value = QLabel("—")
+        detail_type_value = QLabel("—")
+        detail_mag_value = QLabel("—")
+        detail_const_value = QLabel("—")
+        detail_ra_value = QLabel("—")
+        detail_dec_value = QLabel("—")
+        details_form.addRow("Name", detail_name_value)
+        details_form.addRow("Type", detail_type_value)
+        details_form.addRow("Magnitude", detail_mag_value)
+        details_form.addRow("Constellation", detail_const_value)
+        details_form.addRow("Right Ascension", detail_ra_value)
+        details_form.addRow("Declination", detail_dec_value)
+        details_layout.addLayout(details_form)
+        details_layout.addStretch(1)
+
+        results_row.addWidget(details_frame, 1)
+        content_layout.addLayout(results_row, 1)
+
+        def _clear_details() -> None:
+            thumbnail_label.setPixmap(QPixmap())
+            thumbnail_label.setText("Select a result to view details.")
+            for value_label in (
+                detail_name_value, detail_type_value, detail_mag_value,
+                detail_const_value, detail_ra_value, detail_dec_value,
+            ):
+                value_label.setText("—")
+
+        def _show_details(obj) -> None:
+            from galileo.planning.sky_atlas import constellation_for, SkyAtlas
+
+            detail_name_value.setText(obj.primary_name)
+            detail_type_value.setText(obj.object_type.value)
+            detail_mag_value.setText(f"{obj.magnitude:.1f}" if obj.magnitude < 90.0 else "Unknown")
+            try:
+                detail_const_value.setText(constellation_for(obj.ra_deg, obj.dec_deg))
+            except Exception:
+                logger.exception("Could not compute constellation for %s", obj.primary_name)
+                detail_const_value.setText("—")
+            detail_ra_value.setText(f"{obj.ra_deg:.4f}°")
+            detail_dec_value.setText(f"{obj.dec_deg:.4f}°")
+
+            thumbnail_label.setPixmap(QPixmap())
+            thumbnail_label.setText("Loading image…")
+            self._window.statusBar().showMessage(f"Fetching sky-survey image for {obj.primary_name}…")
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                import asyncio
+                data = asyncio.run(SkyAtlas()._fetch_thumbnail(obj))
+            except Exception:
+                logger.exception("Could not fetch thumbnail for %s", obj.primary_name)
+                data = b""
+            finally:
+                QApplication.restoreOverrideCursor()
+            pixmap = QPixmap()
+            if data and pixmap.loadFromData(data) and not pixmap.isNull():
+                thumbnail_label.setText("")
+                thumbnail_label.setPixmap(pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self._window.statusBar().showMessage(f"Loaded image for {obj.primary_name}.", 4000)
+            else:
+                thumbnail_label.setText("No image available.")
+                self._window.statusBar().showMessage(f"No sky-survey image available for {obj.primary_name}.", 4000)
+
+        def _result_selected(item: "QListWidgetItem") -> None:
+            obj = item.data(Qt.UserRole)
+            if obj is None:
+                _clear_details()
+                return
+            _show_details(obj)
+
+        results.itemClicked.connect(_result_selected)
 
         def run_search() -> None:
             results.clear()
+            _clear_details()
+            self._window.statusBar().showMessage("Searching…")
+            QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
                 from galileo.planning.sky_atlas import SkyAtlas, ObjectType
                 atlas = SkyAtlas()
                 name = name_edit.text().strip()
                 if name:
-                    matches = atlas.search(name)
+                    import asyncio
+                    matches = asyncio.run(atlas.search_online(name))
                 else:
                     object_types = None
                     if type_combo.currentText() != "Any":
@@ -1746,12 +3228,21 @@ class AppWindow:
             except Exception:
                 logger.exception("Sky Atlas search failed")
                 results.addItem("Search failed — see log for details.")
+                self._window.statusBar().showMessage("Sky Atlas search failed — see log.", 6000)
                 return
+            finally:
+                QApplication.restoreOverrideCursor()
             if not matches:
                 results.addItem("No matching objects.")
+                self._window.statusBar().showMessage("No matching objects.", 4000)
                 return
             for obj in matches[:200]:
-                results.addItem(f"{obj.primary_name}   RA {obj.ra_deg:.3f}°  Dec {obj.dec_deg:.3f}°  mag {obj.magnitude:.1f}")
+                item = QListWidgetItem(
+                    f"{obj.primary_name}   RA {obj.ra_deg:.3f}°  Dec {obj.dec_deg:.3f}°  mag {obj.magnitude:.1f}"
+                )
+                item.setData(Qt.UserRole, obj)
+                results.addItem(item)
+            self._window.statusBar().showMessage(f"Found {len(matches)} object(s).", 4000)
 
         search_btn.clicked.connect(run_search)
         name_edit.returnPressed.connect(run_search)
@@ -1895,6 +3386,95 @@ class AppWindow:
         layout.addWidget(subtitle)
         layout.addStretch(1)
         return page
+
+
+class _CaptureThread(QThread if _HAS_QT else object):
+    """Runs one manual capture (IMG-070) off the Qt UI thread, so the
+    Imaging page's countdown/status display (IMG-090) keeps updating while
+    the async expose/download call is in flight — the rest of this window
+    calls device adapters with a blocking ``asyncio.run`` directly on the UI
+    thread since those calls are quick (scan/connect/status), but a manual
+    exposure can run for minutes and would otherwise freeze the whole app."""
+
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, service, duration: float, filter_name: str, frame_type: str, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._duration = duration
+        self._filter_name = filter_name
+        self._frame_type = frame_type
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            asyncio.run(self._service.capture_and_preview(
+                duration=self._duration,
+                filter_name=self._filter_name,
+                frame_type=self._frame_type,
+            ))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit()
+
+
+class _HistogramWidget(QWidget if _HAS_QT else object):
+    """Bar-chart rendering of the current frame's histogram (IMG-030), on a
+    log scale so low-population bins stay visible next to a saturated peak."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._counts: list = []
+        self._color = None
+
+    def set_data(self, counts) -> None:
+        self._counts = list(counts or [])
+        self.update()
+
+    def set_color(self, color) -> None:
+        self._color = color
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        from PySide6.QtGui import QPainter, QColor
+        from PySide6.QtCore import Qt as _Qt
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+        if self._counts:
+            import math
+            painter.setPen(_Qt.NoPen)
+            painter.setBrush(QColor(self._color or "#4da3ff"))
+            w, h = self.width(), self.height()
+            n = len(self._counts)
+            max_count = max(self._counts) or 1
+            bar_w = w / n
+            for i, count in enumerate(self._counts):
+                bar_h = (math.log1p(count) / math.log1p(max_count)) * h if count else 0
+                painter.drawRect(int(i * bar_w), int(h - bar_h), max(1, math.ceil(bar_w)), int(bar_h))
+        painter.end()
+
+
+class _LogPane(QPlainTextEdit if _HAS_QT else object):
+    """A read-only QPlainTextEdit that ignores Ctrl+Wheel text-zoom.
+
+    A fixed-height log tail has no use for interactive font zoom, and Qt's
+    built-in zoom (QWidgetTextControl::zoomIn/zoomOut) does arithmetic on
+    QFont::pointSize() — which can be -1 for the system fixed-width font on
+    some Windows configurations, since a system font may be defined only by
+    pixel size — and can end up calling QFont::setPointSize() with a
+    non-positive result, printing "QFont::setPointSize: Point size <= 0" to
+    the console. Ignoring Ctrl+Wheel here (regular scroll still works)
+    avoids that regardless of the underlying font's point-size validity.
+    """
+
+    def wheelEvent(self, event) -> None:
+        from PySide6.QtCore import Qt
+        if event.modifiers() & Qt.ControlModifier:
+            event.ignore()
+            return
+        super().wheelEvent(event)
 
 
 class _NavColumn(QWidget if _HAS_QT else object):

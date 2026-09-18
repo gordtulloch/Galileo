@@ -28,8 +28,9 @@ Two things motivate this project:
   - **Observatory/Pier**: persisted master records (name, lat/long, timezone, physical address, owner for Observatories; name for Piers) saved to a local SQLite database via Peewee, selectable/creatable from the top bar, surviving restarts.
   - **Sky Atlas**: a real search-criteria panel wired to the catalog search/filter backend.
   - **Framing**: a real target/mosaic input panel wired to the FOV and mosaic-panel calculator.
+  - **Imaging**: a live, pan/zoomable auto-stretch preview (`QGraphicsView`) with a histogram, per-frame statistics (mean/median/min/max/star count/HFR), manual single-exposure capture run off the UI thread with a live countdown, and an independent Save Frame action.
   - **Logging**: a runtime logging service capturing all application output to a datestamped, per-run-reset log file under `logs/`, plus a live scrolling log tail on every Equipment device screen ala KStars.
-- **Still placeholder UI**: Sequencer, Imaging, Scheduler, Library, Variable Stars, Flat Wizard, and Options currently show a "not implemented yet" stub — the domain-core logic behind several of them (e.g. `galileo.library`, `galileo.vstarget.*`, `galileo.scheduler`) already exists and is tested, it just isn't wired to a screen yet.
+- **Still placeholder UI**: Sequencer, Scheduler, Library, Variable Stars, Flat Wizard, and Options currently show a "not implemented yet" stub — the domain-core logic behind several of them (e.g. `galileo.library`, `galileo.vstarget.*`, `galileo.scheduler`) already exists and is tested, it just isn't wired to a screen yet.
 
 The `VST`/`VST-AN` plugins specified in the SDD remain the planned reference implementation of Galileo's plugin architecture (`PLUG`), not yet built as installable plugins.
 

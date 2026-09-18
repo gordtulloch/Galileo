@@ -311,7 +311,7 @@ class FilterWheelController(DeviceController):
 
 
 class FocuserController(DeviceController):
-    """Controls a focuser (EQP-FOC-010 … EQP-FOC-020)."""
+    """Controls a focuser (EQP-FOC-010 … EQP-FOC-030)."""
 
     def __init__(self, backend: DeviceBackend, event_bus=None, backlash_steps: int = 0) -> None:
         super().__init__(backend, event_bus)
@@ -323,15 +323,46 @@ class FocuserController(DeviceController):
     def get_temperature(self) -> float:
         return float(self._backend.temperature)
 
+    def _clamp_position(self, position: int) -> int:
+        """Clamp *position* to the focuser's valid travel range, 0..MaxStep
+        (EQP-FOC-030).
+
+        A real ASCOM/Alpaca ``IFocuserV3`` driver is documented to hard-stop
+        at these limits itself rather than raise, but INDI focuser drivers
+        make no equivalent universal guarantee, and even where the hardware
+        does protect itself, silently trusting a rejected/clamped move would
+        leave this controller's cached position out of sync with reality.
+        Clamping here — logged, not silent — is the one guard that applies
+        the same way across both transports. ``max_step`` is read from
+        whatever the connected backend reports (``None`` if the backend
+        hasn't discovered it, e.g. before connecting), in which case only
+        the 0 floor is enforced.
+        """
+        max_step = getattr(self._backend, "max_step", None)
+        if not isinstance(max_step, (int, float)):
+            max_step = None
+        clamped = max(position, 0)
+        if max_step is not None and clamped > max_step:
+            clamped = int(max_step)
+        if clamped != position:
+            logger.warning(
+                "Focuser move to %d is outside the valid travel range (0..%s); clamping to %d.",
+                position, max_step, clamped,
+            )
+        return clamped
+
     async def move_to(self, position: int) -> None:
+        position = self._clamp_position(position)
         if self.backlash_steps > 0:
             # Overshoot then return to apply backlash compensation
-            overshoot = position - self.backlash_steps
+            overshoot = self._clamp_position(position - self.backlash_steps)
             await self._backend.move_to(overshoot)
         await self._backend.move_to(position)
 
     async def move_by(self, steps: int) -> None:
-        await self._backend.move_by(steps)
+        current = self.get_position()
+        target = self._clamp_position(current + steps)
+        await self._backend.move_by(target - current)
 
 
 class RotatorController(DeviceController):

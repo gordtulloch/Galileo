@@ -29,6 +29,7 @@ dependencies = [
     "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
     # Image processing
     "sep>=1.2",               # Source Extractor Python (star detection / HFR)
+    "Pillow>=10.0",           # FITS-cutout-to-JPEG thumbnail conversion (SKY-080, ported from Obsy)
     # Image registration / photometry
     "astroalign>=2.4",
     "photutils>=1.5",

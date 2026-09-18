@@ -78,6 +78,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-FW-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-020` |
 | `EQP-FOC-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-010` |
 | `EQP-FOC-020` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-020` |
+| `EQP-FOC-030` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-FOC-030` |
 | `EQP-ROT-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-ROT-010` |
 | `EQP-GDR-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-GDR-010` |
 | `EQP-SW-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SW-010` |
@@ -170,6 +171,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKY-070` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-070` |
 | `SKY-080` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-080` |
 | `SKY-090` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-090` |
+| `SKY-100` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-100` |
 
 ### `FRAME` — Framing Assistant
 

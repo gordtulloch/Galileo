@@ -1,4 +1,4 @@
-"""SKY — Sky Atlas (TC-SKY-010 … TC-SKY-090)."""
+"""SKY — Sky Atlas (TC-SKY-010 … TC-SKY-100)."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -163,11 +163,18 @@ async def test_tc_sky_080_fetch_and_cache_sky_survey_thumbnail(sky_atlas, tmp_pa
     sky_atlas._cache_dir = tmp_path
     m42 = sky_atlas.get_by_designation("M42")
 
-    sky_atlas._fetch_thumbnail = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    sky_atlas._fetch_thumbnail = AsyncMock(return_value=b"\xff\xd8\xff\xe0" + b"\x00" * 100)
     await sky_atlas.add_to_target_list(m42)
 
-    cached = tmp_path / f"{m42.primary_name.replace(' ', '_')}_thumbnail.png"
+    cached = tmp_path / f"{m42.primary_name.replace(' ', '_')}_thumbnail.jpg"
     assert cached.exists()
+
+    # The real (unmocked) fetch — ported from Obsy's Target.save() — must
+    # degrade to b"" rather than raise when the DSS cutout service is
+    # unreachable, so a missing thumbnail never blocks add-to-target-list.
+    with patch("socket.getaddrinfo", side_effect=OSError("Network unreachable")):
+        data = await sky_mod.SkyAtlas()._fetch_thumbnail(m42)
+        assert data == b""
 
 
 # ---------------------------------------------------------------------------
@@ -189,3 +196,44 @@ async def test_tc_sky_090_geocode_location_name(observing_location):
     result = await sky_mod.geocode_location("Westminster, London")
     assert abs(result["latitude"] - 51.4994) < 0.01
     assert "Europe" in result["timezone"]
+
+
+# ---------------------------------------------------------------------------
+# TC-SKY-100
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SKY-100")
+@pytest.mark.priority("MVP")
+async def test_tc_sky_100_simbad_first_search_with_local_fallback(sky_atlas):
+    """SKY-100: Object search resolves via a live Simbad lookup first
+    (ported from Obsy's target_query, ADR-005), falling back to the
+    offline catalog only when Simbad is unreachable, times out, or finds
+    nothing — the offline catalog is the fallback, not the primary source."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    simbad_hit = sky_mod.DeepSkyObject(
+        primary_name="M42", designations=["M42"], ra_deg=83.8221, dec_deg=-5.3911,
+        object_type=sky_mod.ObjectType.NEBULA, magnitude=4.0,
+    )
+
+    # Simbad hit -> used directly; the local catalog is never consulted.
+    with patch.object(sky_mod, "_search_simbad_sync", return_value=[simbad_hit]) as mock_search:
+        results = await sky_atlas.search_online("M42")
+        assert results == [simbad_hit]
+        mock_search.assert_called_once_with("M42")
+
+    # Simbad unreachable (e.g. no internet) -> falls back to the local catalog.
+    with patch.object(sky_mod, "_search_simbad_sync", side_effect=OSError("no network")):
+        results = await sky_atlas.search_online("M31")
+        assert any("M31" in obj.designations for obj in results)
+
+    # Simbad reachable but finds nothing -> also falls back to the local catalog.
+    with patch.object(sky_mod, "_search_simbad_sync", return_value=[]):
+        results = await sky_atlas.search_online("M31")
+        assert any("M31" in obj.designations for obj in results)
+
+    # Empty query never touches Simbad -> returns the full local catalog directly.
+    with patch.object(sky_mod, "_search_simbad_sync") as mock_search:
+        results = await sky_atlas.search_online("")
+        assert len(results) >= 10_000
+        mock_search.assert_not_called()

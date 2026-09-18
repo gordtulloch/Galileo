@@ -107,6 +107,29 @@ async def test_tc_eqp_050_error_state_distinct_from_disconnect(event_bus):
 
 
 # ---------------------------------------------------------------------------
+# TC-EQP-050 (Alpaca transport)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_050_alpaca_error_envelope_raises():
+    """EQP-050: A driver-reported Alpaca error (nonzero ErrorNumber) is surfaced as a DeviceError, not silently discarded."""
+    alpaca = pytest.importorskip("galileo.adapters.alpaca")
+    exceptions = pytest.importorskip("galileo.exceptions")
+
+    backend = alpaca.AlpacaFocuserAdapter(host="seestar.local", port=32323)
+
+    with pytest.raises(exceptions.DevicePropertyError, match="out of range"):
+        backend._raise_on_alpaca_error(
+            {"ErrorNumber": 0x401, "ErrorMessage": "Position out of range"}, "move"
+        )
+    assert issubclass(exceptions.DevicePropertyError, exceptions.DeviceError)
+
+    # No error present -> no exception
+    backend._raise_on_alpaca_error({"ErrorNumber": 0, "ErrorMessage": ""}, "move")
+
+
+# ---------------------------------------------------------------------------
 # TC-EQP-060
 # ---------------------------------------------------------------------------
 
@@ -346,6 +369,55 @@ async def test_tc_eqp_foc_020_backlash_compensation(mock_focuser):
     assert calls[-1] == call(4900)
     # Overshoot must have occurred in an earlier call
     assert len(calls) >= 2
+
+
+# ---------------------------------------------------------------------------
+# TC-EQP-FOC-030
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-FOC-030")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_foc_030_clamp_to_valid_travel_range(mock_focuser):
+    """EQP-FOC-030: Clamp absolute/relative focuser moves to the device's valid travel range (0..MaxStep)."""
+    devices = pytest.importorskip("galileo.core.devices")
+    mock_focuser.max_step = 8000
+    foc = devices.FocuserController(mock_focuser)
+
+    # Absolute move beyond MaxStep is clamped, not passed through unchecked
+    await foc.move_to(9000)
+    mock_focuser.move_to.assert_called_with(8000)
+
+    # Absolute move below zero is clamped to zero
+    await foc.move_to(-500)
+    mock_focuser.move_to.assert_called_with(0)
+
+    # Relative move that would exceed MaxStep is clamped to land exactly on it
+    mock_focuser.position = 7900
+    await foc.move_by(500)
+    mock_focuser.move_by.assert_called_with(100)
+
+
+@pytest.mark.requirement("TC-EQP-FOC-030")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_foc_030_alpaca_maxstep_feeds_the_clamp():
+    """EQP-FOC-030: AlpacaFocuserAdapter reads MaxStep from the live device on connect, and FocuserController clamps against that value (not a hardcoded simulator constant)."""
+    devices = pytest.importorskip("galileo.core.devices")
+    alpaca = pytest.importorskip("galileo.adapters.alpaca")
+
+    backend = alpaca.AlpacaFocuserAdapter(host="seestar.local", port=32323)
+    live_values = {
+        "absolute": True, "maxstep": 5000, "maxincrement": 5000,
+        "position": 2500, "temperature": 12.0, "ismoving": False,
+    }
+    backend._get = AsyncMock(side_effect=lambda attribute: live_values[attribute])
+    backend._put = AsyncMock()
+
+    await backend.connect()
+    assert backend.max_step == 5000
+
+    foc = devices.FocuserController(backend)
+    await foc.move_to(9999)
+    backend._put.assert_any_call("move", Position=5000)
 
 
 # ---------------------------------------------------------------------------

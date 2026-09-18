@@ -32,6 +32,7 @@ class ImagingService:
         self,
         duration: float,
         filter_name: str = "",
+        frame_type: str = "Light",
         save_dir: "Path | str | None" = None,
     ) -> None:
         """Expose, download, stretch, and cache the current frame (IMG-010 … IMG-030)."""
@@ -40,7 +41,7 @@ class ImagingService:
         self._capture_status = "exposing"
         self.capture_status = "exposing"
 
-        await self._camera.start_exposure(duration=duration, frame_type="Light")
+        await self._camera.start_exposure(duration=duration, frame_type=frame_type)
         data = await self._camera.get_image_array()
 
         self.current_frame = data
@@ -60,9 +61,9 @@ class ImagingService:
             _save_fits(data, p)
             self.last_saved_path = p
 
-    async def capture_single(self, duration: float, filter_name: str = ""):
+    async def capture_single(self, duration: float, filter_name: str = "", frame_type: str = "Light"):
         """Manual single-exposure capture independent of any sequence (IMG-070)."""
-        await self._camera.start_exposure(duration=duration, frame_type="Light")
+        await self._camera.start_exposure(duration=duration, frame_type=frame_type)
         data = await self._camera.get_image_array()
         self.current_frame = data
         return data
