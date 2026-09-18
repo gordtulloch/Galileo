@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 251 requirements (237 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 253 requirements (239 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -66,6 +66,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-040` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-040` |
 | `EQP-050` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-050` |
 | `EQP-060` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-060` |
+| `EQP-070` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-070` |
 | `EQP-CAM-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-CAM-010` |
 | `EQP-CAM-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-CAM-020` |
 | `EQP-CAM-030` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-CAM-030` |
@@ -101,6 +102,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PROF-080` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-080` |
 | `PROF-090` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-090` |
 | `PROF-100` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-100` |
+| `PROF-110` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-110` |
 
 ### `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -470,8 +472,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 |---|---|---|---|---|
 | `EXT` | 14 | 10 | 3 | 1 |
 | `ARCH` | 8 | 6 | 2 | 0 |
-| `EQP` | 25 | 17 | 8 | 0 |
-| `PROF` | 10 | 9 | 1 | 0 |
+| `EQP` | 26 | 18 | 8 | 0 |
+| `PROF` | 11 | 10 | 1 | 0 |
 | `OBS` | 8 | 0 | 8 | 0 |
 | `IMG` | 10 | 7 | 3 | 0 |
 | `SEQ` | 9 | 8 | 0 | 1 |
@@ -505,4 +507,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **251** | **149** | **89** | **13** |
+| **Total** | **253** | **151** | **89** | **13** |

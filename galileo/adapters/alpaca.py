@@ -377,6 +377,28 @@ class AlpacaAdapter(DeviceBackend):
     async def set_property(self, name: str, value: object) -> None:
         self._properties[name] = value
 
+    async def get_driver_info(self) -> dict[str, "str | None"]:
+        """The ASCOM ``Name``/``Description``/``DriverInfo``/``DriverVersion``
+        common properties, which a driver must serve even while not
+        connected. ``DriverInfo`` is read first and any failure there
+        propagates (an unreachable server or wrong device number should be
+        reported once, not timed out four times); the rest are optional
+        and read defensively."""
+        info: dict[str, "str | None"] = {}
+        value = await self._get("driverinfo")
+        info["driver_info"] = str(value) if value is not None else None
+        for key, attribute in (
+            ("driver_version", "driverversion"), ("name", "name"), ("description", "description"),
+        ):
+            try:
+                value = await self._get(attribute)
+                info[key] = str(value) if value is not None else None
+            except Exception as exc:
+                logger.debug("Could not read %s from %s: %s", attribute, self.base_url, exc)
+                info[key] = None
+        return {"name": info["name"], "description": info["description"],
+                "driver_info": info["driver_info"], "driver_version": info["driver_version"]}
+
     async def list_available_devices(self, category: DeviceCategory) -> list[str]:
         """Return device names from this Alpaca server for *category*, via the
         server's Management API (``get_configured_devices``)."""

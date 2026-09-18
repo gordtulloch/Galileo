@@ -80,7 +80,7 @@ class ThemeManager:
         QWidget {{
             background: {p['bg']};
             color: {p['text']};
-            font-size: 12px;
+            font-size: 9pt;
             selection-background-color: {accent};
         }}
         QMainWindow, QStackedWidget, QWidget#ContentArea, QWidget#EquipmentPage {{
@@ -103,7 +103,7 @@ class ThemeManager:
             border-radius: 3px;
         }}
         QLabel#CriteriaHeading {{
-            font-size: 14px;
+            font-size: 10.5pt;
             font-weight: 600;
             color: {p['text_bright']};
         }}
@@ -140,7 +140,7 @@ class ThemeManager:
             background: rgba(255, 255, 255, 6);
         }}
         QLabel#PageTitle {{
-            font-size: 21px;
+            font-size: 15.75pt;
             font-weight: 600;
             color: {p['text_bright']};
         }}

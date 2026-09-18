@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import logging
 import sys
-import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "logo.png"
-_SPLASH_DURATION_S = 5.0
 
 
 def main() -> None:
@@ -30,8 +28,6 @@ def main() -> None:
     app.setOrganizationName("GordTulloch")
 
     splash = _show_splash(app)
-    if splash is not None:
-        _hold_splash(app, splash, _SPLASH_DURATION_S)
 
     from galileo.diagnostics import DiagnosticsService
     diag = DiagnosticsService()
@@ -51,7 +47,11 @@ def main() -> None:
 
 
 def _show_splash(app):
-    """Show the Galileo logo immediately as a translucent splash screen."""
+    """Show the Galileo logo immediately as a translucent splash screen.
+
+    It stays up only while startup work (database, main window) runs; ``main``
+    closes it as soon as the window is shown, with no fixed minimum display time.
+    """
     from PySide6.QtWidgets import QSplashScreen
     from PySide6.QtGui import QPixmap
     from PySide6.QtCore import Qt
@@ -70,14 +70,6 @@ def _show_splash(app):
     splash.show()
     app.processEvents()
     return splash
-
-
-def _hold_splash(app, splash, seconds: float) -> None:
-    """Keep *splash* on screen and responsive for *seconds* before continuing startup."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.03)
 
 
 def _version() -> str:

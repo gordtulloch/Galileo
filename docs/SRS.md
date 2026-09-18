@@ -124,6 +124,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-040 | The system shall allow a device to be selected from all currently reachable INDI/Alpaca devices of its category, with a manual refresh action. | MVP |
 | EQP-050 | The system shall surface a device-reported error/alert state distinctly from a normal disconnect in the equipment panel. | MVP |
 | EQP-060 | The system shall provide an advanced device-property inspector/control panel exposing raw INDI properties or Alpaca device parameters, for diagnostic/expert use distinct from the normal guided controls. | P2 |
+| EQP-070 | For every supported device category, the system shall display the selected device's driver name/information and driver version in its equipment panel. Where the backend allows it (INDI `DRIVER_INFO`, ASCOM `DriverInfo`/`DriverVersion`), this shall be available as soon as the device is selected, before it is connected. | MVP |
 
 #### 4.2.2 Device-Specific Requirements
 
@@ -166,6 +167,7 @@ Refined against the KStars/EKOS "Optical Trains" model (Project Scope Document, 
 | PROF-080 | The system shall support multiple concurrently defined optical trains within one equipment profile, each independently selectable by the imaging, sequencer, and framing modules. | MVP |
 | PROF-090 | The system shall automatically derive effective focal length and plate scale for framing (`FRAME-010`) and plate-solving (`PLT`) calculations from the active optical train's chained components, rather than requiring manual re-entry per setup. | MVP |
 | PROF-100 | The system shall allow one or more optical tubes to be defined per Pier, each with a name, focal length, aperture, optical system (Newtonian, Schmidt-Cassegrain, Mak-Cassegrain, Refractor, or Other), and image alignment (reversed and/or inverted), and shall allow any device already configured on that Pier to be associated with a tube. Optics is an Equipment-section category rather than a device category (`ARCH-010`): it supplies the telescope/lens end of the optical train in `PROF-070`. | MVP |
+| PROF-110 | The system shall provide a selector in the top bar, beside the Pier selector, listing the selected Pier's optical tubes (`PROF-100`) so the user can choose which one the current screen works with. It shall be shown on the Framing and Imaging screens, and only those; with no tubes defined it shall remain visible but disabled. | MVP |
 
 ### 4.3a `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -562,8 +564,8 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 |---|---|---|---|---|
 | ARCH | 8 | 6 | 2 | 0 |
 | OBS | 8 | 0 | 8 | 0 |
-| EQP (generic + device) | 25 | 17 | 8 | 0 |
-| PROF | 10 | 9 | 1 | 0 |
+| EQP (generic + device) | 26 | 18 | 8 | 0 |
+| PROF | 11 | 10 | 1 | 0 |
 | IMG | 10 | 7 | 3 | 0 |
 | SEQ | 9 | 8 | 0 | 1 |
 | SEQ-ADV | 10 | 0 | 9 | 1 |
@@ -596,7 +598,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **237** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **239** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

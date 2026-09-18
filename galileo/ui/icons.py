@@ -157,7 +157,9 @@ def _options(painter, r):
 def _power(painter, r):
     from PySide6.QtCore import QLineF, QRectF
     rect = QRectF(r.left(), r.top() + r.height() * 0.02, r.width(), r.height() * 0.96)
-    painter.drawArc(rect, int(50 * 16), int(260 * 16))
+    # A 260° ring whose 100° gap is centred on 12 o'clock (behind the bar):
+    # Qt angles run counter-clockwise from 3 o'clock, so it starts at 90° + 50°.
+    painter.drawArc(rect, int(140 * 16), int(260 * 16))
     c = r.center()
     painter.drawLine(QLineF(c.x(), r.top(), c.x(), r.top() + r.height() * 0.5))
 

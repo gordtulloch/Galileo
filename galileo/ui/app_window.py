@@ -52,6 +52,10 @@ PRIMARY_SECTIONS = [
 
 OPTIONS_SECTION = ("options", "Options", "options")
 
+# Primary sections that work with one of the Pier's optical tubes, and so show
+# the top bar's Optics selector.
+_OPTICS_SECTIONS = ("framing", "imaging")
+
 EQUIPMENT_CATEGORIES = [
     ("camera", "Camera", "camera"),
     ("mount", "Mount", "mount"),
@@ -124,6 +128,16 @@ def _device_association_label(category: str, slot: str, device_name: "str | None
     return f"{name}: {device_name or 'no device selected'}"
 
 
+def _optical_tube_label(tube, index: int) -> str:
+    """Top-bar Optics selector entry for a saved optical tube: its name (or
+    "Optical Tube N", matching the Optics page's panel title, if unnamed),
+    plus focal length and focal ratio when both dimensions are set."""
+    label = tube.name or f"Optical Tube {index + 1}"
+    if tube.focal_length_mm and tube.aperture_mm:
+        label += f" — {tube.focal_length_mm:g} mm f/{tube.focal_length_mm / tube.aperture_mm:.1f}"
+    return label
+
+
 def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
     """Extract the Alpaca device number from a scan-result label such as
     "ZWO ASI294MM Pro (#0)" (see AlpacaAdapter.list_available_devices)."""
@@ -179,6 +193,7 @@ class AppWindow:
         self._imaging_capture_thread = None
         self._current_primary_section = "equipment"
         self._active_camera_slot = "primary"
+        self._active_optics_position = 0
 
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
         self._window = QMainWindow()
@@ -245,6 +260,20 @@ class AppWindow:
         self._pier_combo.setEnabled(False)
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
+
+        layout.addSpacing(16)
+
+        # Which of the selected Pier's optical tubes (defined on the Equipment >
+        # Optics page) this screen is working with. Only shown on the screens
+        # that depend on the optics — Framing and Imaging — see _OPTICS_SECTIONS.
+        self._optics_label = QLabel("Optics:")
+        self._optics_label.setVisible(False)
+        layout.addWidget(self._optics_label)
+        self._optics_combo = QComboBox()
+        self._optics_combo.setMinimumWidth(220)
+        self._optics_combo.setVisible(False)
+        self._optics_combo.activated.connect(self._on_optics_activated)
+        layout.addWidget(self._optics_combo)
 
         layout.addSpacing(16)
 
@@ -454,6 +483,59 @@ class AppWindow:
         idx = combo.findText(self._current_pier.name)
         return idx if idx >= 0 else combo.count() - 1
 
+    # --- Top bar: Optics selection (Framing and Imaging screens) ------------
+
+    def _refresh_optics_combo(self) -> None:
+        """Repopulate the top-bar Optics selector from the current Pier's
+        saved optical tubes, and show it only on the screens that work with
+        one (``_OPTICS_SECTIONS``). With no tubes defined it stays visible
+        but disabled, pointing the user at where to define one."""
+        from galileo.observatory import list_optical_tubes
+
+        combo = self._optics_combo
+        tubes = []
+        if self._current_pier is not None:
+            try:
+                tubes = list_optical_tubes(self._current_pier)
+            except Exception:
+                logger.exception("Could not load optical tubes for Pier %r", self._current_pier.name)
+
+        combo.blockSignals(True)
+        combo.clear()
+        if tubes:
+            for i, tube in enumerate(tubes):
+                combo.addItem(_optical_tube_label(tube, i), i)
+            if not 0 <= self._active_optics_position < len(tubes):
+                self._active_optics_position = 0
+            combo.setCurrentIndex(self._active_optics_position)
+        else:
+            combo.addItem("None defined — see Equipment > Optics")
+            self._active_optics_position = 0
+        combo.setEnabled(bool(tubes))
+        combo.blockSignals(False)
+
+        show = self._current_primary_section in _OPTICS_SECTIONS
+        combo.setVisible(show)
+        self._optics_label.setVisible(show)
+
+    def _on_optics_activated(self, index: int) -> None:
+        position = self._optics_combo.itemData(index)
+        if position is not None:
+            self._active_optics_position = position
+
+    def active_optical_tube(self):
+        """The optical tube currently chosen in the top-bar Optics selector,
+        or ``None`` if the Pier has none defined."""
+        if self._current_pier is None:
+            return None
+        from galileo.observatory import list_optical_tubes
+        try:
+            tubes = list_optical_tubes(self._current_pier)
+        except Exception:
+            logger.exception("Could not load optical tubes for Pier %r", self._current_pier.name)
+            return None
+        return tubes[self._active_optics_position] if 0 <= self._active_optics_position < len(tubes) else None
+
     # --- Top bar: Camera selection (Imaging screen, multi-camera Piers) -----
 
     def _refresh_camera_combo(self) -> None:
@@ -525,6 +607,7 @@ class AppWindow:
         def _on_section_selected(section_id: str) -> None:
             self._current_primary_section = section_id
             stack.setCurrentIndex(pages[section_id])
+            self._refresh_optics_combo()
             self._refresh_camera_combo()
 
         sidebar = _NavColumn(
@@ -784,6 +867,9 @@ class AppWindow:
             device_combo.addItem("")
             form.addRow("Device", device_combo)
 
+            driver_info_row, apply_driver_info = self._build_driver_info_row()
+            form.addRow(driver_info_row)
+
             pixel_size = QDoubleSpinBox()
             pixel_size.setRange(0.0, 50.0)
             pixel_size.setDecimals(3)
@@ -815,7 +901,8 @@ class AppWindow:
 
             return {
                 "frame": frame, "title_label": title_label, "remove_btn": remove_btn,
-                "device": device_combo, "pixel_size": pixel_size,
+                "device": device_combo, "apply_driver_info": apply_driver_info,
+                "pixel_size": pixel_size,
                 "sensor_w": sensor_w, "sensor_h": sensor_h, "sensor_name": sensor_name,
                 "download": download_btn,
             }
@@ -860,6 +947,7 @@ class AppWindow:
             if panel["remove_btn"] is not None:
                 panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
             panel["download"].clicked.connect(lambda: _download_info(panel))
+            panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             return panel
 
         def _set_panel_count(count: int) -> None:
@@ -908,6 +996,25 @@ class AppWindow:
             _refresh_slot_choices(devices)
 
         scan_btn.clicked.connect(run_scan)
+
+        def _lookup_panel_driver_info(panel: dict) -> None:
+            """Show the driver of the device just picked in *panel*, without connecting it."""
+            from galileo.core.devices import DeviceCategory
+            panel["apply_driver_info"](self._lookup_driver_info(
+                DeviceCategory.CAMERA, driver_combo.currentText(), server_edit.text().strip(),
+                port_spin.value(), panel["device"].currentText().strip(),
+            ))
+
+        def _show_connected_driver_info(panel: dict, slot_label: str) -> None:
+            """Fill *panel*'s driver info from its live, just-connected backend."""
+            adapter = self._camera_backends.get(slot_label)
+            if adapter is None:
+                return
+            import asyncio
+            try:
+                panel["apply_driver_info"](asyncio.run(adapter.get_driver_info()))
+            except Exception:
+                logger.exception("Could not read driver info from connected %s", slot_label)
 
         def _download_info(panel: dict) -> None:
             device_name = panel["device"].currentText().strip()
@@ -1030,6 +1137,9 @@ class AppWindow:
             panel["sensor_w"].setValue(cfg.sensor_width_px if cfg is not None and cfg.sensor_width_px else 0)
             panel["sensor_h"].setValue(cfg.sensor_height_px if cfg is not None and cfg.sensor_height_px else 0)
             panel["sensor_name"].setText(cfg.sensor_name if cfg is not None and cfg.sensor_name else "")
+            # Filled by autoconnect (below) or when a device is next picked —
+            # not looked up here, so a Pier switch never waits on the network.
+            panel["apply_driver_info"](None)
 
         def reload_page() -> None:
             from galileo.observatory import get_device_config, list_device_config_slots
@@ -1093,6 +1203,7 @@ class AppWindow:
                     slot_label, driver_combo.currentText(), server_edit.text().strip(),
                     port_spin.value(), device_name,
                 )
+                _show_connected_driver_info(panel, slot_label)
 
         state = {"reload": reload_page, "autoconnect": autoconnect_page}
         self._device_pages["camera"] = state
@@ -1217,6 +1328,9 @@ class AppWindow:
             device_combo.addItem("")
             form.addRow("Device", device_combo)
 
+            driver_info_row, apply_driver_info = self._build_driver_info_row()
+            form.addRow(driver_info_row)
+
             is_moving_value = QLabel("—")
             form.addRow("Is Moving", is_moving_value)
 
@@ -1249,6 +1363,7 @@ class AppWindow:
             return {
                 "frame": frame, "title_label": title_label, "remove_btn": remove_btn,
                 "connect_btn": connect_btn, "device": device_combo,
+                "apply_driver_info": apply_driver_info,
                 "is_moving_value": is_moving_value, "is_settling_value": is_settling_value,
                 "max_increment_value": max_increment_value, "max_step_value": max_step_value,
                 "position_value": position_value, "target_position": target_position,
@@ -1352,7 +1467,20 @@ class AppWindow:
                 return
             panel["adapter"] = adapter
             self._window.statusBar().showMessage(f"Connected to {slot_label} {device_name!r}.", 4000)
+            import asyncio
+            try:
+                panel["apply_driver_info"](asyncio.run(adapter.get_driver_info()))
+            except Exception:
+                logger.exception("Could not read driver info from connected %s", slot_label)
             _refresh_panel_status(panel)
+
+        def _lookup_panel_driver_info(panel: dict) -> None:
+            """Show the driver of the device just picked in *panel*, without connecting it."""
+            from galileo.core.devices import DeviceCategory
+            panel["apply_driver_info"](self._lookup_driver_info(
+                DeviceCategory.FOCUSER, driver_combo.currentText(), server_edit.text().strip(),
+                port_spin.value(), panel["device"].currentText().strip(),
+            ))
 
         def _connect_clicked(panel: dict) -> None:
             device_name = panel["device"].currentText().strip()
@@ -1397,6 +1525,7 @@ class AppWindow:
             if panel["remove_btn"] is not None:
                 panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
             panel["connect_btn"].clicked.connect(lambda: _connect_clicked(panel))
+            panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             panel["move_btn"].clicked.connect(lambda: _move_clicked(panel))
             panel["temp_comp_check"].toggled.connect(lambda checked: _temp_comp_toggled(panel, checked))
             return panel
@@ -1511,6 +1640,7 @@ class AppWindow:
             combo.blockSignals(False)
             panel["adapter"] = None
             _apply_status(panel, {})
+            panel["apply_driver_info"](None)  # refilled on connect / device pick
 
         def reload_page() -> None:
             from galileo.observatory import get_device_config, list_device_config_slots
@@ -2257,6 +2387,9 @@ class AppWindow:
         device_row.addWidget(connect_btn)
         layout.addLayout(device_row)
 
+        driver_info_row, apply_driver_info = self._build_driver_info_row()
+        layout.addLayout(driver_info_row)
+
         # --- controls (left) + derotation target (right) ----------------
         def _heading(text: str) -> "QLabel":
             label = QLabel(text)
@@ -2552,6 +2685,8 @@ class AppWindow:
 
         def _apply_status(status: dict) -> None:
             connected = bool(status)
+            if connected:  # an empty status is "not connected": keep what a device pick looked up
+                apply_driver_info(status)
             derotating = state["derotator"] is not None
             for widget in device_controls:
                 locked = derotating and widget in (goto_spin, goto_btn, zero_btn)
@@ -2739,6 +2874,16 @@ class AppWindow:
 
         connect_btn.clicked.connect(_connect_clicked)
 
+        def _device_picked() -> None:
+            """Show the driver of the device just picked, without connecting it."""
+            from galileo.core.devices import DeviceCategory
+            apply_driver_info(self._lookup_driver_info(
+                DeviceCategory.ROTATOR, driver_combo.currentText(), server_edit.text().strip(),
+                port_spin.value(), device_combo.currentText().strip(),
+            ))
+
+        device_combo.activated.connect(lambda _index: _device_picked())
+
         def run_scan() -> None:
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
@@ -2854,6 +2999,8 @@ class AppWindow:
                 server_edit.blockSignals(False)
                 port_spin.blockSignals(False)
                 device_combo.blockSignals(False)
+
+            apply_driver_info(None)  # refilled on connect / device pick
 
             # Site for the derotation maths comes from the selected Observatory.
             if self._current_pier is not None:
@@ -3497,6 +3644,7 @@ class AppWindow:
                 logger.exception("Could not save optical tubes for Pier %r", self._current_pier.name)
                 return
             logger.info("Saved %d optical tube(s) for Pier %r.", len(panels), self._current_pier.name)
+            self._refresh_optics_combo()  # the top-bar selector lists what was just saved
             self._window.statusBar().showMessage(
                 f"Saved optics for Pier {self._current_pier.name!r}.", 4000
             )
@@ -3592,6 +3740,9 @@ class AppWindow:
 
         layout.addWidget(table)
 
+        driver_info_row, apply_driver_info = self._build_driver_info_row()
+        layout.addLayout(driver_info_row)
+
         results = QListWidget()
         layout.addWidget(results, 1)
 
@@ -3604,11 +3755,13 @@ class AppWindow:
             "port": port_spin,
             "results": results,
             "selected_device": None,
+            "apply_driver_info": apply_driver_info,
         }
 
         def run_scan() -> None:
             results.clear()
             page_state["selected_device"] = None
+            apply_driver_info(None)
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
             driver = driver_combo.currentText()
@@ -3641,6 +3794,10 @@ class AppWindow:
             # "No devices found" / "Scan failed" info rows above.
             if item.data(Qt.UserRole):
                 page_state["selected_device"] = item.text()
+                apply_driver_info(self._lookup_driver_info(
+                    _CATEGORY_ENUM[cat_id], driver_combo.currentText(),
+                    server_edit.text().strip(), port_spin.value(), item.text(),
+                ))
 
         results.itemClicked.connect(_on_result_clicked)
 
@@ -3683,6 +3840,11 @@ class AppWindow:
                 cfg = get_device_config(self._current_pier, cat_id)
             except Exception:
                 logger.exception("Could not load saved device config for %s", cat_id)
+
+        # Not looked up here: a saved device may be unreachable, and blocking
+        # the Pier switch on a network timeout per page isn't worth a label.
+        # It fills in when the device is next picked from a scan.
+        state["apply_driver_info"](None)
 
         driver_combo.blockSignals(True)
         server_edit.blockSignals(True)
@@ -3761,6 +3923,7 @@ class AppWindow:
             autoconnect = state.get("autoconnect")
             if autoconnect is not None:
                 autoconnect()
+        self._refresh_optics_combo()
         self._refresh_camera_combo()
 
     def _connect_device_adapter(self, category, driver: str, server: str, port: int, device_name: str):
@@ -3771,21 +3934,69 @@ class AppWindow:
         and status polling."""
         import asyncio
         try:
-            if driver == "INDI":
-                from galileo.adapters.indi import get_adapter_class
-                adapter = get_adapter_class(category)(host=server, port=port, device_name=device_name)
-            else:
-                from galileo.adapters.alpaca import get_adapter_class
-                kwargs = {}
-                device_number = _parse_alpaca_device_number(device_name)
-                if device_number is not None:
-                    kwargs["device_number"] = device_number
-                adapter = get_adapter_class(category)(host=server, port=port, **kwargs)
+            adapter = self._make_adapter(category, driver, server, port, device_name)
             asyncio.run(adapter.connect())
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)
             return None
         return adapter
+
+    @staticmethod
+    def _make_adapter(category, driver: str, server: str, port: int, device_name: str):
+        """Instantiate (without connecting) the INDI or Alpaca backend for one
+        scanned device. *device_name* is the scan-result label: an INDI device
+        name, or an Alpaca ``"Name (#N)"`` label carrying the device number."""
+        if driver == "INDI":
+            from galileo.adapters.indi import get_adapter_class
+            return get_adapter_class(category)(host=server, port=port, device_name=device_name)
+        from galileo.adapters.alpaca import get_adapter_class
+        kwargs = {}
+        device_number = _parse_alpaca_device_number(device_name)
+        if device_number is not None:
+            kwargs["device_number"] = device_number
+        return get_adapter_class(category)(host=server, port=port, **kwargs)
+
+    def _lookup_driver_info(self, category, driver: str, server: str, port: int, device_name: str) -> dict:
+        """Read one device's driver name/version *without connecting it* (see
+        ``DeviceBackend.get_driver_info``), for the Equipment pages' "Driver
+        info" row as soon as a device is picked. Returns ``{}`` if no device is
+        chosen or the lookup fails (logged; the row then shows a dash)."""
+        if not device_name:
+            return {}
+        import asyncio
+        try:
+            adapter = self._make_adapter(category, driver, server or "localhost", port, device_name)
+            return asyncio.run(adapter.get_driver_info()) or {}
+        except Exception:
+            logger.exception("Could not read driver info for %r at %s:%s", device_name, server, port)
+            return {}
+
+    @staticmethod
+    def _build_driver_info_row() -> tuple:
+        """The "Driver info" / "Driver version" pair every Equipment page
+        shows (laid out as on the Filter Wheel page). Returns ``(layout,
+        apply)`` where ``apply(info)`` fills it from a ``get_driver_info()``
+        dict — a dash for anything missing, or for ``None``/``{}`` when
+        nothing is known yet."""
+        from PySide6.QtWidgets import QHBoxLayout, QFormLayout, QLabel
+
+        row = QHBoxLayout()
+        info_form = QFormLayout()
+        info_value = QLabel("—")
+        info_form.addRow("Driver info", info_value)
+        row.addLayout(info_form)
+        version_form = QFormLayout()
+        version_value = QLabel("—")
+        version_form.addRow("Driver version", version_value)
+        row.addLayout(version_form)
+        row.addStretch(1)
+
+        def apply(info: "dict | None") -> None:
+            info = info or {}
+            info_value.setText(info.get("driver_info") or "—")
+            version_value.setText(info.get("driver_version") or "—")
+
+        return row, apply
 
     def _connect_camera_device(self, slot_label: str, driver: str, server: str, port: int, device_name: str) -> None:
         """Connect one camera device — shared by the Camera page's Primary

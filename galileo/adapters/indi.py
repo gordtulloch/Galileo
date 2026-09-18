@@ -267,13 +267,42 @@ class IndiAdapter(DeviceBackend):
         found = self._require(prop)
         self._c().send_switch(self.device_name, prop, {n: n == element for n in found.elements})
 
-    def _driver_info(self) -> dict[str, "str | None"]:
+    def _driver_info(self, client: "ic.IndiClient | None" = None) -> dict[str, "str | None"]:
+        client = client or self._client
+
+        def txt(element: str) -> "str | None":
+            return client.get_text(self.device_name, "DRIVER_INFO", element) if client else None
+
         return {
             "name": self.device_name or None,
-            "description": self._txt("DRIVER_INFO", "DRIVER_EXEC"),
-            "driver_info": self._txt("DRIVER_INFO", "DRIVER_NAME"),
-            "driver_version": self._txt("DRIVER_INFO", "DRIVER_VERSION"),
+            "description": txt("DRIVER_EXEC"),
+            "driver_info": txt("DRIVER_NAME"),
+            "driver_version": txt("DRIVER_VERSION"),
         }
+
+    async def get_driver_info(self) -> dict[str, "str | None"]:
+        """The device's ``DRIVER_INFO`` property. A driver defines it as soon
+        as the server knows the device, before anything connects it, so when
+        this adapter isn't connected it borrows the server connection just
+        long enough to read it — without switching the device on."""
+        if self._client is not None and self._client.alive:
+            return self._driver_info()
+        if not self.device_name:
+            return {}
+        return await asyncio.to_thread(self._read_driver_info_sync)
+
+    def _read_driver_info_sync(self) -> dict[str, "str | None"]:
+        client = ic.acquire_client(self.host, self.port)
+        try:
+            if self.device_name not in client.device_names():
+                raise DeviceConnectionError(
+                    f"INDI server {self.host}:{self.port} has no device named {self.device_name!r} "
+                    f"(available: {', '.join(client.device_names()) or 'none'})."
+                )
+            client.wait_property(self.device_name, "DRIVER_INFO", 10.0)
+            return self._driver_info(client)
+        finally:
+            ic.release_client(client)
 
     async def _wait_not_busy(self, prop: str, timeout: float, what: str) -> None:
         """Wait for a commanded operation (property state Busy) to finish."""

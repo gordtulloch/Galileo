@@ -25,6 +25,23 @@ def test_tc_ui_010_light_and_dark_theme():
     assert mgr.current_theme == theme_mod.Theme.LIGHT
 
 
+@pytest.mark.requirement("TC-UI-010")
+@pytest.mark.priority("P2")
+def test_tc_ui_010_stylesheet_font_sizes_are_in_points_not_pixels():
+    """UI-010: Themes size fonts in points — a pixel-only font reports pointSize() == -1, which Qt 6's
+    Windows 11 style then feeds to QFont::setPointSize when it builds a combo-box popup, printing
+    "QFont::setPointSize: Point size <= 0 (-1)" to the console."""
+    import re
+
+    theme_mod = pytest.importorskip("galileo.ui.theme")
+    mgr = theme_mod.ThemeManager()
+    for theme in (theme_mod.Theme.DARK, theme_mod.Theme.LIGHT):
+        mgr.set_theme(theme)
+        sheet = mgr.stylesheet()
+        assert re.search(r"font-size:\s*[\d.]+pt", sheet), "expected the theme to size fonts in points"
+        assert not re.search(r"font-size:\s*[\d.]+px", sheet)
+
+
 # ---------------------------------------------------------------------------
 # TC-UI-020
 # ---------------------------------------------------------------------------

@@ -77,6 +77,20 @@ class DeviceBackend(ABC):
     async def set_property(self, name: str, value: object) -> None:
         """Set a raw device property by name."""
 
+    async def get_driver_info(self) -> dict[str, "str | None"]:
+        """Identify the driver behind this device, for the Equipment pages'
+        "Driver info" / "Driver version" display.
+
+        Returns ``name``, ``description``, ``driver_info`` and
+        ``driver_version`` (each ``None`` if the driver doesn't report it).
+        Both real transports allow this *before* the device is connected
+        (ASCOM's ``DriverInfo``/``DriverVersion`` and INDI's ``DRIVER_INFO``
+        are readable while disconnected), so a page can show it as soon as
+        a device is picked from a scan. Backends that cannot report driver
+        details return an empty dict.
+        """
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # Device pool

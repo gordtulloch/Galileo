@@ -181,3 +181,70 @@ def test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column(tmp_path
         assert (tube.name, tube.focal_length_mm) == ("", 500.0)
     finally:
         db.close()
+
+
+def _open_section(window, text):
+    """Click a primary-sidebar button, as a user switching tabs would (long labels wrap onto two lines)."""
+    sidebar = next(c for c in window._nav_columns if c.objectName() == "Sidebar")
+    buttons = sidebar.findChildren(QtWidgets.QToolButton)
+    next(b for b in buttons if " ".join(b.text().split()) == text).click()
+
+
+def _optics_selector_shown(window):
+    return not window._optics_combo.isHidden() and not window._optics_label.isHidden()
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_tc_prof_110_optics_selector_only_on_framing_and_imaging(window):
+    """PROF-110: the top-bar Optics selector is shown on Framing and Imaging, and nowhere else."""
+    shown = {}
+    for section in ("Equipment", "Sky Atlas", "Framing", "Imaging", "Sequence"):
+        _open_section(window, section)
+        shown[section] = _optics_selector_shown(window)
+    assert shown == {
+        "Equipment": False, "Sky Atlas": False, "Framing": True, "Imaging": True, "Sequence": False,
+    }
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window):
+    """PROF-110: the selector lists the Pier's tubes (named, or numbered if unnamed) and the pick is the active tube."""
+    save_optical_tubes(window.pier, [
+        {"name": "Newt 8in", "focal_length_mm": 1000, "aperture_mm": 200},
+        {"focal_length_mm": 400},
+    ])
+    _open_section(window, "Imaging")
+    combo = window._optics_combo
+    assert [combo.itemText(i) for i in range(combo.count())] == ["Newt 8in — 1000 mm f/5.0", "Optical Tube 2"]
+    assert combo.isEnabled()
+    assert window.active_optical_tube().name == "Newt 8in"
+
+    combo.setCurrentIndex(1)
+    combo.activated.emit(1)
+    assert window.active_optical_tube().focal_length_mm == 400
+    _open_section(window, "Framing")  # the choice survives a tab switch
+    assert combo.currentIndex() == 1
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_tc_prof_110_selector_is_disabled_when_no_tubes_are_defined(window):
+    """PROF-110: with no tubes, the selector stays visible but disabled and there is no active tube."""
+    _open_section(window, "Framing")
+    assert _optics_selector_shown(window)
+    assert not window._optics_combo.isEnabled()
+    assert window.active_optical_tube() is None
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_tc_prof_110_saving_optics_refreshes_the_selector(window):
+    """PROF-110: tubes saved on the Optics page appear in the selector without a restart."""
+    page = window._build_optics_page()
+    [e for e in page.findChildren(QtWidgets.QLineEdit) if e.placeholderText()][0].setText("Refractor")
+    _button(page, "Save").click()
+    combo = window._optics_combo
+    assert [combo.itemText(i) for i in range(combo.count())] == ["Refractor"]
+    assert combo.isEnabled()
