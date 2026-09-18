@@ -16,6 +16,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+from PySide6 import QtCore  # noqa: E402
 
 from galileo.observatory import (
     create_observatory,
@@ -51,7 +52,12 @@ def window(tmp_path, monkeypatch):
     win.pier = create_pier(win.observatory, "Pier A")
     win._current_pier = win.pier
     yield win
+    # Every AppWindow owns polling timers; left running they keep firing (and slowing
+    # every later test's event loop) after the window is gone.
+    for timer in win._window.findChildren(QtCore.QTimer):
+        timer.stop()
     win._window.close()
+    win._window.deleteLater()
     db.close()
 
 

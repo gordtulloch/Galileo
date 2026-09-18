@@ -390,3 +390,19 @@ def _bootstrap_sky_atlas_catalog(tmp_path_factory):
 
     # Point every SkyAtlas() instance at this catalog for the whole session.
     sky_atlas_mod._catalog_cache_path = lambda: catalog_path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_star_atlas_catalogs(tmp_path_factory):
+    """Keep the Planning page's star/constellation-boundary loading off the
+    network and out of the real per-user cache: every ``AppWindow`` builds that
+    page and starts a background load, so without this each test window would
+    fetch from VizieR. Loads fall back to the built-in offline star list and no
+    boundaries."""
+    import galileo.planning.star_atlas as star_atlas_mod
+
+    cache_dir = tmp_path_factory.mktemp("star_atlas_cache")
+    star_atlas_mod._cache_path = lambda: cache_dir / star_atlas_mod._CATALOG_FILENAME
+    star_atlas_mod._boundary_cache_path = lambda: cache_dir / star_atlas_mod._BOUNDARY_FILENAME
+    star_atlas_mod._fetch_bsc = lambda: None
+    star_atlas_mod._fetch_boundaries = lambda: None

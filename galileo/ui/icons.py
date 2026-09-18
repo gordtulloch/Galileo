@@ -75,6 +75,18 @@ def _sky_atlas(painter, r):
     painter.drawPolygon(QPolygonF(_star_points(c.x(), c.y(), r.width() * 0.5, r.width() * 0.21)))
 
 
+def _star_atlas(painter, r):
+    """A round sky chart: horizon circle with a few stars in it."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    c = r.center()
+    painter.drawEllipse(c, r.width() * 0.5, r.height() * 0.5)
+    painter.drawPolygon(QPolygonF(_star_points(c.x() - r.width() * 0.08, c.y() - r.height() * 0.04,
+                                               r.width() * 0.26, r.width() * 0.11)))
+    for dx, dy in ((0.24, -0.22), (0.2, 0.2), (-0.26, 0.22)):
+        painter.drawPoint(QPointF(c.x() + r.width() * dx, c.y() + r.height() * dy))
+
+
 def _framing(painter, r):
     from PySide6.QtCore import QLineF
     seg = r.width() * 0.32
@@ -305,6 +317,7 @@ def _safety_monitor(painter, r):
 
 ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
+    "star_atlas": _star_atlas,
     "sky_atlas": _sky_atlas,
     "framing": _framing,
     "flat_wizard": _flat_wizard,
