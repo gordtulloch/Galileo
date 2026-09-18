@@ -162,7 +162,7 @@ def _texts(page):
 @pytest.mark.requirement("TC-EQP-070")
 @pytest.mark.priority("MVP")
 @pytest.mark.parametrize("cat_id,label", [
-    ("guider", "Guider"), ("switch", "Switches"), ("flat_panel", "Flat Panel"),
+    ("switch", "Switches"), ("flat_panel", "Flat Panel"),
     ("weather", "Weather"), ("dome", "Dome"), ("safety_monitor", "Safety Monitor"),
 ])
 def test_tc_eqp_070_scan_pages_show_driver_info_for_the_picked_device(window, cat_id, label):
@@ -213,7 +213,7 @@ def test_tc_eqp_070_rotator_page_shows_driver_info_when_a_device_is_picked(windo
 @pytest.mark.priority("MVP")
 def test_tc_eqp_070_no_device_shows_dashes(window):
     """EQP-070: with no device chosen the row shows a dash rather than stale or blank text."""
-    page = window._build_device_config_page("guider", "Guider")
+    page = window._build_device_config_page("switch", "Switches")
     row = window._build_driver_info_row()[1]
     row({})  # applying nothing must not raise
     assert _texts(page).count("—") >= 2

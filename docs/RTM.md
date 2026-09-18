@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 253 requirements (239 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 256 requirements (242 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -267,6 +267,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `GUIDE-040` | P2 | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-040` |
 | `GUIDE-050` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-050` |
 | `GUIDE-060` | P2 | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-060` |
+| `GUIDE-070` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-070` |
+| `GUIDE-080` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-080` |
+| `GUIDE-090` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-090` |
 
 ### `DOME` — Dome Control
 
@@ -486,7 +489,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FOC` | 8 | 5 | 3 | 0 |
 | `PLT` | 6 | 5 | 1 | 0 |
 | `MFLIP` | 4 | 0 | 4 | 0 |
-| `GUIDE` | 6 | 4 | 2 | 0 |
+| `GUIDE` | 9 | 7 | 2 | 0 |
 | `DOME` | 3 | 0 | 3 | 0 |
 | `SAFE` | 10 | 2 | 5 | 3 |
 | `HIST` | 4 | 0 | 3 | 1 |
@@ -507,4 +510,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **253** | **151** | **89** | **13** |
+| **Total** | **256** | **154** | **89** | **13** |

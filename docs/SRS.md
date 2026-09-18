@@ -340,6 +340,9 @@ Guiding is always Pier-scoped, never Observatory-scoped (contrast `DOME`/`SAFE`,
 | GUIDE-040 | The system shall surface the external guider's reported guide error (RMS) for display and session-history logging (traces to `HIST-010`). | P2 |
 | GUIDE-050 | The system shall treat a guiding-connection loss during a running sequence as a recoverable error per the sequencer's error-handling policy, not a silent stall. | MVP |
 | GUIDE-060 | The system shall connect each Pier within an Observatory to its own independent external-guider instance (e.g. a separate PHD2 process/instance per Pier), never sharing one guider connection across multiple Piers. | P2 |
+| GUIDE-070 | The Guider screen shall connect to the external guider by host and port alone (PHD2's event server; default port 4400) rather than by selecting a guiding device, save that host and port per Pier, and reconnect to a saved host when the Pier is loaded. A connection failure shall be reported on the screen, not raised. | MVP |
+| GUIDE-080 | The Guider screen shall display the external guider's live data: its state (idle/prep/run), the guide-star image, a guide graph of RA/Dec error, SNR and correction pulses over time, a mount-drift scatter plot with target rings, the calibration plot, guide statistics (latest delta, pulse length, RMS per axis and total, SNR, star mass/HFD), scope/lens information from the selected optical tube and the guider's reported pixel scale, and the guider's event log. | MVP |
+| GUIDE-090 | The Guider screen shall let the user connect/disconnect the guider's own equipment, loop exposures, start guiding (optionally recalibrating), stop, auto-select a star, dither, set the guide exposure, set the Dec guide mode and clear calibration, offering each control only when the guider can act on it and showing any command the guider rejects. | MVP |
 
 ### 4.14 `DOME` — Dome Control
 
@@ -577,7 +580,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | FOC | 8 | 5 | 3 | 0 |
 | PLT | 6 | 5 | 1 | 0 |
 | MFLIP | 4 | 0 | 4 | 0 |
-| GUIDE | 6 | 4 | 2 | 0 |
+| GUIDE | 9 | 7 | 2 | 0 |
 | DOME | 3 | 0 | 3 | 0 |
 | SAFE | 10 | 2 | 5 | 3 |
 | HIST | 4 | 0 | 3 | 1 |
@@ -598,7 +601,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **239** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **242** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

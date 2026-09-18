@@ -683,6 +683,8 @@ class AppWindow:
                 page_widget = self._build_filter_wheel_page()
             elif cat_id == "rotator":
                 page_widget = self._build_rotator_page()
+            elif cat_id == "guider":
+                page_widget = self._build_guider_page()
             elif cat_id == "optics":
                 page_widget = self._build_optics_page()
             else:
@@ -3675,6 +3677,17 @@ class AppWindow:
         self._device_pages["optics"] = {"reload": reload_page}
         reload_page()
 
+        return page
+
+    def _build_guider_page(self) -> "QWidget":
+        """Guider page: a live view onto PHD2 (GUIDE-070 … GUIDE-090) — see
+        ``galileo.ui.guider``. Unlike the other categories there is no device
+        to scan for; PHD2 is reached by host and port, and does its own
+        camera/mount handling."""
+        from galileo.ui.guider import GuiderPage
+        page = GuiderPage(self)
+        self._device_pages["guider"] = {"reload": page.reload, "autoconnect": page.autoconnect}
+        page.reload()
         return page
 
     def _build_device_config_page(self, cat_id: str, label: str) -> "QWidget":

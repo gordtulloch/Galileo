@@ -24,7 +24,8 @@ Two things motivate this project:
 - **Automated tests**: 244 passing (plus a handful of soak/hardware/installer-artifact tests that are intentionally skipped outside a real overnight/CI run) covering every SRS domain — see [Running the tests](#running-the-tests).
 - **What's working today**:
   - A dark-themed, N.I.N.A.-style shell — a primary icon sidebar (Equipment, Sky Atlas, Framing, Imaging, Sequence, Scheduler, Library, Variable Stars, Options) plus a context-sensitive second panel per section, a top-bar Observatory/Pier selector, and a status bar.
-  - **Equipment**: per-device-category (Camera, Mount, Filter Wheel, Focuser, Rotator, Guider, Switches, Flat Panel, Weather, Dome, Safety Monitor) Driver/Server/Port connection panels that do a real INDI or Alpaca scan against a live device — including Alpaca Management API discovery and `.local` mDNS hostname resolution (e.g. a Seestar's `seestar.local` bridge).
+  - **Guider**: connects to PHD2 by host and port and shows its live state — guide-star image, guide graph, drift and calibration plots, guide statistics and event log — with Loop/Guide/Stop/Dither/exposure controls.
+  - **Equipment**: per-device-category (Camera, Mount, Filter Wheel, Focuser, Rotator, Switches, Flat Panel, Weather, Dome, Safety Monitor) Driver/Server/Port connection panels that do a real INDI or Alpaca scan against a live device — including Alpaca Management API discovery and `.local` mDNS hostname resolution (e.g. a Seestar's `seestar.local` bridge).
   - **Observatory/Pier**: persisted master records (name, lat/long, timezone, physical address, owner for Observatories; name for Piers) saved to a local SQLite database via Peewee, selectable/creatable from the top bar, surviving restarts.
   - **Sky Atlas**: a real search-criteria panel wired to the catalog search/filter backend.
   - **Framing**: a real target/mosaic input panel wired to the FOV and mosaic-panel calculator.
