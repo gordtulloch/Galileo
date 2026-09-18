@@ -1,9 +1,34 @@
 """Shared fixtures and pytest configuration for the Galileo test suite."""
 
 import json
+import sys
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _dispose_qt_windows():
+    """Delete every top-level Qt window a test leaves behind.
+
+    A built ``AppWindow`` owns ~9 timers (per-page log refresh and device-status
+    polling), and closing a window doesn't delete it — so each UI test used to
+    leave its window, and those timers, ticking for the rest of the session.
+    The cost of servicing them grows faster than the number of windows (20 idle
+    windows burn ~70% of a core), so once enough UI tests had run, later tests
+    slowed to a crawl or appeared to hang. Only acts if a test imported Qt.
+    """
+    yield
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets is not None else None
+    if app is None:
+        return
+    from PySide6.QtCore import QEvent
+
+    for window in app.topLevelWidgets():
+        window.close()
+        window.deleteLater()
+    app.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 # ---------------------------------------------------------------------------

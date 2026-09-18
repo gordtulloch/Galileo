@@ -41,8 +41,8 @@ _DEFAULT_PORTS = {"Alpaca": 32323, "INDI": 7624}
 # (section_id, label, icon_name)
 PRIMARY_SECTIONS = [
     ("equipment", "Equipment", "equipment"),
-    ("star_atlas", "Planning", "star_atlas"),
-    ("sky_atlas", "Sky Atlas", "sky_atlas"),
+    ("star_atlas", "Star Atlas", "star_atlas"),
+    ("sky_atlas", "Planning", "sky_atlas"),
     ("framing", "Framing", "framing"),
     ("imaging", "Imaging", "imaging"),
     ("sequencer", "Sequence", "sequencer"),
@@ -4321,10 +4321,10 @@ class AppWindow:
 
         return page
 
-    # --- Planning page (Star Atlas planetarium) ------------------------------
+    # --- Star Atlas page (planetarium) ------------------------------------
 
     def _build_star_atlas_page(self) -> "QWidget":
-        """Planning page: a basic planetarium (``galileo.ui.star_atlas``) with
+        """Star Atlas page: a basic planetarium (``galileo.ui.star_atlas``) with
         the time, site and display controls in the left panel and the sky view
         filling the rest. The site follows the selected Pier's Observatory."""
         import calendar
@@ -4414,7 +4414,7 @@ class AppWindow:
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 20, 24, 20)
 
-        heading = QLabel("Planning")
+        heading = QLabel("Star Atlas")
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
@@ -4560,10 +4560,10 @@ class AppWindow:
         view.load_catalogs()
         return page
 
-    # --- Sky Atlas page (secondary panel = search criteria, not icons) ------
+    # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---
 
     def _build_sky_atlas_page(self) -> "QWidget":
-        """Sky Atlas page (SKY-010 … SKY-100): search criteria on the left, a
+        """Planning page — the catalog lookup formerly labelled Sky Atlas (SKY-010 … SKY-100): search criteria on the left, a
         results list plus a per-result details panel on the right — Type,
         Magnitude, Constellation, RA/Dec and a downloaded DSS sky-survey
         thumbnail image, matching what Obsy's target search was set up to
@@ -4618,7 +4618,7 @@ class AppWindow:
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 20, 24, 20)
 
-        heading = QLabel("Sky Atlas")
+        heading = QLabel("Planning")
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
@@ -4734,7 +4734,7 @@ class AppWindow:
             except Exception:
                 logger.exception("Sky Atlas search failed")
                 results.addItem("Search failed — see log for details.")
-                self._window.statusBar().showMessage("Sky Atlas search failed — see log.", 6000)
+                self._window.statusBar().showMessage("Planning search failed — see log.", 6000)
                 return
             finally:
                 QApplication.restoreOverrideCursor()
@@ -4852,7 +4852,7 @@ class AppWindow:
 
     def _build_criteria_panel(self, heading: str):
         """A fixed-width form panel used where N.I.N.A. shows search/input
-        criteria instead of a secondary icon column (Sky Atlas, Framing)."""
+        criteria instead of a secondary icon column (Planning, Framing)."""
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel
 
         panel = QWidget()

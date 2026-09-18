@@ -1,6 +1,6 @@
-"""Star Atlas planetarium (``galileo.planning.star_atlas``, ``galileo.ui.star_atlas``, the Planning page).
+"""Star Atlas planetarium (``galileo.planning.star_atlas``, ``galileo.ui.star_atlas``, the Star Atlas page).
 
-The Planning sidebar section shows a basic planetarium: the sky maths is plain
+The Star Atlas sidebar section shows a basic planetarium: the sky maths is plain
 numpy and is tested directly; the view and page are built offscreen. Catalog
 loading is patched to the built-in offline star list so no test touches the
 network. Requirement IDs are the SKYMAP ones the planetarium partly satisfies
@@ -301,7 +301,7 @@ def test_star_atlas_find_solar_system_body(view):
     assert view.find("no such thing") is None
 
 
-# --- the Planning page ----------------------------------------------------------
+# --- the Star Atlas page ----------------------------------------------------------
 
 @pytest.fixture
 def window(tmp_path, monkeypatch):
@@ -319,18 +319,19 @@ def window(tmp_path, monkeypatch):
 
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
-def test_planning_section_sits_above_sky_atlas():
-    """The Planning section (the Star Atlas planetarium) is listed directly above Sky Atlas."""
+def test_star_atlas_section_sits_above_planning():
+    """The Star Atlas section (the planetarium) is listed directly above Planning (the catalog lookup formerly labelled Sky Atlas)."""
     from galileo.ui.app_window import PRIMARY_SECTIONS
     ids = [s[0] for s in PRIMARY_SECTIONS]
     assert ids[ids.index("sky_atlas") - 1] == "star_atlas"
-    assert dict((s[0], s[1]) for s in PRIMARY_SECTIONS)["star_atlas"] == "Planning"
+    labels = {s[0]: s[1] for s in PRIMARY_SECTIONS}
+    assert labels["star_atlas"] == "Star Atlas" and labels["sky_atlas"] == "Planning"
 
 
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
-def test_planning_page_shows_the_sky_at_the_observatory_site(window):
-    """SKYMAP-010: the Planning page hosts the sky view, using the selected Pier's Observatory as its site."""
+def test_star_atlas_page_shows_the_sky_at_the_observatory_site(window):
+    """SKYMAP-010: the Star Atlas page hosts the sky view, using the selected Pier's Observatory as its site."""
     from galileo.observatory import create_observatory, create_pier
     from galileo.ui.star_atlas import StarAtlasView
     window._current_pier = create_pier(create_observatory("Dark Site", latitude=-33.9, longitude=151.2), "Pier A")
