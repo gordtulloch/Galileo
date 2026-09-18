@@ -22,6 +22,7 @@ from galileo.exceptions import DeviceConnectionError, DevicePropertyError
 from tests.indi_fake_server import IMAGE, FakeIndiServer
 
 CCD, MOUNT, WHEEL, FOCUSER = "CCD Simulator", "Telescope Simulator", "Filter Simulator", "Focuser Simulator"
+ROTATOR = "Rotator Simulator"
 
 
 @pytest.fixture
@@ -99,7 +100,7 @@ async def test_tc_eqp_040_scan_lists_devices_by_category(server):
     expected = {
         DeviceCategory.CAMERA: [CCD], DeviceCategory.MOUNT: [MOUNT],
         DeviceCategory.FILTER_WHEEL: [WHEEL], DeviceCategory.FOCUSER: [FOCUSER],
-        DeviceCategory.DOME: [], DeviceCategory.SAFETY_MONITOR: [],
+        DeviceCategory.ROTATOR: [ROTATOR], DeviceCategory.DOME: [], DeviceCategory.SAFETY_MONITOR: [],
     }
     for category, names in expected.items():
         adapter = indi.get_adapter_class(category)(host="127.0.0.1", port=server.port)
@@ -366,3 +367,77 @@ async def test_tc_eqp_foc_010_absolute_relative_moves_and_limits(server):
         await sent(server, FOCUSER, "REL_FOCUS_POSITION", {"FOCUS_RELATIVE_POSITION": "150"})
     finally:
         await focuser.disconnect()
+
+
+# --- rotator -----------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-ROT-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_rot_010_position_goto_reverse_and_sync(server):
+    """EQP-ROT-010: rotator position is read live; goto, reverse and set-as-zero use the standard INDI properties."""
+    rot = make(indi.IndiRotatorAdapter, server, ROTATOR)
+    await rot.connect()
+    try:
+        status = await rot.get_status()
+        assert status["position"] == status["mechanical_position"] == 10.0
+        assert status["reverse"] is False and status["can_sync"] is True and status["max_angle"] == 360.0
+
+        await rot.move_to_angle(158.29)
+        await sent(server, ROTATOR, "ABS_ROTATOR_ANGLE", {"ANGLE": "158.29"})
+
+        async def _arrived():
+            s = await rot.get_status()
+            return s if s["position"] == 158.29 and not s["is_moving"] else None
+
+        await eventually(_arrived)  # the fake reports Busy briefly, then the new angle
+
+        await rot.set_reverse(True)
+        await sent(server, ROTATOR, "ROTATOR_REVERSE", {"INDI_ENABLED": "On", "INDI_DISABLED": "Off"})
+        await rot.sync_position(0.0)
+        await sent(server, ROTATOR, "SYNC_ROTATOR_ANGLE", {"ANGLE": "0"})
+        await rot.halt()
+        await sent(server, ROTATOR, "ROTATOR_ABORT_MOTION")
+    finally:
+        await rot.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-ROT-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_rot_010_backlash_unsupported_is_reported(server):
+    """EQP-ROT-010: a driver without backlash properties (like the INDI Rotator Simulator) says so instead of failing silently."""
+    rot = make(indi.IndiRotatorAdapter, server, ROTATOR)
+    await rot.connect()
+    try:
+        assert (await rot.get_status())["backlash_supported"] is False
+        with pytest.raises(DevicePropertyError, match="ROTATOR_BACKLASH_STEPS"):
+            await rot.set_backlash(2.0)
+    finally:
+        await rot.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-ROT-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_rot_010_alpaca_rotator_status_and_commands():
+    """EQP-ROT-010: the Alpaca rotator reads IRotatorV3 Position/MechanicalPosition and has no backlash."""
+    from unittest.mock import AsyncMock
+
+    from galileo.adapters import alpaca
+
+    rot = alpaca.AlpacaRotatorAdapter(host="127.0.0.1", port=11111)
+    values = {"name": "Rot", "description": "d", "driverinfo": "i", "driverversion": "1",
+              "position": 45.5, "mechanicalposition": 12.25, "ismoving": False, "reverse": True}
+    rot._get = AsyncMock(side_effect=lambda attr: values[attr])
+    rot._put = AsyncMock()
+
+    status = await rot.get_status()
+    assert (status["position"], status["mechanical_position"], status["reverse"]) == (45.5, 12.25, True)
+    assert status["backlash_supported"] is False and rot.sky_angle == 45.5 and rot.mechanical_angle == 12.25
+
+    await rot.sync_position(0.0)
+    rot._put.assert_awaited_with("sync", Position=0.0)
+    await rot.set_reverse(False)
+    rot._put.assert_awaited_with("reverse", Reverse=False)
+    await rot.halt()
+    rot._put.assert_awaited_with("halt")
+    with pytest.raises(DevicePropertyError, match="backlash"):
+        await rot.set_backlash(1.0)

@@ -374,6 +374,13 @@ class IndiClient:
         with self._cond:
             return sorted({dev for dev, _ in self._props})
 
+    def device_properties(self, device: str) -> list[IndiProperty]:
+        """Every property one device currently defines, sorted by group then
+        name — for discovery logging of what a driver actually offers."""
+        with self._cond:
+            props = [p for (dev, _), p in self._props.items() if dev == device]
+        return sorted(props, key=lambda p: (p.group, p.name))
+
     def device_interface(self, device: str) -> int:
         text = self.get_text(device, "DRIVER_INFO", "DRIVER_INTERFACE")
         try:

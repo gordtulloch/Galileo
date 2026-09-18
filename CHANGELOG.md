@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Device discovery logging at DEBUG level: on connect, Alpaca adapters now log the driver's `SupportedActions` (the device-specific extras a driver exposes beyond the standard ASCOM interface), and INDI adapters log every property the driver defines (group, name, type, permission, state, elements). This makes it possible to see from the log alone what a given driver offers versus what Galileo's adapter expects, without attaching a separate INDI/Alpaca client. Queries are diagnostic only — a driver that doesn't implement `SupportedActions` never fails the connect. Adds `IndiClient.device_properties()` to support this.
 - `CLAUDE.md` guidance file documenting the codebase's architecture, requirement-traceability chain, test conventions, and module map for AI-assisted development.
 - `requirements.txt` / `requirements-dev.txt`, mirroring `pyproject.toml`'s dependency groups for environments not using `pip install -e .`.
 - `run.sh` / `run.ps1` launch scripts that locate the project's `.venv` (or fall back to `python`/`python3` on `PATH`) and start the app from the repository root regardless of caller working directory.
@@ -55,6 +56,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Disconnecting leaves a device connected if another client (e.g. Ekos/KStars) had already connected it.
   - Driver warnings/errors appear in the log pane; routine driver chatter is kept out of it.
 - `tests/indi_fake_server.py` (a loopback INDI server speaking the real wire protocol) and `tests/test_indi_adapter.py` (17 tests) covering discovery, connect/disconnect, exposure download, mount/filter-wheel/focuser control and error paths end to end.
+- Completed user saves are now logged at INFO (and so appear in the on-screen log pane): each Equipment page's Save button (camera, focuser, mount, filter wheel, and the generic device pages) logs the Pier, driver, server:port and selected device(s), and the Imaging page's Save Frame logs the file path. Previously these only flashed a 4-second status-bar message, leaving no record in the log.
+- Rotator page (Equipment → Rotator) rebuilt after the reference screen `assets/samples/rot.png`, keeping the Driver/Server/Port/Scan and Device/Connect line every other Equipment page has, with the Save button and log pane below:
+  - Live position readout showing both mechanical and sky angle (`EQP-ROT-010`), a Goto box (0–359.99°), a Reverse checkbox, "Set Current Position as Zero", a Backlash slider, and a derotation-rate correction slider (−100% to +100%), all disabled until a rotator is connected. The backlash slider is disabled with an explanation when the driver has no backlash setting (ASCOM rotators never do; neither does the INDI Rotator Simulator).
+  - Derotation section: date and UTC clock, site latitude/longitude (filled from the selected Observatory), a target RA/Dec entered by hand or synced from the newest FITS file in a chosen folder, the resulting Altitude/Azimuth, and the field rotation rate in degrees per minute. Start/Stop Derotation then steps the rotator at that rate, only issuing a move once it has drifted 0.05°; Goto and Set-as-Zero are locked while it runs.
+- `galileo/derotation.py`: the UI-free logic behind derotation — RA/Dec to Alt/Az, the alt-az field rotation rate, the move accumulator, and the FITS-header target source. Not yet in the SRS/RTM; documented as SDD §4.26.
+- Rotator adapters (INDI and Alpaca) gained `get_status()`, `halt()`, `set_reverse()`, `sync_position()` and `set_backlash()`, checked against the property names of the INDI Rotator Simulator on a StellarMate (`SYNC_ROTATOR_ANGLE`, `ROTATOR_REVERSE`, `ROTATOR_ABORT_MOTION`).
+- Tests: `tests/test_derotation.py` (the maths and FITS source), rotator cases in `tests/test_indi_adapter.py` (with a rotator added to the fake INDI server), and `tests/test_rotator_page.py`, the suite's first UI tests, which build the page offscreen and drive it with a fake rotator.
 
 ### Changed
 

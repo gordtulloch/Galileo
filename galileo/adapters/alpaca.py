@@ -350,6 +350,25 @@ class AlpacaAdapter(DeviceBackend):
     async def connect(self) -> None:
         await self._put("connected", Connected=True)
         self._connected = True
+        await self._log_supported_actions()
+
+    async def _log_supported_actions(self) -> None:
+        """Log the driver's ``SupportedActions`` (device-specific extras
+        callable via ``Action``) at DEBUG. Purely diagnostic, so a driver
+        that doesn't implement it, or a failed query, never fails connect."""
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        try:
+            actions = await self._get("supportedactions")
+        except Exception as exc:
+            logger.debug("Alpaca %s at %s: could not read SupportedActions: %s",
+                         self.device_type, self.base_url, exc)
+            return
+        if actions:
+            logger.debug("Alpaca %s at %s SupportedActions (%d): %s",
+                         self.device_type, self.base_url, len(actions), ", ".join(map(str, actions)))
+        else:
+            logger.debug("Alpaca %s at %s reports no SupportedActions", self.device_type, self.base_url)
 
     async def disconnect(self) -> None:
         await self._put("connected", Connected=False)
@@ -773,6 +792,47 @@ class AlpacaRotatorAdapter(AlpacaAdapter):
     async def move_to_angle(self, angle: float) -> None:
         await self._put("moveabsolute", Position=angle)
         self.mechanical_angle = angle
+
+    async def halt(self) -> None:
+        await self._put("halt")
+
+    async def set_reverse(self, reverse: bool) -> None:
+        await self._put("reverse", Reverse=reverse)
+
+    async def sync_position(self, angle: float) -> None:
+        """``IRotatorV3.Sync``: declare the current sky position to be *angle*
+        (``sync_position(0)`` = "set current position as zero")."""
+        await self._put("sync", Position=angle)
+        self.sky_angle = angle
+
+    async def set_backlash(self, steps: float) -> None:
+        raise DevicePropertyError("ASCOM Alpaca's IRotatorV3 interface has no backlash setting.")
+
+    async def get_status(self) -> dict:
+        """Live status from the standard ASCOM ``IRotatorV3`` properties:
+        ``Position`` (sky, as synced) and ``MechanicalPosition`` (raw), plus
+        ``IsMoving`` and ``Reverse``. Each is read defensively — a driver
+        that doesn't implement one leaves that field ``None``."""
+        status: dict[str, Any] = {}
+        reads: list[tuple[str, str, Any]] = [
+            ("name", "name", str), ("description", "description", str),
+            ("driver_info", "driverinfo", str), ("driver_version", "driverversion", str),
+            ("position", "position", float), ("mechanical_position", "mechanicalposition", float),
+            ("is_moving", "ismoving", bool), ("reverse", "reverse", bool),
+        ]
+        for key, attribute, caster in reads:
+            try:
+                value = await self._get(attribute)
+                status[key] = caster(value) if value is not None else None
+            except Exception:
+                logger.exception("Could not read %s from %s", attribute, self.base_url)
+                status[key] = None
+        status.update(backlash=None, backlash_supported=False, can_sync=True, max_angle=360.0)
+        if status["position"] is not None:
+            self.sky_angle = status["position"]
+        if status["mechanical_position"] is not None:
+            self.mechanical_angle = status["mechanical_position"]
+        return status
 
 
 class AlpacaDomeAdapter(AlpacaAdapter):

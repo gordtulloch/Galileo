@@ -137,7 +137,26 @@ class IndiAdapter(DeviceBackend):
         if not self.device_name:
             raise DeviceConnectionError("No INDI device selected — scan the server and pick a device first.")
         await asyncio.to_thread(self._connect_sync)
+        self._log_available_properties()
         await asyncio.to_thread(self._on_connected)
+
+    def _log_available_properties(self) -> None:
+        """Log every property the driver defines, at DEBUG, so what a given
+        device actually supports (vs. what Galileo's adapter expects) can be
+        diagnosed from the log without a separate INDI client."""
+        if not logger.isEnabledFor(logging.DEBUG) or self._client is None:
+            return
+        props = self._client.device_properties(self.device_name)
+        logger.debug(
+            "INDI %s %r (%s:%d) exposes %d properties:",
+            self.device_type, self.device_name, self.host, self.port, len(props),
+        )
+        for p in props:
+            elements = ", ".join(p.elements) or "-"
+            logger.debug(
+                "INDI %r property %s/%s [%s %s state=%s]: %s",
+                self.device_name, p.group or "-", p.name, p.kind, p.perm, p.state, elements,
+            )
 
     def _connect_sync(self) -> None:
         client = ic.acquire_client(self.host, self.port)
@@ -740,6 +759,53 @@ class IndiRotatorAdapter(IndiAdapter):
         self._log_interaction("move_to_angle", angle=angle)
         self._set_num("ABS_ROTATOR_ANGLE", {"ANGLE": angle})
         self.mechanical_angle = angle
+
+    async def halt(self) -> None:
+        self._log_interaction("halt")
+        self._set_sw("ROTATOR_ABORT_MOTION", {"ABORT": True})
+
+    async def set_reverse(self, reverse: bool) -> None:
+        self._log_interaction("set_reverse", reverse=reverse)
+        self._set_sw("ROTATOR_REVERSE", {"INDI_ENABLED": reverse, "INDI_DISABLED": not reverse})
+
+    async def sync_position(self, angle: float) -> None:
+        """Declare the rotator's current physical position to be *angle*
+        (``sync_position(0)`` = "set current position as zero")."""
+        self._log_interaction("sync_position", angle=angle)
+        prop = "SYNC_ROTATOR_ANGLE" if self._has("SYNC_ROTATOR_ANGLE") else "SYNC_ROTATOR"
+        self._set_num(prop, {"ANGLE": angle})
+        self.mechanical_angle = self.sky_angle = angle
+
+    async def set_backlash(self, steps: float) -> None:
+        """Set backlash compensation (a step count; ``0`` disables it). Only
+        drivers implementing ``INDI::RotatorInterface``'s backlash properties
+        have it — others raise ``DevicePropertyError``."""
+        self._log_interaction("set_backlash", steps=steps)
+        self._require("ROTATOR_BACKLASH_STEPS")
+        if self._has("ROTATOR_BACKLASH_TOGGLE"):
+            self._set_sw("ROTATOR_BACKLASH_TOGGLE", {"INDI_ENABLED": steps > 0, "INDI_DISABLED": steps <= 0})
+        self._set_num("ROTATOR_BACKLASH_STEPS", {"ROTATOR_BACKLASH_VALUE": steps})
+
+    async def get_status(self) -> dict:
+        """Live rotator status. INDI reports a single angle (moved with
+        ``ABS_ROTATOR_ANGLE``, redefined with a sync), so mechanical and sky
+        position are the same value here."""
+        angle = self._num("ABS_ROTATOR_ANGLE", "ANGLE")
+        if angle is not None:
+            self.mechanical_angle = self.sky_angle = angle
+        limit = self._client.get_property(self.device_name, "ABS_ROTATOR_ANGLE") if self._client else None
+        el = limit.elements.get("ANGLE") if limit else None
+        return {
+            **self._driver_info(),
+            "position": angle,
+            "mechanical_position": angle,
+            "is_moving": (self._state("ABS_ROTATOR_ANGLE") == ic.BUSY) if angle is not None else None,
+            "reverse": self._sw("ROTATOR_REVERSE", "INDI_ENABLED"),
+            "backlash": self._num("ROTATOR_BACKLASH_STEPS", "ROTATOR_BACKLASH_VALUE"),
+            "backlash_supported": self._has("ROTATOR_BACKLASH_STEPS"),
+            "can_sync": self._has("SYNC_ROTATOR_ANGLE") or self._has("SYNC_ROTATOR"),
+            "max_angle": el.max if el is not None else None,
+        }
 
 
 class IndiFlatPanelAdapter(IndiAdapter):

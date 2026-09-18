@@ -61,6 +61,7 @@ def blob_vec(dev: str, name: str) -> str:
 
 def _devices() -> dict[str, dict]:
     ccd, mnt, fw, foc = "CCD Simulator", "Telescope Simulator", "Filter Simulator", "Focuser Simulator"
+    rot = "Rotator Simulator"
 
     def base(dev: str, iface: int) -> list[str]:
         return [
@@ -103,6 +104,13 @@ def _devices() -> dict[str, dict]:
             text_vec(fw, "FILTER_NAME", {"FILTER_SLOT_NAME_1": "L", "FILTER_SLOT_NAME_2": "R", "FILTER_SLOT_NAME_3": "Ha"},
                      perm="rw"),
         ]},
+        # Property names as exposed by the real INDI Rotator Simulator driver.
+        rot: {"static": base(rot, 4096), "on_connect": [
+            num_vec(rot, "ABS_ROTATOR_ANGLE", {"ANGLE": (10.0, 0, 360)}),
+            num_vec(rot, "SYNC_ROTATOR_ANGLE", {"ANGLE": (0, 0, 360)}),
+            sw_vec(rot, "ROTATOR_REVERSE", {"INDI_ENABLED": False, "INDI_DISABLED": True}),
+            sw_vec(rot, "ROTATOR_ABORT_MOTION", {"ABORT": False}, rule="AtMostOne"),
+        ]},
         foc: {"static": base(foc, 8), "on_connect": [
             num_vec(foc, "ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": (5000, 0, 60000)}),
             num_vec(foc, "REL_FOCUS_POSITION", {"FOCUS_RELATIVE_POSITION": (0, 0, 2000)}),
@@ -117,7 +125,7 @@ class FakeIndiServer:
     as ``(tag, device, property, {element: text})`` for assertions."""
 
     # Properties whose changes show as Busy before Ok, like a real move.
-    _SLOW = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION"}
+    _SLOW = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "ABS_ROTATOR_ANGLE"}
 
     def __init__(self, preconnected: tuple[str, ...] = ()) -> None:
         self.devices = _devices()

@@ -365,6 +365,13 @@ Each module lists its responsibility, key design elements, external libraries, a
 - **Libraries:** `astroalign` (registration), `photutils` (aperture photometry — see ADR-003 for why this is not a SEP duplication), `pandas` (photometry tables), `matplotlib` (interactive transformation-outlier review, and finder-chart rendering), `paramiko` (SFTP).
 - **Satisfies:** `VST-AN-010`–`VST-AN-090`, `EXT-120`.
 
+### 4.26 `galileo.derotation` — Rotator Field Derotation
+
+- **Responsibility:** The domain logic behind the Rotator Equipment page's derotation section (layout reference: `assets/samples/rot.png`): converting a target's RA/Dec to Alt/Az for a site and time, the alt-az field rotation rate, and turning that rate into rotator move commands.
+- **Key design:** Pure Python with no Qt, INDI or Alpaca dependency; the page drives a device adapter with it. The rate is `Ω·cos(lat)·cos(az)/cos(alt)` (Ω = 0.25068°/min, clamped near the zenith where it diverges). Sidereal time is computed directly from the Julian date rather than through `astropy`'s Alt/Az frames, which can try to download IERS data at runtime. `Derotator` integrates the rate into a virtual angle and only requests a move once it has drifted a minimum step (default 0.05°) from the last commanded angle, so a rotator isn't commanded for every tiny increment. A target comes from typed RA/Dec, or the newest FITS file in a folder (solved WCS, then `OBJCTRA`/`OBJCTDEC`, then `RA`/`DEC`). The rotator adapters (`galileo.adapters.indi` / `.alpaca`) gained `get_status`, `halt`, `set_reverse`, `sync_position` and `set_backlash`; backlash exists only on INDI drivers implementing it (ASCOM's `IRotatorV3` has none, and the INDI Rotator Simulator lacks it), and reports `DevicePropertyError` otherwise. The Reverse setting also flips the derotation direction. The derotation direction sign has not been validated against a real alt-az rig.
+- **Libraries:** standard library plus `astropy.io.fits` for reading headers.
+- **Satisfies:** `EQP-ROT-010` (position display and move commands). Derotation itself has no requirement ID yet — it should be added to the SRS/RTM.
+
 ---
 
 ## 5. Data Design
