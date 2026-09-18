@@ -165,6 +165,7 @@ Refined against the KStars/EKOS "Optical Trains" model (Project Scope Document, 
 | PROF-070 | The system shall allow devices to be organized into a named "optical train" — an ordered chain from telescope/lens, through intermediate elements (reducer/flattener, filter wheel, rotator, off-axis guider), to the final imaging camera — rather than requiring each device to be configured independently. | MVP |
 | PROF-080 | The system shall support multiple concurrently defined optical trains within one equipment profile, each independently selectable by the imaging, sequencer, and framing modules. | MVP |
 | PROF-090 | The system shall automatically derive effective focal length and plate scale for framing (`FRAME-010`) and plate-solving (`PLT`) calculations from the active optical train's chained components, rather than requiring manual re-entry per setup. | MVP |
+| PROF-100 | The system shall allow one or more optical tubes to be defined per Pier, each with a name, focal length, aperture, optical system (Newtonian, Schmidt-Cassegrain, Mak-Cassegrain, Refractor, or Other), and image alignment (reversed and/or inverted), and shall allow any device already configured on that Pier to be associated with a tube. Optics is an Equipment-section category rather than a device category (`ARCH-010`): it supplies the telescope/lens end of the optical train in `PROF-070`. | MVP |
 
 ### 4.3a `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -290,6 +291,7 @@ Multi-night/multi-target job scheduling, distinct from `SEQ`/`SEQ-ADV`'s single-
 | CAL-030 | The system shall support dark-frame and bias-frame capture sequences with configurable exposure/count/binning matching a set of light-frame parameters. | MVP |
 | CAL-040 | The system shall integrate with a connected flat panel device to control brightness/cover as part of the flat-capture routine, where present. | MVP |
 | CAL-050 | The system shall abort and report the flat-capture routine if a target ADU level cannot be reached within configured exposure-time bounds. | P2 |
+| CAL-060 | The system shall present the flat-wizard workflow within the Imaging tab (`IMG`) rather than as a separate top-level navigation section. | MVP |
 
 ### 4.10 `FOC` — Autofocus
 
@@ -561,7 +563,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | ARCH | 8 | 6 | 2 | 0 |
 | OBS | 8 | 0 | 8 | 0 |
 | EQP (generic + device) | 25 | 17 | 8 | 0 |
-| PROF | 9 | 8 | 1 | 0 |
+| PROF | 10 | 9 | 1 | 0 |
 | IMG | 10 | 7 | 3 | 0 |
 | SEQ | 9 | 8 | 0 | 1 |
 | SEQ-ADV | 10 | 0 | 9 | 1 |
@@ -569,7 +571,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | FRAME | 6 | 0 | 5 | 1 |
 | SKYMAP | 6 | 3 | 3 | 0 |
 | SCHED | 10 | 8 | 2 | 0 |
-| CAL | 5 | 4 | 1 | 0 |
+| CAL | 6 | 5 | 1 | 0 |
 | FOC | 8 | 5 | 3 | 0 |
 | PLT | 6 | 5 | 1 | 0 |
 | MFLIP | 4 | 0 | 4 | 0 |
@@ -594,7 +596,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **235** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **237** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

@@ -1,4 +1,4 @@
-"""CAL — Calibration / Flat Wizard (TC-CAL-010 … TC-CAL-050)."""
+"""CAL — Calibration / Flat Wizard (TC-CAL-010 … TC-CAL-060)."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -127,3 +127,17 @@ async def test_tc_cal_050_abort_if_adu_unreachable(mock_indi_camera, cal_service
             target_adu=30000,
             max_exposure_s=60.0,
         )
+
+
+# ---------------------------------------------------------------------------
+# TC-CAL-060
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-CAL-060")
+@pytest.mark.priority("MVP")
+def test_tc_cal_060_flat_wizard_is_not_a_top_level_navigation_section():
+    """CAL-060: The flat-wizard workflow is presented within the Imaging tab, not as a separate top-level section."""
+    from galileo.ui.app_window import PRIMARY_SECTIONS
+    section_ids = [section[0] for section in PRIMARY_SECTIONS]
+    assert "flat_wizard" not in section_ids
+    assert "imaging" in section_ids

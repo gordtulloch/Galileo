@@ -197,8 +197,9 @@ Each module lists its responsibility, key design elements, external libraries, a
 
 - **Responsibility:** Persist and load named equipment configurations. Each profile is a **Pier**: one mount plus one or more **optical trains** — an ordered chain of device-port references from telescope/lens through reducer/flattener, filter wheel, rotator, and off-axis guider to the final camera — rather than a flat per-device settings list. This refines the data model described in earlier drafts of this document, adopted from the KStars/EKOS "Optical Trains" precedent (Project Scope Document, Section 6.6), because it is what makes automatic focal-length/plate-scale derivation (`PROF-090`) and clean multi-rig support (`PROF-080`, `SEQ-090`) possible without ad-hoc special-casing.
 - **Key design:** An `OpticalTrain` is an ordered list of `(DevicePort, role)` references; effective focal length and plate scale are computed by walking the train's optical elements rather than being separately configured, and are consumed directly by `galileo.planning.framing` (`FRAME-010`) and `galileo.platesolve`. A `Pier` wraps one `MountPort` plus its `OpticalTrain`s and owns the `DevicePool` slot (Section 4.1) it's keyed under. Profiles serialize to human-readable, schema-validated JSON files under a per-platform config directory; import/export is a file-copy of the same schema. The active-profile/active-train-selection model follows AstroLlama's `telescope_registry_tool.py` precedent (ADR-004, Section 2.7).
+- **Optical tube definitions (`PROF-100`):** the telescope/lens end of a train is defined on the Equipment section's Optics page, one panel per tube on the selected Pier: name, focal length (mm), aperture (mm), optical system (Newtonian / Schmidt-Cassegrain / Mak-Cassegrain / Refractor / Other), and image alignment as two independent flags, reversed (mirrored left-right) and inverted (flipped top-bottom), since a tube can be either, both, or neither. Optics is a UI/persistence concept only — it has no device port and does not appear in `DeviceCategory` (`ARCH-010`). Tubes persist as `OpticalTubeRecord` rows (`optical_tubes` table, Pier foreign key, ordered by position) in the project-wide Peewee database (ADR-002), alongside the per-Pier `DeviceConfigRecord` rows they reference. A tube's associated devices are stored as `"<category>:<slot>"` keys into those device-config rows rather than as foreign keys, because the device pages delete and recreate their rows on Save; an association whose device no longer exists degrades to a visible "not configured" entry instead of losing the tube. Columns added to an existing table after release are applied at `init_db` time (`_add_missing_columns`), since Peewee's `create_tables(safe=True)` never alters an existing table. Deriving plate scale from a tube (`PROF-090`) is not yet wired to these records.
 - **Libraries:** `pydantic` (schema validation/serialization).
-- **Satisfies:** `PROF-010`–`PROF-090`.
+- **Satisfies:** `PROF-010`–`PROF-100`.
 
 ### 4.4a `galileo.observatory` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -209,10 +210,10 @@ Each module lists its responsibility, key design elements, external libraries, a
 
 ### 4.5 `galileo.ui.imaging` — Imaging Tab
 
-- **Responsibility:** Live frame display, histogram, auto-stretch preview, per-frame statistics, star overlay, manual capture, panel layout.
+- **Responsibility:** Live frame display, histogram, auto-stretch preview, per-frame statistics, star overlay, manual capture, panel layout, and the entry point for the flat-wizard workflow (`CAL-060`) — the UI is hosted here rather than in its own primary-navigation section; the capture logic remains in `galileo.calibration` (Section 4.10).
 - **Key design:** Frame data is decoded off the UI thread (in the process pool for the auto-stretch/statistics computation) and handed to a Qt `QGraphicsView`-based renderer for pan/zoom; layout persistence uses Qt's `QDockWidget` state save/restore.
 - **Libraries:** `numpy` (pixel math), `astropy` (FITS decode), `SEP` (star detection for the HFR/star-count statistics, unified with the autofocus service per ADR-002), Qt Graphics View framework.
-- **Satisfies:** `IMG-010`–`IMG-100`.
+- **Satisfies:** `IMG-010`–`IMG-100`, `CAL-060`.
 
 ### 4.6 `galileo.sequencer.basic` — Sequencer (Basic)
 
@@ -257,7 +258,7 @@ Each module lists its responsibility, key design elements, external libraries, a
 
 - **Responsibility:** Automated flat/dark/bias *capture* routines during a live session, flat-panel integration, target-ADU convergence. Master-frame *creation* and *application* to light frames is a repository-time operation and lives in `galileo.library` (Section 4.23), not here — this module only produces the raw calibration exposures.
 - **Key design:** An iterative exposure-time (or brightness) search loop against the `CameraPort`/`FlatPanelPort`, with a bounded iteration count and explicit failure reporting rather than an unbounded retry loop. Captured calibration frames are handed off to `galileo.library` for session linking and master-frame creation.
-- **Satisfies:** `CAL-010`–`CAL-050`, `NFR-USE-020`.
+- **Satisfies:** `CAL-010`–`CAL-050`, `NFR-USE-020`. (`CAL-060`, the Imaging-tab placement of the flat wizard's UI, is satisfied by `galileo.ui.imaging`, Section 4.5; this module stays UI-free.)
 
 ### 4.11 `galileo.autofocus` — Autofocus Service
 

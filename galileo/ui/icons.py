@@ -250,6 +250,17 @@ def _guider(painter, r):
     painter.drawLine(QLineF(r.right(), c.y(), r.right() - r.width() * 0.2, c.y()))
 
 
+def _optics(painter, r):
+    from PySide6.QtCore import QLineF, QRectF
+    # A telescope tube seen from the side: barrel, dew-shield lip, and a focuser stub.
+    barrel = QRectF(r.left(), r.top() + r.height() * 0.3, r.width() * 0.8, r.height() * 0.4)
+    painter.drawRoundedRect(barrel, 2, 2)
+    painter.drawLine(QLineF(barrel.left(), barrel.top() - r.height() * 0.06, barrel.left(), barrel.bottom() + r.height() * 0.06))
+    painter.drawRect(QRectF(r.left() + r.width() * 0.8, r.top() + r.height() * 0.4, r.width() * 0.2, r.height() * 0.2))
+    painter.drawLine(QLineF(r.left() + r.width() * 0.3, barrel.bottom(), r.left() + r.width() * 0.15, r.bottom()))
+    painter.drawLine(QLineF(r.left() + r.width() * 0.3, barrel.bottom(), r.left() + r.width() * 0.45, r.bottom()))
+
+
 def _switch(painter, r):
     from PySide6.QtCore import QPointF, QRectF
     body = QRectF(r.left(), r.top() + r.height() * 0.28, r.width(), r.height() * 0.44)
@@ -311,6 +322,7 @@ ICONS: dict[str, DrawFn] = {
     "focuser": _focuser,
     "rotator": _rotator,
     "guider": _guider,
+    "optics": _optics,
     "switch": _switch,
     "flat_panel": _flat_panel,
     "weather": _weather,

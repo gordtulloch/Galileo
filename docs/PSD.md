@@ -88,7 +88,7 @@ One input among several (Sections 6.2–6.7 cover the others) to Galileo's scope
 - **Sequencer:** Legacy (basic) sequencer for straightforward target lists; Advanced Sequencer with nested instructions, loop conditions, and triggers, organized into reusable templates
 - **Sky Atlas:** 10,000+ deep-sky object catalog with filtering and altitude charting
 - **Framing Assistant:** sky-survey imagery overlay, field-of-view preview, mosaic planning, offline star-field mapping with constellation/coordinate grid overlays
-- **Flat Wizard:** automated flat-frame exposure/brightness calibration
+- **Flat Wizard:** automated flat-frame exposure/brightness calibration, presented within the Imaging tab rather than as its own top-level section
 - **Autofocus:** HFR-curve-fit-based automatic focus, triggerable on schedule/temperature/filter-change/HFR-drift conditions
 - **Plate Solving:** integration with external/local/online solvers for target centering and pointing verification
 - **Automated Meridian Flip**
@@ -206,7 +206,7 @@ Each domain below will decompose into individually numbered SRS requirements und
 |---|---|---|---|
 | `ARCH` | Protocol & Device Abstraction Layer | Unified device abstraction supporting INDI (native protocol, INDI server/client) and ASCOM Alpaca (REST/JSON, device discovery) as interchangeable backends per device; a device-capability model so UI adapts to what a connected device actually supports | MVP |
 | `EQP` | Equipment Control | Connect/configure/monitor: Camera, Mount/Telescope, Filter Wheel, Focuser, Rotator, Guider, Switch/Power, Flat Panel, Weather Device, Dome, Safety Monitor | MVP |
-| `PROF` | Equipment Profiles (Piers) | Save/load named equipment configurations, each a **Pier**: one mount plus one or more **optical trains** (ordered device chains from telescope/lens through reducer/rotator/filter wheel to camera — KStars/EKOS-informed, Section 6.6), not a flat device list; multi-rig support. Multiple Piers can be grouped into an `OBS` Observatory | MVP |
+| `PROF` | Equipment Profiles (Piers) | Save/load named equipment configurations, each a **Pier**: one mount plus one or more **optical trains** (ordered device chains from telescope/lens through reducer/rotator/filter wheel to camera — KStars/EKOS-informed, Section 6.6), not a flat device list; each Pier's optical tubes are defined on an Equipment "Optics" page (name, focal length, aperture, optical system, image alignment) with the Pier's other devices associated to them; multi-rig support. Multiple Piers can be grouped into an `OBS` Observatory | MVP |
 | `IMG` | Imaging Tab | Live capture, histogram display, auto-stretch preview, per-exposure statistics, star detection overlay | MVP |
 | `SEQ` | Sequencer — Basic | Linear multi-target sequence definition: exposure count/time/filter/binning, dynamic file-naming macros | MVP |
 | `SEQ-ADV` | Sequencer — Advanced | Nested instruction/condition/trigger model (e.g., loop-for-N, loop-until-time, wait-for-altitude, autofocus-on-trigger, meridian-flip-on-trigger); reusable templates; instruction set open to plugin extension | Phase 2 |

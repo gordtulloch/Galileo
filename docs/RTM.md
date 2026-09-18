@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 249 requirements (235 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 251 requirements (237 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -100,6 +100,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PROF-070` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-070` |
 | `PROF-080` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-080` |
 | `PROF-090` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-090` |
+| `PROF-100` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-100` |
 
 ### `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -219,6 +220,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-030` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-030` |
 | `CAL-040` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-040` |
 | `CAL-050` | P2 | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-050` |
+| `CAL-060` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-060` |
 
 ### `FOC` — Autofocus
 
@@ -469,7 +471,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EXT` | 14 | 10 | 3 | 1 |
 | `ARCH` | 8 | 6 | 2 | 0 |
 | `EQP` | 25 | 17 | 8 | 0 |
-| `PROF` | 9 | 8 | 1 | 0 |
+| `PROF` | 10 | 9 | 1 | 0 |
 | `OBS` | 8 | 0 | 8 | 0 |
 | `IMG` | 10 | 7 | 3 | 0 |
 | `SEQ` | 9 | 8 | 0 | 1 |
@@ -478,7 +480,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FRAME` | 6 | 0 | 5 | 1 |
 | `SKYMAP` | 6 | 3 | 3 | 0 |
 | `SCHED` | 10 | 8 | 2 | 0 |
-| `CAL` | 5 | 4 | 1 | 0 |
+| `CAL` | 6 | 5 | 1 | 0 |
 | `FOC` | 8 | 5 | 3 | 0 |
 | `PLT` | 6 | 5 | 1 | 0 |
 | `MFLIP` | 4 | 0 | 4 | 0 |
@@ -503,4 +505,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **249** | **147** | **89** | **13** |
+| **Total** | **251** | **149** | **89** | **13** |

@@ -43,9 +43,8 @@ PRIMARY_SECTIONS = [
     ("equipment", "Equipment", "equipment"),
     ("sky_atlas", "Sky Atlas", "sky_atlas"),
     ("framing", "Framing", "framing"),
-    ("flat_wizard", "Flat Wizard", "flat_wizard"),
-    ("sequencer", "Sequence", "sequencer"),
     ("imaging", "Imaging", "imaging"),
+    ("sequencer", "Sequence", "sequencer"),
     ("scheduler", "Scheduler", "scheduler"),
     ("library", "Library", "library"),
     ("variable_stars", "Variable Stars", "variable_stars"),
@@ -60,7 +59,8 @@ EQUIPMENT_CATEGORIES = [
     ("focuser", "Focuser", "focuser"),
     ("rotator", "Rotator", "rotator"),
     ("guider", "Guider", "guider"),
-    ("switch", "Switch", "switch"),
+    ("optics", "Optics", "optics"),
+    ("switch", "Switches", "switch"),
     ("flat_panel", "Flat Panel", "flat_panel"),
     ("weather", "Weather", "weather"),
     ("dome", "Dome", "dome"),
@@ -108,6 +108,20 @@ def _camera_backend_key_for_slot(slot: str) -> str:
     if slot.startswith("camera_"):
         return f"camera {slot.rsplit('_', 1)[1]}"
     return slot
+
+
+def _device_association_label(category: str, slot: str, device_name: "str | None") -> str:
+    """Display label for a saved device in the Optics page's "Associated"
+    list — e.g. ``Camera 2: ZWO ASI120MM`` — built from its category, slot
+    (see ``DeviceConfigRecord``) and the device name picked on its own page."""
+    category_label = next((label for cat_id, label, _ in EQUIPMENT_CATEGORIES if cat_id == category), category)
+    if slot == "primary":
+        name = category_label
+    elif slot.rsplit("_", 1)[-1].isdigit():
+        name = f"{category_label} {slot.rsplit('_', 1)[-1]}"
+    else:
+        name = f"{category_label} ({slot})"
+    return f"{name}: {device_name or 'no device selected'}"
 
 
 def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
@@ -586,6 +600,8 @@ class AppWindow:
                 page_widget = self._build_filter_wheel_page()
             elif cat_id == "rotator":
                 page_widget = self._build_rotator_page()
+            elif cat_id == "optics":
+                page_widget = self._build_optics_page()
             else:
                 page_widget = self._build_device_config_page(cat_id, label)
             device_pages[cat_id] = device_stack.addWidget(page_widget)
@@ -3235,6 +3251,284 @@ class AppWindow:
 
         return page
 
+    def _build_optics_page(self) -> "QWidget":
+        """Optics page (PROF-070): one panel per optical tube on the current
+        Pier — focal length, aperture, optical design, and image alignment
+        (reversed/inverted) — plus an "Associated" list of the Pier's other
+        configured devices (camera, guider, focuser, ...) that sit behind
+        that tube. A "+" next to the title adds another tube; the "+" next
+        to each tube's "Associated:" label picks from the devices already
+        saved on the other Equipment pages."""
+        from PySide6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel, QComboBox,
+            QDoubleSpinBox, QPushButton, QCheckBox, QScrollArea, QMessageBox, QInputDialog,
+            QLineEdit,
+        )
+        from galileo.library.models.optical_tube import OPTICAL_SYSTEMS
+
+        page = QWidget()
+        page.setObjectName("OpticsPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        heading_row = QHBoxLayout()
+        heading = QLabel("Optics")
+        heading.setObjectName("PageTitle")
+        heading_row.addWidget(heading)
+        add_tube_btn = QPushButton("+")
+        add_tube_btn.setObjectName("AccentButton")
+        add_tube_btn.setFixedWidth(28)
+        add_tube_btn.setToolTip("Add another optical tube.")
+        heading_row.addWidget(add_tube_btn)
+        heading_row.addStretch(1)
+        layout.addLayout(heading_row)
+
+        panels: list[dict] = []
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        panels_container = QWidget()
+        panels_layout = QVBoxLayout(panels_container)
+        panels_layout.setContentsMargins(0, 0, 0, 0)
+        panels_layout.setSpacing(10)
+        panels_layout.addStretch(1)
+        scroll_area.setWidget(panels_container)
+        layout.addWidget(scroll_area, 1)
+
+        def _device_labels() -> dict:
+            """``"<category>:<slot>"`` -> display label for every device saved on the current Pier."""
+            if self._current_pier is None:
+                return {}
+            from galileo.observatory import list_device_configs
+            try:
+                configs = list_device_configs(self._current_pier)
+            except Exception:
+                logger.exception("Could not load saved device configs for the Optics page")
+                return {}
+            return {
+                f"{c.category}:{c.slot}": _device_association_label(c.category, c.slot, c.device_name)
+                for c in configs
+            }
+
+        def _render_associations(panel: dict) -> None:
+            box = panel["assoc_layout"]
+            while box.count():
+                row = box.takeAt(0).layout()
+                while row is not None and row.count():
+                    widget = row.takeAt(0).widget()
+                    if widget is not None:
+                        widget.setParent(None)
+                        widget.deleteLater()
+            labels = _device_labels()
+            for key in panel["assoc_keys"]:
+                row = QHBoxLayout()
+                row.addWidget(QLabel(labels.get(key, f"{key} (not configured)")), 1)
+                remove = QPushButton("Remove")
+                remove.clicked.connect(lambda _c=False, k=key: _dissociate(panel, k))
+                row.addWidget(remove)
+                box.addLayout(row)
+
+        def _associate(panel: dict) -> None:
+            labels = _device_labels()
+            choices = {k: v for k, v in labels.items() if k not in panel["assoc_keys"]}
+            if not choices:
+                QMessageBox.information(
+                    self._window, "No devices to associate",
+                    "Save a device on one of the other Equipment pages first — every "
+                    "device saved on this Pier is already associated with this tube.",
+                )
+                return
+            picked, ok = QInputDialog.getItem(
+                self._window, "Associate device", "Device:", list(choices.values()), 0, False
+            )
+            if not ok:
+                return
+            key = next(k for k, v in choices.items() if v == picked)
+            panel["assoc_keys"].append(key)
+            _render_associations(panel)
+
+        def _dissociate(panel: dict, key: str) -> None:
+            if key in panel["assoc_keys"]:
+                panel["assoc_keys"].remove(key)
+                _render_associations(panel)
+
+        def _build_tube_panel(removable: bool) -> dict:
+            frame = QFrame()
+            frame.setObjectName("DeviceSlotPanel")
+            outer = QVBoxLayout(frame)
+
+            header = QHBoxLayout()
+            title_label = QLabel()
+            title_label.setObjectName("CriteriaHeading")
+            header.addWidget(title_label)
+            header.addStretch(1)
+            remove_btn = None
+            if removable:
+                remove_btn = QPushButton("Remove")
+                header.addWidget(remove_btn)
+            outer.addLayout(header)
+
+            form = QFormLayout()
+            outer.addLayout(form)
+
+            name_edit = QLineEdit()
+            name_edit.setPlaceholderText("e.g. Esprit 100ED")
+            name_edit.setMaxLength(60)
+            form.addRow("Name", name_edit)
+
+            focal = QDoubleSpinBox()
+            focal.setRange(0.0, 50000.0)
+            focal.setDecimals(1)
+            focal.setSuffix(" mm")
+            form.addRow("Focal Length", focal)
+
+            aperture = QDoubleSpinBox()
+            aperture.setRange(0.0, 5000.0)
+            aperture.setDecimals(1)
+            aperture.setSuffix(" mm")
+            form.addRow("Aperture", aperture)
+
+            system = QComboBox()
+            system.addItems(OPTICAL_SYSTEMS)
+            form.addRow("Optical System", system)
+
+            alignment_row = QHBoxLayout()
+            reversed_check = QCheckBox("Reversed")
+            reversed_check.setToolTip("The image is mirrored left-to-right (e.g. a refractor with a star diagonal).")
+            inverted_check = QCheckBox("Inverted")
+            inverted_check.setToolTip("The image is flipped top-to-bottom (e.g. a Newtonian).")
+            alignment_row.addWidget(reversed_check)
+            alignment_row.addWidget(inverted_check)
+            alignment_row.addStretch(1)
+            form.addRow("Image Alignment", alignment_row)
+
+            assoc_header = QHBoxLayout()
+            assoc_title = QLabel("Associated:")
+            assoc_title.setObjectName("CriteriaHeading")
+            assoc_header.addWidget(assoc_title)
+            associate_btn = QPushButton("+")
+            associate_btn.setObjectName("AccentButton")
+            associate_btn.setFixedWidth(28)
+            associate_btn.setToolTip("Associate a device already configured on this Pier with this tube.")
+            assoc_header.addWidget(associate_btn)
+            assoc_header.addStretch(1)
+            outer.addLayout(assoc_header)
+
+            assoc_layout = QVBoxLayout()
+            outer.addLayout(assoc_layout)
+
+            return {
+                "frame": frame, "title_label": title_label, "remove_btn": remove_btn,
+                "name": name_edit, "focal": focal, "aperture": aperture, "system": system,
+                "reversed": reversed_check, "inverted": inverted_check,
+                "associate_btn": associate_btn, "assoc_layout": assoc_layout, "assoc_keys": [],
+            }
+
+        def _renumber_panels() -> None:
+            for i, panel in enumerate(panels):
+                panel["title_label"].setText(f"Optical Tube {i + 1}")
+
+        def _remove_panel(panel: dict) -> None:
+            if panel not in panels or panel is panels[0]:
+                return
+            panels.remove(panel)
+            panel["frame"].setParent(None)
+            panel["frame"].deleteLater()
+            _renumber_panels()
+
+        def _add_panel() -> dict:
+            panel = _build_tube_panel(removable=len(panels) > 0)
+            panels.append(panel)
+            panels_layout.insertWidget(panels_layout.count() - 1, panel["frame"])
+            _renumber_panels()
+            if panel["remove_btn"] is not None:
+                panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
+            panel["associate_btn"].clicked.connect(lambda: _associate(panel))
+            return panel
+
+        def _set_panel_count(count: int) -> None:
+            count = max(count, 1)
+            while len(panels) < count:
+                _add_panel()
+            while len(panels) > count:
+                _remove_panel(panels[-1])
+
+        add_tube_btn.clicked.connect(_add_panel)
+
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        save_btn.setToolTip("Save every optical tube under the selected Observatory and Pier.")
+        save_row.addWidget(save_btn)
+        layout.addLayout(save_row)
+
+        log_heading = QLabel("Log")
+        log_heading.setObjectName("CriteriaHeading")
+        layout.addWidget(log_heading)
+        log_pane = self._build_log_pane()
+        self._log_panes.append(log_pane)
+        layout.addWidget(log_pane)
+
+        def save_optics() -> None:
+            if self._current_pier is None:
+                QMessageBox.warning(
+                    self._window, "No Pier selected",
+                    "Select (or create) an Observatory and Pier before saving equipment settings.",
+                )
+                return
+            from galileo.observatory import save_optical_tubes
+            try:
+                save_optical_tubes(self._current_pier, [
+                    {
+                        "name": p["name"].text().strip(),
+                        "focal_length_mm": p["focal"].value(),
+                        "aperture_mm": p["aperture"].value(),
+                        "optical_system": p["system"].currentText(),
+                        "image_reversed": p["reversed"].isChecked(),
+                        "image_inverted": p["inverted"].isChecked(),
+                        "associated": list(p["assoc_keys"]),
+                    }
+                    for p in panels
+                ])
+            except Exception:
+                logger.exception("Could not save optical tubes for Pier %r", self._current_pier.name)
+                return
+            logger.info("Saved %d optical tube(s) for Pier %r.", len(panels), self._current_pier.name)
+            self._window.statusBar().showMessage(
+                f"Saved optics for Pier {self._current_pier.name!r}.", 4000
+            )
+
+        save_btn.clicked.connect(save_optics)
+
+        def reload_page() -> None:
+            tubes = []
+            if self._current_pier is not None:
+                from galileo.observatory import list_optical_tubes
+                try:
+                    tubes = list_optical_tubes(self._current_pier)
+                except Exception:
+                    logger.exception("Could not load saved optical tubes")
+            _set_panel_count(len(tubes))
+            for i, panel in enumerate(panels):
+                tube = tubes[i] if i < len(tubes) else None
+                panel["name"].setText(tube.name if tube else "")
+                panel["focal"].setValue(tube.focal_length_mm if tube else 0.0)
+                panel["aperture"].setValue(tube.aperture_mm if tube else 0.0)
+                idx = panel["system"].findText(tube.optical_system) if tube else 0
+                panel["system"].setCurrentIndex(max(idx, 0))
+                panel["reversed"].setChecked(bool(tube and tube.image_reversed))
+                panel["inverted"].setChecked(bool(tube and tube.image_inverted))
+                panel["assoc_keys"] = list(tube.associated) if tube else []
+                _render_associations(panel)
+
+        self._device_pages["optics"] = {"reload": reload_page}
+        reload_page()
+
+        return page
+
     def _build_device_config_page(self, cat_id: str, label: str) -> "QWidget":
         """One Equipment device-category page: Driver/Server table + scan (ARCH-050)."""
         from PySide6.QtWidgets import (
@@ -3333,7 +3627,7 @@ class AppWindow:
                 results.addItem(f"Scan failed: {exc}")
                 return
             if not devices:
-                results.addItem(f"No {driver} {label.lower()} devices found at {server}:{port}.")
+                results.addItem(f"No {driver} devices found for {label.lower()} at {server}:{port}.")
                 return
             for name in devices:
                 item = QListWidgetItem(name)
@@ -4275,6 +4569,13 @@ class _NavColumn(QWidget if _HAS_QT else object):
             btn.setMinimumHeight(button_min_height)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.setText(label)
+            # QToolButton never wraps its own text, so a label wider than the
+            # column (e.g. "Variable Stars", "Safety Monitor") is clipped with an
+            # ellipsis. Break it onto one line per word instead, but only when it
+            # actually overflows, judged with the real stylesheet font/padding.
+            btn.ensurePolished()
+            if " " in label and btn.sizeHint().width() > self.width():
+                btn.setText(label.replace(" ", "\n"))
             _set_icon_pair(btn, icon_name, icon_size)
             btn.toggled.connect(lambda checked, b=btn: b.setIcon(b._icon_accent if checked else b._icon_dim))
             btn.clicked.connect(lambda _checked=False, sid=section_id: on_select(sid))
@@ -4297,6 +4598,9 @@ class _NavColumn(QWidget if _HAS_QT else object):
             power_btn.setObjectName(button_object_name)
             power_btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             power_btn.setMinimumHeight(button_min_height)
+            # Span the full column like every other nav button, so the icon and
+            # label are centred rather than shrink-wrapped against the left edge.
+            power_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             power_btn.setText("Quit")
             _set_icon_pair(power_btn, "power", icon_size)
             power_btn.clicked.connect(power_action)

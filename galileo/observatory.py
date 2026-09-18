@@ -237,3 +237,50 @@ def list_device_config_slots(pier: "PierRecord", category: str) -> list[str]:
         (DeviceConfigRecord.pier == pier) & (DeviceConfigRecord.category == category)
     )
     return [row.slot for row in rows]
+
+
+def list_device_configs(pier: "PierRecord") -> list["DeviceConfigRecord"]:
+    """Return every saved device configuration on *pier*, across all
+    categories and slots — the pool the Optics page's "Associated" picker
+    offers to attach to an optical tube."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    return list(
+        DeviceConfigRecord.select()
+        .where(DeviceConfigRecord.pier == pier)
+        .order_by(DeviceConfigRecord.category, DeviceConfigRecord.slot)
+    )
+
+
+def list_optical_tubes(pier: "PierRecord") -> list["OpticalTubeRecord"]:
+    """Return *pier*'s saved optical tubes in display order."""
+    from galileo.library.models.optical_tube import OpticalTubeRecord
+    return list(
+        OpticalTubeRecord.select()
+        .where(OpticalTubeRecord.pier == pier)
+        .order_by(OpticalTubeRecord.position)
+    )
+
+
+def save_optical_tubes(pier: "PierRecord", tubes: list[dict]) -> None:
+    """Replace *pier*'s optical tubes with *tubes*, in order (the Optics
+    page's Save button). Each dict may carry ``name``, ``focal_length_mm``,
+    ``aperture_mm``, ``optical_system``, ``image_reversed``,
+    ``image_inverted`` and ``associated`` (a list of ``"<category>:<slot>"``
+    device keys); a tube's position is its index in the list."""
+    from galileo.library.models.base import db
+    from galileo.library.models.optical_tube import OpticalTubeRecord
+    with db.atomic():
+        OpticalTubeRecord.delete().where(OpticalTubeRecord.pier == pier).execute()
+        for position, tube in enumerate(tubes):
+            record = OpticalTubeRecord(
+                pier=pier,
+                position=position,
+                name=tube.get("name", ""),
+                focal_length_mm=tube.get("focal_length_mm", 0.0),
+                aperture_mm=tube.get("aperture_mm", 0.0),
+                optical_system=tube.get("optical_system", "Other"),
+                image_reversed=bool(tube.get("image_reversed", False)),
+                image_inverted=bool(tube.get("image_inverted", False)),
+            )
+            record.associated = tube.get("associated", [])
+            record.save(force_insert=True)
