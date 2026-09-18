@@ -112,15 +112,25 @@ def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str
     is unreachable even though the host/port are correct. Querying mDNS
     directly via ``zeroconf`` sidesteps that (mirrors the approach proven
     in this author's VSTarget project's ``alpaca_client.py``).
+
+    The operating system's own resolver is tried first: current Windows,
+    macOS and Linux (with avahi/nss-mdns) resolve ``.local`` themselves, and
+    that also works where ``zeroconf``'s compiled extension can't load (e.g.
+    a Windows Application Control policy blocking its DLL).
     """
+    try:
+        return socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+    except OSError:
+        pass  # fall back to querying mDNS directly
+
     try:
         from zeroconf import AddressResolver, Zeroconf
     except ImportError as exc:
         raise RuntimeError(
-            f"Cannot resolve '{host}': the 'zeroconf' package is required to "
-            "resolve .local hostnames (Windows does not do this on its own "
-            "without Bonjour installed). Install it with 'pip install "
-            "zeroconf', or use the device's IP address directly."
+            f"Cannot resolve '{host}': the operating system could not resolve "
+            f"it and the 'zeroconf' package could not be loaded ({exc}). "
+            "Install it with 'pip install zeroconf', or use the device's IP "
+            "address directly."
         ) from exc
 
     name = host if host.endswith(".") else f"{host}."

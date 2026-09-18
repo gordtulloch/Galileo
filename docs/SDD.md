@@ -41,7 +41,7 @@ Acronyms and abbreviations used throughout this document are defined at first us
 
 **Rationale:**
 - PySide6 renders through the same native Qt widget engine as a C++/Qt build, giving the same proven performance and memory footprint on ARM SBCs (Raspberry Pi 5-class hardware) that the KStars/Ekos ecosystem already relies on via StellarMate OS. UI performance is therefore not a Python-vs-C++ question — Qt's C++ core does the rendering either way.
-- Direct reuse of the domain's existing Python library ecosystem: `astropy.io.fits` for FITS I/O (`META`), `numpy`/`photutils` for star detection and HFR (`IMG-040`, `FOC-010`), the official `pyindi-client` INDI binding, and the official ASCOM `alpyca` Alpaca client. This avoids reimplementing or wrapping these in a language without equivalent libraries.
+- Direct reuse of the domain's existing Python library ecosystem: `astropy.io.fits` for FITS I/O (`META`), `numpy`/`photutils` for star detection and HFR (`IMG-040`, `FOC-010`), a native Python implementation of the INDI wire protocol (see Section 4.2 for why not `pyindi-client`), and the official ASCOM `alpyca` Alpaca client. This avoids reimplementing or wrapping these in a language without equivalent libraries.
 - Python is the most common scripting language in the amateur-astronomy tooling community (ASTAP/astrometry.net wrapper scripts, PHD2 event scripts, Siril scripting), which materially lowers the barrier for third-party plugin authors (`PLUG` domain).
 - Faster development velocity than C++ for the same Qt-based UI fidelity target.
 
@@ -71,7 +71,7 @@ This directly satisfies `ARCH-010` (per-category device abstraction implemented 
 |---|---|
 | Qt UI thread | Owns the Qt event loop exclusively; never performs blocking I/O. |
 | Async I/O (Alpaca HTTP calls, external solver/guider process calls) | `asyncio` event loop bridged into the Qt event loop via `qasync`, so awaitable I/O is non-blocking without a proliferation of manual `QThread` classes. |
-| INDI I/O | `pyindi-client`'s underlying C++ client runs its own connection thread (standard INDI client behavior); results are marshaled to the domain core via thread-safe Qt signals (`Qt.QueuedConnection`). |
+| INDI I/O | `galileo.adapters.indi_client` runs one reader thread per INDI server connection, which parses the XML stream into a thread-safe property cache. Adapter calls use the blocking, thread-safe client API via `asyncio.to_thread`, so they work from any event loop (including the short-lived `asyncio.run` loops the UI uses); results reach the domain core through the event bus / queued Qt signals (`Qt.QueuedConnection`). |
 | CPU-bound work (star detection, HFR curve fitting, plate-solve pre/post-processing) | Dispatched to a `concurrent.futures.ProcessPoolExecutor` to avoid GIL contention with the UI thread; results returned via a future/callback marshaled back to the Qt event loop. |
 | Cross-module communication | A lightweight in-process event bus (publish/subscribe over Qt signals) decouples the sequencer, device layer, and safety/notification modules, so e.g. a safety-monitor "unsafe" event reaches the sequencer without a direct dependency (`SAFE-010`, `ARCH-060`). |
 
@@ -182,8 +182,8 @@ Each module lists its responsibility, key design elements, external libraries, a
 ### 4.2 `galileo.adapters.indi` — INDI Adapter
 
 - **Responsibility:** Implements every device port against an INDI server connection.
-- **Key design:** Wraps `pyindi-client`; translates INDI property `newXXX`/`updateXXX` callbacks into domain-core events on the Qt event loop via queued signal emission; maps INDI property definitions to `DeviceCapabilities`.
-- **Libraries:** `pyindi-client` (official INDI Python binding, wraps `libindi`'s C++ client).
+- **Key design:** Implemented on `galileo.adapters.indi_client`, a native Python client for the INDI XML wire protocol (v1.7) over TCP, rather than on `pyindi-client`. `pyindi-client` is a SWIG wrapper around the `libindi` C++ library, which has no Windows port, so it cannot be built on Windows — a stated target platform (`NFR-PORT`) — whereas a pure-Python client behaves identically on Windows, macOS, Linux and Raspberry Pi. One shared connection per `host:port` (reference-counted) keeps a live property cache updated by a reader thread; each adapter targets one named INDI device and maps Galileo's port methods onto that device's standard properties (`CCD_EXPOSURE`, `EQUATORIAL_EOD_COORD`, `FILTER_SLOT`, `ABS_FOCUS_POSITION`, ...). Devices are classified per category from each driver's `DRIVER_INTERFACE` bit mask; `DeviceCapabilities` are derived from the properties a driver actually defines. Exposures are delivered as FITS BLOBs (zlib-compressed `.z` handled), which the adapter routes to this client only (`UPLOAD_CLIENT`). A device another client (e.g. Ekos) had already connected is left connected on `disconnect()`. `SAFETY_MONITOR` has no INDI interface, so no devices are discoverable for it.
+- **Libraries:** none beyond the standard library (`socket`, `xml.etree`, `zlib`) plus `astropy.io.fits` for decoding frames. An alternative binding (`pyindi-client`) can be built on Linux/macOS where `libindi` is available, but is not required.
 - **Satisfies:** `ARCH-010`, `ARCH-020`, `ARCH-030`, `ARCH-050`, `EXT-020`, `EXT-030`, and the INDI-transport implementation of every device-specific `EQP-*` requirement: `EQP-CAM-010`–`EQP-CAM-040`, `EQP-MNT-010`–`EQP-MNT-030`, `EQP-FW-010`–`EQP-FW-020`, `EQP-FOC-010`–`EQP-FOC-020`, `EQP-ROT-010`, `EQP-GDR-010`, `EQP-SW-010`, `EQP-FP-010`, `EQP-WX-010`, `EQP-DOME-010`, `EQP-SAFE-010`.
 
 ### 4.3 `galileo.adapters.alpaca` — Alpaca Adapter

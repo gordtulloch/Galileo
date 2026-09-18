@@ -8,7 +8,7 @@ numpy>=1.24
 astropy>=5.0
 
 # Device protocols (optional — enable the backend(s) you need)
-# pyindi-client>=0.1   # INDI device support
+# (INDI needs no extra package: galileo.adapters.indi_client is a native INDI-protocol client)
 # alpyca>=0.1          # ASCOM Alpaca device support
 zeroconf>=0.130.0      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
 

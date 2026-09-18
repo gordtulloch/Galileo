@@ -24,7 +24,8 @@ dependencies = [
     "numpy>=1.24",
     "astropy>=5.0",
     # Device protocols
-    # "pyindi-client>=0.1",   # optional: INDI device support
+    # INDI needs no extra package: galileo.adapters.indi_client is a native Python INDI-protocol client
+    # (pyindi-client cannot be built on Windows because libindi has no Windows port).
     # "alpyca>=0.1",          # optional: Alpaca device support
     "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
     # Image processing
