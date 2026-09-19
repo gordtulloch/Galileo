@@ -217,3 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+
+# Third-party reference screenshots (kept locally only; not redistributed)
+assets/samples/

@@ -19,6 +19,7 @@ from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.slew_guard import get_slew_guard
 from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
 try:
@@ -570,11 +571,13 @@ class AlpacaMountAdapter(AlpacaAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         await self._refuse_if_parked("slew_to_coordinates")
+        get_slew_guard().check_radec(ra, dec)
         await self._put("slewtocoordinatesasync", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         await self._refuse_if_parked("slew_to_altaz")
+        get_slew_guard().check_altaz(alt, az)
         await self._put("slewtoaltazasync", Azimuth=az, Altitude=alt)
         self.altitude, self.azimuth = alt, az
 

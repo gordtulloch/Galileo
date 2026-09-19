@@ -77,7 +77,7 @@ Galileo uses a **layered, ports-and-adapters (hexagonal) architecture** (SDD §2
 
 **Star detection uses SEP everywhere** (autofocus, imaging-tab stats, library quality metrics) — `photutils` is deliberately reintroduced only in `galileo.vstarget.analysis` for aperture photometry, a different problem SEP doesn't solve. Don't conflate the two or "unify" them; SDD §2.6 explains why they coexist.
 
-**Persistence is unified**: one Peewee ORM database (`galileo.library`'s repository catalog, `galileo.history` session metrics, scheduler job queue, and VSTarget's variable-star data all share the same DB via `peewee-migrate`-managed schema) — not separate SQLite files per module.
+**Persistence is unified**: one Peewee ORM database (`galileo.library`'s repository catalog, `galileo.history` session metrics, scheduler job queue, and VSTarget's variable-star data all share the same DB via `peewee-migrate`-managed schema) — not separate SQLite files per module. A schema change is a new numbered file in `galileo/library/migrations/` (never `create_tables` or hand-patched columns); `init_db` applies pending ones at start-up. The catalog models keep AstroFiler's names (`fitsFile`, `fitsSession`, …) and camelCase columns on purpose, so AstroFiler databases open unchanged.
 
 **FITS is the sole working image format** (project-wide constraint, SDD §4.18); XISF is accepted only on import via a best-effort converter in `galileo.library` and never read/written anywhere else in the codebase.
 
@@ -92,7 +92,7 @@ Galileo uses a **layered, ports-and-adapters (hexagonal) architecture** (SDD §2
 | `galileo.sequencer.basic` / `.advanced` | Linear sequence runner / nested instruction-condition-trigger engine (`SequencerNode`) |
 | `galileo.scheduler` | Multi-night job queue layered above the sequencer (triggers, doesn't duplicate, `SequenceRunner`) |
 | `galileo.autofocus`, `galileo.platesolve`, `galileo.calibration`, `galileo.meridianflip`, `galileo.guiding`, `galileo.dome`, `galileo.safety` | Domain-core workflow services, each behind its own adapter interface (`SolverAdapter`, `GuiderAdapter`, etc.) |
-| `galileo.library` | Vendored AstroFiler core: scan/dedup/ingest, session linking, master-calibration frames, SMB/FTP/GCS sync, CLI entry points |
+| `galileo.library` | Vendored AstroFiler: catalog models + `migrations/` (the schema — AstroFiler's `001`-`012`, then Galileo's), `core/` (ingest, sessions, master frames, calibration, quality, duplicates), `services/` (GCS, smart telescopes), `registrar` (sequencer hook), `config` (`library.ini`). Screens are `galileo.ui.library`; batch utilities are `galileo.commands` |
 | `galileo.vstarget.planning` / `.analysis` | Vendored VSTarget: AAVSO planning and photometry, shipped as first-party plugins |
 | `galileo.planning.sky_atlas` / `.framing`, `galileo.ui.skymap` | Catalog/visibility, FOV/framing, and the live planetarium view — three distinct UIs sharing one bundled catalog DB |
 | `galileo.plugins` | Entry-point-based plugin discovery/load, manifest/version checks, `PluginContext` callback surface |

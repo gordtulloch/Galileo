@@ -191,10 +191,9 @@ def test_tc_ext_080_smb_ftp_smart_telescope_adapters():
 @pytest.mark.priority("P2")
 def test_tc_ext_090_google_cloud_storage_sync():
     """EXT-090: Synchronize repository contents with Google Cloud Storage via its documented API."""
-    library = pytest.importorskip("galileo.library")
-    assert hasattr(library, "CloudSyncService"), "CloudSyncService must be present"
-    sync = library.CloudSyncService.__new__(library.CloudSyncService)
-    assert hasattr(sync, "sync")
+    cloud = pytest.importorskip("galileo.library.services.cloud")
+    assert callable(cloud.sync_with_google_cloud_repo), "the Google Cloud Storage sync must be present"
+    assert callable(cloud.validate_google_cloud_config)
 
 
 # ---------------------------------------------------------------------------
@@ -262,5 +261,5 @@ def test_tc_ext_130_open_meteo_geocoding():
 def test_tc_ext_140_cli_batch_commands():
     """EXT-140: Standalone CLI programs for repo ingest, calibration, and cloud sync, runnable without GUI."""
     pytest.importorskip("galileo.commands.load_repo")
-    pytest.importorskip("galileo.commands.calibrate")
+    pytest.importorskip("galileo.commands.auto_calibration")
     pytest.importorskip("galileo.commands.cloud_sync")

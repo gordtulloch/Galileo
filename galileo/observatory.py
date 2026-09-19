@@ -168,6 +168,29 @@ def create_pier(observatory: "ObservatoryRecord", name: str) -> "PierRecord":
     return PierRecord.create(observatory=observatory, name=name)
 
 
+def list_horizon_points(observatory: "ObservatoryRecord") -> list[tuple[float, float]]:
+    """Return *observatory*'s horizon obstruction table as ``(azimuth°, altitude°)``
+    pairs in azimuth order — empty if none has been uploaded."""
+    from galileo.library.models.horizon import HorizonPointRecord
+    rows = (HorizonPointRecord.select()
+            .where(HorizonPointRecord.observatory == observatory)
+            .order_by(HorizonPointRecord.azimuth_deg, HorizonPointRecord.id))
+    return [(row.azimuth_deg, row.altitude_deg) for row in rows]
+
+
+def save_horizon_points(observatory: "ObservatoryRecord", points: list[tuple[float, float]]) -> None:
+    """Replace *observatory*'s horizon obstruction table with *points* (Options >
+    Star Atlas' upload). An empty list clears it."""
+    from galileo.library.models.base import db
+    from galileo.library.models.horizon import HorizonPointRecord
+    with db.atomic():
+        HorizonPointRecord.delete().where(HorizonPointRecord.observatory == observatory).execute()
+        if points:
+            HorizonPointRecord.insert_many(
+                [{"observatory": observatory, "azimuth_deg": az, "altitude_deg": alt} for az, alt in points]
+            ).execute()
+
+
 def get_device_config(
     pier: "PierRecord", category: str, slot: str = "primary"
 ) -> "DeviceConfigRecord | None":

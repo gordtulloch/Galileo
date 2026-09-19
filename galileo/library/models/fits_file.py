@@ -1,69 +1,112 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025-2026 Gord Tulloch
+"""
+FITS file model for AstroFiler.
 
-"""FITS file catalog model (adapted from AstroFiler models/fits_file.py)."""
-
-from __future__ import annotations
-
-import datetime
+This model represents individual FITS files in the system.
+"""
 
 import peewee as pw
-
 from galileo.library.models.base import BaseModel
 
-
-class FitsFile(BaseModel):
-    """One FITS file entry in the repository catalog."""
-
-    id = pw.TextField(primary_key=True)
-    file_name = pw.TextField(null=True)
-    file_path = pw.TextField(null=True)
-    file_date = pw.DateField(null=True)
-    file_hash = pw.TextField(null=True, index=True)
-
-    # FITS header metadata
-    object_name = pw.TextField(null=True, column_name="object")
-    frame_type = pw.TextField(null=True)   # Light Frame, Dark Frame, Flat Field, Bias Frame
-    exposure_time = pw.TextField(null=True)
-    filter_name = pw.TextField(null=True)
-    telescope = pw.TextField(null=True)
-    instrument = pw.TextField(null=True)
-    gain = pw.TextField(null=True)
-    offset = pw.TextField(null=True)
-    binning_x = pw.TextField(null=True)
-    binning_y = pw.TextField(null=True)
-    ccd_temp = pw.TextField(null=True)
-    date_obs = pw.TextField(null=True)
-    observer = pw.TextField(null=True)
-
-    # Derived / quality metrics
-    fwhm = pw.FloatField(null=True)
-    hfr = pw.FloatField(null=True)
-    eccentricity = pw.FloatField(null=True)
-    snr = pw.FloatField(null=True)
-    star_count = pw.IntegerField(null=True)
-    image_scale = pw.FloatField(null=True)
-
-    # Lifecycle flags
-    is_calibrated = pw.BooleanField(default=False)
-    is_stacked = pw.BooleanField(default=False)
-    is_soft_deleted = pw.BooleanField(default=False)
-    calibration_date = pw.DateTimeField(null=True)
-    cloud_url = pw.TextField(null=True)
-
-    # Session / sequence linkage
-    session_id = pw.TextField(null=True)
+class fitsFile(BaseModel):
+    """Model representing a FITS file in the system."""
+    
+    fitsFileId = pw.TextField(primary_key=True)
+    fitsFileName = pw.TextField(null=True)
+    fitsFileDate = pw.DateField(null=True)
+    fitsFileCalibrated = pw.IntegerField(null=True)
+    fitsFileType = pw.TextField(null=True)
+    fitsFileStacked = pw.IntegerField(null=True)
+    fitsFileObject = pw.TextField(null=True)
+    fitsFileExpTime = pw.TextField(null=True)
+    fitsFileXBinning = pw.TextField(null=True)
+    fitsFileYBinning = pw.TextField(null=True)
+    fitsFileCCDTemp = pw.TextField(null=True)
+    fitsFileTelescop = pw.TextField(null=True)
+    fitsFileInstrument = pw.TextField(null=True)
+    fitsFileGain = pw.TextField(null=True)
+    fitsFileOffset = pw.TextField(null=True)
+    fitsFileFilter = pw.TextField(null=True)
+    fitsFileObserver = pw.TextField(null=True)
+    fitsFileNotes = pw.TextField(null=True)
+    fitsFileHash = pw.TextField(null=True)
+    fitsFileSession = pw.TextField(null=True)
+    fitsFileCloudURL = pw.TextField(null=True)
+    fitsFileSoftDelete = pw.BooleanField(null=True, default=False)
+    fitsFileCalibrationDate = pw.DateTimeField(null=True)
+    fitsFileOriginalFile = pw.TextField(null=True)
+    fitsFileOriginalCloudURL = pw.TextField(null=True)
+    
+    # Quality metrics fields
+    fitsFileAvgFWHMArcsec = pw.FloatField(null=True)  # Average FWHM in arcseconds
+    fitsFileAvgEccentricity = pw.FloatField(null=True)  # Average star eccentricity (0-1)
+    fitsFileAvgHFRArcsec = pw.FloatField(null=True)  # Average HFR in arcseconds  
+    fitsFileImageSNR = pw.FloatField(null=True)  # Signal-to-noise ratio for image
+    fitsFileStarCount = pw.IntegerField(null=True)  # Number of detected stars
+    fitsFileImageScale = pw.FloatField(null=True)  # Arcsec/pixel scale
 
     class Meta:
-        table_name = "fits_files"
-
-    def is_calibration_frame(self) -> bool:
-        return self.frame_type in ("Bias Frame", "Dark Frame", "Flat Field")
-
-    def is_light_frame(self) -> bool:
-        return self.frame_type == "Light Frame"
-
-    def mark_as_calibrated(self) -> None:
-        self.is_calibrated = True
-        self.calibration_date = datetime.datetime.utcnow()
+        table_name = 'fitsFile'
+    
+    def is_calibration_frame(self):
+        """
+        Check if this file is a calibration frame (bias, dark, flat).
+        
+        Returns:
+            bool: True if this is a calibration frame
+        """
+        return self.fitsFileType in ['Bias Frame', 'Dark Frame', 'Flat Field']
+    
+    def is_light_frame(self):
+        """
+        Check if this file is a light frame.
+        
+        Returns:
+            bool: True if this is a light frame
+        """
+        return self.fitsFileType == 'Light Frame'
+    
+    def get_calibration_criteria(self):
+        """
+        Get the calibration matching criteria for this file.
+        
+        Returns:
+            dict: Dictionary with calibration matching criteria
+        """
+        return {
+            'telescope': self.fitsFileTelescop,
+            'instrument': self.fitsFileInstrument,
+            'binning_x': self.fitsFileXBinning,
+            'binning_y': self.fitsFileYBinning,
+            'ccd_temp': self.fitsFileCCDTemp,
+            'gain': self.fitsFileGain,
+            'offset': self.fitsFileOffset,
+            'exposure_time': self.fitsFileExpTime if self.fitsFileType == 'Dark Frame' else None,
+            'filter_name': self.fitsFileFilter if self.fitsFileType == 'Flat Field' else None
+        }
+    
+    def mark_as_calibrated(self, calibration_date=None):
+        """
+        Mark this file as calibrated.
+        
+        Args:
+            calibration_date: Date of calibration (defaults to now)
+        """
+        import datetime
+        self.fitsFileCalibrated = 1
+        if calibration_date:
+            self.fitsFileCalibrationDate = calibration_date
+        else:
+            self.fitsFileCalibrationDate = datetime.datetime.now()
         self.save()
+    
+    def is_precalibrated(self):
+        """
+        Check if this file is from a telescope that provides pre-calibrated images.
+        
+        Returns:
+            bool: True if from Seestar or iTelescope
+        """
+        if self.fitsFileTelescop:
+            telescope = self.fitsFileTelescop.lower()
+            return 'seestar' in telescope or 'itelescope' in telescope
+        return False

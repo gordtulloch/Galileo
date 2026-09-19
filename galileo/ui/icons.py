@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Flat, single-colour vector icons for the NINA-style sidebar navigation.
+"""Flat, single-colour vector icons for the sidebar navigation.
 
 Drawn at runtime with ``QPainter`` rather than shipped as image assets, so
 icon colour tracks the current theme/accent colour without needing a
@@ -128,6 +128,20 @@ def _imaging(painter, r):
         QPointF(r.left() + r.width() * 0.78, r.top() + r.height() * 0.48),
         QPointF(r.right(), r.bottom() - r.height() * 0.08),
     ]))
+
+
+def _solve(painter, r):
+    """A crosshair around a star: the frame's centre being pinned to a place on the sky."""
+    from PySide6.QtCore import QLineF
+    from PySide6.QtGui import QPolygonF
+    c = r.center()
+    radius = r.width() * 0.3
+    painter.drawEllipse(c, radius, radius)
+    reach = r.width() * 0.5
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        painter.drawLine(QLineF(c.x() + dx * radius * 0.6, c.y() + dy * radius * 0.6, c.x() + dx * reach, c.y() + dy * reach))
+    painter.setBrush(painter.pen().color())
+    painter.drawPolygon(QPolygonF(_star_points(c.x(), c.y(), r.width() * 0.13, r.width() * 0.055)))
 
 
 def _scheduler(painter, r):
@@ -267,6 +281,18 @@ def _guider(painter, r):
     painter.drawLine(QLineF(r.right(), c.y(), r.right() - r.width() * 0.2, c.y()))
 
 
+def _focus(painter, r):
+    from PySide6.QtCore import QLineF
+    # Camera-style focus brackets around a centre dot.
+    arm = r.width() * 0.3
+    for x, sx in ((r.left(), 1), (r.right(), -1)):
+        for y, sy in ((r.top(), 1), (r.bottom(), -1)):
+            painter.drawLine(QLineF(x, y, x + sx * arm, y))
+            painter.drawLine(QLineF(x, y, x, y + sy * arm))
+    painter.setBrush(painter.pen().color())
+    painter.drawEllipse(r.center(), r.width() * 0.09, r.width() * 0.09)
+
+
 def _optics(painter, r):
     from PySide6.QtCore import QLineF, QRectF
     # A telescope tube seen from the side: barrel, dew-shield lip, and a focuser stub.
@@ -318,6 +344,80 @@ def _safety_monitor(painter, r):
     ]))
 
 
+def _images(painter, r):
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPolygonF
+    # A picture frame with a sun and a hillside.
+    painter.drawRoundedRect(QRectF(r.left(), r.top() + r.height() * 0.12, r.width(), r.height() * 0.76), 2, 2)
+    painter.drawEllipse(QPointF(r.left() + r.width() * 0.3, r.top() + r.height() * 0.36), r.width() * 0.08, r.width() * 0.08)
+    painter.drawPolyline(QPolygonF([
+        QPointF(r.left(), r.top() + r.height() * 0.8),
+        QPointF(r.left() + r.width() * 0.38, r.top() + r.height() * 0.52),
+        QPointF(r.left() + r.width() * 0.6, r.top() + r.height() * 0.7),
+        QPointF(r.left() + r.width() * 0.75, r.top() + r.height() * 0.58),
+        QPointF(r.right(), r.top() + r.height() * 0.82),
+    ]))
+
+
+def _sessions(painter, r):
+    from PySide6.QtCore import QLineF, QPointF, QRectF
+    # A calendar page: two binder rings over a header rule and a grid of nights.
+    body = QRectF(r.left(), r.top() + r.height() * 0.14, r.width(), r.height() * 0.86)
+    painter.drawRoundedRect(body, 2, 2)
+    for x in (0.28, 0.72):
+        painter.drawLine(QLineF(r.left() + r.width() * x, r.top(), r.left() + r.width() * x, r.top() + r.height() * 0.26))
+    painter.drawLine(QLineF(body.left(), body.top() + body.height() * 0.28, body.right(), body.top() + body.height() * 0.28))
+    for row in (0.5, 0.75):
+        for col in (0.22, 0.5, 0.78):
+            painter.drawPoint(QPointF(body.left() + body.width() * col, body.top() + body.height() * row))
+
+
+def _mappings(painter, r):
+    from PySide6.QtCore import QLineF
+    # Two opposing arrows: one value replaced by another.
+    y1, y2 = r.top() + r.height() * 0.32, r.top() + r.height() * 0.68
+    painter.drawLine(QLineF(r.left(), y1, r.right(), y1))
+    painter.drawLine(QLineF(r.right(), y1, r.right() - r.width() * 0.2, y1 - r.height() * 0.16))
+    painter.drawLine(QLineF(r.right(), y1, r.right() - r.width() * 0.2, y1 + r.height() * 0.16))
+    painter.drawLine(QLineF(r.right(), y2, r.left(), y2))
+    painter.drawLine(QLineF(r.left(), y2, r.left() + r.width() * 0.2, y2 - r.height() * 0.16))
+    painter.drawLine(QLineF(r.left(), y2, r.left() + r.width() * 0.2, y2 + r.height() * 0.16))
+
+
+def _dedup(painter, r):
+    from PySide6.QtCore import QRectF
+    # Two overlapping sheets.
+    side = r.width() * 0.66
+    painter.drawRoundedRect(QRectF(r.left(), r.top(), side, side), 2, 2)
+    painter.drawRoundedRect(QRectF(r.right() - side, r.bottom() - side, side, side), 2, 2)
+
+
+def _cloud(painter, r):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainterPath
+    # A cloud outline: a flat base with three overlapping puffs.
+    base = r.top() + r.height() * 0.78
+    path = QPainterPath()
+    path.moveTo(r.left() + r.width() * 0.2, base)
+    path.arcTo(QRectF(r.left(), r.top() + r.height() * 0.42, r.width() * 0.4, r.height() * 0.36), 270, -180)
+    path.arcTo(QRectF(r.left() + r.width() * 0.16, r.top() + r.height() * 0.14, r.width() * 0.44, r.height() * 0.5), 200, -170)
+    path.arcTo(QRectF(r.left() + r.width() * 0.44, r.top() + r.height() * 0.28, r.width() * 0.4, r.height() * 0.4), 100, -160)
+    path.arcTo(QRectF(r.left() + r.width() * 0.62, r.top() + r.height() * 0.42, r.width() * 0.38, r.height() * 0.36), 90, -180)
+    path.lineTo(r.left() + r.width() * 0.2, base)
+    painter.drawPath(path)
+
+
+def _merge(painter, r):
+    from PySide6.QtCore import QLineF, QPointF
+    # Two lines converging into one, with an arrow head.
+    mid = QPointF(r.left() + r.width() * 0.5, r.center().y())
+    painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.15, mid.x(), mid.y()))
+    painter.drawLine(QLineF(r.left(), r.bottom() - r.height() * 0.15, mid.x(), mid.y()))
+    painter.drawLine(QLineF(mid.x(), mid.y(), r.right(), mid.y()))
+    painter.drawLine(QLineF(r.right(), mid.y(), r.right() - r.width() * 0.22, mid.y() - r.height() * 0.18))
+    painter.drawLine(QLineF(r.right(), mid.y(), r.right() - r.width() * 0.22, mid.y() + r.height() * 0.18))
+
+
 ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
     "star_atlas": _star_atlas,
@@ -326,6 +426,7 @@ ICONS: dict[str, DrawFn] = {
     "flat_wizard": _flat_wizard,
     "sequencer": _sequencer,
     "imaging": _imaging,
+    "solve": _solve,
     "scheduler": _scheduler,
     "library": _library,
     "variable_stars": _variable_stars,
@@ -340,10 +441,17 @@ ICONS: dict[str, DrawFn] = {
     "focuser": _focuser,
     "rotator": _rotator,
     "guider": _guider,
+    "focus": _focus,
     "optics": _optics,
     "switch": _switch,
     "flat_panel": _flat_panel,
     "weather": _weather,
     "dome": _dome,
     "safety_monitor": _safety_monitor,
+    "images": _images,
+    "sessions": _sessions,
+    "mappings": _mappings,
+    "dedup": _dedup,
+    "cloud": _cloud,
+    "merge": _merge,
 }

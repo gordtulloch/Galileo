@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 257 requirements (243 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 261 requirements (247 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -198,6 +198,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKYMAP-040` | P2 | SDD 4.9a `galileo.ui.skymap` | Test | `TC-SKYMAP-040` |
 | `SKYMAP-050` | P2 | SDD 4.9a `galileo.ui.skymap` | Test | `TC-SKYMAP-050` |
 | `SKYMAP-060` | P2 | SDD 4.9a `galileo.ui.skymap` | Test | `TC-SKYMAP-060` |
+| `SKYMAP-070` | P2 | SDD 4.9a `galileo.ui.star_atlas` / `galileo.planning.visibility` | Test | `TC-SKYMAP-070` |
+| `SKYMAP-080` | P2 | SDD 4.9a `galileo.core.slew_guard` | Test | `TC-SKYMAP-080` |
 
 ### `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 
@@ -237,6 +239,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FOC-060` | P2 | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-060` |
 | `FOC-070` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-070` |
 | `FOC-080` | P2 | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-080` |
+| `FOC-090` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-090` |
 
 ### `PLT` — Plate Solving
 
@@ -248,6 +251,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-040` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-040` |
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
+| `PLT-070` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-070` |
 
 ### `MFLIP` — Meridian Flip
 
@@ -484,11 +488,11 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SEQ-ADV` | 10 | 0 | 9 | 1 |
 | `SKY` | 9 | 6 | 3 | 0 |
 | `FRAME` | 6 | 0 | 5 | 1 |
-| `SKYMAP` | 6 | 3 | 3 | 0 |
+| `SKYMAP` | 8 | 3 | 5 | 0 |
 | `SCHED` | 10 | 8 | 2 | 0 |
 | `CAL` | 6 | 5 | 1 | 0 |
-| `FOC` | 8 | 5 | 3 | 0 |
-| `PLT` | 6 | 5 | 1 | 0 |
+| `FOC` | 9 | 6 | 3 | 0 |
+| `PLT` | 7 | 6 | 1 | 0 |
 | `MFLIP` | 4 | 0 | 4 | 0 |
 | `GUIDE` | 9 | 7 | 2 | 0 |
 | `DOME` | 3 | 0 | 3 | 0 |
@@ -511,4 +515,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **257** | **155** | **89** | **13** |
+| **Total** | **261** | **157** | **91** | **13** |

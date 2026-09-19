@@ -190,3 +190,78 @@ async def test_tc_foc_080_aberration_inspection_per_region(mock_indi_camera, foc
     assert len(result.regions) >= 3
     for region in result.regions:
         assert "hfr" in region or hasattr(region, "hfr")
+
+
+# ---------------------------------------------------------------------------
+# TC-FOC-090 — the run is reported on the event bus (what the Focus screen follows)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def focus_events(foc_service, monkeypatch):
+    """The service on a private bus, recording every focus event; star measurement is stubbed
+    to a V-curve so the tests don't depend on SEP."""
+    from galileo import autofocus as foc_mod
+    from galileo.bus import (
+        EventBus,
+        FocusCompleteEvent,
+        FocusFrameEvent,
+        FocusStartedEvent,
+    )
+
+    monkeypatch.setattr(foc_mod, "_measure_stars", lambda frame: (_synthetic_hfr(foc_service._current_position), 12))
+    foc_service._camera.get_image_array = AsyncMock(return_value=np.zeros((20, 30), dtype=np.float32))
+    bus = EventBus()
+    foc_service._event_bus = bus
+    seen: list = []
+    for event_type in (FocusStartedEvent, FocusFrameEvent, FocusCompleteEvent):
+        bus.subscribe(event_type, seen.append)
+    return seen
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_090_run_publishes_start_each_frame_and_completion(foc_service, focus_events):
+    """FOC-090: a run reports its start, every measured frame (with star count, HFR, FWHM) and its result."""
+    foc_service.exposure_s = 2.5
+    result = await foc_service.run(step_size=100, num_points=5)
+
+    kinds = [type(e).__name__ for e in focus_events]
+    assert kinds == ["FocusStartedEvent"] + ["FocusFrameEvent"] * 5 + ["FocusCompleteEvent"]
+    started, *frames, complete = focus_events
+    assert started.payload["positions"] == [4800, 4900, 5000, 5100, 5200]
+    assert [f.payload["position"] for f in frames] == started.payload["positions"]
+    assert frames[2].payload["hfr"] == pytest.approx(1.0)
+    assert frames[2].payload["fwhm"] == pytest.approx(1.5)
+    assert frames[2].payload["star_count"] == 12
+    assert frames[0].payload["frame"].shape == (20, 30)
+    assert complete.payload["result"] is result and result.success
+    # each frame is a fresh exposure of the configured length
+    assert foc_service._camera.start_exposure.await_count == 5
+    foc_service._camera.start_exposure.assert_awaited_with(duration=2.5)
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_090_a_failed_run_still_publishes_completion(foc_service, focus_events):
+    """FOC-090: a run that fails reports that too, so a screen following it never waits on a run that has ended."""
+    foc_service._camera.get_image_array = AsyncMock(return_value=None)
+    result = await foc_service.run(step_size=100, num_points=3)
+
+    assert not result.success
+    assert [type(e).__name__ for e in focus_events] == ["FocusStartedEvent", "FocusCompleteEvent"]
+    assert focus_events[-1].payload["result"] is result
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_090_cancel_stops_the_run_and_restores_the_focuser(foc_service, mock_focuser, focus_events):
+    """FOC-090: cancelling a run stops it after the exposure in progress and puts the focuser back where it began."""
+    from galileo.bus import FocusFrameEvent
+
+    foc_service._event_bus.subscribe(FocusFrameEvent, lambda e: foc_service.cancel() if e.payload["position"] == 4900 else None)
+    result = await foc_service.run(step_size=100, num_points=5)
+
+    assert not result.success and result.failure_reason == "Cancelled"
+    assert [e.payload["position"] for e in focus_events if isinstance(e, FocusFrameEvent)] == [4800, 4900]
+    mock_focuser.move_to.assert_called_with(5000)
+    assert type(focus_events[-1]).__name__ == "FocusCompleteEvent"

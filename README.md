@@ -7,7 +7,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![Tests](https://img.shields.io/badge/tests-244%20passing-brightgreen.svg)
 
-A cross-platform astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) instead of Windows-only ASCOM/COM device drivers.
+A cross-platform astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) 
 
 ## Why Galileo
 
@@ -21,18 +21,21 @@ Two things motivate this project:
 **Pre-alpha — early development.** Galileo is a runnable PySide6 desktop application today, not just a design document, but most of its screens are still placeholders pending their own build-out.
 
 - **Design docs**: a complete Project Scope Document, a Software Requirements Specification (235 numbered requirements across 27 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
-- **Automated tests**: 244 passing (plus a handful of soak/hardware/installer-artifact tests that are intentionally skipped outside a real overnight/CI run) covering every SRS domain — see [Running the tests](#running-the-tests).
+- **Automated tests**: 488 passing (plus a handful of soak/hardware/installer-artifact tests that are intentionally skipped outside a real overnight/CI run) covering every SRS domain — see [Running the tests](#running-the-tests).
 - **What's working today**:
-  - A dark-themed, N.I.N.A.-style shell — a primary icon sidebar (Equipment, Star Atlas, Planning, Framing, Imaging, Guiding, Library, Science, Options — with Planning opening onto Targets, Sequence and Scheduler, and Science onto Variable Stars) plus a context-sensitive second panel per section, a top-bar Observatory/Pier selector, and a status bar.
+  - A dark-themed shell — a primary icon sidebar (Equipment, Star Atlas, Planning, Framing, Imaging, Guiding, Focus, Solve, Library, Science, Options — with Planning opening onto Targets, Sequence and Scheduler, and Science onto Variable Stars) plus a context-sensitive second panel per section, a top-bar Observatory/Pier selector, and a status bar.
   - **Guiding** (its own sidebar section, below Imaging): connects to PHD2 by host and port and shows its live state — guide-star image, guide graph, drift and calibration plots, guide statistics and event log — with Loop/Guide/Stop/Dither/exposure controls.
+  - **Focus** (its own sidebar section, below Guiding): follows an autofocus run live — the frame being measured, star count / HFR / FWHM, and the HFR V-curve with its fit and best position — and only updates while a run is in progress, whether started by its own Auto Focus button or by another part of the app. Start/Stop, step size, points and exposure work; Aberration Inspector, CFZ and Advisor buttons are placeholders.
+  - **Solve** (its own sidebar section, below Focus): plate solving with the frame being solved and its results on show. **Capture & Solve** takes an exposure with the selected camera and solves it with ASTAP (using the mount's position as a search hint), then syncs the mount, slews back to the target until within an accuracy you set, or just reports the error; **Load & Slew…** solves a FITS file and slews to it; **Stop** cancels. It shows every solve, whichever part of Galileo started it, and only updates while it is in view. Needs [ASTAP](https://www.hnsky.org/astap.htm) and a star database installed (found on `PATH` or in its usual install folder). ASTAP is the only solver; Mount Model and Polar Alignment are not built yet.
   - **Equipment**: per-device-category (Camera, Mount, Filter Wheel, Focuser, Rotator, Switches, Flat Panel, Weather, Dome, Safety Monitor) Driver/Server/Port connection panels that do a real INDI or Alpaca scan against a live device — including Alpaca Management API discovery and `.local` mDNS hostname resolution (e.g. a Seestar's `seestar.local` bridge).
   - **Observatory/Pier**: persisted master records (name, lat/long, timezone, physical address, owner for Observatories; name for Piers) saved to a local SQLite database via Peewee, selectable/creatable from the top bar, surviving restarts.
-  - **Star Atlas**: a basic planetarium — stars, deep-sky objects (Messier, Caldwell and NGC catalogs, chosen with the panel's Catalogs **+** button), Sun/Moon/planets for the Observatory's location and a chosen (or live) time, with optional constellation boundaries and constellation outlines (stick figures), pan/zoom, click-to-identify and centre-and-track. No comets/satellites, FOV/mount overlay or slew-from-map yet.
+  - **Star Atlas**: a basic planetarium — stars, deep-sky objects (Messier, Caldwell and NGC catalogs, chosen with the panel's Catalogs **+** button), Sun/Moon/planets for the Observatory's location and a chosen (or live) time, with optional constellation boundaries and constellation outlines (stick figures), pan/zoom, click-to-identify and centre-and-track. A horizon obstruction table can be uploaded under **Options > Star Atlas** and shaded on the map with the **Horizon** checkbox; **Options > Planning** can then refuse slews into it. No comets/satellites or FOV/mount overlay yet.
   - **Planning** (formerly Sky Atlas): a real search-criteria panel wired to the catalog search/filter backend.
   - **Framing**: a real target/mosaic input panel wired to the FOV and mosaic-panel calculator.
   - **Imaging**: a live, pan/zoomable auto-stretch preview (`QGraphicsView`) with a histogram, per-frame statistics (mean/median/min/max/star count/HFR), manual single-exposure capture run off the UI thread with a live countdown, and an independent Save Frame action.
+  - **Library** (AstroFiler's screens, in its own sidebar section): **Images** (the catalog by object), **Sessions** (imaging sessions, linked calibration sessions, master frames, calibrating lights), **Mappings** (FITS header-value rules), **Dedup** (duplicate files), **Merge Objects** (rename an object across the catalog) and **Cloud** (Google Cloud Storage backup and sync). Its settings are under **Options > Library**. The catalog lives in the same database as everything else, built by migrations, and an existing AstroFiler database opens as it is. AstroFiler's twelve command-line utilities are installed as `galileo-load-repo`, `galileo-create-sessions`, `galileo-link-sessions`, `galileo-auto-calibration`, `galileo-cloud-sync` and so on, for scheduled or headless use.
   - **Logging**: a runtime logging service capturing all application output to a datestamped, per-run-reset log file under `logs/`, plus a live scrolling log tail on every Equipment device screen ala KStars.
-- **Still placeholder UI**: Sequencer, Scheduler, Library, Variable Stars, and Options currently show a "not implemented yet" stub — the domain-core logic behind several of them (e.g. `galileo.library`, `galileo.vstarget.*`, `galileo.scheduler`) already exists and is tested, it just isn't wired to a screen yet.
+- **Still placeholder UI**: Sequencer, Scheduler, Variable Stars, and every Options page except Library, Star Atlas and Planning currently show a "not implemented yet" stub — the domain-core logic behind several of them (e.g. `galileo.vstarget.*`, `galileo.scheduler`) already exists and is tested, it just isn't wired to a screen yet.
 
 The `VST`/`VST-AN` plugins specified in the SDD remain the planned reference implementation of Galileo's plugin architecture (`PLUG`), not yet built as installable plugins.
 
@@ -110,6 +113,42 @@ Galileo's design is validated against the author's own physical multi-Pier Obser
 
 Copyright (C) 2025-2026 Gord Tulloch. Licensed under [GPL-3.0-or-later](LICENSE). Every source file carries an `SPDX-License-Identifier` and copyright header.
 
+## Contributing
+
+Contributions are welcome. All contributors must agree to the Contributor License Agreement (CLA) in [CONTRIBUTING.md](CONTRIBUTING.md), which also covers the development setup, test conventions and changelog requirements.
+
 ## Author
 
 [Gord Tulloch](https://github.com/gordtulloch)
+
+## Screenshots
+
+### Equipment
+
+![Cameras](assets/screenshots/Cameras.png)
+
+![Mount](assets/screenshots/mount.png)
+
+![Filter wheel](assets/screenshots/filterwheel.png)
+
+![Focuser](assets/screenshots/focuser.png)
+
+![Rotator](assets/screenshots/rotater.png)
+
+![Optics](assets/screenshots/optics.png)
+
+### Imaging
+
+![Imaging](assets/screenshots/imaging.png)
+
+![Guiding](assets/screenshots/guiding.png)
+
+![Focus](assets/screenshots/focus.png)
+
+![Plate solving](assets/screenshots/solve.png)
+
+### Planning and Library
+
+![Horizon](assets/screenshots/Horizon.png)
+
+![Library options](assets/screenshots/LibraryOptions.png)

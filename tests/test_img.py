@@ -370,6 +370,8 @@ def test_tc_img_110_existing_device_configs_table_gains_the_bayer_column(tmp_pat
     save_device_config(pier, "camera", driver="Alpaca", server="h", port=1)
     db.execute_sql("ALTER TABLE device_configs DROP COLUMN bayer_pattern")
     assert "bayer_pattern" not in {c.name for c in db.get_columns("device_configs")}
+    # A database from before migrations owned the schema has no migration history for Galileo's tables.
+    db.execute_sql("DELETE FROM migratehistory WHERE name >= '013'")
     db.close()
 
     init_db(path)

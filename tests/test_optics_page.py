@@ -178,6 +178,8 @@ def test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column(tmp_path
         " image_reversed, image_inverted, associated_devices) VALUES (?, 0, 500, 100, 'Refractor', 0, 0, '[]')",
         (pier.id,),
     )
+    # A database from before migrations owned the schema has no migration history for Galileo's tables.
+    db.execute_sql("DELETE FROM migratehistory WHERE name >= '013'")
     try:
         init_db(path)
         (tube,) = list_optical_tubes(pier)
@@ -328,3 +330,82 @@ def test_imaging_filter_choice_survives_a_refresh(window):
     _open_section(window, "framing")
     _open_section(window, "imaging")
     assert window._imaging_filter_combo.currentText() == "G"
+
+
+class _MovableWheel(_FakeWheel):
+    def __init__(self, names, position=0, fail=False):
+        super().__init__(names, position)
+        self.moves, self.fail = [], fail
+
+    async def move_to(self, index):
+        if self.fail:
+            raise RuntimeError("wheel jammed")
+        self.moves.append(index)
+        self.position = index
+
+
+def _pick_filter(window, name):
+    """Choose ``name`` in the Imaging Filter box as the user would, then wait for the move to finish."""
+    combo = window._imaging_filter_combo
+    combo.setCurrentText(name)
+    combo.activated.emit(combo.findText(name))
+    thread = window._imaging_filter_thread
+    if thread is not None:
+        thread.wait(5000)
+        window.app.processEvents()      # deliver the queued finished/failed signal
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filter_change_moves_the_wheel(window):
+    """PROF-110: choosing a filter on the Imaging page moves the wheel to that slot, off the UI thread."""
+    wheel = _MovableWheel(["L", "R", "G", "B"], position=0)
+    window._device_pages["filter_wheel"]["adapter"] = wheel
+    _open_section(window, "imaging")
+    _pick_filter(window, "G")
+    assert wheel.moves == [2]
+    assert window._imaging_filter_thread is None
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filter_does_not_move_the_wheel_needlessly(window):
+    """PROF-110: re-picking the filter already in the beam, a blank, free text, or opening the page leaves the wheel alone."""
+    wheel = _MovableWheel(["L", "R", "G"], position=1)
+    window._device_pages["filter_wheel"]["adapter"] = wheel
+    _open_section(window, "imaging")            # populating the list must not move it
+    _pick_filter(window, "R")                   # already there
+    _pick_filter(window, "")                    # "no filter"
+    _pick_filter(window, "Custom label")        # not one of the wheel's filters
+    assert wheel.moves == []
+    assert window._imaging_filter_thread is None
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filter_change_ignores_a_wheel_that_belongs_to_another_tube(window):
+    """PROF-110: a tube with no wheel of its own never drives one associated with a different tube."""
+    save_optical_tubes(window.pier, [
+        {"name": "Newt", "associated": ["filter_wheel:primary"]},
+        {"name": "Guide scope"},
+    ])
+    wheel = _MovableWheel(["Ha", "OIII"], position=0)
+    window._device_pages["filter_wheel"]["adapter"] = wheel
+    _open_section(window, "imaging")
+    combo = window._optics_combo
+    combo.setCurrentIndex(1)
+    combo.activated.emit(1)
+    _pick_filter(window, "OIII")
+    assert wheel.moves == []
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filter_move_failure_is_reported_not_raised(window):
+    """PROF-110: a wheel that fails to move is reported on the status bar and does not block the next attempt."""
+    wheel = _MovableWheel(["L", "R"], position=0, fail=True)
+    window._device_pages["filter_wheel"]["adapter"] = wheel
+    _open_section(window, "imaging")
+    _pick_filter(window, "R")
+    assert window._imaging_filter_thread is None
+    assert "failed" in window._window.statusBar().currentMessage()

@@ -3,7 +3,7 @@
 
 """Main application window (PySide6).
 
-A N.I.N.A.-style shell: a primary icon sidebar on the left selects the
+A sidebar-driven shell: a primary icon sidebar on the left selects the
 active section; the Equipment section additionally shows a context-sensitive
 secondary icon sidebar for the device category (Camera, Mount, ...); the
 remaining space is the content panel for whatever is selected. Thin shell
@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import logging
 
-from galileo.exceptions import MountParkedError
+from galileo.exceptions import MountParkedError, SlewObstructedError
 
 logger = logging.getLogger(__name__)
 
 _PARKED_MESSAGE = "The mount is parked — unpark it first."
+_OBSTRUCTED_MESSAGE = "Unable to slew to that area, it is obstructed"
 
 # Derived from this repository's own git remote — the docs/ folder doubles as
 # the online manual until a dedicated documentation site exists.
@@ -53,6 +54,8 @@ PRIMARY_SECTIONS = [
     ("framing", "Framing", "framing"),
     ("imaging", "Imaging", "imaging"),
     ("guiding", "Guiding", "guider"),
+    ("focus", "Focus", "focus"),
+    ("solve", "Solve", "solve"),
     ("library", "Library", "library"),
     ("science", "Science", "variable_stars"),
 ]
@@ -72,10 +75,25 @@ PLANNING_ITEMS = [
 SCIENCE_ITEMS = [
     ("variable_stars", "Variable Stars", "variable_stars"),
 ]
+# The Library is AstroFiler's screens: the image catalog, the imaging sessions
+# built from it, header-value mappings, duplicate/merge clean-up, and cloud
+# backup. Its settings are under Options > Library.
+LIBRARY_ITEMS = [
+    ("images", "Images", "images"),
+    ("sessions", "Sessions", "sessions"),
+    ("mappings", "Mappings", "mappings"),
+    ("dedup", "Dedup", "dedup"),
+    ("merge", "Merge Objects", "merge"),
+    ("cloud", "Cloud", "cloud"),
+]
 
 # Primary sections that work with one of the Pier's optical tubes, and so show
 # the top bar's Optics selector.
-_OPTICS_SECTIONS = ("framing", "imaging")
+_OPTICS_SECTIONS = ("framing", "imaging", "solve")
+
+# Primary sections that take frames from one of the Pier's cameras, and so show
+# the top bar's Camera selector (when the Pier has more than one).
+_CAMERA_SECTIONS = ("imaging", "solve")
 
 EQUIPMENT_CATEGORIES = [
     ("camera", "Camera", "camera"),
@@ -175,7 +193,7 @@ def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
 def _format_hms(hours: "float | None") -> str:
     """Format an hour-angle-like value (Right Ascension, Sidereal Time,
     time-to-meridian) as ``HH:MM:SS`` — the Mount page's status display
-    convention, matching how these are conventionally shown in N.I.N.A."""
+    convention for astronomy software."""
     if hours is None:
         return "—"
     total_seconds = round((hours % 24.0) * 3600.0)
@@ -188,7 +206,7 @@ def _format_dms(degrees: "float | None") -> str:
     """Format a degree value (Declination, Altitude, Azimuth, Site
     Latitude/Longitude) as ``±DD° MM' SS"`` — the Mount page's status
     display convention, matching how these are conventionally shown in
-    N.I.N.A."""
+    astronomy software."""
     if degrees is None:
         return "—"
     sign = "-" if degrees < 0 else ""
@@ -226,6 +244,7 @@ class AppWindow:
         self._device_pages: dict[str, dict] = {}
         self._camera_backends: dict[str, object] = {}
         self._imaging_capture_thread = None
+        self._imaging_filter_thread = None
         self._current_primary_section = "equipment"
         self._active_camera_slot = "primary"
         self._active_optics_position = 0
@@ -256,6 +275,8 @@ class AppWindow:
         root.setSpacing(0)
 
         self._primary_stack, primary_sidebar = self._build_primary_nav()
+        self._primary_nav = primary_sidebar
+        self._apply_horizon()     # the top bar picked the Observatory before the pages existed
         root.addWidget(primary_sidebar)
         root.addWidget(self._primary_stack, 1)
         outer.addWidget(body, 1)
@@ -289,7 +310,8 @@ class AppWindow:
 
         layout.addSpacing(16)
 
-        layout.addWidget(QLabel("Pier:"))
+        self._pier_label = QLabel("Pier:")
+        layout.addWidget(self._pier_label)
         self._pier_combo = QComboBox()
         self._pier_combo.setMinimumWidth(180)
         self._pier_combo.setEnabled(False)
@@ -300,7 +322,7 @@ class AppWindow:
 
         # Which of the selected Pier's optical tubes (defined on the Equipment >
         # Optics page) this screen is working with. Only shown on the screens
-        # that depend on the optics — Framing and Imaging — see _OPTICS_SECTIONS.
+        # that depend on the optics — Framing, Imaging and Solve — see _OPTICS_SECTIONS.
         self._optics_label = QLabel("Optics:")
         self._optics_label.setVisible(False)
         layout.addWidget(self._optics_label)
@@ -312,10 +334,11 @@ class AppWindow:
 
         layout.addSpacing(16)
 
-        # Only shown on the Imaging screen, and only when the selected Pier
-        # has more than one configured camera (e.g. a Seestar S30 Pro's
-        # primary + wide-field second camera) — with a single camera there's
-        # nothing to choose between, so it stays out of the way.
+        # Only shown on the screens that capture frames — Imaging and Solve —
+        # and only when the selected Pier has more than one configured camera
+        # (e.g. a Seestar S30 Pro's primary + wide-field second camera) — with
+        # a single camera there's nothing to choose between, so it stays out
+        # of the way.
         self._camera_label = QLabel("Camera:")
         self._camera_label.setVisible(False)
         layout.addWidget(self._camera_label)
@@ -603,6 +626,42 @@ class AppWindow:
             combo.setCurrentText(names[position])     # start on what the wheel is showing now
         combo.blockSignals(False)
 
+    def _on_imaging_filter_activated(self, _index: int = -1) -> None:
+        """The user picked (or typed and confirmed) a filter on the Imaging page:
+        move the active tube's wheel to that slot. Text that isn't one of the
+        wheel's filters, or no wheel, leaves the box as a plain frame label. Runs
+        the move on a worker thread; ``_refresh_imaging_filters`` doesn't fire
+        this, so re-populating the list never moves the wheel."""
+        combo = getattr(self, "_imaging_filter_combo", None)
+        wheel = self._active_filter_wheel()
+        if combo is None or wheel is None:
+            return
+        names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])]
+        name = combo.currentText().strip()
+        if name not in names or getattr(wheel, "position", None) == names.index(name):
+            return
+        if self._imaging_filter_thread is not None:
+            self._window.statusBar().showMessage("The filter wheel is still moving.", 4000)
+            return
+        index = names.index(name)
+
+        def done() -> None:
+            self._imaging_filter_thread = None
+            logger.info("Filter wheel: moved to %r (#%d)", name, index)
+            self._window.statusBar().showMessage(f"Filter wheel at {name}.", 4000)
+
+        def failed(message: str) -> None:
+            self._imaging_filter_thread = None
+            logger.error("Filter wheel move to %r (#%d) failed: %s", name, index, message)
+            self._window.statusBar().showMessage("Filter change failed — see log.", 6000)
+
+        thread = _FilterMoveThread(wheel, index, self._window)
+        thread.finished_ok.connect(done)
+        thread.failed.connect(failed)
+        self._imaging_filter_thread = thread
+        self._window.statusBar().showMessage(f"Moving filter wheel to {name}…")
+        thread.start()
+
     def active_optical_tube(self):
         """The optical tube currently chosen in the top-bar Optics selector,
         or ``None`` if the Pier has none defined."""
@@ -619,9 +678,10 @@ class AppWindow:
     # --- Top bar: Camera selection (Imaging screen, multi-camera Piers) -----
 
     def _refresh_camera_combo(self) -> None:
-        """Show the top-bar Camera selector only while on the Imaging screen
-        and only when the current Pier has more than one configured camera
-        slot — otherwise there is nothing to choose between."""
+        """Show the top-bar Camera selector only while on a screen that
+        captures frames (``_CAMERA_SECTIONS``) and only when the current Pier
+        has more than one configured camera slot — otherwise there is nothing
+        to choose between."""
         from galileo.observatory import list_device_config_slots, get_device_config
 
         combo = self._camera_combo
@@ -653,7 +713,7 @@ class AppWindow:
             combo.setCurrentIndex(idx)
         combo.blockSignals(False)
 
-        show = len(slots) > 1 and self._current_primary_section == "imaging"
+        show = len(slots) > 1 and self._current_primary_section in _CAMERA_SECTIONS
         combo.setVisible(show)
         self._camera_label.setVisible(show)
 
@@ -675,9 +735,12 @@ class AppWindow:
             "planning": lambda: self._build_submenu_page(
                 PLANNING_ITEMS, {"targets": self._build_sky_atlas_page}),
             "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
+            "library": self._build_library_page,
             "framing": self._build_framing_page,
             "imaging": self._build_imaging_page,
             "guiding": self._build_guider_page,
+            "focus": self._build_focus_page,
+            "solve": self._build_solve_page,
         }
         pages: dict[str, int] = {}
         for section_id, label, icon_name in PRIMARY_SECTIONS:
@@ -685,15 +748,23 @@ class AppWindow:
             page = builder() if builder else self._build_placeholder_page(label)
             pages[section_id] = stack.addWidget(page)
 
-        options_page = self._build_submenu_page(OPTIONS_ITEMS, {
+        option_builders = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
             for item_id, label, _icon in OPTIONS_ITEMS
-        })
+        }
+        option_builders["library"] = self._build_library_settings_page
+        option_builders["star_atlas"] = self._build_star_atlas_settings_page
+        option_builders["planning"] = self._build_planning_settings_page
+        options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
+        self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
 
         def _on_section_selected(section_id: str) -> None:
             self._current_primary_section = section_id
             stack.setCurrentIndex(pages[section_id])
+            # The library is about the whole catalog, not any one Pier's equipment.
+            for widget in (self._pier_label, self._pier_combo):
+                widget.setVisible(section_id != "library")
             self._refresh_optics_combo()
             self._refresh_camera_combo()
             self._refresh_imaging_filters()
@@ -779,11 +850,36 @@ class AppWindow:
             on_select=lambda item_id: stack.setCurrentIndex(indexes[item_id]),
         )
         self._nav_columns.append(secondary)
+        page._secondary_nav = secondary
         stack.setCurrentIndex(indexes[items[0][0]])
 
         layout.addWidget(secondary)
         layout.addWidget(stack, 1)
         return page
+
+    # --- Library page (AstroFiler's screens) ---------------------------------
+
+    def _build_library_page(self) -> "QWidget":
+        """Library section: Images, Sessions, Mappings, Dedup and Cloud — see
+        ``galileo.ui.library.pages``. The screens read the whole catalog, so
+        they are only built when the section is first opened."""
+        from galileo.ui.library.pages import LibraryScreens
+
+        screens = LibraryScreens(on_configure=self._open_library_settings)
+        return self._build_submenu_page(
+            LIBRARY_ITEMS, {item_id: (lambda item_id=item_id: screens.page(item_id)) for item_id, _l, _i in LIBRARY_ITEMS})
+
+    def _build_library_settings_page(self) -> "QWidget":
+        """Options > Library: repository folders, cloud, compression, telescope
+        credentials and the rest of ``library.ini`` — see
+        ``galileo.ui.library.config_widget``."""
+        from galileo.ui.library.config_widget import ConfigWidget
+        return ConfigWidget()
+
+    def _open_library_settings(self) -> None:
+        """Jump to Options > Library (e.g. from the Cloud page's Configure button)."""
+        self._primary_nav.select(OPTIONS_SECTION[0])
+        self._options_page._secondary_nav.select("library")
 
     # --- Equipment page (primary + secondary nav example) -------------------
 
@@ -864,13 +960,19 @@ class AppWindow:
             return
         text = "\n".join(get_recent_log_lines(300))
         for pane in self._log_panes:
-            if pane.toPlainText() == text:
-                continue
-            bar = pane.verticalScrollBar()
-            at_bottom = bar.value() >= bar.maximum() - 2
-            previous_value = bar.value()
-            pane.setPlainText(text)
-            bar.setValue(bar.maximum() if at_bottom else previous_value)
+            self.set_log_pane_text(pane, text)
+
+    @staticmethod
+    def set_log_pane_text(pane: "QPlainTextEdit", text: str) -> None:
+        """Show *text* in a log pane, staying scrolled to the newest line if it was
+        (and otherwise where the user left it). Shared by every screen with a live log tail."""
+        if pane.toPlainText() == text:
+            return
+        bar = pane.verticalScrollBar()
+        at_bottom = bar.value() >= bar.maximum() - 2
+        previous_value = bar.value()
+        pane.setPlainText(text)
+        bar.setValue(bar.maximum() if at_bottom else previous_value)
 
     # --- Camera page (shared connection, N independent camera slots) --------
 
@@ -1844,7 +1946,11 @@ class AppWindow:
         status_timer.timeout.connect(_when_visible(page, lambda: [_refresh_panel_status(p) for p in panels]))
         status_timer.start(2000)
 
-        state = {"reload": reload_page, "autoconnect": autoconnect_page}
+        def connected_adapter():
+            # The first connected focuser — what the Focus page drives.
+            return next((p["adapter"] for p in panels if p.get("adapter") is not None), None)
+
+        state = {"reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter}
         self._device_pages["focuser"] = state
         reload_page()
         autoconnect_page()
@@ -1859,7 +1965,7 @@ class AppWindow:
         plus manual RA/Dec and Alt/Az coordinate slewing, tracking-rate
         selection, N/S/E/W jog with Stop, Home/Park, and axis-reversal
         controls (EQP-MNT-010), matching the field set of the reference
-        N.I.N.A. Mount screen (assets/samples/mount.png) laid out with this
+        Mount layout (assets/samples/mount.png) laid out with this
         app's own Driver/Server/Port/Scan connection convention rather than
         its icon toolbar."""
         from PySide6.QtWidgets import (
@@ -2229,6 +2335,9 @@ class AppWindow:
             except MountParkedError:
                 self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
                 return
+            except SlewObstructedError:
+                self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
+                return
             except Exception:
                 logger.exception("Mount slew-to-coordinates failed")
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
@@ -2249,6 +2358,9 @@ class AppWindow:
                 asyncio.run(adapter.slew_to_altaz(alt_deg, az_deg))
             except MountParkedError:
                 self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
+            except SlewObstructedError:
+                self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
                 return
             except Exception:
                 logger.exception("Mount slew-to-altaz failed")
@@ -3191,8 +3303,8 @@ class AppWindow:
         (Name/Description/Driver info/version — EQP-FW-010/020) plus a
         current-filter selector with an explicit Change action, and a
         Filters list showing every filter the wheel reports with the
-        current one highlighted, matching the reference N.I.N.A. Filter
-        Wheel screen (assets/samples/wheel.png) laid out with this app's
+        current one highlighted, matching the reference Filter
+        Wheel layout (assets/samples/wheel.png) laid out with this app's
         own Driver/Server/Port/Scan connection convention rather than its
         icon toolbar."""
         from PySide6.QtWidgets import (
@@ -3840,6 +3952,23 @@ class AppWindow:
         page.reload()
         return page
 
+    def _build_focus_page(self) -> "QWidget":
+        """Focus page (a primary sidebar section): follows autofocus runs and
+        can start one — see ``galileo.ui.focus``. It only redraws while a run
+        is in progress."""
+        from galileo.ui.focus import FocusPage
+        return FocusPage(self)
+
+    def _build_solve_page(self) -> "QWidget":
+        """Solve page (a primary sidebar section): plate solving, with the frame
+        being solved and its results on show (PLT-070) — see ``galileo.ui.solve``.
+        It follows every solve, whoever started it, but only while it is on
+        screen."""
+        from galileo.ui.solve import SolvePage
+        page = SolvePage(self)
+        self._device_pages["solve"] = {"reload": page.reload}
+        return page
+
     def _build_device_config_page(self, cat_id: str, label: str) -> "QWidget":
         """One Equipment device-category page: Driver/Server table + scan (ARCH-050)."""
         from PySide6.QtWidgets import (
@@ -4092,6 +4221,39 @@ class AppWindow:
         refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
         if refresh_star_atlas_site is not None:
             refresh_star_atlas_site()
+        self._apply_horizon()
+
+    def _apply_horizon(self) -> None:
+        """Load the current Observatory's horizon obstruction table and hand it to
+        everything that uses it: the Star Atlas shading, the Options > Star Atlas
+        table, and the slew guard the mount adapters consult (together with the
+        site, and the Options > Planning switch)."""
+        from galileo.core.slew_guard import get_slew_guard
+        from galileo.observatory import list_horizon_points
+        from galileo.planning.settings import load_planning_settings
+        from galileo.planning.visibility import HorizonProfile
+
+        observatory = getattr(self, "_current_observatory", None)
+        points: list = []
+        if observatory is not None:
+            try:
+                points = list_horizon_points(observatory)
+            except Exception:
+                logger.exception("Could not load the horizon obstructions for Observatory %r", observatory.name)
+        horizon = HorizonProfile(points) if points else None
+
+        guard = get_slew_guard()
+        guard.enabled = bool(load_planning_settings()["block_obstructed_slews"])
+        guard.horizon = horizon
+        guard.latitude = getattr(observatory, "latitude", None)
+        guard.longitude = getattr(observatory, "longitude", None)
+
+        set_atlas_horizon = getattr(self, "_star_atlas_set_horizon", None)
+        if set_atlas_horizon is not None:
+            set_atlas_horizon(horizon)
+        refresh_table = getattr(self, "_horizon_table_refresh", None)
+        if refresh_table is not None:
+            refresh_table(points)
 
     def _mount_to_object(self, action: str, obj: dict) -> bool:
         """Point the current Pier's mount at a Star Atlas *obj*: ``"goto"`` slews
@@ -4127,6 +4289,9 @@ class AppWindow:
                 asyncio.run(adapter.sync_to_coordinates(ra_deg, dec_deg))
         except MountParkedError:
             self._window.statusBar().showMessage(f"{verb}: {_PARKED_MESSAGE}", 6000)
+            return False
+        except SlewObstructedError:
+            self._window.statusBar().showMessage(f"{verb}: {_OBSTRUCTED_MESSAGE}", 6000)
             return False
         except Exception:
             logger.exception("Mount %s to %s failed", action, obj["name"])
@@ -4286,6 +4451,7 @@ class AppWindow:
         capture_form.addRow("Filter", filter_combo)
         self._imaging_filter_combo = filter_combo
         self._refresh_imaging_filters()
+        filter_combo.activated.connect(self._on_imaging_filter_activated)
 
         settings_layout.addWidget(capture_group)
 
@@ -4507,6 +4673,9 @@ class AppWindow:
                     "Connect a camera on the Camera equipment page first.",
                 )
                 return
+            if self._imaging_filter_thread is not None:
+                self._window.statusBar().showMessage("Wait for the filter wheel to finish moving.", 4000)
+                return
 
             duration = exposure_spin.value()
             frame_type = frame_type_combo.currentText()
@@ -4638,7 +4807,8 @@ class AppWindow:
                    ("Abbreviate constellation names", "abbreviate_constellations"),
                    ("Deep-sky objects", "show_dsos"),
                    ("Sun, Moon && planets", "show_bodies"), ("Labels", "show_labels"),
-                   ("Ground", "show_ground"), ("Daylight sky", "daylight_sky"))
+                   ("Ground", "show_ground"), ("Daylight sky", "daylight_sky"),
+                   ("Horizon", "show_horizon"))
         for text, attr in toggles:
             box = QCheckBox(text)
             box.setChecked(getattr(view, attr))
@@ -4859,10 +5029,157 @@ class AppWindow:
         view.catalogsLoaded.connect(show_catalog_status)
 
         self._star_atlas_refresh_site = refresh_site
+        self._star_atlas_set_horizon = view.set_horizon
         refresh_site()
         sync_time_field()
         on_live(True)
         view.load_catalogs()
+        return page
+
+    # --- Options > Star Atlas / Planning ------------------------------------
+
+    def _build_star_atlas_settings_page(self) -> "QWidget":
+        """Options > Star Atlas: upload a file of azimuth/altitude pairs describing the
+        horizon obstructions at the current Observatory. They are kept in a table shown
+        here, shaded on the Star Atlas by its "Horizon" checkbox, and (with Options >
+        Planning) used to refuse slews into them."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import (
+            QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+            QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+        )
+        from galileo.observatory import save_horizon_points
+        from galileo.planning.visibility import parse_horizon_text
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Star Atlas settings")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        subtitle = QLabel("Horizon obstructions")
+        subtitle.setObjectName("PageSubtitle")
+        layout.addWidget(subtitle)
+
+        hint = QLabel(
+            "Upload a text file with one “azimuth altitude” pair per line (degrees; azimuth from north "
+            "through east, 0–360; altitude 0–90). Each altitude is the height of the obstruction at that "
+            "azimuth — the sky below it is blocked. The values are joined by straight lines, wrapping "
+            "through north. Turn on “Horizon” on the Star Atlas to see them shaded.")
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        upload_btn = QPushButton("Upload horizon file…")
+        upload_btn.setObjectName("AccentButton")
+        clear_btn = QPushButton("Clear")
+        clear_btn.setToolTip("Delete this Observatory's horizon obstruction table")
+        buttons.addWidget(upload_btn)
+        buttons.addWidget(clear_btn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        status = QLabel("")
+        status.setObjectName("StatusHint")
+        layout.addWidget(status)
+
+        table = QTableWidget(0, 2)
+        table.setHorizontalHeaderLabels(["Azimuth (°)", "Altitude (°)"])
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(table, 1)
+
+        def refresh(points: list) -> None:
+            table.setRowCount(len(points))
+            for row, (az, alt) in enumerate(points):
+                for col, value in enumerate((az, alt)):
+                    item = QTableWidgetItem(f"{value:g}")
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    table.setItem(row, col, item)
+            observatory = self._current_observatory
+            if observatory is None:
+                status.setText("Create an Observatory first — the horizon belongs to one.")
+            elif points:
+                status.setText(f"{len(points)} obstruction points for {observatory.name}.")
+            else:
+                status.setText(f"No horizon obstructions defined for {observatory.name}.")
+            upload_btn.setEnabled(observatory is not None)
+            clear_btn.setEnabled(bool(points))
+
+        def store(points: list) -> None:
+            try:
+                save_horizon_points(self._current_observatory, points)
+            except Exception:
+                logger.exception("Could not save the horizon obstructions")
+                QMessageBox.warning(self._window, "Horizon", "Could not save the horizon — see the log.")
+                return
+            self._apply_horizon()
+
+        def upload() -> None:
+            path, _ = QFileDialog.getOpenFileName(
+                self._window, "Upload horizon file", "", "Text files (*.txt *.csv *.hzn *.dat);;All files (*)")
+            if not path:
+                return
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    points = parse_horizon_text(f.read())
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.exception("Could not read horizon file %s", path)
+                QMessageBox.warning(self._window, "Horizon", f"Could not read {path}:\n{exc}")
+                return
+            except ValueError as exc:
+                QMessageBox.warning(self._window, "Horizon", f"{path} is not a valid horizon file.\n\n{exc}")
+                return
+            store(points)
+            self._window.statusBar().showMessage(f"Loaded {len(points)} horizon obstruction points.", 5000)
+
+        upload_btn.clicked.connect(upload)
+        clear_btn.clicked.connect(lambda: store([]))
+        self._horizon_table_refresh = refresh
+        refresh([])
+        return page
+
+    def _build_planning_settings_page(self) -> "QWidget":
+        """Options > Planning: whether slews into the Star Atlas horizon obstructions are refused."""
+        from PySide6.QtWidgets import QCheckBox, QLabel, QVBoxLayout, QWidget
+        from galileo.planning.settings import load_planning_settings, save_planning_settings
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Planning settings")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        settings = load_planning_settings()
+        block = QCheckBox("Do not slew where obstructed (see Star Atlas)")
+        block.setToolTip("Refuse any slew whose altitude/azimuth is below the horizon obstructions "
+                         "defined under Options > Star Atlas.")
+        block.setChecked(settings["block_obstructed_slews"])
+        layout.addWidget(block)
+
+        hint = QLabel(f"A refused slew reports “{_OBSTRUCTED_MESSAGE}”, whether it was asked for from "
+                      "the Mount page, the Star Atlas, a sequence or plate solving. Needs a horizon "
+                      "uploaded under Options > Star Atlas.")
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        def changed(checked: bool) -> None:
+            settings["block_obstructed_slews"] = checked
+            save_planning_settings(settings)
+            self._apply_horizon()
+
+        block.toggled.connect(changed)
         return page
 
     # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---
@@ -5156,8 +5473,8 @@ class AppWindow:
         return page
 
     def _build_criteria_panel(self, heading: str):
-        """A fixed-width form panel used where N.I.N.A. shows search/input
-        criteria instead of a secondary icon column (Planning, Framing)."""
+        """A fixed-width form panel holding search/input criteria, used
+        instead of a secondary icon column (Planning, Framing)."""
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel
 
         panel = QWidget()
@@ -5225,6 +5542,29 @@ class _CaptureThread(QThread if _HAS_QT else object):
                 filter_name=self._filter_name,
                 frame_type=self._frame_type,
             ))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit()
+
+
+class _FilterMoveThread(QThread if _HAS_QT else object):
+    """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
+    several seconds to settle (INDI waits up to a minute), which would otherwise
+    freeze the window the way a blocking ``asyncio.run`` on the UI thread does."""
+
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, wheel, index: int, parent=None) -> None:
+        super().__init__(parent)
+        self._wheel = wheel
+        self._index = index
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            asyncio.run(self._wheel.move_to(self._index))
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -5326,6 +5666,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
 
         group = QButtonGroup(self)
         group.setExclusive(True)
+        self._buttons: dict[str, "QToolButton"] = {}
 
         def _set_icon_pair(btn, icon_name: str, size: int) -> None:
             btn.setIconSize(QSize(size, size))
@@ -5354,6 +5695,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
             btn.clicked.connect(lambda _checked=False, sid=section_id: on_select(sid))
             group.addButton(btn)
             layout.addWidget(btn)
+            self._buttons[section_id] = btn
             return btn
 
         for section_id, label, icon_name in items:
@@ -5393,6 +5735,10 @@ class _NavColumn(QWidget if _HAS_QT else object):
                 util_btn.clicked.connect(callback)
                 utility_row.addWidget(util_btn)
             layout.addLayout(utility_row)
+
+    def select(self, item_id: str) -> None:
+        """Select *item_id* as if its button had been clicked."""
+        self._buttons[item_id].click()
 
     def refresh_icons(self, dim_color: str, accent: str) -> None:
         """Regenerate every icon in this column after a theme/accent change."""

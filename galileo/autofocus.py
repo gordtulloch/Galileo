@@ -12,7 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
+
 logger = logging.getLogger(__name__)
+
+# This module's HFR → FWHM conversion, shared by the aberration inspector and
+# the autofocus frame measurements so the two report comparable numbers.
+_FWHM_PER_HFR = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -71,29 +77,72 @@ class AutofocusService:
         focuser=None,
         output_dir: "Path | str" = ".",
         event_bus=None,
+        exposure_s: float = AutofocusParams.exposure_s,
     ) -> None:
         self._camera = camera
         self._focuser = focuser
         self._output_dir = Path(output_dir)
         self._event_bus = event_bus
+        self.exposure_s = exposure_s
         self._filter_offsets: dict[str, int] = {}
         self._current_position: int = 5000
         self._last_best_position: int | None = None
+        self._cancelled = False
         self.last_run: AutofocusResult | None = None
 
     # --- Public API -------------------------------------------------------
 
-    async def run(self, step_size: int = 200, num_points: int = 9) -> AutofocusResult:
-        """Sweep the focuser across *num_points* positions and fit a curve (FOC-010)."""
-        initial_position = self._get_current_position()
+    def cancel(self) -> None:
+        """Ask a running :meth:`run` to stop after the exposure in progress; it
+        puts the focuser back where it started and reports a failure."""
+        self._cancelled = True
 
+    async def run(self, step_size: int = 200, num_points: int = 9) -> AutofocusResult:
+        """Sweep the focuser across *num_points* positions and fit a curve (FOC-010).
+
+        Publishes a ``FocusStartedEvent``, a ``FocusFrameEvent`` per measured
+        exposure and, however the run ends, a ``FocusCompleteEvent``, so screens
+        can follow a run started from anywhere (the Focus screen, a sequencer
+        trigger)."""
+        self._cancelled = False
+        initial_position = self._get_current_position()
         positions = self._sample_positions(initial_position, step_size, num_points)
+        self._publish(FocusStartedEvent(
+            source="autofocus", positions=positions, initial_position=initial_position,
+            step_size=step_size, num_points=num_points,
+        ))
+        logger.info("Autofocus started: %d points, %d steps apart, from position %d.",
+                    num_points, step_size, initial_position)
+        result = AutofocusResult(success=False, failure_reason="Autofocus did not complete")
+        try:
+            result = await self._sweep(initial_position, positions)
+            return result
+        except Exception as exc:
+            result = AutofocusResult(success=False, failure_reason=str(exc))
+            raise
+        finally:
+            if result.success:
+                logger.info("Autofocus complete: best focus at position %d.", result.best_position)
+            else:
+                logger.warning("Autofocus failed: %s.", result.failure_reason)
+            self._publish(FocusCompleteEvent(source="autofocus", result=result))
+
+    async def _sweep(self, initial_position: int, positions: list[int]) -> AutofocusResult:
         hfr_values: list[float] = []
 
         for pos in positions:
             await self._move_to(pos)
             hfr = await self._measure_hfr()
             hfr_values.append(hfr)
+            if self._cancelled:
+                await self._move_to(initial_position)
+                result = AutofocusResult(
+                    success=False,
+                    failure_reason="Cancelled",
+                    sample_points=list(zip(positions, hfr_values)),
+                )
+                self.last_run = result
+                return result
 
         # Validate measurements
         if any(math.isnan(h) for h in hfr_values) or len(set(hfr_values)) < 2:
@@ -171,10 +220,20 @@ class AutofocusService:
         """Take a short exposure and return the mean HFR of detected stars."""
         if self._camera is None:
             return 2.0
+        await self._camera.start_exposure(duration=self.exposure_s)
         frame = await self._camera.get_image_array()
         if frame is None:
             return float("nan")
-        return _compute_hfr(frame)
+        hfr, star_count = await asyncio.to_thread(_measure_stars, frame)
+        logger.info("Focuser position %d: %d stars, HFR %.2f.", self._current_position, star_count, hfr)
+        self._publish(FocusFrameEvent(
+            source="autofocus", position=self._current_position, frame=frame,
+            hfr=hfr, fwhm=hfr * _FWHM_PER_HFR, star_count=star_count,
+        ))
+        return hfr
+
+    def _publish(self, event) -> None:
+        (self._event_bus if self._event_bus is not None else get_bus()).publish(event)
 
     @staticmethod
     def _sample_positions(center: int, step: int, num: int) -> list[int]:
@@ -214,12 +273,15 @@ def _compute_regional_hfr(frame) -> AberrationResult:
     regions = []
     for name, quad in quadrants:
         hfr = _compute_hfr(quad)
-        regions.append(RegionResult(region_name=name, hfr=hfr, fwhm=hfr * 1.5))
+        regions.append(RegionResult(region_name=name, hfr=hfr, fwhm=hfr * _FWHM_PER_HFR))
     return AberrationResult(regions=regions)
 
 
-def _compute_hfr(frame) -> float:
-    """Estimate the mean HFR of stars in *frame* using SEP if available."""
+def _measure_stars(frame) -> tuple[float, int]:
+    """``(hfr, star_count)`` for *frame*, detecting stars with SEP if available.
+
+    The HFR falls back to 2.0 when no stars are found and to a crude contrast
+    estimate when SEP is unavailable; the star count is 0 in both cases."""
     try:
         import sep
         import numpy as np
@@ -228,9 +290,14 @@ def _compute_hfr(frame) -> float:
         data_sub = data - bkg
         objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
         if len(objects) == 0:
-            return 2.0
+            return 2.0, 0
         # Approximate HFR as FWHM/2 via flux-radius
-        return float(np.median(objects["a"] + objects["b"]) / 2)
+        return float(np.median(objects["a"] + objects["b"]) / 2), len(objects)
     except Exception:
         import numpy as np
-        return float(np.std(frame) / (np.mean(frame) + 1e-6) * 2.0) or 2.0
+        return float(np.std(frame) / (np.mean(frame) + 1e-6) * 2.0) or 2.0, 0
+
+
+def _compute_hfr(frame) -> float:
+    """Estimate the mean HFR of stars in *frame* using SEP if available."""
+    return _measure_stars(frame)[0]

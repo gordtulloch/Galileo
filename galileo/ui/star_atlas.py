@@ -17,7 +17,7 @@ import json
 import logging
 import math
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
@@ -26,6 +26,9 @@ from PySide6.QtWidgets import QWidget
 
 from galileo.planning import star_atlas as sa
 from galileo.planning.sky_atlas import DSO_CATALOGS, catalogs_of
+
+if TYPE_CHECKING:
+    from galileo.planning.visibility import HorizonProfile
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +45,15 @@ _CONSTELLATION_LABEL_COLOR = QColor(190, 140, 215, 200)
 _DSO_COLOR = QColor(120, 200, 150)
 _BODY_COLOR = QColor(255, 214, 120)
 _SELECT_COLOR = QColor(255, 90, 90)
+# Horizon obstructions: translucent, so the stars behind them can still be seen.
+_OBSTRUCTION_RGBA = (220, 40, 40, 95)
 
 MAX_MAG_LIMIT = 7.0
 
 # The on/off options the page offers as checkboxes. These and the chosen deep-sky
 # catalogs are remembered between runs.
 PERSISTED_TOGGLES = ("show_grid", "show_boundaries", "show_lines", "abbreviate_constellations",
-                     "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky")
+                     "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky", "show_horizon")
 
 
 def _prefs_path():
@@ -136,6 +141,8 @@ class StarAtlasView(QWidget):
         self.show_labels = True
         self.show_ground = True
         self.daylight_sky = True
+        self.show_horizon = False       # shade the horizon obstructions (Options > Star Atlas)
+        self._horizon: "HorizonProfile | None" = None
 
         self.view = sa.Viewport()
         self.selected: dict[str, Any] | None = None
@@ -249,6 +256,11 @@ class StarAtlasView(QWidget):
 
     def set_option(self, name: str, value: Any) -> None:
         setattr(self, name, value)
+        self.update()
+
+    def set_horizon(self, horizon: "HorizonProfile | None") -> None:
+        """The obstruction horizon to shade when ``show_horizon`` is on (``None`` for none)."""
+        self._horizon = horizon if horizon is not None and horizon.points else None
         self.update()
 
     def set_fov(self, fov_deg: float) -> None:
@@ -428,6 +440,8 @@ class StarAtlasView(QWidget):
         self._draw_bodies(p, sets["bodies"])
         if self.show_ground:
             self._draw_ground(p, vp, brightness)
+        if self.show_horizon and self._horizon is not None:
+            self._draw_obstructions(p, vp)
         self._draw_horizon(p, vp)
         self._draw_labels(p, vp, sets)
         self._draw_selection(p, vp)
@@ -559,6 +573,21 @@ class StarAtlasView(QWidget):
         r, g, b = (int(12 + 40 * brightness), int(16 + 46 * brightness), int(14 + 38 * brightness))
         arr = np.zeros((gh, gw, 4), dtype=np.uint8)
         arr[below] = (b, g, r, 238)          # Format_ARGB32 is BGRA in memory (little-endian)
+        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_ARGB32).copy()
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.drawImage(QRectF(0, 0, gw * cell, gh * cell), img)
+
+    def _draw_obstructions(self, p: QPainter, vp) -> None:
+        """Shade the sky between the horizon and the obstruction altitude at each
+        azimuth in translucent red, on the same coarse pixel grid as the ground."""
+        cell = 2
+        gw, gh = max(1, vp.width // cell), max(1, vp.height // cell)
+        sx, sy = np.meshgrid((np.arange(gw) + 0.5) * cell, (np.arange(gh) + 0.5) * cell)
+        alt, az = vp.unproject(sx, sy)
+        blocked = (alt >= 0.0) & (alt < self._horizon.min_altitudes(az))
+        r, g, b, a = _OBSTRUCTION_RGBA
+        arr = np.zeros((gh, gw, 4), dtype=np.uint8)
+        arr[blocked] = (b, g, r, a)          # Format_ARGB32 is BGRA in memory (little-endian)
         img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_ARGB32).copy()
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         p.drawImage(QRectF(0, 0, gw * cell, gh * cell), img)

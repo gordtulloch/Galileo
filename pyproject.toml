@@ -42,9 +42,13 @@ dependencies = [
     # Network adapters
     "requests>=2.28",
     "paramiko>=3.0",          # SFTP
-    # Notifications
-    # "google-cloud-storage>=2.0",   # optional: GCS cloud sync
-    # "google-auth>=2.0",
+    # Library (AstroFiler): master frames, cloud sync, smart-telescope shares, XISF import, statistics
+    "scipy>=1.7",
+    "matplotlib>=3.3",
+    "reproject>=0.12",        # WCS-based frame alignment when stacking masters
+    "lz4>=3.0",               # lz4-compressed XISF blocks
+    "pysmb>=1.2",             # SMB/CIFS shares on smart telescopes
+    "google-cloud-storage>=2.0",  # Google Cloud Storage sync (Library > Cloud)
     # UI
     "PySide6>=6.5",
     # Async
@@ -53,9 +57,18 @@ dependencies = [
 
 [project.scripts]
 galileo = "galileo.app:main"
-galileo-load-repo = "galileo.commands.load_repo:main"
-galileo-calibrate = "galileo.commands.calibrate:main"
+galileo-auto-calibration = "galileo.commands.auto_calibration:main"
 galileo-cloud-sync = "galileo.commands.cloud_sync:main"
+galileo-create-sessions = "galileo.commands.create_sessions:main"
+galileo-download = "galileo.commands.download:main"
+galileo-link-sessions = "galileo.commands.link_sessions:main"
+galileo-load-repo = "galileo.commands.load_repo:main"
+galileo-photometry = "galileo.commands.photometry:main"
+galileo-register-existing = "galileo.commands.register_existing:main"
+galileo-reset-calibration-test-state = "galileo.commands.reset_calibration_test_state:main"
+galileo-stack = "galileo.commands.stack:main"
+galileo-sync-repo = "galileo.commands.sync_repo:main"
+galileo-variable-star-photometry = "galileo.commands.variable_star_photometry:main"
 
 [project.optional-dependencies]
 test = [

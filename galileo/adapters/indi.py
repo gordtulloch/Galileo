@@ -21,6 +21,7 @@ from typing import Any
 from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.slew_guard import get_slew_guard
 from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
 logger = logging.getLogger(__name__)
@@ -549,6 +550,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         self._refuse_if_parked("slew_to_coordinates")
+        get_slew_guard().check_radec(ra, dec)
         self._log_interaction("slew_to_coordinates", ra=ra, dec=dec)
         self._select("ON_COORD_SET", "TRACK")
         self._set_num("EQUATORIAL_EOD_COORD", {"RA": ra / 15.0, "DEC": dec})
@@ -556,6 +558,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         self._refuse_if_parked("slew_to_altaz")
+        get_slew_guard().check_altaz(alt, az)
         self._log_interaction("slew_to_altaz", alt=alt, az=az)
         self._set_num("HORIZONTAL_COORD", {"ALT": alt, "AZ": az})
         self.altitude, self.azimuth = alt, az

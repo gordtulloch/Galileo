@@ -19,10 +19,9 @@ class Theme(str, Enum):
     SYSTEM = "system"
 
 
-# Palette tokens sampled from N.I.N.A.'s default dark theme, so Galileo's
-# shell reads as visually consistent with the imaging-software family it
-# follows (UI-010). Accent is user-customizable (UI-030); everything else is
-# fixed per theme.
+# Palette tokens for the light and dark themes, kept in one place so Galileo's
+# shell reads consistently across every page (UI-010). Accent is
+# user-customizable (UI-030); everything else is fixed per theme.
 _PALETTE = {
     Theme.DARK: {
         "bg": "#263238",
@@ -50,7 +49,7 @@ class ThemeManager:
 
     def __init__(self) -> None:
         self._theme = Theme.DARK
-        self._accent_color = "#12877b"  # N.I.N.A.-style teal
+        self._accent_color = "#12877b"  # default teal
 
     def available_themes(self) -> list[Theme]:
         return [Theme.LIGHT, Theme.DARK]
@@ -174,13 +173,25 @@ class ThemeManager:
             border-radius: 3px;
             padding: 3px 6px;
         }}
+        QRadioButton::indicator {{
+            width: 12px;
+            height: 12px;
+            border-radius: 7px;
+            border: 1px solid {p['text_dim']};
+            background: {p['surface_alt']};
+        }}
+        QRadioButton::indicator:checked {{
+            border-color: {accent};
+            background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+                stop: 0 {accent}, stop: 0.5 {accent}, stop: 0.6 {p['surface_alt']}, stop: 1 {p['surface_alt']});
+        }}
         QFrame#DeviceSlotPanel {{
             border: 1px solid {p['border']};
             border-radius: 4px;
             background: {p['surface']};
         }}
         QTabWidget::pane {{ border: 1px solid {p['border']}; }}
-        QTabBar::tab:selected {{ color: {accent}; }}
+        QTabBar::tab:selected {{ background: {accent}; color: {p['text_bright']}; }}
         QScrollBar:vertical {{
             background: {p['bg']};
             width: 10px;

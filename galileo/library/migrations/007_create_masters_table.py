@@ -1,0 +1,113 @@
+"""Peewee migrations -- 007_create_masters_table.py.
+
+Legacy migration name expected by some existing databases.
+
+This file intentionally exists to keep peewee-migrate compatible with databases
+whose `migratehistory` includes `007_create_masters_table`.
+
+If the Masters table is missing, it will be created.
+
+"""
+
+from contextlib import suppress
+
+import peewee as pw
+from peewee_migrate import Migrator
+
+
+with suppress(ImportError):
+    import playhouse.postgres_ext as pw_pext
+
+
+def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
+    """Create the Masters table (if missing)."""
+
+    def _is_sqlite() -> bool:
+        return database.__class__.__name__.lower().startswith('sqlite')
+
+    def _create_index_if_not_exists(index_name: str, table_name: str, columns: list[str]) -> None:
+        if _is_sqlite():
+            cols_sql = ", ".join([f"\"{c}\"" for c in columns])
+            database.execute_sql(
+                f"CREATE INDEX IF NOT EXISTS \"{index_name}\" ON \"{table_name}\" ({cols_sql})"
+            )
+            return
+
+        # Non-SQLite fallback (best-effort).
+        migrator.add_index(table_name, *columns, unique=False)
+
+    try:
+        existing_tables = set(database.get_tables())
+    except Exception:
+        existing_tables = set()
+
+    if any(t.lower() == 'masters' for t in existing_tables):
+        return
+
+    class Masters(pw.Model):
+        id = pw.AutoField()
+        master_id = pw.TextField(unique=True)
+        master_type = pw.TextField()
+        master_path = pw.TextField()
+        creation_date = pw.DateTimeField()
+        telescope = pw.TextField(null=True)
+        instrument = pw.TextField(null=True)
+        exposure_time = pw.TextField(null=True)
+        binning_x = pw.TextField(null=True)
+        binning_y = pw.TextField(null=True)
+        ccd_temp = pw.TextField(null=True)
+        gain = pw.TextField(null=True)
+        offset = pw.TextField(null=True)
+        filter_name = pw.TextField(null=True)
+        source_session_id = pw.TextField(null=True)
+        file_count = pw.IntegerField()
+        quality_score = pw.FloatField(null=True)
+        file_size = pw.IntegerField(null=True)
+        hash_value = pw.TextField(null=True)
+        cloud_url = pw.TextField(null=True)
+        is_validated = pw.IntegerField(default=0)
+        validation_date = pw.DateTimeField(null=True)
+        notes = pw.TextField(null=True)
+        soft_delete = pw.IntegerField(default=0)
+
+        class Meta:
+            table_name = 'Masters'
+
+    migrator.create_model(Masters)
+
+    # Indexes (idempotent). On SQLite we use CREATE INDEX IF NOT EXISTS because
+    # peewee-migrate executes index operations after migrate() returns.
+    with suppress(Exception):
+        _create_index_if_not_exists(
+            'idx_masters_match_criteria',
+            'Masters',
+            [
+                'telescope',
+                'instrument',
+                'master_type',
+                'soft_delete',
+                'binning_x',
+                'binning_y',
+                'exposure_time',
+                'filter_name',
+            ],
+        )
+    with suppress(Exception):
+        _create_index_if_not_exists(
+            'Masters_master_type_soft_delete',
+            'Masters',
+            ['master_type', 'soft_delete'],
+        )
+    with suppress(Exception):
+        _create_index_if_not_exists(
+            'Masters_source_session_id_soft_delete',
+            'Masters',
+            ['source_session_id', 'soft_delete'],
+        )
+
+
+def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
+    """Drop the Masters table."""
+
+    with suppress(Exception):
+        migrator.remove_model('Masters', cascade=True)

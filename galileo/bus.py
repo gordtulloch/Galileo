@@ -63,6 +63,25 @@ class SequenceAbortEvent(Event):
 class WeatherReadingEvent(Event):
     timestamp: str
 
+class SolveStartedEvent(Event):
+    """A plate solve began; ``fits_path`` is the frame being solved."""
+
+class SolveCompleteEvent(Event):
+    """A plate solve finished; ``fits_path`` is the frame and ``result`` its ``SolveResult``
+    (success or not — see ``SolveResult.failure_reason``)."""
+
+class FocusStartedEvent(Event):
+    """An autofocus run began. Payload: ``positions`` (the planned sweep),
+    ``initial_position``, ``step_size``, ``num_points``."""
+
+class FocusFrameEvent(Event):
+    """One autofocus exposure was measured. Payload: ``position``, ``frame``
+    (the raw array), ``hfr``, ``fwhm`` and ``star_count``."""
+
+class FocusCompleteEvent(Event):
+    """An autofocus run ended, however it ended. Payload: ``result`` (an
+    ``AutofocusResult``)."""
+
 
 # --- Bus implementation ---------------------------------------------------
 

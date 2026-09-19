@@ -400,29 +400,33 @@ def test_star_atlas_section_sits_above_planning():
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
 def test_planning_and_science_sections_carry_their_own_menus(window):
-    """Planning opens onto Targets (the catalog lookup), Sequence and Scheduler; Science holds Variable Stars.
-    None of those four is a top-level section any more."""
-    from galileo.ui.app_window import PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
+    """Planning opens onto Targets (the catalog lookup), Sequence and Scheduler; Science holds Variable Stars;
+    Library holds AstroFiler's screens. None of those is a top-level section any more."""
+    from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
-    assert ids == ["equipment", "star_atlas", "planning", "framing", "imaging", "guiding", "library", "science"]
+    assert ids == ["equipment", "star_atlas", "planning", "framing", "imaging", "guiding", "focus", "solve", "library", "science"]
     assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sequencer", "Sequence"), ("scheduler", "Scheduler")]
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
+    assert [i[:2] for i in LIBRARY_ITEMS] == [
+        ("images", "Images"), ("sessions", "Sessions"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
+    ]
 
     from PySide6 import QtWidgets
-    # Planning, Science and Options each carry a secondary menu.
-    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 3
+    # Planning, Science, Library and Options each carry a secondary menu.
+    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 4
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
     assert ["Targets", "Sequence", "Scheduler"] in menus and ["Variable Stars"] in menus
+    assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 
 @pytest.mark.requirement("TC-UI-020")
 @pytest.mark.priority("P2")
 def test_options_has_a_settings_placeholder_for_each_primary_section(window):
     """Options opens onto one settings page per primary sidebar section, in the same order,
-    each a titled placeholder until its real settings are built."""
+    each a titled placeholder until its real settings are built (Library's are real: see test_lib.py)."""
     from PySide6 import QtWidgets
     from galileo.ui.app_window import OPTIONS_ITEMS, PRIMARY_SECTIONS
     assert [i[:2] for i in OPTIONS_ITEMS] == [s[:2] for s in PRIMARY_SECTIONS]
@@ -434,8 +438,9 @@ def test_options_has_a_settings_placeholder_for_each_primary_section(window):
     assert [s[1] for s in PRIMARY_SECTIONS] in menus
 
     titles = {w.text() for w in window._window.findChildren(QtWidgets.QLabel, "PageTitle")}
-    for _id, label, _icon in PRIMARY_SECTIONS:
-        assert f"{label} settings" in titles
+    for section_id, label, _icon in PRIMARY_SECTIONS:
+        if section_id != "library":
+            assert f"{label} settings" in titles
 
 
 @pytest.mark.requirement("TC-SKYMAP-010")
@@ -693,3 +698,231 @@ def test_star_atlas_goto_refusals_are_logged(window, caplog):
         window._device_pages["mount"]["adapter"] = _FakeMount("JNOW")
         window._mount_to_object("sync", {**vega, "alt": -5.0})
     assert "no mount is connected" in caplog.text and "below the horizon" in caplog.text
+
+
+# --- horizon obstructions (SKYMAP-070, SKYMAP-080) -------------------------------
+
+@pytest.fixture
+def horizon_env(tmp_path, monkeypatch):
+    """Keep the Planning options file out of the real config folder and put the process-wide slew guard back afterwards."""
+    from galileo.core.slew_guard import get_slew_guard
+    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
+    guard = get_slew_guard()
+    saved = (guard.enabled, guard.horizon, guard.latitude, guard.longitude)
+    yield guard
+    guard.enabled, guard.horizon, guard.latitude, guard.longitude = saved
+
+
+@pytest.mark.requirement("TC-SKYMAP-070")
+@pytest.mark.priority("P2")
+def test_horizon_file_parsing_accepts_common_layouts_and_names_bad_lines():
+    """SKYMAP-070: a horizon file is azimuth/altitude pairs (whitespace, comma or semicolon separated, comments and a header allowed); anything else is rejected with its line."""
+    from galileo.planning.visibility import parse_horizon_text
+    text = "﻿Azimuth,Altitude\n# my horizon\n90, 20\n\n0\t5 # north\n270;15.5\n"
+    assert parse_horizon_text(text) == [(0.0, 5.0), (90.0, 20.0), (270.0, 15.5)]
+    for bad, fragment in (("0 5\n10 x\n", "Line 2"), ("0 5 7\n", "Line 1"), ("400 5\n", "azimuth"),
+                          ("10 95\n", "altitude"), ("-1 5\n", "azimuth"), ("# nothing\n", "no azimuth"), ("", "no azimuth")):
+        with pytest.raises(ValueError, match=fragment):
+            parse_horizon_text(bad)
+
+
+@pytest.mark.requirement("TC-SKYMAP-070")
+@pytest.mark.priority("P2")
+def test_horizon_profile_interpolates_and_wraps_through_north():
+    """SKYMAP-070: obstruction altitude is interpolated linearly between points and wraps from the last azimuth back to the first."""
+    from galileo.planning.visibility import HorizonProfile
+    h = HorizonProfile([(90.0, 20.0), (270.0, 40.0)])
+    assert h.min_altitude_at(180.0) == pytest.approx(30.0)
+    assert h.min_altitude_at(0.0) == pytest.approx(30.0)              # halfway round through north
+    assert h.min_altitude_at(315.0) == pytest.approx(35.0)
+    assert h.is_obstructed(25.0, 180.0) and not h.is_obstructed(35.0, 180.0)
+    assert not HorizonProfile([]).is_obstructed(1.0, 10.0)            # no points, no obstruction
+    assert list(HorizonProfile([(10.0, 12.0)]).min_altitudes(np.array([0.0, 200.0]))) == [12.0, 12.0]
+
+
+@pytest.mark.requirement("TC-SKYMAP-070")
+@pytest.mark.priority("P2")
+def test_star_atlas_shades_obstructions_translucently_when_horizon_is_on(view):
+    """SKYMAP-070: with "Horizon" on, the sky between the horizon and the obstruction altitude is tinted red — and only there — and the tint is translucent."""
+    from galileo.planning.visibility import HorizonProfile
+    from galileo.ui import star_atlas as ui
+    view.show_ground = False
+    view.show_grid = view.show_boundaries = view.show_lines = view.show_labels = False
+    view.center_on_altaz(30.0, 180.0)
+    view.set_horizon(HorizonProfile([(0.0, 40.0)]))                   # 40° all round
+    vp = view._viewport()
+
+    def pixel(alt: float):
+        x, y, _ = vp.project(np.array([alt]), np.array([180.0]))
+        return view.grab().toImage().pixelColor(int(x[0]), int(y[0]))
+
+    below, above = pixel(20.0), pixel(60.0)
+    assert view.show_horizon is False                                 # off by default
+    view.set_option("show_horizon", True)
+    shaded, clear = pixel(20.0), pixel(60.0)
+    assert shaded.red() > below.red() + 40 and shaded.red() < 200    # tinted red, but not opaque
+    assert ui._OBSTRUCTION_RGBA[3] < 128                              # translucent, so the stars behind it still show
+    assert (clear.red(), clear.green(), clear.blue()) == (above.red(), above.green(), above.blue())
+    view.set_horizon(None)
+    assert pixel(20.0).red() == below.red()                           # nothing to shade without a horizon
+
+
+@pytest.mark.requirement("TC-SKYMAP-070")
+@pytest.mark.priority("P2")
+def test_horizon_points_are_kept_per_observatory_by_a_migration(tmp_path):
+    """SKYMAP-070: the horizon table is created by migration 015 and stored per Observatory; saving replaces it, an empty list clears it."""
+    from galileo.library.database import db, get_migration_status, init_db
+    from galileo.observatory import create_observatory, list_horizon_points, save_horizon_points
+    init_db(tmp_path / "horizon.db")
+    try:
+        assert not get_migration_status()["undone"] and "horizon_points" in db.get_tables()
+        home, away = create_observatory("Home"), create_observatory("Away")
+        save_horizon_points(home, [(90.0, 20.0), (0.0, 5.0)])
+        save_horizon_points(away, [(10.0, 1.0)])
+        assert list_horizon_points(home) == [(0.0, 5.0), (90.0, 20.0)]
+        save_horizon_points(home, [(45.0, 9.0)])
+        assert list_horizon_points(home) == [(45.0, 9.0)] and list_horizon_points(away) == [(10.0, 1.0)]
+        save_horizon_points(home, [])
+        assert list_horizon_points(home) == []
+    finally:
+        db.close()
+
+
+@pytest.mark.requirement("TC-SKYMAP-080")
+@pytest.mark.priority("P2")
+def test_slew_guard_blocks_only_when_enabled_with_a_horizon(horizon_env):
+    """SKYMAP-080: an obstructed alt/az or RA/Dec raises the "obstructed" error, but only when the guard is on and a horizon exists."""
+    from galileo.exceptions import SlewObstructedError
+    from galileo.planning.visibility import HorizonProfile
+    guard = horizon_env
+    guard.enabled, guard.horizon, guard.latitude, guard.longitude = True, None, 40.0, 0.0
+    guard.check_altaz(5.0, 90.0)                                      # no horizon: nothing blocked
+    guard.horizon = HorizonProfile([(0.0, 30.0)])
+    with pytest.raises(SlewObstructedError, match="Unable to slew to that area, it is obstructed"):
+        guard.check_altaz(10.0, 90.0)
+    guard.check_altaz(45.0, 90.0)
+    guard.enabled = False
+    guard.check_altaz(10.0, 90.0)                                     # switched off
+
+    # At latitude 40°N, a star on the meridian at Dec +40° is at the zenith and the celestial pole is 40° up.
+    when = dt.datetime(2024, 6, 1, 3, 0)
+    lst = sa.local_sidereal_deg(sa.julian_date(when), 0.0)
+    guard.enabled, guard.horizon = True, HorizonProfile([(0.0, 60.0)])
+    with pytest.raises(SlewObstructedError):
+        guard.check_radec(lst, 90.0, when)                            # 40° up, under the 60° obstruction
+    guard.check_radec(lst, 40.0, when)                                # zenith: clear
+    guard.latitude = None
+    guard.check_radec(lst, 90.0, when)                                # no site: cannot convert, so not blocked
+
+
+@pytest.mark.requirement("TC-SKYMAP-080")
+@pytest.mark.priority("P2")
+def test_mount_adapters_refuse_obstructed_slews_before_moving(horizon_env):
+    """SKYMAP-080: both mount adapters consult the guard, so an obstructed slew is never sent to the mount."""
+    import asyncio
+    from galileo.adapters.alpaca import AlpacaMountAdapter
+    from galileo.adapters.indi import IndiMountAdapter
+    from galileo.exceptions import SlewObstructedError
+    from galileo.planning.visibility import HorizonProfile
+    guard = horizon_env
+    guard.enabled, guard.horizon, guard.latitude, guard.longitude = True, HorizonProfile([(0.0, 30.0)]), 40.0, 0.0
+
+    sent: list = []
+    alpaca = AlpacaMountAdapter()
+
+    async def no_park(_command):
+        return None
+
+    async def put(*args, **kwargs):
+        sent.append((args, kwargs))
+
+    alpaca._refuse_if_parked, alpaca._put = no_park, put
+    with pytest.raises(SlewObstructedError):
+        asyncio.run(alpaca.slew_to_altaz(10.0, 90.0))
+    asyncio.run(alpaca.slew_to_altaz(50.0, 90.0))
+    assert len(sent) == 1                                             # only the clear slew went out
+
+    sent.clear()
+    indi = IndiMountAdapter()
+    indi._refuse_if_parked = lambda _command: None
+    indi._set_num = indi._select = lambda *args, **kwargs: sent.append(args)
+    lst = sa.local_sidereal_deg(sa.julian_date(dt.datetime.now(dt.timezone.utc)), 0.0)
+    with pytest.raises(SlewObstructedError):
+        asyncio.run(indi.slew_to_altaz(10.0, 90.0))
+    with pytest.raises(SlewObstructedError):
+        asyncio.run(indi.slew_to_coordinates(lst, -60.0))             # on the meridian, 10° below the horizon
+    assert sent == []
+    asyncio.run(indi.slew_to_coordinates(lst, 40.0))                  # zenith
+    assert sent                                                       # went out
+
+
+def _checkbox(window, text: str):
+    from PySide6.QtWidgets import QCheckBox
+    return next(box for box in window._window.findChildren(QCheckBox) if box.text() == text)
+
+
+@pytest.mark.requirement("TC-SKYMAP-070")
+@pytest.mark.priority("P2")
+def test_options_star_atlas_uploads_a_horizon_and_the_atlas_shows_it(horizon_env, window, tmp_path, monkeypatch):
+    """SKYMAP-070: Options > Star Atlas loads a file into the horizon table, the Star Atlas gets a "Horizon" checkbox that shades it, and a bad file changes nothing."""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QTableWidget
+    from galileo.observatory import create_observatory, list_horizon_points
+    window._select_observatory(create_observatory("Home", 40.0, 0.0))
+    assert window._star_atlas_set_horizon.__self__.show_horizon is False
+    table = next(t for t in window._options_page.findChildren(QTableWidget))
+    assert table.rowCount() == 0
+
+    good = tmp_path / "horizon.txt"
+    good.write_text("Azimuth Altitude\n0 10\n90 25\n180 5\n270 15\n", encoding="utf-8")
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(good), ""))
+    upload = next(b for b in window._options_page.findChildren(QPushButton) if b.text().startswith("Upload"))
+    upload.click()
+    assert table.rowCount() == 4 and table.item(1, 0).text() == "90" and table.item(1, 1).text() == "25"
+    assert list_horizon_points(window._current_observatory) == [(0.0, 10.0), (90.0, 25.0), (180.0, 5.0), (270.0, 15.0)]
+    view = window._star_atlas_set_horizon.__self__
+    assert view._horizon is not None and view._horizon.min_altitude_at(90.0) == 25.0
+
+    _checkbox(window, "Horizon").setChecked(True)
+    assert view.show_horizon is True
+
+    bad = tmp_path / "bad.txt"
+    bad.write_text("north ten\n", encoding="utf-8")
+    warned: list = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(bad), ""))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[-1]))
+    upload.click()
+    assert warned and table.rowCount() == 4                           # rejected, previous table kept
+
+
+@pytest.mark.requirement("TC-SKYMAP-080")
+@pytest.mark.priority("P2")
+def test_options_planning_switch_turns_the_slew_guard_on(horizon_env, window):
+    """SKYMAP-080: Options > Planning has "Do not slew where obstructed (see Star Atlas)"; it is off by default, remembered, and switches the guard."""
+    from galileo.observatory import create_observatory, save_horizon_points
+    from galileo.planning.settings import load_planning_settings
+    home = create_observatory("Home", 40.0, 0.0)
+    save_horizon_points(home, [(0.0, 30.0)])
+    window._select_observatory(home)
+    box = _checkbox(window, "Do not slew where obstructed (see Star Atlas)")
+    assert box.isChecked() is False and horizon_env.enabled is False
+    assert horizon_env.horizon is not None and horizon_env.latitude == 40.0    # the guard has the site and horizon
+    box.setChecked(True)
+    assert horizon_env.enabled is True and load_planning_settings()["block_obstructed_slews"] is True
+    box.setChecked(False)
+    assert horizon_env.enabled is False and load_planning_settings()["block_obstructed_slews"] is False
+
+
+@pytest.mark.requirement("TC-SKYMAP-080")
+@pytest.mark.priority("P2")
+def test_obstructed_goto_reports_the_error_in_the_status_bar(window):
+    """SKYMAP-080: a Goto the mount refuses as obstructed says "Unable to slew to that area, it is obstructed" and is not reported as sent."""
+    from galileo.exceptions import SlewObstructedError
+
+    class _ObstructedMount(_FakeMount):
+        async def slew_to_coordinates(self, ra, dec):
+            raise SlewObstructedError()
+
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    window._device_pages["mount"]["adapter"] = _ObstructedMount("J2000")
+    assert window._mount_to_object("goto", vega) is False
+    assert "Unable to slew to that area, it is obstructed" in window._window.statusBar().currentMessage()

@@ -30,6 +30,12 @@ class DevicePropertyError(DeviceError):
 class MountParkedError(DeviceError):
     """A movement command was not sent because the mount is parked."""
 
+class SlewObstructedError(DeviceError):
+    """A slew was refused because the target is behind a horizon obstruction."""
+
+    def __init__(self, message: str = "Unable to slew to that area, it is obstructed") -> None:
+        super().__init__(message)
+
 
 # --- Profile errors --------------------------------------------------------
 

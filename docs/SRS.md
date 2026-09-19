@@ -267,6 +267,8 @@ A live, rendered sky view — distinct from the catalog-based `SKY` and the FOV-
 | SKYMAP-040 | The system shall display comets, asteroids, and artificial satellites on the sky map from a periodically updated orbital-elements source. | P2 |
 | SKYMAP-050 | The system shall overlay the active optical train's field-of-view rectangle and the mount's current pointing position live on the sky map, sharing FOV geometry with `FRAME-010`. | P2 |
 | SKYMAP-060 | The system shall allow slewing the connected mount directly to a location clicked or selected on the sky map. | P2 |
+| SKYMAP-070 | The system shall allow a horizon obstruction table of azimuth/altitude pairs to be uploaded from a file for the Observatory (Options > Star Atlas), and shall shade the obstructed sky from the horizon up to each obstruction's altitude in a translucent colour on the sky map, toggleable with a "Horizon" option, so that stars behind it remain visible. | P2 |
+| SKYMAP-080 | Where the "Do not slew where obstructed" option is enabled (Options > Planning) and a horizon obstruction table is defined, the system shall refuse any mount slew whose altitude/azimuth falls inside an obstruction and report the error "Unable to slew to that area, it is obstructed". | P2 |
 
 ### 4.8b `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 
@@ -308,6 +310,7 @@ Multi-night/multi-target job scheduling, distinct from `SEQ`/`SEQ-ADV`'s single-
 | FOC-060 | The system shall apply the per-filter focus offset (`EQP-FW-020`) when switching filters without requiring a full autofocus run, where offsets are configured. | P2 |
 | FOC-070 | The system shall allow configuration of autofocus parameters (step size, number of points, exposure time, backlash handling) per equipment profile. | MVP |
 | FOC-080 | The system shall provide an aberration-inspection tool that computes per-region (at minimum 3-point or 4-point) HFR/tilt indicators across the frame, to help diagnose sensor tilt or collimation issues. | P2 |
+| FOC-090 | The system shall provide a Focus screen that shows an autofocus run as it happens — the frame being measured, its star count, HFR and FWHM, and the HFR-against-position curve, with the fitted curve and best position once the run ends — whichever way the run was started (from that screen or by a sequencer trigger), and shall leave what it shows unchanged while no run is in progress. It shall let the user start a run (step size, number of points, exposure) and stop a run started from it, offering each control only when it can act (traces to `FOC-010`, `FOC-050`, `FOC-070`). | MVP |
 
 ### 4.11 `PLT` — Plate Solving
 
@@ -319,6 +322,7 @@ Multi-night/multi-target job scheduling, distinct from `SEQ`/`SEQ-ADV`'s single-
 | PLT-040 | The system shall support a solve-and-center workflow that iteratively slews and re-solves until the target is within a configured tolerance of the frame center. | MVP |
 | PLT-050 | The system shall report plate-solve failure distinctly from success and allow the invoking workflow (manual or sequencer) to react accordingly. | MVP |
 | PLT-060 | The system shall allow configuration of solver search parameters (field-of-view hint, search radius, downsample) per equipment profile. | P2 |
+| PLT-070 | The system shall provide a Solve screen that shows the frame being solved and its solution as a solve happens — whichever part of the application started it (that screen's own Capture & Solve or Load & Slew, or another workflow such as the sequencer) — and shall leave what it shows unchanged while the screen is not in view. From that screen the user shall be able to capture a frame with the selected camera and solve it, choose whether the mount is then synced, slewed back to the target, or left alone, stop a run in progress, and see each solution's position, its error against the target and a log of the run (traces to `PLT-010`, `PLT-030`, `PLT-040`, `PLT-050`). | MVP |
 
 ### 4.12 `MFLIP` — Meridian Flip
 
@@ -575,11 +579,11 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | SEQ-ADV | 10 | 0 | 9 | 1 |
 | SKY | 9 | 6 | 3 | 0 |
 | FRAME | 6 | 0 | 5 | 1 |
-| SKYMAP | 6 | 3 | 3 | 0 |
+| SKYMAP | 8 | 3 | 5 | 0 |
 | SCHED | 10 | 8 | 2 | 0 |
 | CAL | 6 | 5 | 1 | 0 |
-| FOC | 8 | 5 | 3 | 0 |
-| PLT | 6 | 5 | 1 | 0 |
+| FOC | 9 | 6 | 3 | 0 |
+| PLT | 7 | 6 | 1 | 0 |
 | MFLIP | 4 | 0 | 4 | 0 |
 | GUIDE | 9 | 7 | 2 | 0 |
 | DOME | 3 | 0 | 3 | 0 |
@@ -602,7 +606,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **243** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **247** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

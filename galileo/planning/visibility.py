@@ -40,16 +40,68 @@ class HorizonProfile:
 
     def min_altitude_at(self, azimuth_deg: float) -> float:
         """Interpolate the minimum observable altitude at *azimuth_deg*."""
+        return float(self.min_altitudes(azimuth_deg))
+
+    def min_altitudes(self, azimuth_deg):
+        """Vectorised :meth:`min_altitude_at`: the obstruction altitude at each azimuth in
+        *azimuth_deg* (scalar or array). Interpolates linearly between points and wraps
+        through north, so the stretch from the last point back to the first is covered
+        too. With no points there is no obstruction, and the answer is 0° everywhere."""
+        import numpy as np
+        az = np.asarray(azimuth_deg, dtype=float)
         if not self.points:
-            return 0.0
-        # Sort by azimuth
-        pts = sorted(self.points, key=lambda p: p[0])
-        for i, (az, alt) in enumerate(pts):
-            next_az, next_alt = pts[(i + 1) % len(pts)]
-            if az <= azimuth_deg <= next_az:
-                frac = (azimuth_deg - az) / (next_az - az) if next_az != az else 0
-                return alt + frac * (next_alt - alt)
-        return pts[0][1]
+            return np.zeros_like(az)
+        xp, fp = zip(*self.points)
+        return np.interp(az, xp, fp, period=360.0)
+
+    def is_obstructed(self, altitude_deg: float, azimuth_deg: float) -> bool:
+        """Whether a line of sight at (*altitude_deg*, *azimuth_deg*) is blocked, i.e. it
+        is lower than the obstruction at that azimuth."""
+        return bool(altitude_deg < self.min_altitude_at(azimuth_deg)) if self.points else False
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
+def parse_horizon_text(text: str) -> list[tuple[float, float]]:
+    """Read ``azimuth altitude`` pairs, one per line, from the text of a horizon file.
+
+    Values may be separated by whitespace, commas, semicolons or tabs. Blank lines,
+    ``#`` comments and a single non-numeric header line are ignored. Azimuth is
+    degrees from north through east (0–360); altitude is degrees above the horizon
+    (0–90). Returns the pairs sorted by azimuth. Raises ``ValueError``, naming the line,
+    for anything else that isn't a valid pair, or when the file has no pairs at all."""
+    import re
+    points: list[tuple[float, float]] = []
+    header_allowed = True
+    for number, raw in enumerate(text.lstrip("﻿").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [f for f in re.split(r"[\s,;]+", line) if f]
+        try:
+            if len(fields) != 2:
+                raise ValueError
+            az, alt = float(fields[0]), float(fields[1])
+        except ValueError:
+            if header_allowed and not any(_is_number(f) for f in fields):
+                header_allowed = False      # e.g. "Azimuth,Altitude"
+                continue
+            raise ValueError(f"Line {number}: expected an azimuth and an altitude, got {raw.strip()!r}.") from None
+        header_allowed = False
+        if not 0.0 <= az <= 360.0:
+            raise ValueError(f"Line {number}: azimuth {az:g}° is outside 0–360°.")
+        if not 0.0 <= alt <= 90.0:
+            raise ValueError(f"Line {number}: altitude {alt:g}° is outside 0–90°.")
+        points.append((az, alt))
+    if not points:
+        raise ValueError("The file contains no azimuth/altitude pairs.")
+    return sorted(points)
 
 
 def altitude_chart(
