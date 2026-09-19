@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Guider Equipment page (``galileo.ui.guider.GuiderPage``), built offscreen against a fake PHD2 (GUIDE-070 … 090).
 
 The page polls the guiding model on a timer; tests call ``_tick()`` themselves

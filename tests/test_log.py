@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """LOG — Diagnostics & Logging (TC-LOG-010 … TC-LOG-040)."""
 
 import pytest

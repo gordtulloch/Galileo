@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Basic sequencer — ordered target list execution (SEQ-010 … SEQ-090).
 
 The ``BasicSequencer`` runs an ordered list of ``SequenceDef`` targets,

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Field derotation for alt-az mounts (galileo.derotation).
 
 An alt-az mount rotates the sky's field of view relative to the camera as it

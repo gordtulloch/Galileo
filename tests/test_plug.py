@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-080)."""
 
 import pytest

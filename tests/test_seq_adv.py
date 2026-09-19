@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SEQ-ADV — Advanced Sequencer (TC-SEQ-ADV-010 … TC-SEQ-ADV-100)."""
 
 import pytest

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Calibration service — flat wizard and calibration frame capture (CAL-010 … CAL-050)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.adapters package."""
 
 from galileo.adapters.alpaca import AlpacaAdapter, AlpacaDiscovery, get_adapter_class as get_alpaca_adapter_class

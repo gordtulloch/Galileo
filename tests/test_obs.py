@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """OBS — Multi-Mount Observatory Management (TC-OBS-010 … TC-OBS-080)."""
 
 import pytest

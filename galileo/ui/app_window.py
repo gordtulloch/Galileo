@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Main application window (PySide6).
 
 A N.I.N.A.-style shell: a primary icon sidebar on the left selects the
@@ -55,6 +58,9 @@ PRIMARY_SECTIONS = [
 ]
 
 OPTIONS_SECTION = ("options", "Options", "options")
+
+# Options opens onto one settings page per primary section, in the same order.
+OPTIONS_ITEMS = list(PRIMARY_SECTIONS)
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].
@@ -679,7 +685,10 @@ class AppWindow:
             page = builder() if builder else self._build_placeholder_page(label)
             pages[section_id] = stack.addWidget(page)
 
-        options_page = self._build_placeholder_page(OPTIONS_SECTION[1])
+        options_page = self._build_submenu_page(OPTIONS_ITEMS, {
+            item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
+            for item_id, label, _icon in OPTIONS_ITEMS
+        })
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
 
         def _on_section_selected(section_id: str) -> None:
@@ -729,13 +738,14 @@ class AppWindow:
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
-        from galileo import __author__, __license__, __version__
+        from galileo import __version__
+        from galileo.copyright import COPYRIGHT_NOTICE, LICENSE_NOTICE
         QMessageBox.about(
             self._window,
             "About Galileo",
             f"<h3>Galileo {__version__}</h3>"
             f"<p>Cross-platform astrophotography imaging suite, built on INDI and ASCOM Alpaca.</p>"
-            f"<p>© {__author__} — {__license__}</p>",
+            f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>",
         )
 
     def _build_submenu_page(self, items: list, builders: dict) -> "QWidget":

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Altitude/visibility calculations for the sky atlas and scheduler.
 
 Uses ``astropy.coordinates`` so all results are J2000 / ICRS with proper

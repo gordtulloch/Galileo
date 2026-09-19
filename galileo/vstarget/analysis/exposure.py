@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Exposure-time calculator (adapted from VSTarget analysis/exposure.py)."""
 
 from __future__ import annotations

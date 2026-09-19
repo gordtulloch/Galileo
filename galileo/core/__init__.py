@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.core package — device abstraction layer."""
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities

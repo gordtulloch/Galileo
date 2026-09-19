@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """META — Image Metadata (TC-META-010 … TC-META-050).
 
 These tests exercise FITS header writing/reading directly via astropy.

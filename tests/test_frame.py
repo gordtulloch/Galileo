@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """FRAME — Framing Assistant (TC-FRAME-010 … TC-FRAME-060)."""
 
 import pytest

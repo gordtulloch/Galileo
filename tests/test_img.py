@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """IMG — Imaging Tab (TC-IMG-010 … TC-IMG-110)."""
 
 import pytest

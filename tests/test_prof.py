@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """PROF — Equipment Profiles / Piers (TC-PROF-010 … TC-PROF-090)."""
 
 import json

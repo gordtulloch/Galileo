@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Meridian flip service (MFLIP-010 … MFLIP-040)."""
 
 from __future__ import annotations

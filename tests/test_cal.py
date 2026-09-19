@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """CAL — Calibration / Flat Wizard (TC-CAL-010 … TC-CAL-060)."""
 
 import pytest

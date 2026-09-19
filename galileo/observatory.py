@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Multi-Mount Observatory management (OBS-010 … OBS-080).
 
 An Observatory groups one or more Piers.  Safety monitors and domes may be

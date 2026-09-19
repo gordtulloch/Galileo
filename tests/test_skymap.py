@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SKYMAP — Interactive Star Map / Planetarium (TC-SKYMAP-010 … TC-SKYMAP-060)."""
 
 import pytest
@@ -57,7 +60,7 @@ def test_tc_skymap_020_click_to_identify_double_click_to_center(skymap):
 @pytest.mark.requirement("TC-SKYMAP-030")
 @pytest.mark.priority("MVP")
 def test_tc_skymap_030_constellation_lines_and_grid_toggleable(skymap):
-    """SKYMAP-030: Overlay constellation lines/art and coordinate grid, each independently toggleable."""
+    """SKYMAP-030: Overlay constellation lines and coordinate grid, each independently toggleable."""
     skymap.set_constellation_overlay(enabled=True)
     assert skymap.show_constellations is True
 

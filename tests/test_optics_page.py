@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Optics Equipment page (``AppWindow._build_optics_page``), built offscreen.
 
 PROF-100: the page defines the optical tube(s) on a Pier — focal length,

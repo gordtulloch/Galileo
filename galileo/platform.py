@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Platform-specific path resolution for Galileo.
 
 All platform-specific code is isolated here per NFR-PORT-010.

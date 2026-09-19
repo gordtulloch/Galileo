@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Device abstraction layer — ports and adapters core (ARCH-010 … ARCH-080).
 
 This module defines the abstract device interfaces ("ports") that all device

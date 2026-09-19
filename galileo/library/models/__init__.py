@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.library.models package."""
 
 from galileo.library.models.base import BaseModel, db

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """NFR — Non-Functional Requirements (TC-NFR-*).
 
 Performance, reliability, portability, extensibility, usability,

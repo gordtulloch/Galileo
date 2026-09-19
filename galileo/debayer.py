@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Debayering (demosaicing) of one-shot-colour camera frames (IMG-110).
 
 Pure numpy, no Qt and no device access. A one-shot-colour sensor records one

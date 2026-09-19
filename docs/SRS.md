@@ -263,7 +263,7 @@ A live, rendered sky view — distinct from the catalog-based `SKY` and the FOV-
 |---|---|---|
 | SKYMAP-010 | The system shall render an interactive, pannable, zoomable real-time sky view for the configured observing location and time, displaying stars down to a configurable magnitude limit, deep-sky objects, and the Sun/Moon/planets. | MVP |
 | SKYMAP-020 | The system shall allow clicking an object on the sky map to identify it, and double-clicking to center and track it. | MVP |
-| SKYMAP-030 | The system shall overlay constellation lines/art and a coordinate grid on the sky map, each independently toggleable. | MVP |
+| SKYMAP-030 | The system shall overlay constellation lines and a coordinate grid on the sky map, each independently toggleable. | MVP |
 | SKYMAP-040 | The system shall display comets, asteroids, and artificial satellites on the sky map from a periodically updated orbital-elements source. | P2 |
 | SKYMAP-050 | The system shall overlay the active optical train's field-of-view rectangle and the mount's current pointing position live on the sky map, sharing FOV geometry with `FRAME-010`. | P2 |
 | SKYMAP-060 | The system shall allow slewing the connected mount directly to a location clicked or selected on the sky map. | P2 |

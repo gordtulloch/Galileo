@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Star Atlas view — a basic planetarium widget (SKYMAP-010, SKYMAP-020).
 
 Draws the sky above the configured location at a chosen time: stars from the

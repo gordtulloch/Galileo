@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Full variable-star analysis service (VST-AN-010 … VST-AN-090)."""
 
 from __future__ import annotations

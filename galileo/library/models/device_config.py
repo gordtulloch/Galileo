@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Persisted per-Pier device configuration (Equipment page Save button).
 
 One record per (Pier, device category, slot) holds the driver/server/port and

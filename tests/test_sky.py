@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SKY — Sky Atlas (TC-SKY-010 … TC-SKY-100)."""
 
 import pytest

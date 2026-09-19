@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Sky atlas — offline DSO catalog search and visibility (SKY-010 … SKY-090).
 
 The catalog is OpenNGC (NGC/IC objects with their Messier and Caldwell

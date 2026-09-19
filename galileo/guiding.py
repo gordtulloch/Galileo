@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Guiding service — PHD2 event-server integration (GUIDE-010 … GUIDE-090).
 
 Two halves, both free of Qt and of any socket code (that lives in

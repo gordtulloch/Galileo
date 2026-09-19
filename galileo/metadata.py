@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """FITS image metadata writer (META-010 … META-050).
 
 Wraps ``astropy.io.fits`` to write properly formed headers with all

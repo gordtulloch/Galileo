@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """HIST — Session History & Statistics (TC-HIST-010 … TC-HIST-040)."""
 
 import pytest

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Data models for variable star target planning (adapted from VSTarget planning/models.py)."""
 
 from __future__ import annotations

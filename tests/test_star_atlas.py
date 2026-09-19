@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Star Atlas planetarium (``galileo.planning.star_atlas``, ``galileo.ui.star_atlas``, the Star Atlas page).
 
 The Star Atlas sidebar section shows a basic planetarium: the sky maths is plain
@@ -5,8 +8,8 @@ numpy and is tested directly; the view and page are built offscreen. Catalog
 loading is patched to the built-in offline star list so no test touches the
 network. Requirement IDs are the SKYMAP ones the planetarium partly satisfies
 (SKYMAP-010 render, SKYMAP-020 identify / centre-and-track, SKYMAP-030 constellation
-boundaries and outlines); constellation art, comets/asteroids/satellites and the
-FOV/mount overlay are not built.
+boundaries and outlines); comets/asteroids/satellites and the FOV/mount overlay
+are not built.
 """
 
 from __future__ import annotations
@@ -406,12 +409,33 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
 
     from PySide6 import QtWidgets
-    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 2
+    # Planning, Science and Options each carry a secondary menu.
+    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 3
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
     assert ["Targets", "Sequence", "Scheduler"] in menus and ["Variable Stars"] in menus
+
+
+@pytest.mark.requirement("TC-UI-020")
+@pytest.mark.priority("P2")
+def test_options_has_a_settings_placeholder_for_each_primary_section(window):
+    """Options opens onto one settings page per primary sidebar section, in the same order,
+    each a titled placeholder until its real settings are built."""
+    from PySide6 import QtWidgets
+    from galileo.ui.app_window import OPTIONS_ITEMS, PRIMARY_SECTIONS
+    assert [i[:2] for i in OPTIONS_ITEMS] == [s[:2] for s in PRIMARY_SECTIONS]
+
+    menus = [
+        [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
+        for c in window._nav_columns if c.objectName() == "SecondarySidebar"
+    ]
+    assert [s[1] for s in PRIMARY_SECTIONS] in menus
+
+    titles = {w.text() for w in window._window.findChildren(QtWidgets.QLabel, "PageTitle")}
+    for _id, label, _icon in PRIMARY_SECTIONS:
+        assert f"{label} settings" in titles
 
 
 @pytest.mark.requirement("TC-SKYMAP-010")

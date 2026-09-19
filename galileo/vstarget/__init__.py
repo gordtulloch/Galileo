@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.vstarget package — variable star planning and analysis (VST, VST-AN).
 
 Delivered as first-party pre-loaded plugins (PLUG-060).

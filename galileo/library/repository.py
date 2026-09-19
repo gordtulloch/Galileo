@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """FITS repository scanning, cataloging, and management (LIB-010 … LIB-160).
 
 Adapted from AstroFiler's core scanning and hashing logic.

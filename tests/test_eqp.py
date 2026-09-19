@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """EQP — Equipment Control (TC-EQP-010 … TC-EQP-SAFE-010)."""
 
 import pytest

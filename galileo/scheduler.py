@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Observatory scheduler — multi-target, multi-night job queue (SCHED-010 … SCHED-100).
 
 Each ``SchedulerJob`` references a target, a sequence definition, and a Pier.

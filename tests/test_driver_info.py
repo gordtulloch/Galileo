@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Driver name/version info on the Equipment pages (EQP-070).
 
 Adapter level: ``DeviceBackend.get_driver_info`` for INDI (against the

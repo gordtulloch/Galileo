@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SAFE — Safety & Weather Monitoring (TC-SAFE-010 … TC-SAFE-100)."""
 
 import asyncio

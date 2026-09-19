@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """INDI adapter behavior against a real-protocol fake INDI server.
 
 Unlike the mock-based tests in ``test_eqp.py`` / ``test_ext.py`` (which use

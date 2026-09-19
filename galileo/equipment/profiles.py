@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Equipment profiles — Pier / optical-train management (PROF-010 … PROF-090).
 
 Profiles are persisted as JSON files in the platform data directory.

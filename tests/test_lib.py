@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """LIB — Image Library & Repository Management (TC-LIB-010 … TC-LIB-160).
 
 TC-LIB-020 (SHA-256 deduplication) and parts of TC-LIB-010 (file scanning)

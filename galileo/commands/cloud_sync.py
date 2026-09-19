@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """CLI: Google Cloud Storage sync (LIB-120, LIB-130, EXT-140)."""
 
 from __future__ import annotations

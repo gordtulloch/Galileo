@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """UI theming — light/dark themes and panel layout persistence (UI-010 … UI-030)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Advanced sequencer — nested instructions, conditions, triggers (SEQ-ADV-010 … SEQ-ADV-100).
 
 Implements the tree of ``InstructionGroup`` → ``BaseInstruction`` |

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Field-derotation logic behind the Rotator screen (``galileo.derotation``).
 
 Derotation has no numbered SRS requirement yet (it comes from the reference

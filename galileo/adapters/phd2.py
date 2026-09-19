@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """PHD2 event-server adapter (GUIDE-010 … GUIDE-090).
 
 Speaks PHD2's "Event Server" protocol: newline-delimited JSON over TCP (port

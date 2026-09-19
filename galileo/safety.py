@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Safety monitoring and watchdog service (SAFE-010 … SAFE-100)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Notification service — in-app and outbound channels (NOTIF-010 … NOTIF-030)."""
 
 from __future__ import annotations

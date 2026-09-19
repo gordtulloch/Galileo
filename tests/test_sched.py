@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SCHED — Observatory Scheduler (TC-SCHED-010 … TC-SCHED-100)."""
 
 import pytest

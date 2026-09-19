@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Galileo application entry point (EXT-010).
 
 Starts the PySide6 QApplication and the main window.
@@ -53,8 +56,10 @@ def _show_splash(app):
     closes it as soon as the window is shown, with no fixed minimum display time.
     """
     from PySide6.QtWidgets import QSplashScreen
-    from PySide6.QtGui import QPixmap
+    from PySide6.QtGui import QColor, QPixmap
     from PySide6.QtCore import Qt
+
+    from galileo.copyright import FULL_NOTICE
 
     if not _LOGO_PATH.exists():
         logger.warning("Splash logo not found at %s", _LOGO_PATH)
@@ -67,6 +72,14 @@ def _show_splash(app):
 
     splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
     splash.setAttribute(Qt.WA_TranslucentBackground)
+    font = splash.font()
+    font.setPointSize(16)
+    splash.setFont(font)
+    splash.showMessage(
+        FULL_NOTICE,
+        Qt.AlignBottom | Qt.AlignHCenter,
+        QColor("white"),
+    )
     splash.show()
     app.processEvents()
     return splash

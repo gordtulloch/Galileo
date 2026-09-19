@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Plate-solving service — ASTAP and astrometry.net integration (PLT-010 … PLT-060)."""
 
 from __future__ import annotations

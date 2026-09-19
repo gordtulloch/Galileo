@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Interactive sky map service (SKYMAP-010 … SKYMAP-060).
 
 The rendering engine is a thin service layer; the PySide6 widget wraps this.

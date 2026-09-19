@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """A small in-process INDI server for testing ``galileo.adapters.indi``.
 
 Speaks the real INDI XML wire protocol over a loopback TCP socket, so the

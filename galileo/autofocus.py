@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Autofocus service — HFR curve fitting and focuser control (FOC-010 … FOC-080)."""
 
 from __future__ import annotations

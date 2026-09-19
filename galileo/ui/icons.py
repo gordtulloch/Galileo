@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Flat, single-colour vector icons for the NINA-style sidebar navigation.
 
 Drawn at runtime with ``QPainter`` rather than shipped as image assets, so

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """A tiny stand-in for PHD2's event server (newline-delimited JSON over TCP).
 
 Answers requests from a ``responses`` table (a value, or a callable taking the

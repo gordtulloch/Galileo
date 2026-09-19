@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """NOTIF — Notifications (TC-NOTIF-010 … TC-NOTIF-030)."""
 
 import pytest

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Framing assistant — FOV calculation and mosaic planning (FRAME-010 … FRAME-060)."""
 
 from __future__ import annotations

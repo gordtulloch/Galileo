@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.planning package."""
 
 from galileo.planning.framing import FOV, FramingAssistant, Mosaic, MosaicPanel

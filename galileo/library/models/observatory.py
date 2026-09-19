@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Persisted Observatory/Pier master records (OBS settings persistence).
 
 Distinct from the live runtime ``galileo.observatory.Observatory``/``Pier``

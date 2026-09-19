@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """SFTP image retrieval adapter (EXT-120)."""
 
 from __future__ import annotations

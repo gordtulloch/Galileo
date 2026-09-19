@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """galileo.library package — image library and repository management.
 
 Incorporates and extends code from the AstroFiler project (GPL-3.0).

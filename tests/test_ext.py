@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """EXT — External Interface Requirements (TC-EXT-010 … TC-EXT-140)."""
 
 import pytest

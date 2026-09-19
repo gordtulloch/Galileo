@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Native INDI protocol client (galileo.adapters.indi_client).
 
 Speaks the INDI XML wire protocol (v1.7) directly over TCP, so INDI support

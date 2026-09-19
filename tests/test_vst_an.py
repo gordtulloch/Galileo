@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """VST-AN — Variable Star Analysis & Photometry (TC-VST-AN-010 … TC-VST-AN-090)."""
 
 import pytest

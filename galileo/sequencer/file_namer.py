@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """File-naming macro expansion for captured frames (SEQ-020)."""
 
 from __future__ import annotations

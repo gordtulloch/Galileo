@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Dome control service (DOME-010 … DOME-030)."""
 
 from __future__ import annotations

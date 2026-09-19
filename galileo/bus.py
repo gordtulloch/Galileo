@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Lightweight in-process publish/subscribe event bus.
 
 The bus is the sole cross-module communication mechanism between the

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """Guider screen (GUIDE-070 … GUIDE-090): a live view onto PHD2.
 
 Laid out after the reference guiding screen (assets/samples/guide.png): control

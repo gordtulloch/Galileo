@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
 """FOC — Autofocus (TC-FOC-010 … TC-FOC-080)."""
 
 import pytest
