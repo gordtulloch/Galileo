@@ -212,10 +212,10 @@ Each module lists its responsibility, key design elements, external libraries, a
 
 ### 4.5 `galileo.ui.imaging` — Imaging Tab
 
-- **Responsibility:** Live frame display, histogram, auto-stretch preview, per-frame statistics, star overlay, manual capture, panel layout, and the entry point for the flat-wizard workflow (`CAL-060`) — the UI is hosted here rather than in its own primary-navigation section; the capture logic remains in `galileo.calibration` (Section 4.10).
+- **Responsibility:** Live frame display, histogram, auto-stretch preview, optional debayering of the preview (`IMG-110`, pattern set per camera on the Camera page), per-frame statistics, star overlay, manual capture, panel layout, and the entry point for the flat-wizard workflow (`CAL-060`) — the UI is hosted here rather than in its own primary-navigation section; the capture logic remains in `galileo.calibration` (Section 4.10).
 - **Key design:** Frame data is decoded off the UI thread (in the process pool for the auto-stretch/statistics computation) and handed to a Qt `QGraphicsView`-based renderer for pan/zoom; layout persistence uses Qt's `QDockWidget` state save/restore.
 - **Libraries:** `numpy` (pixel math), `astropy` (FITS decode), `SEP` (star detection for the HFR/star-count statistics, unified with the autofocus service per ADR-002), Qt Graphics View framework.
-- **Satisfies:** `IMG-010`–`IMG-100`, `CAL-060`.
+- **Satisfies:** `IMG-010`–`IMG-110`, `CAL-060`.
 
 ### 4.6 `galileo.sequencer.basic` — Sequencer (Basic)
 

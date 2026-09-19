@@ -417,6 +417,16 @@ def _bootstrap_sky_atlas_catalog(tmp_path_factory):
     sky_atlas_mod._catalog_cache_path = lambda: catalog_path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_star_atlas_prefs(tmp_path, monkeypatch):
+    """Give each test its own Star Atlas display-options file: windows read it
+    on build and every checkbox click writes it, so sharing the real per-user
+    file (or one file across tests) would leak state in and out."""
+    import galileo.ui.star_atlas as star_atlas_ui_mod
+
+    monkeypatch.setattr(star_atlas_ui_mod, "_prefs_path", lambda: tmp_path / "star_atlas_prefs.json")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _isolate_star_atlas_catalogs(tmp_path_factory):
     """Keep the Planning page's star/constellation-boundary loading off the

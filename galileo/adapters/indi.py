@@ -18,7 +18,7 @@ from typing import Any
 from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceBackend, DeviceCategory
-from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError
+from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
 logger = logging.getLogger(__name__)
 
@@ -536,13 +536,23 @@ class IndiMountAdapter(IndiAdapter):
             can_track_non_sidereal=self._has("TELESCOPE_TRACK_RATE"),
         )
 
+    def _refuse_if_parked(self, command: str) -> None:
+        """Movement commands must not reach a parked mount. Checked against the
+        driver's live ``TELESCOPE_PARK`` state, so a park done outside Galileo
+        is honoured too."""
+        if self._sw("TELESCOPE_PARK", "PARK"):
+            logger.warning("Not sending %s to INDI mount %r: it is parked", command, self.device_name)
+            raise MountParkedError(f"The mount is parked, so {command} was not sent — unpark it first.")
+
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
+        self._refuse_if_parked("slew_to_coordinates")
         self._log_interaction("slew_to_coordinates", ra=ra, dec=dec)
         self._select("ON_COORD_SET", "TRACK")
         self._set_num("EQUATORIAL_EOD_COORD", {"RA": ra / 15.0, "DEC": dec})
         self.ra, self.dec = ra, dec
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
+        self._refuse_if_parked("slew_to_altaz")
         self._log_interaction("slew_to_altaz", alt=alt, az=az)
         self._set_num("HORIZONTAL_COORD", {"ALT": alt, "AZ": az})
         self.altitude, self.azimuth = alt, az
@@ -560,6 +570,7 @@ class IndiMountAdapter(IndiAdapter):
         self._set_sw("TELESCOPE_PARK", {"PARK": False, "UNPARK": True})
 
     async def find_home(self) -> None:
+        self._refuse_if_parked("find_home")
         self._log_interaction("find_home")
         self._select("TELESCOPE_HOME", "FIND")
 
@@ -568,7 +579,10 @@ class IndiMountAdapter(IndiAdapter):
         axis 0 is RA (positive = east), axis 1 is Dec (positive = north),
         ``rate`` in deg/s, ``0`` stops that axis. INDI drives jogging with
         direction switches plus a discrete slew-rate selector, so the
-        requested speed is snapped to the nearest slower standard rate."""
+        requested speed is snapped to the nearest slower standard rate.
+        Stopping an axis (``rate=0``) is always allowed."""
+        if rate:
+            self._refuse_if_parked("move_axis")
         self._log_interaction("move_axis", axis=axis, rate=rate)
         if axis == 0:
             prop, positive, negative = "TELESCOPE_MOTION_WE", "MOTION_EAST", "MOTION_WEST"

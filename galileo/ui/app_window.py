@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import logging
 
+from galileo.exceptions import MountParkedError
+
 logger = logging.getLogger(__name__)
+
+_PARKED_MESSAGE = "The mount is parked — unpark it first."
 
 # Derived from this repository's own git remote — the docs/ folder doubles as
 # the online manual until a dedicated documentation site exists.
@@ -42,16 +46,26 @@ _DEFAULT_PORTS = {"Alpaca": 32323, "INDI": 7624}
 PRIMARY_SECTIONS = [
     ("equipment", "Equipment", "equipment"),
     ("star_atlas", "Star Atlas", "star_atlas"),
-    ("sky_atlas", "Planning", "sky_atlas"),
+    ("planning", "Planning", "sky_atlas"),
     ("framing", "Framing", "framing"),
     ("imaging", "Imaging", "imaging"),
-    ("sequencer", "Sequence", "sequencer"),
-    ("scheduler", "Scheduler", "scheduler"),
+    ("guiding", "Guiding", "guider"),
     ("library", "Library", "library"),
-    ("variable_stars", "Variable Stars", "variable_stars"),
+    ("science", "Science", "variable_stars"),
 ]
 
 OPTIONS_SECTION = ("options", "Options", "options")
+
+# Sections that open onto a secondary menu of their own, like Equipment does:
+# section_id -> [(item_id, label, icon_name)].
+PLANNING_ITEMS = [
+    ("targets", "Targets", "sky_atlas"),
+    ("sequencer", "Sequence", "sequencer"),
+    ("scheduler", "Scheduler", "scheduler"),
+]
+SCIENCE_ITEMS = [
+    ("variable_stars", "Variable Stars", "variable_stars"),
+]
 
 # Primary sections that work with one of the Pier's optical tubes, and so show
 # the top bar's Optics selector.
@@ -63,7 +77,6 @@ EQUIPMENT_CATEGORIES = [
     ("filter_wheel", "Filter Wheel", "filter_wheel"),
     ("focuser", "Focuser", "focuser"),
     ("rotator", "Rotator", "rotator"),
-    ("guider", "Guider", "guider"),
     ("optics", "Optics", "optics"),
     ("switch", "Switches", "switch"),
     ("flat_panel", "Flat Panel", "flat_panel"),
@@ -119,7 +132,11 @@ def _device_association_label(category: str, slot: str, device_name: "str | None
     """Display label for a saved device in the Optics page's "Associated"
     list — e.g. ``Camera 2: ZWO ASI120MM`` — built from its category, slot
     (see ``DeviceConfigRecord``) and the device name picked on its own page."""
-    category_label = next((label for cat_id, label, _ in EQUIPMENT_CATEGORIES if cat_id == category), category)
+    category_label = next(
+        (label for cat_id, label, _ in EQUIPMENT_CATEGORIES if cat_id == category),
+        # Guiding is a top-level section now, but its device is still saved under the "guider" category.
+        "Guider" if category == "guider" else category,
+    )
     if slot == "primary":
         name = category_label
     elif slot.rsplit("_", 1)[-1].isdigit():
@@ -173,6 +190,17 @@ def _format_dms(degrees: "float | None") -> str:
     d, rem = divmod(total_seconds, 3600)
     m, s = divmod(rem, 60)
     return f"{sign}{d:02d}° {m:02d}' {s:02d}\""
+
+
+def _when_visible(page, refresh):
+    """Wrap a status-poll callback so it only runs while ``page`` is on
+    screen. The device pages poll their hardware on a timer, and each poll is
+    a blocking call on the UI thread; polling a page nobody is looking at
+    only makes the visible one sluggish."""
+    def tick() -> None:
+        if page.isVisible():
+            refresh()
+    return tick
 
 
 class AppWindow:
@@ -523,6 +551,51 @@ class AppWindow:
         position = self._optics_combo.itemData(index)
         if position is not None:
             self._active_optics_position = position
+        self._refresh_imaging_filters()
+
+    def _active_filter_wheel(self):
+        """The connected filter wheel that belongs to the active optical tube, or
+        ``None``. A tube with a filter wheel associated on the Optics page owns
+        it. If no tube on the Pier has one associated the wheel is unassigned, so
+        it is offered to whichever tube is selected; if another tube owns it,
+        this one has no wheel."""
+        adapter = (self._device_pages.get("filter_wheel") or {}).get("adapter")
+        if adapter is None or self._current_pier is None:
+            return None
+        from galileo.observatory import list_optical_tubes
+        try:
+            tubes = list_optical_tubes(self._current_pier)
+        except Exception:
+            logger.exception("Could not load optical tubes for Pier %r", self._current_pier.name)
+            return adapter
+        def has_wheel(tube) -> bool:
+            return any(key.startswith("filter_wheel:") for key in (tube.associated or []))
+        tube = self.active_optical_tube()
+        if tube is not None and has_wheel(tube):
+            return adapter
+        return None if any(has_wheel(t) for t in tubes) else adapter
+
+    def _refresh_imaging_filters(self) -> None:
+        """Fill the Imaging page's Filter selector from the filter wheel that
+        belongs to the active optical tube (see ``_active_filter_wheel``). The
+        list is the wheel's own filter names, led by a blank for "no filter";
+        with no wheel it is just the blank, and the box stays editable. Reads
+        the names the adapter already holds rather than querying the device."""
+        combo = getattr(self, "_imaging_filter_combo", None)
+        if combo is None:
+            return
+        wheel = self._active_filter_wheel()
+        names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])] if wheel is not None else []
+        current = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(["", *names])
+        position = getattr(wheel, "position", None)
+        if current in names:
+            combo.setCurrentText(current)
+        elif isinstance(position, int) and 0 <= position < len(names):
+            combo.setCurrentText(names[position])     # start on what the wheel is showing now
+        combo.blockSignals(False)
 
     def active_optical_tube(self):
         """The optical tube currently chosen in the top-bar Optics selector,
@@ -593,9 +666,12 @@ class AppWindow:
         page_builders = {
             "equipment": self._build_equipment_page,
             "star_atlas": self._build_star_atlas_page,
-            "sky_atlas": self._build_sky_atlas_page,
+            "planning": lambda: self._build_submenu_page(
+                PLANNING_ITEMS, {"targets": self._build_sky_atlas_page}),
+            "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
             "framing": self._build_framing_page,
             "imaging": self._build_imaging_page,
+            "guiding": self._build_guider_page,
         }
         pages: dict[str, int] = {}
         for section_id, label, icon_name in PRIMARY_SECTIONS:
@@ -611,6 +687,7 @@ class AppWindow:
             stack.setCurrentIndex(pages[section_id])
             self._refresh_optics_combo()
             self._refresh_camera_combo()
+            self._refresh_imaging_filters()
 
         sidebar = _NavColumn(
             object_name="Sidebar",
@@ -661,6 +738,43 @@ class AppWindow:
             f"<p>© {__author__} — {__license__}</p>",
         )
 
+    def _build_submenu_page(self, items: list, builders: dict) -> "QWidget":
+        """A primary section with a secondary icon menu down its left edge
+        (the same layout as Equipment): one page per ``(id, label, icon)`` in
+        ``items``, built by ``builders[id]`` or, if none is given, a
+        placeholder."""
+        from PySide6.QtWidgets import QWidget, QHBoxLayout, QStackedWidget
+
+        page = QWidget()
+        page.setObjectName("SubmenuPage")
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        stack = QStackedWidget()
+        indexes: dict[str, int] = {}
+        for item_id, label, _icon in items:
+            builder = builders.get(item_id)
+            indexes[item_id] = stack.addWidget(builder() if builder else self._build_placeholder_page(label))
+
+        secondary = _NavColumn(
+            object_name="SecondarySidebar",
+            button_object_name="SecondaryNavButton",
+            items=items,
+            bottom_items=[],
+            icon_size=20,
+            button_min_height=52,
+            accent=self._theme.accent_color,
+            dim_color=self._theme.palette()["text_dim"],
+            on_select=lambda item_id: stack.setCurrentIndex(indexes[item_id]),
+        )
+        self._nav_columns.append(secondary)
+        stack.setCurrentIndex(indexes[items[0][0]])
+
+        layout.addWidget(secondary)
+        layout.addWidget(stack, 1)
+        return page
+
     # --- Equipment page (primary + secondary nav example) -------------------
 
     def _build_equipment_page(self) -> "QWidget":
@@ -685,8 +799,6 @@ class AppWindow:
                 page_widget = self._build_filter_wheel_page()
             elif cat_id == "rotator":
                 page_widget = self._build_rotator_page()
-            elif cat_id == "guider":
-                page_widget = self._build_guider_page()
             elif cat_id == "optics":
                 page_widget = self._build_optics_page()
             else:
@@ -895,6 +1007,16 @@ class AppWindow:
             sensor_name.setPlaceholderText("—")
             form.addRow("Sensor name", sensor_name)
 
+            from galileo.debayer import BAYER_PATTERNS
+            bayer_combo = QComboBox()
+            bayer_combo.addItems(BAYER_PATTERNS)
+            bayer_combo.setToolTip(
+                "The layout of a one-shot-colour sensor's colour-filter mosaic, read from the top-left "
+                "2x2 pixels (RGGB is the most common). Used by the Imaging tab's Debayer option; "
+                "if the colours look wrong, try another. Ignored for a monochrome camera."
+            )
+            form.addRow("Bayer pattern", bayer_combo)
+
             download_btn = QPushButton("Download Info")
             download_btn.setToolTip(
                 "Live-query this device's pixel size and sensor dimensions "
@@ -908,7 +1030,7 @@ class AppWindow:
                 "device": device_combo, "apply_driver_info": apply_driver_info,
                 "pixel_size": pixel_size,
                 "sensor_w": sensor_w, "sensor_h": sensor_h, "sensor_name": sensor_name,
-                "download": download_btn,
+                "bayer": bayer_combo, "download": download_btn,
             }
 
         def _renumber_panels() -> None:
@@ -1113,6 +1235,7 @@ class AppWindow:
                     sensor_width_px=panel["sensor_w"].value() or None,
                     sensor_height_px=panel["sensor_h"].value() or None,
                     sensor_name=panel["sensor_name"].text().strip() or None,
+                    bayer_pattern=panel["bayer"].currentText(),
                 )
 
             # Prune slots from cameras that were since removed from the page.
@@ -1141,6 +1264,9 @@ class AppWindow:
             panel["sensor_w"].setValue(cfg.sensor_width_px if cfg is not None and cfg.sensor_width_px else 0)
             panel["sensor_h"].setValue(cfg.sensor_height_px if cfg is not None and cfg.sensor_height_px else 0)
             panel["sensor_name"].setText(cfg.sensor_name if cfg is not None and cfg.sensor_name else "")
+            from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN
+            saved_pattern = cfg.bayer_pattern if cfg is not None else DEFAULT_PATTERN
+            panel["bayer"].setCurrentText(saved_pattern if saved_pattern in BAYER_PATTERNS else DEFAULT_PATTERN)
             # Filled by autoconnect (below) or when a device is next picked —
             # not looked up here, so a Pier switch never waits on the network.
             panel["apply_driver_info"](None)
@@ -1705,7 +1831,7 @@ class AppWindow:
                     _do_connect(panel, device_name, panel["title_label"].text())
 
         status_timer = QTimer(page)
-        status_timer.timeout.connect(lambda: [_refresh_panel_status(p) for p in panels])
+        status_timer.timeout.connect(_when_visible(page, lambda: [_refresh_panel_status(p) for p in panels]))
         status_timer.start(2000)
 
         state = {"reload": reload_page, "autoconnect": autoconnect_page}
@@ -2090,6 +2216,9 @@ class AppWindow:
             import asyncio
             try:
                 asyncio.run(adapter.slew_to_coordinates(ra_hours * 15.0, dec_deg))
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
             except Exception:
                 logger.exception("Mount slew-to-coordinates failed")
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
@@ -2108,6 +2237,9 @@ class AppWindow:
             import asyncio
             try:
                 asyncio.run(adapter.slew_to_altaz(alt_deg, az_deg))
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
             except Exception:
                 logger.exception("Mount slew-to-altaz failed")
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
@@ -2124,6 +2256,8 @@ class AppWindow:
             import asyncio
             try:
                 asyncio.run(adapter.move_axis(axis, rate))
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
             except Exception:
                 logger.exception("Mount move_axis failed (axis=%s rate=%s)", axis, rate)
 
@@ -2167,6 +2301,9 @@ class AppWindow:
             import asyncio
             try:
                 asyncio.run(adapter.find_home())
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
             except Exception:
                 logger.exception("Mount find_home failed")
                 self._window.statusBar().showMessage("Find Home failed — see log.", 6000)
@@ -2296,7 +2433,7 @@ class AppWindow:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)
-        status_timer.timeout.connect(_refresh_status)
+        status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
 
         state["reload"] = reload_page
@@ -3028,7 +3165,7 @@ class AppWindow:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)
-        status_timer.timeout.connect(_refresh_status)
+        status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
 
         state["reload"] = reload_page
@@ -3391,7 +3528,7 @@ class AppWindow:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)
-        status_timer.timeout.connect(_refresh_status)
+        status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
 
         state["reload"] = reload_page
@@ -3682,8 +3819,9 @@ class AppWindow:
         return page
 
     def _build_guider_page(self) -> "QWidget":
-        """Guider page: a live view onto PHD2 (GUIDE-070 … GUIDE-090) — see
-        ``galileo.ui.guider``. Unlike the other categories there is no device
+        """Guiding page (a primary sidebar section): a live view onto PHD2
+        (GUIDE-070 … GUIDE-090) — see ``galileo.ui.guider``. Unlike the
+        Equipment categories there is no device
         to scan for; PHD2 is reached by host and port, and does its own
         camera/mount handling."""
         from galileo.ui.guider import GuiderPage
@@ -3940,9 +4078,54 @@ class AppWindow:
                 autoconnect()
         self._refresh_optics_combo()
         self._refresh_camera_combo()
+        self._refresh_imaging_filters()
         refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
         if refresh_star_atlas_site is not None:
             refresh_star_atlas_site()
+
+    def _mount_to_object(self, action: str, obj: dict) -> bool:
+        """Point the current Pier's mount at a Star Atlas *obj*: ``"goto"`` slews
+        to it, ``"sync"`` tells the mount it is already pointing there. Uses the
+        connection made on the Equipment > Mount page (which is reset whenever
+        the Pier changes) and reports the outcome on the status bar. Returns
+        whether the command was sent."""
+        import asyncio
+        import datetime as dt
+        from galileo.planning import star_atlas as sa
+
+        verb = "Goto" if action == "goto" else "Sync"
+        adapter = (self._device_pages.get("mount") or {}).get("adapter")
+        if adapter is None:
+            logger.warning("Mount %s to %s not sent: no mount is connected", action, obj["name"])
+            self._window.statusBar().showMessage(
+                f"{verb}: no mount is connected — connect it on Equipment > Mount.", 6000)
+            return False
+        if obj["alt"] < 0:
+            logger.warning("Mount %s to %s not sent: it is below the horizon (alt %.1f°)", action, obj["name"], obj["alt"])
+            self._window.statusBar().showMessage(
+                f"{verb}: {obj['name']} is below the horizon at this time and place.", 6000)
+            return False
+        ra_deg, dec_deg = obj["ra_deg"], obj["dec_deg"]      # the atlas holds J2000
+        try:
+            if (asyncio.run(adapter.get_status()) or {}).get("equatorial_system") != "J2000":
+                # Every other mount takes coordinates of date (JNow).
+                jd = sa.julian_date(dt.datetime.now(dt.timezone.utc).replace(tzinfo=None))
+                ra_deg, dec_deg = (float(v) for v in sa.precess_from_j2000(ra_deg, dec_deg, jd))
+            if action == "goto":
+                asyncio.run(adapter.slew_to_coordinates(ra_deg, dec_deg))
+            else:
+                asyncio.run(adapter.sync_to_coordinates(ra_deg, dec_deg))
+        except MountParkedError:
+            self._window.statusBar().showMessage(f"{verb}: {_PARKED_MESSAGE}", 6000)
+            return False
+        except Exception:
+            logger.exception("Mount %s to %s failed", action, obj["name"])
+            self._window.statusBar().showMessage(f"{verb} to {obj['name']} failed — see log.", 6000)
+            return False
+        logger.info("Mount: %s to %s (RA %.4fh Dec %.4f°)", action, obj["name"], ra_deg / 15.0, dec_deg)
+        self._window.statusBar().showMessage(
+            f"Slewing the mount to {obj['name']}." if action == "goto" else f"Mount synced to {obj['name']}.", 4000)
+        return True
 
     def _connect_device_adapter(self, category, driver: str, server: str, port: int, device_name: str):
         """Instantiate and connect one device backend for *category*, or
@@ -4086,8 +4269,13 @@ class AppWindow:
 
         filter_combo = QComboBox()
         filter_combo.setEditable(True)
-        filter_combo.addItems(["", "L", "R", "G", "B", "H_Alpha", "OIII", "SII"])
+        filter_combo.setToolTip(
+            "The filters of the filter wheel associated with the selected optics "
+            "(Equipment > Optics). Connect the wheel on Equipment > Filter Wheel to fill this in."
+        )
         capture_form.addRow("Filter", filter_combo)
+        self._imaging_filter_combo = filter_combo
+        self._refresh_imaging_filters()
 
         settings_layout.addWidget(capture_group)
 
@@ -4103,6 +4291,14 @@ class AppWindow:
 
         view_group = QGroupBox("View")
         view_form = QFormLayout(view_group)
+
+        debayer_check = QCheckBox("Debayer")
+        debayer_check.setToolTip(
+            "Show the frame from a one-shot-colour camera in colour, using the Bayer pattern set for "
+            "the camera on Equipment > Camera (RGGB by default) (IMG-110). Only the preview changes: "
+            "statistics, the histogram and Save Frame keep the camera's raw data."
+        )
+        view_form.addRow(debayer_check)
 
         star_overlay_check = QCheckBox("Star overlay")
         star_overlay_check.setToolTip("Overlay stars detected for HFR computation (IMG-050).")
@@ -4183,6 +4379,7 @@ class AppWindow:
             return self._camera_backends.get(key)
 
         service = ImagingService(camera=_selected_camera_backend())
+        self._imaging_service = service
 
         def _refresh_preview() -> None:
             import numpy as np
@@ -4191,7 +4388,10 @@ class AppWindow:
                 return
             arr = np.ascontiguousarray(data)
             h, w = arr.shape[:2]
-            image = QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+            if arr.ndim == 3:
+                image = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+            else:
+                image = QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
             pixmap_item.setPixmap(QPixmap.fromImage(image))
             scene.setSceneRect(0, 0, w, h)
             preview_view.resetTransform()
@@ -4230,6 +4430,28 @@ class AppWindow:
 
         star_overlay_check.toggled.connect(service.set_star_overlay)
 
+        def _use_camera_bayer_pattern(rebuild: bool) -> None:
+            # The pattern saved for the selected camera on Equipment > Camera (RGGB until changed).
+            from galileo.observatory import get_device_config
+            pattern = None
+            if self._current_pier is not None:
+                try:
+                    cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
+                    pattern = cfg.bayer_pattern if cfg is not None else None
+                except Exception:
+                    logger.exception("Could not load the camera's Bayer pattern")
+            service.set_bayer_pattern(pattern, rebuild=rebuild)
+
+        def _debayer_toggled(checked: bool) -> None:
+            _use_camera_bayer_pattern(rebuild=False)
+            service.set_debayer(checked)
+            _refresh_preview()
+            if service.current_frame is not None:
+                status_label.setText(service.debayer_note or "Debayer off.")
+
+        debayer_check.toggled.connect(_debayer_toggled)
+        self._imaging_debayer_check = debayer_check
+
         countdown = {"timer": None, "start": 0.0, "duration": 0.0}
 
         def _tick_countdown() -> None:
@@ -4248,7 +4470,7 @@ class AppWindow:
                 timer.stop()
             capture_btn.setEnabled(True)
             progress_bar.setValue(1000)
-            status_label.setText("Complete")
+            status_label.setText(f"Complete — {service.debayer_note}" if service.debayer_note else "Complete")
             _refresh_preview()
             _refresh_stats()
             _refresh_histogram()
@@ -4279,6 +4501,7 @@ class AppWindow:
             duration = exposure_spin.value()
             frame_type = frame_type_combo.currentText()
             filter_name = filter_combo.currentText().strip()
+            _use_camera_bayer_pattern(rebuild=False)
 
             import time
             countdown["start"] = time.monotonic()
@@ -4335,7 +4558,9 @@ class AppWindow:
             QLabel, QLineEdit, QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget,
         )
         from galileo.planning.sky_atlas import DSO_CATALOGS
-        from galileo.ui.star_atlas import StarAtlasView, format_dec, format_ra
+        from galileo.ui.star_atlas import (
+            StarAtlasView, format_dec, format_ra, load_display_prefs, save_display_prefs,
+        )
 
         page = QWidget()
         layout = QHBoxLayout(page)
@@ -4344,6 +4569,8 @@ class AppWindow:
 
         criteria, form = self._build_criteria_panel("Sky View")
         view = StarAtlasView()
+        for attr, value in load_display_prefs().items():
+            setattr(view, attr, set(value) if attr == "dso_catalogs" else value)
 
         find_edit = QLineEdit()
         find_edit.setPlaceholderText("e.g. Vega, Jupiter, M31")
@@ -4405,7 +4632,7 @@ class AppWindow:
         for text, attr in toggles:
             box = QCheckBox(text)
             box.setChecked(getattr(view, attr))
-            box.toggled.connect(lambda checked, a=attr: view.set_option(a, checked))
+            box.toggled.connect(lambda checked, a=attr: (view.set_option(a, checked), save_display_prefs(view)))
             form.addRow(box)
 
         status = QLabel("Loading catalogs…")
@@ -4450,6 +4677,7 @@ class AppWindow:
 
         def set_catalogs(chosen) -> None:
             view.set_dso_catalogs(chosen)
+            save_display_prefs(view)
             refresh_catalog_rows()
 
         def show_catalog_menu() -> None:
@@ -4488,7 +4716,7 @@ class AppWindow:
             details_form.addRow(label, value)
         details_layout.addLayout(details_form)
         hint = QLabel("Click an object to identify it. Double-click to centre and track it. "
-                      "Drag to pan, scroll to zoom.")
+                      "Drag to pan, scroll to zoom. Right-click for Goto and Sync.")
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         details_layout.addWidget(hint)
@@ -4594,6 +4822,20 @@ class AppWindow:
         mag_spin.valueChanged.connect(lambda v: view.set_option("mag_limit", v))
         dso_mag_spin.valueChanged.connect(lambda v: view.set_option("dso_mag_limit", v))
         view.objectSelected.connect(show_object)
+
+        def show_context_menu(obj, global_pos) -> None:
+            menu = QMenu(view)
+            goto = menu.addAction("Goto")
+            goto.setToolTip("Slew the current Pier's mount to this object")
+            sync = menu.addAction("Sync")
+            sync.setToolTip("Tell the current Pier's mount it is pointing at this object")
+            goto.setEnabled(obj is not None)
+            sync.setEnabled(obj is not None)
+            goto.triggered.connect(lambda: self._mount_to_object("goto", obj))
+            sync.triggered.connect(lambda: self._mount_to_object("sync", obj))
+            menu.exec(global_pos)
+
+        view.contextMenuRequested.connect(show_context_menu)
         view.viewChanged.connect(lambda: (sync_time_field() if live_check.isChecked() else None, refresh_altaz()))
         def show_catalog_status(stars: int, dsos: int) -> None:
             text = f"{stars:,} stars · {dsos:,} deep-sky objects"

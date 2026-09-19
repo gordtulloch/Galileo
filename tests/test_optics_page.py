@@ -52,11 +52,11 @@ def _titles(page):
 
 @pytest.mark.requirement("TC-PROF-100")
 @pytest.mark.priority("MVP")
-def test_tc_prof_100_optics_sits_directly_below_guider_in_the_equipment_nav():
-    """PROF-100: the Optics category is listed immediately after Guider."""
+def test_tc_prof_100_optics_sits_directly_below_rotator_in_the_equipment_nav():
+    """PROF-100: the Optics category is listed immediately after Rotator (Guiding is no longer an Equipment category)."""
     from galileo.ui.app_window import EQUIPMENT_CATEGORIES
     ids = [c[0] for c in EQUIPMENT_CATEGORIES]
-    assert ids[ids.index("guider") + 1] == "optics"
+    assert ids[ids.index("rotator") + 1] == "optics"
 
 
 @pytest.mark.requirement("TC-PROF-100")
@@ -205,11 +205,11 @@ def _optics_selector_shown(window):
 def test_tc_prof_110_optics_selector_only_on_framing_and_imaging(window):
     """PROF-110: the top-bar Optics selector is shown on Framing and Imaging, and nowhere else."""
     shown = {}
-    for section in ("equipment", "sky_atlas", "framing", "imaging", "sequencer"):
+    for section in ("equipment", "planning", "framing", "imaging", "science"):
         _open_section(window, section)
         shown[section] = _optics_selector_shown(window)
     assert shown == {
-        "equipment": False, "sky_atlas": False, "framing": True, "imaging": True, "sequencer": False,
+        "equipment": False, "planning": False, "framing": True, "imaging": True, "science": False,
     }
 
 
@@ -254,3 +254,74 @@ def test_tc_prof_110_saving_optics_refreshes_the_selector(window):
     combo = window._optics_combo
     assert [combo.itemText(i) for i in range(combo.count())] == ["Refractor"]
     assert combo.isEnabled()
+
+
+# --- Imaging filter selector follows the optics' filter wheel ----------------
+
+class _FakeWheel:
+    def __init__(self, names, position=0):
+        self.filter_names, self.position = names, position
+
+
+def _filters_shown(window):
+    combo = window._imaging_filter_combo
+    return [combo.itemText(i) for i in range(combo.count())]
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filters_come_from_the_wheel_associated_with_the_optics(window):
+    """PROF-110: the Imaging Filter selector lists the connected wheel's filters (blank first) and starts on the one in the beam."""
+    save_optical_tubes(window.pier, [{"name": "Newt", "associated": ["filter_wheel:primary"]}])
+    window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["L", "R", "G", "B"], position=2)
+    _open_section(window, "imaging")
+    assert _filters_shown(window) == ["", "L", "R", "G", "B"]
+    assert window._imaging_filter_combo.currentText() == "G"
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filters_follow_the_selected_tube(window):
+    """PROF-110: a wheel associated with one tube is offered for that tube only, and switching the Optics selector updates the list."""
+    save_optical_tubes(window.pier, [
+        {"name": "Newt", "associated": ["filter_wheel:primary"]},
+        {"name": "Guide scope"},
+    ])
+    window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["Ha", "OIII"], position=0)
+    _open_section(window, "imaging")
+    assert _filters_shown(window) == ["", "Ha", "OIII"]
+
+    combo = window._optics_combo
+    combo.setCurrentIndex(1)
+    combo.activated.emit(1)
+    assert _filters_shown(window) == [""]          # the wheel belongs to the other tube
+
+    combo.setCurrentIndex(0)
+    combo.activated.emit(0)
+    assert _filters_shown(window) == ["", "Ha", "OIII"]
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filters_offer_an_unassigned_wheel_and_tolerate_none(window):
+    """PROF-110: a wheel no tube has claimed is offered to the selected tube; with no wheel connected the list is just the blank."""
+    save_optical_tubes(window.pier, [{"name": "Only tube"}])
+    _open_section(window, "imaging")
+    assert _filters_shown(window) == [""]
+
+    window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["L", "R"], position=0)
+    _open_section(window, "framing")
+    _open_section(window, "imaging")
+    assert _filters_shown(window) == ["", "L", "R"]
+
+
+@pytest.mark.requirement("TC-PROF-110")
+@pytest.mark.priority("MVP")
+def test_imaging_filter_choice_survives_a_refresh(window):
+    """PROF-110: refreshing the list keeps the filter the user picked rather than snapping back to the wheel's position."""
+    window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["L", "R", "G"], position=0)
+    _open_section(window, "imaging")
+    window._imaging_filter_combo.setCurrentText("G")
+    _open_section(window, "framing")
+    _open_section(window, "imaging")
+    assert window._imaging_filter_combo.currentText() == "G"

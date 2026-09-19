@@ -194,9 +194,11 @@ def save_device_config(
     sensor_width_px: int | None = None,
     sensor_height_px: int | None = None,
     sensor_name: str | None = None,
+    bayer_pattern: str | None = None,
 ) -> "DeviceConfigRecord":
     """Create or update the saved device configuration for *category*/*slot*
-    on *pier* (the Equipment page's per-device Save button)."""
+    on *pier* (the Equipment page's per-device Save button). *bayer_pattern*
+    (cameras only) is left as it was when omitted, and starts as ``RGGB``."""
     from galileo.library.models.device_config import DeviceConfigRecord
     record = DeviceConfigRecord.get_or_none(
         (DeviceConfigRecord.pier == pier)
@@ -208,6 +210,8 @@ def save_device_config(
         pixel_size_um=pixel_size_um, sensor_width_px=sensor_width_px,
         sensor_height_px=sensor_height_px, sensor_name=sensor_name,
     )
+    if bayer_pattern is not None:
+        fields["bayer_pattern"] = bayer_pattern
     if record is None:
         return DeviceConfigRecord.create(pier=pier, category=category, slot=slot, **fields)
     for key, value in fields.items():

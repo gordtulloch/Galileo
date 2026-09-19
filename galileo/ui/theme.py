@@ -83,7 +83,7 @@ class ThemeManager:
             font-size: 9pt;
             selection-background-color: {accent};
         }}
-        QMainWindow, QStackedWidget, QWidget#ContentArea, QWidget#EquipmentPage {{
+        QMainWindow, QStackedWidget, QWidget#ContentArea, QWidget#EquipmentPage, QWidget#SubmenuPage {{
             background: {p['bg']};
         }}
         QWidget#Sidebar, QWidget#SecondarySidebar {{

@@ -389,9 +389,29 @@ def test_star_atlas_section_sits_above_planning():
     """The Star Atlas section (the planetarium) is listed directly above Planning (the catalog lookup formerly labelled Sky Atlas)."""
     from galileo.ui.app_window import PRIMARY_SECTIONS
     ids = [s[0] for s in PRIMARY_SECTIONS]
-    assert ids[ids.index("sky_atlas") - 1] == "star_atlas"
+    assert ids[ids.index("planning") - 1] == "star_atlas"
     labels = {s[0]: s[1] for s in PRIMARY_SECTIONS}
-    assert labels["star_atlas"] == "Star Atlas" and labels["sky_atlas"] == "Planning"
+    assert labels["star_atlas"] == "Star Atlas" and labels["planning"] == "Planning"
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_planning_and_science_sections_carry_their_own_menus(window):
+    """Planning opens onto Targets (the catalog lookup), Sequence and Scheduler; Science holds Variable Stars.
+    None of those four is a top-level section any more."""
+    from galileo.ui.app_window import PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
+    ids = [s[0] for s in PRIMARY_SECTIONS]
+    assert ids == ["equipment", "star_atlas", "planning", "framing", "imaging", "guiding", "library", "science"]
+    assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sequencer", "Sequence"), ("scheduler", "Scheduler")]
+    assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
+
+    from PySide6 import QtWidgets
+    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 2
+    menus = [
+        [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
+        for c in window._nav_columns if c.objectName() == "SecondarySidebar"
+    ]
+    assert ["Targets", "Sequence", "Scheduler"] in menus and ["Variable Stars"] in menus
 
 
 @pytest.mark.requirement("TC-SKYMAP-010")
@@ -516,3 +536,136 @@ def test_star_atlas_page_catalog_list_adds_and_removes_catalogs(window):
     remove = next(b for b in buttons if b.text() == "×" and b.toolTip() == "Remove Messier from the map")
     remove.click()
     assert view.dso_catalogs == set()
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_remembers_toggles_and_catalogs_between_runs(window):
+    """SKYMAP-010: the Star Atlas remembers which options are ticked and which deep-sky catalogs are on the map."""
+    from galileo.ui.star_atlas import StarAtlasView, load_display_prefs
+    view = window._window.findChildren(StarAtlasView)[0]
+    assert load_display_prefs() == {}                     # nothing is written until the user changes something
+    grid = next(b for b in window._window.findChildren(QtWidgets.QCheckBox) if b.text() == "Coordinate grid")
+    grid.setChecked(False)
+    add = next(b for b in window._window.findChildren(QtWidgets.QToolButton)
+               if b.text() == "+" and b.toolTip().startswith("Add a deep-sky catalog"))
+    remove = next(b for b in window._window.findChildren(QtWidgets.QToolButton)
+                  if b.text() == "×" and b.toolTip() == "Remove Messier from the map")
+    remove.click()
+    assert add.isEnabled()
+    saved = load_display_prefs()
+    assert saved["show_grid"] is False and saved["show_labels"] is True and saved["dso_catalogs"] == []
+
+    from galileo.ui.app_window import AppWindow
+    reopened = AppWindow()
+    try:
+        view2 = reopened._window.findChildren(StarAtlasView)[0]
+        assert view2.show_grid is False and view2.dso_catalogs == set()
+        box = next(b for b in reopened._window.findChildren(QtWidgets.QCheckBox) if b.text() == "Coordinate grid")
+        assert not box.isChecked()
+    finally:
+        reopened._window.close()
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_display_prefs_ignore_bad_entries(tmp_path, monkeypatch):
+    """SKYMAP-010: an unreadable or partly invalid options file falls back to the defaults instead of breaking the page."""
+    import galileo.ui.star_atlas as ui
+    path = tmp_path / "prefs.json"
+    monkeypatch.setattr(ui, "_prefs_path", lambda: path)
+    path.write_text("not json", encoding="utf-8")
+    assert ui.load_display_prefs() == {}
+    path.write_text('{"show_grid": "yes", "show_labels": false, "dso_catalogs": ["NGC", "Bogus"], "mag_limit": 1}',
+                    encoding="utf-8")
+    assert ui.load_display_prefs() == {"show_labels": False, "dso_catalogs": ["NGC"]}
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_right_click_offers_the_object_under_the_cursor(view):
+    """SKYMAP-020: right-clicking the map selects the object under the cursor and asks for a context menu for it."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+    view.center_on(view.find("Vega"))
+    seen = []
+    view.contextMenuRequested.connect(lambda obj, pos: seen.append((obj, pos)))
+    view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(400, 300), QPoint(1400, 900)))
+    assert seen[-1][0]["name"] == "Vega" and view.selected["name"] == "Vega" and seen[-1][1] == QPoint(1400, 900)
+    view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), QPoint(1005, 605)))
+    assert seen[-1][0] is None
+
+
+class _FakeMount:
+    def __init__(self, system):
+        self.system, self.calls = system, []
+
+    async def get_status(self):
+        return {"equatorial_system": self.system}
+
+    async def slew_to_coordinates(self, ra, dec):
+        self.calls.append(("goto", ra, dec))
+
+    async def sync_to_coordinates(self, ra, dec):
+        self.calls.append(("sync", ra, dec))
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_goto_and_sync_command_the_connected_mount(window):
+    """SKYMAP-020: the Goto / Sync menu items slew the current Pier's mount to, or sync it on, the chosen object."""
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    mount = _FakeMount("J2000")
+    window._device_pages["mount"]["adapter"] = mount
+    assert window._mount_to_object("goto", vega) and window._mount_to_object("sync", vega)
+    assert mount.calls == [("goto", 279.2347, 38.7837), ("sync", 279.2347, 38.7837)]   # J2000 mount: sent as is
+
+    mount = _FakeMount("JNOW")
+    window._device_pages["mount"]["adapter"] = mount
+    assert window._mount_to_object("goto", vega)
+    _, ra, dec = mount.calls[0]
+    assert 0.0 < abs(ra - 279.2347) < 1.0 and 0.0 < abs(dec - 38.7837) < 0.5           # precessed to the epoch of date
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_goto_refused_without_mount_or_below_horizon(window):
+    """SKYMAP-020: nothing is sent when no mount is connected or the object is below the horizon."""
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    window._device_pages["mount"]["adapter"] = None
+    assert window._mount_to_object("goto", vega) is False
+    mount = _FakeMount("JNOW")
+    window._device_pages["mount"]["adapter"] = mount
+    assert window._mount_to_object("goto", {**vega, "alt": -5.0}) is False
+    assert window._mount_to_object("sync", {**vega, "alt": -5.0}) is False
+    assert mount.calls == []
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_goto_to_a_parked_mount_says_so(window):
+    """SKYMAP-020: a Goto the mount refuses because it is parked is reported as "parked", not as a generic failure."""
+    from galileo.exceptions import MountParkedError
+
+    class _ParkedMount(_FakeMount):
+        async def slew_to_coordinates(self, ra, dec):
+            raise MountParkedError("parked")
+
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    window._device_pages["mount"]["adapter"] = _ParkedMount("J2000")
+    assert window._mount_to_object("goto", vega) is False
+    assert "unpark" in window._window.statusBar().currentMessage()
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_goto_refusals_are_logged(window, caplog):
+    """SKYMAP-020: a Goto/Sync that is not sent (no mount, below the horizon) leaves a log entry, not just a status-bar message."""
+    import logging
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    with caplog.at_level(logging.WARNING, logger="galileo.ui.app_window"):
+        window._device_pages["mount"]["adapter"] = None
+        window._mount_to_object("goto", vega)
+        window._device_pages["mount"]["adapter"] = _FakeMount("JNOW")
+        window._mount_to_object("sync", {**vega, "alt": -5.0})
+    assert "no mount is connected" in caplog.text and "below the horizon" in caplog.text

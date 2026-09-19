@@ -17,7 +17,7 @@ import pytest
 
 from galileo.adapters import indi, indi_client
 from galileo.core.devices import DeviceCategory
-from galileo.exceptions import DeviceConnectionError, DevicePropertyError
+from galileo.exceptions import DeviceConnectionError, DevicePropertyError, MountParkedError
 
 from tests.indi_fake_server import IMAGE, FakeIndiServer
 
@@ -287,6 +287,14 @@ async def test_tc_eqp_mnt_010_status_slew_park_and_tracking(server):
         assert status["side_of_pier"] == "West" and status["at_park"] is True
         assert status["tracking"] is False and status["sidereal_time"] == 5.5
 
+        await mount.unpark()  # this fake mount starts parked, and a parked mount refuses to move
+        await sent(server, MOUNT, "TELESCOPE_PARK", {"PARK": "Off", "UNPARK": "On"})
+
+        async def _unparked():
+            return not (await mount.get_status())["at_park"]
+
+        await eventually(_unparked)
+
         await mount.slew_to_coordinates(ra=180.0, dec=45.0)
         await sent(server, MOUNT, "ON_COORD_SET", {"TRACK": "On"}, exact=False)
         await sent(server, MOUNT, "EQUATORIAL_EOD_COORD", {"RA": "12", "DEC": "45"})
@@ -299,8 +307,34 @@ async def test_tc_eqp_mnt_010_status_slew_park_and_tracking(server):
 
         await mount.set_tracking(True)
         await sent(server, MOUNT, "TELESCOPE_TRACK_STATE", {"TRACK_ON": "On", "TRACK_OFF": "Off"})
-        await mount.unpark()
-        await sent(server, MOUNT, "TELESCOPE_PARK", {"PARK": "Off", "UNPARK": "On"})
+        await mount.abort_slew()
+        await sent(server, MOUNT, "TELESCOPE_ABORT_MOTION")
+    finally:
+        await mount.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_010_parked_mount_is_not_sent_movement_commands(server):
+    """EQP-MNT-010: while parked, slews, jogs and find-home are refused before anything is sent; stopping and unparking still work."""
+    mount = make(indi.IndiMountAdapter, server, MOUNT)
+    await mount.connect()
+    try:
+        assert (await mount.get_status())["at_park"] is True
+        for refused in (
+            mount.slew_to_coordinates(ra=180.0, dec=45.0),
+            mount.slew_to_altaz(alt=45.0, az=90.0),
+            mount.move_axis(1, 0.5),
+            mount.find_home(),
+        ):
+            with pytest.raises(MountParkedError, match="parked"):
+                await refused
+        await asyncio.sleep(0.1)
+        for prop in ("EQUATORIAL_EOD_COORD", "HORIZONTAL_COORD", "TELESCOPE_MOTION_NS", "TELESCOPE_HOME", "ON_COORD_SET"):
+            assert commands(server, MOUNT, prop) == [], prop
+
+        await mount.move_axis(1, 0.0)   # a stop is always allowed
+        await sent(server, MOUNT, "TELESCOPE_MOTION_NS", {"MOTION_NORTH": "Off", "MOTION_SOUTH": "Off"})
         await mount.abort_slew()
         await sent(server, MOUNT, "TELESCOPE_ABORT_MOTION")
     finally:
@@ -314,7 +348,13 @@ async def test_tc_eqp_mnt_020_jog_direction_and_rate(server):
     mount = make(indi.IndiMountAdapter, server, MOUNT)
     await mount.connect()
     try:
-        await mount.move_axis(1, 0.5)   # secondary axis, positive = north, fast
+        await mount.unpark()  # a parked mount refuses to jog
+
+        async def _unparked():
+            return not (await mount.get_status())["at_park"]
+
+        await eventually(_unparked)
+        await mount.move_axis(1, 0.5)  # secondary axis, positive = north, fast
         await sent(server, MOUNT, "TELESCOPE_SLEW_RATE", {"SLEW_FIND": "On"}, exact=False)
         await sent(server, MOUNT, "TELESCOPE_MOTION_NS", {"MOTION_NORTH": "On", "MOTION_SOUTH": "Off"})
         await mount.move_axis(1, 0.0)

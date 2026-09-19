@@ -6,6 +6,8 @@ import asyncio
 import logging
 from pathlib import Path
 
+from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN, debayer
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,10 @@ class ImagingService:
         self.capture_status: str = "idle"
         self._panel_layout: dict = {}
         self._capture_status: str = "idle"
+        # Debayering (IMG-110) only changes the preview; current_frame stays the camera's raw mosaic.
+        self.debayer_enabled: bool = False
+        self.bayer_pattern: str = DEFAULT_PATTERN  # the camera's mosaic layout, as set on its Equipment page
+        self.debayer_note: str = ""                # what the last preview did, for the UI to show
 
     # --- Capture ---------------------------------------------------------
 
@@ -48,7 +54,7 @@ class ImagingService:
         self.last_saved_array = data
 
         if data is not None:
-            self.current_preview = _auto_stretch(data)
+            self._rebuild_preview()
 
         self._capture_status = "preview_ready"
         self.capture_status = "preview_ready"
@@ -67,6 +73,45 @@ class ImagingService:
         data = await self._camera.get_image_array()
         self.current_frame = data
         return data
+
+    # --- Debayer (IMG-110) -----------------------------------------------
+
+    def set_debayer(self, enabled: bool) -> None:
+        """Turn debayering of the displayed frame on or off, re-rendering the
+        current frame at once (no new exposure). The raw frame — what
+        statistics, the histogram and Save Frame use — is never changed."""
+        self.debayer_enabled = enabled
+        self._rebuild_preview()
+
+    def set_bayer_pattern(self, pattern: "str | None", rebuild: bool = True) -> None:
+        """Set the mosaic layout used to debayer (``RGGB``, ``GRBG``, ``GBRG``
+        or ``BGGR``), re-rendering the current frame unless ``rebuild`` is
+        false (e.g. just before a capture, which replaces it anyway).
+        Anything else — ``None``, or a bad value in a saved config — falls
+        back to the default."""
+        pattern = (pattern or "").strip().upper()
+        self.bayer_pattern = pattern if pattern in BAYER_PATTERNS else DEFAULT_PATTERN
+        if rebuild:
+            self._rebuild_preview()
+
+    def _rebuild_preview(self) -> None:
+        """Rebuild the 8-bit preview from ``current_frame``, debayered if asked to."""
+        data = self.current_frame
+        if data is None:
+            return
+        shown = data
+        self.debayer_note = ""
+        if self.debayer_enabled:
+            shown, self.debayer_note = self._debayered(data)
+        self.current_preview = _auto_stretch(shown)
+
+    def _debayered(self, data) -> tuple:
+        """``(image, note)``: *data* debayered with ``bayer_pattern``, or
+        unchanged with a note saying why not. Wrong colours mean the pattern
+        set on the camera's Equipment page doesn't match the sensor."""
+        if data.ndim != 2:
+            return data, "Frame is already colour — not debayered."
+        return debayer(data, self.bayer_pattern), f"Debayered ({self.bayer_pattern})."
 
     # --- Statistics (IMG-040) --------------------------------------------
 
@@ -118,12 +163,17 @@ class ImagingService:
 # ---------------------------------------------------------------------------
 
 def _auto_stretch(data):
-    """Return an 8-bit auto-stretched preview array."""
+    """Return an 8-bit auto-stretched preview array — ``(height, width)`` for
+    a single plane, ``(height, width, 3)`` for colour. Each colour plane is
+    stretched on its own, which also balances the background: a Bayer sensor
+    has twice as many green pixels, so a common stretch would tint the image."""
     try:
         import numpy as np
         if data is None:
             return None
         d = data.astype(np.float32)
+        if d.ndim == 3:
+            return np.stack([_auto_stretch(d[..., i]) for i in range(d.shape[2])], axis=-1)
         lo, hi = float(np.percentile(d, 0.5)), float(np.percentile(d, 99.5))
         stretched = np.clip((d - lo) / (hi - lo + 1e-9), 0, 1)
         return (stretched * 255).astype(np.uint8)

@@ -117,6 +117,94 @@ async def test_tc_eqp_070_alpaca_optional_properties_may_be_missing():
 
 @pytest.mark.requirement("TC-EQP-070")
 @pytest.mark.priority("MVP")
+async def test_tc_eqp_070_alpaca_mount_status_reads_fixed_properties_once():
+    """EQP-070: the Mount page polls status every 2 s; driver info and site never change while connected, so they
+    are fetched once — not re-requested (one HTTP call each) on every poll."""
+    from galileo.adapters.alpaca import AlpacaMountAdapter
+
+    adapter = AlpacaMountAdapter(host="h", port=1)
+    reads: list[str] = []
+    values = {"name": "Mount", "driverinfo": "Drv", "sitelatitude": 51.0, "rightascension": 6.0, "sideofpier": 0,
+              "equatorialsystem": 1}
+
+    async def fake_get(attribute):
+        reads.append(attribute)
+        if attribute == "siteelevation":
+            raise DevicePropertyError("not implemented")
+        return values.get(attribute)
+
+    adapter._get = fake_get
+    first = await adapter.get_status()
+    reads_first = len(reads)
+    second = await adapter.get_status()
+
+    assert first["name"] == "Mount" and first["driver_info"] == "Drv" and first["site_latitude"] == 51.0
+    assert first["site_elevation"] is None and first["equatorial_system"] == "JNOW"
+    assert second == first
+    live = ["siderealtime", "rightascension", "declination", "altitude", "azimuth", "tracking", "slewing", "atpark",
+           "sideofpier"]
+    assert reads[reads_first:] == live
+    assert reads.count("siteelevation") == 1  # an unimplemented optional property isn't retried every poll
+
+
+def _alpaca_mount(parked):
+    """An Alpaca mount whose HTTP layer is faked: ``AtPark`` answers ``parked`` (or raises if it is an exception)."""
+    from galileo.adapters.alpaca import AlpacaMountAdapter
+
+    adapter = AlpacaMountAdapter(host="h", port=1)
+    puts: list[tuple] = []
+
+    async def fake_get(attribute):
+        if attribute == "atpark":
+            if isinstance(parked, Exception):
+                raise parked
+            return parked
+        return None
+
+    async def fake_put(action, **fields):
+        puts.append((action, fields))
+
+    adapter._get, adapter._put, adapter.puts = fake_get, fake_put, puts
+    return adapter
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_010_alpaca_parked_mount_is_not_sent_movement_commands():
+    """EQP-MNT-010: an Alpaca mount that reports AtPark refuses slews, jogs and find-home without sending them;
+    stopping, aborting and unparking still go through."""
+    from galileo.exceptions import MountParkedError
+
+    mount = _alpaca_mount(True)
+    for refused in (
+        mount.slew_to_coordinates(180.0, 45.0), mount.slew_to_altaz(45.0, 90.0),
+        mount.move_axis(0, 0.5), mount.find_home(),
+    ):
+        with pytest.raises(MountParkedError, match="parked"):
+            await refused
+    assert mount.puts == []
+
+    await mount.move_axis(0, 0.0)
+    await mount.abort_slew()
+    await mount.unpark()
+    assert [p[0] for p in mount.puts] == ["moveaxis", "abortslew", "unpark"]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_010_alpaca_unparked_mount_moves_and_unreadable_park_state_defers_to_the_device():
+    """EQP-MNT-010: an unparked mount slews normally; if AtPark can't be read the command is still sent (the device decides)."""
+    mount = _alpaca_mount(False)
+    await mount.slew_to_coordinates(180.0, 45.0)
+    assert mount.puts == [("slewtocoordinatesasync", {"RightAscension": 12.0, "Declination": 45.0})]
+
+    unreadable = _alpaca_mount(DevicePropertyError("no atpark"))
+    await unreadable.move_axis(1, 0.5)
+    assert [p[0] for p in unreadable.puts] == ["moveaxis"]
+
+
+@pytest.mark.requirement("TC-EQP-070")
+@pytest.mark.priority("MVP")
 async def test_tc_eqp_070_alpaca_unreachable_device_fails_once_not_four_times():
     """EQP-070: a connectivity failure surfaces from the first read rather than timing out on every property."""
     adapter = _alpaca({}, failing=("driverinfo", "driverversion", "name", "description"))

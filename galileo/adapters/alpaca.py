@@ -16,7 +16,13 @@ from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceBackend, DeviceCategory
-from galileo.exceptions import DevicePropertyError
+from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
+
+try:
+    import httpx as _httpx
+    _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (_httpx.HTTPError, OSError)
+except ImportError:  # the urllib fallbacks below raise OSError subclasses (URLError)
+    _TRANSPORT_ERRORS = (OSError,)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +132,7 @@ def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str
     try:
         from zeroconf import AddressResolver, Zeroconf
     except ImportError as exc:
-        raise RuntimeError(
+        raise DeviceConnectionError(
             f"Cannot resolve '{host}': the operating system could not resolve "
             f"it and the 'zeroconf' package could not be loaded ({exc}). "
             "Install it with 'pip install zeroconf', or use the device's IP "
@@ -138,14 +144,14 @@ def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str
     try:
         resolver = AddressResolver(name)
         if not resolver.request(zc, timeout_ms):
-            raise RuntimeError(
+            raise DeviceConnectionError(
                 f"Could not resolve '{host}' via mDNS within {timeout_ms / 1000:g}s. "
                 "Make sure the device is powered on and on the same network, "
                 "or use its IP address directly."
             )
         addresses = resolver.parsed_addresses()
         if not addresses:
-            raise RuntimeError(f"mDNS lookup for '{host}' returned no address.")
+            raise DeviceConnectionError(f"mDNS lookup for '{host}' returned no address.")
         return addresses[0]
     finally:
         zc.close()
@@ -280,7 +286,16 @@ class AlpacaAdapter(DeviceBackend):
                 f"(ErrorNumber={error_number})"
             )
 
-    async def _get(self, attribute: str) -> Any:
+    def _unreachable_error(self, exc: BaseException) -> DeviceConnectionError:
+        """A one-line, user-facing replacement for a raw httpx/urllib transport error."""
+        reason = str(exc) or type(exc).__name__
+        return DeviceConnectionError(
+            f"Alpaca {self.device_type} device at {self.host}:{self.port} is not responding "
+            f"({reason}). Make sure it is powered on, on the same network, and that the "
+            f"Alpaca server is running."
+        )
+
+    async def _get(self, attribute: str, timeout: float = 10.0) -> Any:
         """HTTP GET an Alpaca device attribute."""
         await self._ensure_resolved()
         self._transaction_id += 1
@@ -290,18 +305,21 @@ class AlpacaAdapter(DeviceBackend):
             "ClientTransactionID": self._transaction_id,
         }
         try:
-            import httpx  # type: ignore[import]
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                data = resp.json()
-        except ImportError:
-            # httpx not available; use urllib synchronously
-            import urllib.request
-            import urllib.parse
-            query = urllib.parse.urlencode(params)
-            with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
-                data = json.loads(r.read())
+            try:
+                import httpx  # type: ignore[import]
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.get(url, params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+            except ImportError:
+                # httpx not available; use urllib synchronously
+                import urllib.request
+                import urllib.parse
+                query = urllib.parse.urlencode(params)
+                with urllib.request.urlopen(f"{url}?{query}", timeout=timeout) as r:
+                    data = json.loads(r.read())
+        except _TRANSPORT_ERRORS as exc:
+            raise self._unreachable_error(exc) from exc
         if (data.get("ErrorNumber") or 0) == self._ASCOM_NOT_IMPLEMENTED:
             return None
         self._raise_on_alpaca_error(data, attribute)
@@ -327,24 +345,27 @@ class AlpacaAdapter(DeviceBackend):
         logger.info("Alpaca %s device interaction: %s %s at %s", self.device_type, attribute, params, url)
         body.update({"ClientID": self._client_id, "ClientTransactionID": self._transaction_id})
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.put(url, data=body)
-                resp.raise_for_status()
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = {}
-        except ImportError:
-            import urllib.request
-            import urllib.parse
-            encoded = urllib.parse.urlencode(body).encode()
-            req = urllib.request.Request(url, data=encoded, method="PUT")
-            with urllib.request.urlopen(req, timeout=10) as r:
-                try:
-                    data = json.loads(r.read())
-                except Exception:
-                    data = {}
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.put(url, data=body)
+                    resp.raise_for_status()
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = {}
+            except ImportError:
+                import urllib.request
+                import urllib.parse
+                encoded = urllib.parse.urlencode(body).encode()
+                req = urllib.request.Request(url, data=encoded, method="PUT")
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    try:
+                        data = json.loads(r.read())
+                    except Exception:
+                        data = {}
+        except _TRANSPORT_ERRORS as exc:
+            raise self._unreachable_error(exc) from exc
         self._raise_on_alpaca_error(data, attribute)
 
     async def connect(self) -> None:
@@ -420,18 +441,48 @@ class AlpacaAdapter(DeviceBackend):
 class AlpacaCameraAdapter(AlpacaAdapter):
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.CAMERA, host, port, **kwargs)
+        self._exposure_s = 0.0
+
+    # Allowed on top of the exposure time for readout and a slow Wi-Fi download.
+    _IMAGE_MARGIN_S = 60.0
+    _IMAGE_POLL_S = 0.5
+    _CAMERA_ERROR = 5          # ASCOM CameraStates.cameraError
 
     def get_capabilities(self) -> DeviceCapabilities:
         return DeviceCapabilities(has_cooler=True, can_set_gain=True, can_bin=True)
 
     async def start_exposure(self, duration: float, **kwargs) -> None:
         await self._put("startexposure", Duration=duration, Light=True)
+        self._exposure_s = float(duration)
 
     async def abort_exposure(self) -> None:
         await self._put("abortexposure")
 
     async def get_image_array(self):
-        return await self._get("imagearray")
+        """Wait for the exposure started by :meth:`start_exposure` to finish, then
+        download it as a numpy array shaped ``(height, width)`` — ``(height,
+        width, planes)`` for a colour camera. ``startexposure`` returns at once,
+        so asking for ``imagearray`` straight away fails with "no image
+        available" until the driver reports ``imageready``."""
+        import numpy as np
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._exposure_s + self._IMAGE_MARGIN_S
+        while True:
+            ready = await self._get("imageready")
+            if ready is None or ready:          # None: the driver can't say — just try the download
+                break
+            if await self._get("camerastate") == self._CAMERA_ERROR:
+                raise DeviceError(f"Alpaca Camera at {self.base_url} reported an error during the exposure.")
+            if loop.time() > deadline:
+                raise DeviceError(
+                    f"Alpaca Camera at {self.base_url} did not finish a {self._exposure_s:g} s exposure "
+                    f"within {self._IMAGE_MARGIN_S:g} s of its end.")
+            await asyncio.sleep(self._IMAGE_POLL_S)
+        value = await self._get("imagearray", timeout=self._exposure_s + self._IMAGE_MARGIN_S)
+        if value is None:
+            raise DeviceError(f"Alpaca Camera at {self.base_url} returned no image data.")
+        # ASCOM sends the image as columns (X first); numpy/FITS want rows (Y first).
+        return np.asarray(value).swapaxes(0, 1)
 
     async def set_temperature(self, temp_c: float) -> None:
         await self._put("setccdtemperature", SetCCDTemperature=temp_c)
@@ -497,12 +548,30 @@ class AlpacaMountAdapter(AlpacaAdapter):
         self.pier_side = "East"
         self.is_tracking = False
         self.is_slewing = False
+        self._static_status: "dict[str, Any] | None" = None
+
+    async def _refuse_if_parked(self, command: str) -> None:
+        """Movement commands must not reach a parked mount. Asks the mount
+        (``AtPark``) rather than trusting a cached value, so a park done
+        outside Galileo is honoured too. If the mount can't say, the command
+        goes ahead and the device decides — ASCOM drivers reject movement
+        while parked themselves."""
+        try:
+            parked = bool(await self._get("atpark"))
+        except Exception:
+            logger.warning("Could not read AtPark from %s before %s; sending it anyway", self.base_url, command)
+            return
+        if parked:
+            logger.warning("Not sending %s to %s: the mount is parked", command, self.base_url)
+            raise MountParkedError(f"The mount is parked, so {command} was not sent — unpark it first.")
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
+        await self._refuse_if_parked("slew_to_coordinates")
         await self._put("slewtocoordinatesasync", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
+        await self._refuse_if_parked("slew_to_altaz")
         await self._put("slewtoaltazasync", Azimuth=az, Altitude=alt)
         self.altitude, self.azimuth = alt, az
 
@@ -516,6 +585,7 @@ class AlpacaMountAdapter(AlpacaAdapter):
         await self._put("unpark")
 
     async def find_home(self) -> None:
+        await self._refuse_if_parked("find_home")
         await self._put("findhome")
 
     async def move_axis(self, axis: int, rate: float) -> None:
@@ -524,7 +594,10 @@ class AlpacaMountAdapter(AlpacaAdapter):
         starts motion on that axis; ``rate=0`` stops it. Used by the Mount
         page's N/S/E/W jog buttons rather than a one-shot relative slew,
         since MoveAxis is the standard way to drive a mount while a button
-        is held rather than computing a target coordinate."""
+        is held rather than computing a target coordinate. Stopping an axis
+        (``rate=0``) is always allowed."""
+        if rate:
+            await self._refuse_if_parked("move_axis")
         await self._put("moveaxis", Axis=axis, Rate=rate)
 
     async def set_tracking(self, enabled: bool) -> None:
@@ -550,16 +623,11 @@ class AlpacaMountAdapter(AlpacaAdapter):
         await self._put("synctocoordinates", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 
-    async def get_status(self) -> dict:
-        """Live-query this mount's status from the standard ASCOM
-        ``ITelescopeV3`` properties — the Mount page's live status display
-        (Name/Description/Driver info/version, Site latitude/longitude/
-        elevation, Sidereal time, Right Ascension/Declination, Altitude/
-        Azimuth, Side of Pier, Tracking, Epoch). Every property is read
-        defensively since not every driver implements every optional one
-        (e.g. SiteElevation) — a failed read leaves that field ``None``
-        rather than aborting the whole refresh."""
-        status: dict[str, Any] = {}
+    async def _read_static_status(self) -> dict[str, Any]:
+        """Properties that don't change while connected. A failed read is
+        logged once and stays ``None`` (cached too, so an unimplemented
+        optional property like SiteElevation isn't retried every poll)."""
+        static: dict[str, Any] = {}
         reads: list[tuple[str, str, Any]] = [
             ("name", "name", str),
             ("description", "description", str),
@@ -568,6 +636,41 @@ class AlpacaMountAdapter(AlpacaAdapter):
             ("site_latitude", "sitelatitude", float),
             ("site_longitude", "sitelongitude", float),
             ("site_elevation", "siteelevation", float),
+        ]
+        for key, attribute, caster in reads:
+            try:
+                value = await self._get(attribute)
+                static[key] = caster(value) if value is not None else None
+            except Exception:
+                logger.exception("Could not read %s from %s", attribute, self.base_url)
+                static[key] = None
+        try:
+            raw_equatorial_system = await self._get("equatorialsystem")
+            static["equatorial_system"] = (
+                self._EQUATORIAL_SYSTEM.get(int(raw_equatorial_system)) if raw_equatorial_system is not None else None
+            )
+        except Exception:
+            logger.exception("Could not read EquatorialSystem from %s", self.base_url)
+            static["equatorial_system"] = None
+        return static
+
+    async def get_status(self) -> dict:
+        """Live-query this mount's status from the standard ASCOM
+        ``ITelescopeV3`` properties — the Mount page's live status display
+        (Name/Description/Driver info/version, Site latitude/longitude/
+        elevation, Sidereal time, Right Ascension/Declination, Altitude/
+        Azimuth, Side of Pier, Tracking, Epoch). Every property is read
+        defensively since not every driver implements every optional one
+        (e.g. SiteElevation) — a failed read leaves that field ``None``
+        rather than aborting the whole refresh.
+
+        The UI polls this every couple of seconds and each property is its
+        own HTTP request, so the ones that never change while connected
+        (identity, site, equatorial system) are read once and reused."""
+        if self._static_status is None:
+            self._static_status = await self._read_static_status()
+        status: dict[str, Any] = dict(self._static_status)
+        reads: list[tuple[str, str, Any]] = [
             ("sidereal_time", "siderealtime", float),
             ("right_ascension", "rightascension", float),
             ("declination", "declination", float),
@@ -590,14 +693,6 @@ class AlpacaMountAdapter(AlpacaAdapter):
         except Exception:
             logger.exception("Could not read SideOfPier from %s", self.base_url)
             status["side_of_pier"] = None
-        try:
-            raw_equatorial_system = await self._get("equatorialsystem")
-            status["equatorial_system"] = (
-                self._EQUATORIAL_SYSTEM.get(int(raw_equatorial_system)) if raw_equatorial_system is not None else None
-            )
-        except Exception:
-            logger.exception("Could not read EquatorialSystem from %s", self.base_url)
-            status["equatorial_system"] = None
 
         if status.get("right_ascension") is not None:
             self.ra = status["right_ascension"] * 15.0

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import collections
 import logging
+import socket
 import threading
 import traceback
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
+
+from galileo.exceptions import DeviceError
 
 _APP_ROOT = Path(__file__).resolve().parent.parent
 
@@ -17,6 +20,31 @@ def default_log_dir() -> Path:
     """``.\\logs\\`` under the application root (not the per-user platform
     log directory) — the location Galileo's own log file lives in."""
     return _APP_ROOT / "logs"
+
+
+# Failures that mean "the device/network isn't reachable", not "Galileo has a
+# bug": worth one readable line, not a traceback.
+_EXPECTED_CONNECTIVITY_ERRORS = (DeviceError, ConnectionError, TimeoutError, socket.gaierror)
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+class _ConciseFormatter(logging.Formatter):
+    """Formats records like the stdlib default, except that a record carrying
+    an expected connectivity failure (device off, unreachable host, mDNS
+    lookup timeout, ...) is written as its message plus the exception's own
+    text, without a traceback. Any other exception keeps its full traceback."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        exc = record.exc_info[1] if record.exc_info else None
+        if not isinstance(exc, _EXPECTED_CONNECTIVITY_ERRORS):
+            return super().format(record)
+        saved = record.exc_info, record.exc_text
+        record.exc_info = record.exc_text = None
+        try:
+            return f"{super().format(record)} — {exc}"
+        finally:
+            record.exc_info, record.exc_text = saved
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +77,7 @@ def _ensure_tail_handler() -> None:
     if _tail_handler_installed:
         return
     handler = _TailBufferHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setFormatter(_ConciseFormatter(_LOG_FORMAT))
     # The on-screen log panes (fed by get_recent_log_lines) are meant for a
     # user glancing at what the app is doing, not for debugging internals —
     # DEBUG-level records still reach the on-disk file via the root logger's
@@ -118,7 +146,7 @@ class DiagnosticsService:
         existing = [h for h in root_logger.handlers if isinstance(h, logging.FileHandler) and Path(h.baseFilename) == log_file]
         if not existing:
             file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
-            file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            file_handler.setFormatter(_ConciseFormatter(_LOG_FORMAT))
             root_logger.addHandler(file_handler)
 
         _ensure_tail_handler()

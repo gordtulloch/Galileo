@@ -24,6 +24,9 @@ class DeviceCapabilityError(DeviceError):
 class DevicePropertyError(DeviceError):
     """A device property read or write failed."""
 
+class MountParkedError(DeviceError):
+    """A movement command was not sent because the mount is parked."""
+
 
 # --- Profile errors --------------------------------------------------------
 

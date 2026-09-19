@@ -46,7 +46,7 @@ def _add_missing_columns() -> None:
     from playhouse.migrate import SqliteMigrator, migrate
 
     migrator = SqliteMigrator(db)
-    for model, field_names in ((OpticalTubeRecord, ("name",)),):
+    for model, field_names in ((OpticalTubeRecord, ("name",)), (DeviceConfigRecord, ("bayer_pattern",))):
         existing = {col.name for col in db.get_columns(model._meta.table_name)}
         for field_name in field_names:
             if field_name not in existing:

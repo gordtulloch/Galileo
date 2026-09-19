@@ -44,6 +44,9 @@ class DeviceConfigRecord(BaseModel):
     sensor_width_px = pw.IntegerField(null=True)
     sensor_height_px = pw.IntegerField(null=True)
     sensor_name = pw.TextField(null=True)
+    # Layout of a one-shot-colour sensor's 2x2 colour-filter mosaic, used to
+    # debayer the Imaging preview (IMG-110). Set by hand on the Camera page.
+    bayer_pattern = pw.TextField(default="RGGB")
 
     class Meta:
         table_name = "device_configs"

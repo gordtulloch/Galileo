@@ -10,13 +10,14 @@ maths lives in :mod:`galileo.planning.star_atlas`; this module only draws.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
 import math
 import threading
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -41,6 +42,47 @@ _SELECT_COLOR = QColor(255, 90, 90)
 
 MAX_MAG_LIMIT = 7.0
 
+# The on/off options the page offers as checkboxes. These and the chosen deep-sky
+# catalogs are remembered between runs.
+PERSISTED_TOGGLES = ("show_grid", "show_boundaries", "show_lines", "abbreviate_constellations",
+                     "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky")
+
+
+def _prefs_path():
+    from galileo.platform import get_config_dir
+    return get_config_dir() / "star_atlas.json"
+
+
+def load_display_prefs() -> dict[str, Any]:
+    """The remembered toggles and catalogs: ``{option: bool, ..., "dso_catalogs": [name, ...]}``.
+
+    Missing, unreadable or unrecognised entries are left out so the view's defaults apply."""
+    try:
+        raw = json.loads(_prefs_path().read_text("utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        logger.exception("Could not read the saved Star Atlas display options")
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    prefs: dict[str, Any] = {k: raw[k] for k in PERSISTED_TOGGLES if isinstance(raw.get(k), bool)}
+    if isinstance(raw.get("dso_catalogs"), list):
+        prefs["dso_catalogs"] = [c for c in raw["dso_catalogs"] if c in DSO_CATALOGS]
+    return prefs
+
+
+def save_display_prefs(view: "StarAtlasView") -> None:
+    """Remember the view's toggles and deep-sky catalogs."""
+    data: dict[str, Any] = {k: bool(getattr(view, k)) for k in PERSISTED_TOGGLES}
+    data["dso_catalogs"] = [c for c in DSO_CATALOGS if c in view.dso_catalogs]
+    try:
+        path = _prefs_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        logger.exception("Could not save the Star Atlas display options")
+
 
 def format_ra(deg: float) -> str:
     total = (deg % 360.0) / 15.0 * 3600.0
@@ -59,6 +101,8 @@ class StarAtlasView(QWidget):
     ``catalogsLoaded(stars, dsos)`` once the background catalog load finishes."""
 
     objectSelected = Signal(dict)
+    # Right-click: the object under the cursor (None over empty sky) and the global position for a menu.
+    contextMenuRequested = Signal(object, QPoint)
     viewChanged = Signal()
     catalogsLoaded = Signal(int, int)
     _catalogsReady = Signal(object, object, object, object)
@@ -653,6 +697,12 @@ class StarAtlasView(QWidget):
             if obj is not None:
                 self.select(obj)
                 self.center_on(obj, track=True)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        obj = self.object_at(event.pos().x(), event.pos().y())
+        if obj is not None:
+            self.select(obj)
+        self.contextMenuRequested.emit(obj, event.globalPos())
 
     def leaveEvent(self, _event) -> None:  # noqa: N802
         self._cursor = None

@@ -198,6 +198,7 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | IMG-080 | The system shall allow the user to configure the imaging-tab panel layout (traces to `UI-020`). | P2 |
 | IMG-090 | The system shall display live exposure countdown and camera/download status during an in-progress capture. | MVP |
 | IMG-100 | The system shall allow saving the currently displayed frame independently of the automatic sequence save path. | P2 |
+| IMG-110 | The system shall let the user turn on debayering of the displayed frame from a one-shot-colour camera, using a Bayer pattern (RGGB, GRBG, GBRG or BGGR) that the user sets per camera on its Equipment page and that defaults to RGGB. Debayering shall not alter the frame's raw pixel data, statistics or saved file (traces to `IMG-020`). | MVP |
 
 ### 4.5 `SEQ` — Sequencer (Basic)
 
@@ -569,7 +570,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | OBS | 8 | 0 | 8 | 0 |
 | EQP (generic + device) | 26 | 18 | 8 | 0 |
 | PROF | 11 | 10 | 1 | 0 |
-| IMG | 10 | 7 | 3 | 0 |
+| IMG | 11 | 8 | 3 | 0 |
 | SEQ | 9 | 8 | 0 | 1 |
 | SEQ-ADV | 10 | 0 | 9 | 1 |
 | SKY | 9 | 6 | 3 | 0 |
@@ -601,7 +602,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **242** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **243** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

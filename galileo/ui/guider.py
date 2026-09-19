@@ -359,7 +359,7 @@ def _heading(text: str) -> QLabel:
 
 
 class GuiderPage(QWidget):
-    """Equipment > Guider. One PHD2 connection per Pier (GUIDE-060)."""
+    """The Guiding section. One PHD2 connection per Pier (GUIDE-060)."""
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -383,7 +383,7 @@ class GuiderPage(QWidget):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(10)
 
-        title = QLabel("Guider")
+        title = QLabel("Guiding")
         title.setObjectName("PageTitle")
         layout.addWidget(title)
 

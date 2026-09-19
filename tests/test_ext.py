@@ -53,6 +53,57 @@ def test_tc_ext_030_remote_connection_host_port():
     assert adapter_a.port == 11111
 
 
+@pytest.mark.requirement("TC-EXT-030")
+@pytest.mark.priority("MVP")
+async def test_tc_ext_030_unreachable_alpaca_device_raises_device_connection_error():
+    """EXT-030: an unreachable Alpaca device (unresolvable .local name, or a
+    refused connection) surfaces as a DeviceConnectionError, not a raw
+    RuntimeError/httpx/socket error."""
+    from galileo.adapters import alpaca
+    from galileo.exceptions import DeviceConnectionError
+
+    adapter = alpaca.AlpacaAdapter(host="seestar.local", port=32323)
+    with patch.object(alpaca, "resolve_mdns_host_sync", side_effect=DeviceConnectionError("no mDNS")):
+        with pytest.raises(DeviceConnectionError, match="no mDNS"):
+            await adapter.connect()
+
+    # Port 1 on loopback refuses immediately.
+    adapter = alpaca.AlpacaAdapter(host="127.0.0.1", port=1)
+    with pytest.raises(DeviceConnectionError, match="127.0.0.1:1 is not responding"):
+        await adapter.connect()
+
+
+@pytest.mark.requirement("TC-EXT-030")
+@pytest.mark.priority("MVP")
+def test_tc_ext_030_connectivity_failures_log_without_traceback():
+    """EXT-030: an unreachable device is reported in the log as one readable
+    line, while genuine (non-connectivity) errors keep their traceback."""
+    import logging
+    from galileo.diagnostics import _ConciseFormatter, _LOG_FORMAT
+    from galileo.exceptions import DeviceConnectionError
+
+    formatter = _ConciseFormatter(_LOG_FORMAT)
+
+    def render(exc: BaseException) -> str:
+        try:
+            raise exc
+        except type(exc):
+            import sys
+            record = logging.LogRecord(
+                "galileo.ui.app_window", logging.ERROR, __file__, 1,
+                "Could not connect %s", ("focuser",), sys.exc_info(),
+            )
+        first = formatter.format(record)
+        assert formatter.format(record) == first  # formatting twice must not change it
+        return first
+
+    concise = render(DeviceConnectionError("device is off"))
+    assert concise.endswith("Could not connect focuser — device is off")
+    assert "Traceback" not in concise
+
+    assert "Traceback" in render(KeyError("bug"))
+
+
 # ---------------------------------------------------------------------------
 # TC-EXT-040
 # ---------------------------------------------------------------------------

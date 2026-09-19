@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 256 requirements (242 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 257 requirements (243 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
 
 ---
 
@@ -131,6 +131,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-080` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-080` |
 | `IMG-090` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-090` |
 | `IMG-100` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-100` |
+| `IMG-110` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-110` |
 
 ### `SEQ` — Sequencer (Basic)
 
@@ -478,7 +479,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP` | 26 | 18 | 8 | 0 |
 | `PROF` | 11 | 10 | 1 | 0 |
 | `OBS` | 8 | 0 | 8 | 0 |
-| `IMG` | 10 | 7 | 3 | 0 |
+| `IMG` | 11 | 8 | 3 | 0 |
 | `SEQ` | 9 | 8 | 0 | 1 |
 | `SEQ-ADV` | 10 | 0 | 9 | 1 |
 | `SKY` | 9 | 6 | 3 | 0 |
@@ -510,4 +511,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **256** | **154** | **89** | **13** |
+| **Total** | **257** | **155** | **89** | **13** |

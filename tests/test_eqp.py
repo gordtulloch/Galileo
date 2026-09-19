@@ -573,3 +573,57 @@ async def test_tc_eqp_safe_010_safety_monitor_polling(mock_safety_monitor, event
     mock_safety_monitor.explanation = "Rain detected"
     await safe_ctrl.poll()
     assert event_bus.publish.called
+
+
+# ---------------------------------------------------------------------------
+# Alpaca camera: the image is only fetched once the exposure has finished
+# ---------------------------------------------------------------------------
+
+def _alpaca_camera(monkeypatch, replies):
+    """An Alpaca camera whose GETs are scripted: ``replies[attribute]`` is a list, consumed in order (last one repeats)."""
+    from galileo.adapters.alpaca import AlpacaCameraAdapter
+    adapter = AlpacaCameraAdapter(host="h", port=1)
+    adapter.reads = []
+    adapter._IMAGE_POLL_S = 0.0
+
+    async def fake_get(attribute, timeout=10.0):
+        adapter.reads.append(attribute)
+        queue = replies[attribute]
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    async def fake_put(attribute, **body):
+        adapter.reads.append(attribute)
+
+    monkeypatch.setattr(adapter, "_get", fake_get)
+    monkeypatch.setattr(adapter, "_put", fake_put)
+    return adapter
+
+
+@pytest.mark.requirement("TC-EQP-CAM-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_cam_010_alpaca_waits_for_the_exposure_before_downloading(monkeypatch):
+    """EQP-CAM-010: an Alpaca exposure is polled until ImageReady, then the image is returned as a (height, width) array."""
+    import numpy as np
+    columns = [[1, 2, 3], [4, 5, 6]]                    # ASCOM order: X first — 2 wide, 3 high
+    cam = _alpaca_camera(monkeypatch, {"imageready": [False, False, True], "camerastate": [2],
+                                       "imagearray": [columns]})
+    await cam.start_exposure(duration=10.0)
+    image = await cam.get_image_array()
+    assert cam.reads.index("imagearray") > max(i for i, r in enumerate(cam.reads) if r == "imageready")
+    assert cam.reads.count("imageready") == 3
+    assert isinstance(image, np.ndarray) and image.shape == (3, 2) and image[2, 1] == 6
+
+
+@pytest.mark.requirement("TC-EQP-CAM-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_cam_010_alpaca_exposure_failure_is_reported(monkeypatch):
+    """EQP-CAM-010: a camera error state, or an exposure that never completes, raises instead of hanging or returning nothing."""
+    from galileo.exceptions import DeviceError
+    cam = _alpaca_camera(monkeypatch, {"imageready": [False], "camerastate": [5], "imagearray": [None]})
+    with pytest.raises(DeviceError, match="error during the exposure"):
+        await cam.get_image_array()
+
+    cam = _alpaca_camera(monkeypatch, {"imageready": [False], "camerastate": [2], "imagearray": [None]})
+    cam._IMAGE_MARGIN_S = -1.0                          # deadline already passed
+    with pytest.raises(DeviceError, match="did not finish"):
+        await cam.get_image_array()

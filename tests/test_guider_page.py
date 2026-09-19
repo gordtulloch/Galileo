@@ -108,7 +108,12 @@ def test_tc_guide_070_guider_page_asks_for_a_host_not_a_device(window):
 @pytest.mark.requirement("TC-GUIDE-070")
 @pytest.mark.priority("MVP")
 def test_tc_guide_070_equipment_page_uses_the_guider_page(window):
-    """GUIDE-070: the Equipment sidebar's Guider category is the PHD2 page and takes part in Pier reloads."""
+    """GUIDE-070: Guiding is a top-level sidebar section, directly below Imaging, that shows the PHD2 page and takes part in Pier reloads."""
+    from galileo.ui.app_window import EQUIPMENT_CATEGORIES, PRIMARY_SECTIONS
+    ids = [s[0] for s in PRIMARY_SECTIONS]
+    assert ids[ids.index("imaging") + 1] == "guiding"
+    assert {s[0]: s[1] for s in PRIMARY_SECTIONS}["guiding"] == "Guiding"
+    assert "guider" not in [c[0] for c in EQUIPMENT_CATEGORIES]
     from galileo.ui.guider import GuiderPage
     state = window._device_pages["guider"]
     assert set(state) == {"reload", "autoconnect"}
