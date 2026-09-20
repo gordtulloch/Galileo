@@ -9,7 +9,7 @@ Out of scope for v1 (see PSD §5): post-processing/stacking beyond calibration a
 - [ ] **Planning > Sequence** (`SEQ`, `SEQ-ADV`) — basic and advanced sequencer UI, templates, file-name macros. Logic exists (`galileo.sequencer.*`).
 - [ ] **Planning > Scheduler** (`SCHED`) — job queue UI, constraints, multi-night progress. Logic exists (`galileo.scheduler`).
 - [ ] **Science > Variable Stars** (`VST`, `VST-AN`) — target planning, photometry, AAVSO report UI. Logic exists (`galileo.vstarget.*`).
-- [ ] **Options** — the menu and a page per section exist, and **Library** has its real settings (AstroFiler's configuration screen); the other pages (Equipment, Star Atlas, Planning, Framing, Imaging, Guiding, Focus, Solve, Science) are still placeholders, and theme/layout customization (`UI`), notification configuration and per-user preferences are not built.
+- [ ] **Options** — the menu and a page per section exist, and **Library** (AstroFiler's configuration screen), **Star Atlas** (horizon file upload) and **Planning** (the "do not slew where obstructed" option) have real settings; the other pages (Equipment, Framing, Imaging, Guiding, Focus, Solve, Science) are still placeholders, and theme/layout customization (`UI`), notification configuration and per-user preferences are not built.
 
 ## Domain logic with no UI
 
@@ -33,10 +33,11 @@ Out of scope for v1 (see PSD §5): post-processing/stacking beyond calibration a
 - [ ] Star Atlas: comets/asteroids/satellites (`SKYMAP-040`), FOV/mount overlay (`SKYMAP-050`), slew-from-map polish (`SKYMAP-060`).
 - [ ] Equipment pages poll devices on the UI thread while visible; move to a worker thread.
 - [ ] Parked-mount guard does not cover Sync or tracking on/off.
+- [ ] Horizon obstruction guard (`SKYMAP-080`, `galileo.core.slew_guard`) checks only the slew destination, not the path the mount takes; it skips jogging and Find Home, treats RA/Dec as of date, and does nothing for an Observatory with no latitude/longitude.
 - [ ] Plugin framework (`PLUG`): marketplace raises `NotImplementedError` (`galileo/plugins.py`); `VST`/`VST-AN` not yet packaged as installable first-party plugins.
 - [ ] `galileo/vstarget/analysis/transform_apply.py` applies a placeholder correction (`Tv * 0.05`); implement the real transformation formula.
 - [ ] Framing (`FRAME`): verify survey-image overlay, mosaic-to-sequencer handoff and constellation/grid overlay against the SRS; the README lists only the input panel as working.
-- [ ] Planning (`SKY`): horizon-profile editing (`SKY-040`), survey thumbnail caching (`SKY-080`), geocoding (`SKY-090`) — confirm wired to the UI.
+- [ ] Planning (`SKY`): horizon-profile editing (`SKY-040`; upload, display and clearing exist under Options > Star Atlas, but there is no point-by-point editing), survey thumbnail caching (`SKY-080`), geocoding (`SKY-090`) — confirm wired to the UI.
 
 ## Non-functional and release
 
