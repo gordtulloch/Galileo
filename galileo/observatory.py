@@ -12,7 +12,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # ORM records, imported lazily inside the functions that use them (the domain
+    # core must not load the persistence layer at import time); names here are for annotations.
+    from galileo.library.models.device_config import DeviceConfigRecord
+    from galileo.library.models.observatory import ObservatoryRecord, PierRecord
+    from galileo.library.models.optical_tube import OpticalTubeRecord
 
 logger = logging.getLogger(__name__)
 

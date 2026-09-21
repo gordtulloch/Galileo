@@ -7,7 +7,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![Tests](https://img.shields.io/badge/tests-244%20passing-brightgreen.svg)
 
-A cross-platform Python-based astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) Supports a mix of INDI and Alpaca devices on multiple piers per observatory, multiple optical tubes and cameras per mount. 
+A cross-platform Python-based astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) Supports a mix of INDI and Alpaca devices on multiple piers per observatory, multiple optical tubes and cameras per mount.  
 
 ## Why Galileo
 
@@ -18,7 +18,7 @@ Two things motivate this project:
 
 ## Status
 
-**Pre-alpha — early development.** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Download it and give it a try today!
+**Pre-alpha — early development.** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Download it and give it a try today! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
 
 - **Design docs**: a complete Project Scope Document, a Software Requirements Specification (235 numbered requirements across 27 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
 - **Automated tests**: 488 passing (plus a handful of soak/hardware/installer-artifact tests that are intentionally skipped outside a real overnight/CI run) covering every SRS domain — see [Running the tests](#running-the-tests).
@@ -41,27 +41,7 @@ The `VST`/`VST-AN` plugins specified in the SDD remain the planned reference imp
 
 ## Getting Started
 
-Requires Python 3.11+.
-
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\pip install -r requirements.txt
-# macOS/Linux:
-.venv/bin/pip install -r requirements.txt
-
-./run.sh        # macOS/Linux, or Git Bash on Windows
-.\run.ps1       # Windows PowerShell
-```
-
-Both launch scripts locate the project's `.venv` automatically and start the app maximized. `requirements-dev.txt` additionally installs `pytest`/`ruff`/`mypy` for development. This is temporary, a full multiplatform installer is planned.
-
-### Running the tests
-
-```bash
-pytest                                                       # full suite
-pytest -m "not soak and not hardware and not integration"    # skip long/external-dependency tests
-```
+Please see the Wiki for the Getting Started Guide.
 
 ## Documentation
 

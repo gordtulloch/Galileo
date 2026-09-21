@@ -240,3 +240,48 @@ async def test_tc_sky_100_simbad_first_search_with_local_fallback(sky_atlas):
         results = await sky_atlas.search_online("")
         assert len(results) >= 10_000
         mock_search.assert_not_called()
+
+
+@pytest.mark.requirement("TC-SKY-100")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("v_value, expected", [
+    (7.5, 7.5),                    # a real magnitude passes through
+    (-1.46, -1.46),                # bright objects have negative magnitudes
+    (float("nan"), 99.0),          # Simbad's "no V magnitude"
+    (float("inf"), 99.0),          # never let a non-finite value become a magnitude
+    (float("-inf"), 99.0),
+    ("masked", 99.0),              # astropy masked cell
+    ("no rows", 99.0),
+    ("no table", 99.0),
+    ("error", 99.0),               # network failure -> unknown, not an exception
+])
+def test_tc_sky_100_simbad_magnitude_lookup_returns_unknown_for_anything_unusable(monkeypatch, v_value, expected):
+    """SKY-100: The follow-up Simbad V-magnitude lookup returns the magnitude, or 99.0 (unknown) for NaN/infinite/masked/missing values and lookup errors, without losing the match."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    simbad_mod = pytest.importorskip("astroquery.simbad")
+    np = pytest.importorskip("numpy")
+    from astropy.table import MaskedColumn, Table
+
+    if v_value == "masked":
+        table = Table([MaskedColumn([1.0], name="V", mask=[True])])
+    elif v_value == "no rows":
+        table = Table({"V": np.array([], dtype=float)})
+    elif v_value in ("no table", "error"):
+        table = None
+    else:
+        table = Table({"V": [v_value]})
+
+    class FakeSimbad:
+        TIMEOUT = None
+
+        def add_votable_fields(self, *fields):
+            pass
+
+        def query_object(self, name, wildcard=False):
+            if v_value == "error":
+                raise OSError("no network")
+            return table
+
+    monkeypatch.setattr(simbad_mod, "Simbad", FakeSimbad)
+
+    assert sky_mod._simbad_magnitude_sync("M42") == pytest.approx(expected)

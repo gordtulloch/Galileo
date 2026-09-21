@@ -1112,9 +1112,7 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
         light_path: Original light frame path
     """
     import numpy as np
-    import hashlib
     import os
-    from datetime import datetime
     
     # =================================================================
     # PRIMARY CALIBRATION IDENTIFICATION

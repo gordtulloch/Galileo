@@ -28,7 +28,6 @@ class VariableStarAnalysis:
     """Coordinates plate-solve, stack, photometry, transform, and report generation."""
 
     def __init__(self) -> None:
-        from galileo.vstarget.analysis.photometry import AperturePhotometryEngine
         self._photometry = AperturePhotometryEngine()
         self._solver = None
         self._comparison_stars: list[dict] = []
@@ -62,7 +61,6 @@ class VariableStarAnalysis:
     ):
         from astropy.io import fits
         from astropy.wcs import WCS
-        from galileo.vstarget.analysis.photometry import PhotometryResult
 
         try:
             import numpy as np
@@ -110,7 +108,6 @@ class VariableStarAnalysis:
             )
         except Exception as exc:
             logger.exception("Photometry failed: %s", exc)
-            from galileo.vstarget.analysis.photometry import PhotometryResult
             return PhotometryResult(target=target.get("name", ""), jd=0, magnitude=99, uncertainty=99, filter_band=filter_band)
 
     # --- AAVSO report (VST-AN-050) ---------------------------------------

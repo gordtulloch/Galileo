@@ -708,7 +708,6 @@ class CloudSyncWidget(QWidget):
         from galileo.library.models import fitsFile
         from PySide6.QtWidgets import QProgressDialog
         from PySide6.QtCore import Qt
-        import configparser
         
         try:
             # Get repository path from configuration
@@ -884,7 +883,6 @@ class CloudSyncWidget(QWidget):
         from galileo.library.models import fitsFile
         from PySide6.QtWidgets import QProgressDialog
         from PySide6.QtCore import Qt
-        import configparser
         
         try:
             # Get repository path from configuration
@@ -1170,7 +1168,6 @@ class CloudSyncWidget(QWidget):
         from galileo.library.models import fitsFile
         from PySide6.QtWidgets import QProgressDialog
         from PySide6.QtCore import Qt
-        import configparser
         
         try:
             # Get repository path from configuration

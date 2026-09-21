@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,13 @@ class InstructionRegistry:
     def available_instructions(self) -> list[type["BaseInstruction"]]:
         return list(self._instructions)
 
+    def find(self, name: str) -> "type[BaseInstruction] | None":
+        """The registered instruction class called *name*, or None.
+
+        The first registration wins, so a plugin cannot shadow a built-in type name.
+        """
+        return next((cls for cls in self._instructions if cls.__name__ == name), None)
+
 
 # ---------------------------------------------------------------------------
 # Base types
@@ -59,7 +66,27 @@ class BaseInstruction(ABC):
         """Execute this instruction, modifying *context* as needed."""
 
     def to_dict(self) -> dict:
-        return {"type": type(self).__name__, "label": self.label}
+        """JSON-able form: the type name, label, and (for dataclass instructions) every field."""
+        data: dict[str, Any] = {"type": type(self).__name__, "label": self.label}
+        if is_dataclass(self):
+            data["params"] = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BaseInstruction":
+        """Rebuild an instruction from :meth:`to_dict` output; unknown parameters are ignored.
+
+        Non-dataclass instructions (e.g. from plugins) that need constructor arguments should
+        override this.
+        """
+        params = data.get("params", {})
+        if not is_dataclass(cls):
+            return cls()
+        known = {f.name for f in fields(cls) if f.init}
+        unknown = sorted(set(params) - known)
+        if unknown:
+            logger.warning("Ignoring unknown parameters %s for instruction %s", unknown, cls.__name__)
+        return cls(**{k: v for k, v in params.items() if k in known})
 
 
 class BaseCondition(ABC):
@@ -124,18 +151,19 @@ def save_template(group: InstructionGroup, path: "Path | str") -> None:
 def load_template(path: "Path | str") -> InstructionGroup:
     """Load an InstructionGroup template from a .gtpl file."""
     data = json.loads(Path(path).read_text("utf-8"))
+    registry = InstructionRegistry.instance()
     grp = InstructionGroup(name=data.get("name", ""))
     for instr_data in data.get("instructions", []):
         cls_name = instr_data.get("type", "")
-        cls = _find_instruction_class(cls_name)
-        if cls:
-            grp.add_instruction(cls.__new__(cls))
+        cls = registry.find(cls_name)
+        if cls is None:
+            # Fail loudly: silently dropping a step would run a shorter sequence than was saved.
+            raise ValueError(
+                f"Template {str(path)!r} uses unknown instruction type {cls_name!r} "
+                "(is the plugin that provides it loaded?)"
+            )
+        grp.add_instruction(cls.from_dict(instr_data))
     return grp
-
-
-def _find_instruction_class(name: str) -> type[BaseInstruction] | None:
-    import galileo.sequencer.advanced as mod
-    return getattr(mod, name, None)
 
 
 def from_basic_sequence(basic_seq) -> AdvancedSequenceDef:

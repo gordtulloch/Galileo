@@ -123,7 +123,6 @@ class BasicSequencer:
         event_bus=None,
         retry_policy: dict | None = None,
     ) -> None:
-        from galileo.sequencer.file_namer import FileNamer
         self._camera = camera
         self._mount = mount
         self._filter_wheel = filter_wheel

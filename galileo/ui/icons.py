@@ -13,12 +13,17 @@ separate image file per theme. Each entry in :data:`ICONS` is a small
 from __future__ import annotations
 
 import math
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-DrawFn = Callable[["QPainter", "QRectF"], None]  # noqa: F821 — Qt types, imported lazily
+if TYPE_CHECKING:
+    # Qt is imported lazily inside the functions so this module loads without PySide6.
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QIcon, QPainter
+
+DrawFn = Callable[["QPainter", "QRectF"], None]
 
 
-def make_icon(name: str, color: str, size: int = 26) -> "QIcon":  # noqa: F821
+def make_icon(name: str, color: str, size: int = 26) -> "QIcon":
     from PySide6.QtCore import Qt, QRectF
     from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 

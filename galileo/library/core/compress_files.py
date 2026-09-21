@@ -1,952 +1,737 @@
 """
 FITS File Compression Module
 
-This module provides lossless compression for FITS images. 
+This module provides lossless compression for FITS images.
 FITS tile-compressed files are written in-place (filename unchanged) when
 `replace_original=True` (the default for auto-import). The resulting FITS file
-stores the image using the FITS tile compression convention.
+stores the image using the FITS tile compression convention (GZIP_2, with
+quantization disabled so floating-point images are preserved bit for bit).
 
 The compression system supports:
-- Lossless compression using gzip or similar algorithms
-- Transparent decompression when files are accessed
+- Lossless FITS tile compression (GZIP_2) and external gzip/lzma/bzip2 streams
+- Transparent reading of tile-compressed files (astropy does this itself)
 - Configuration-driven compression behavior
 - Integration with file registration and download processes
 
-Key Features:
-- Preserves all FITS metadata and image data exactly
-- Significant file size reduction (typically 30-70% smaller)
-- Fast compression/decompression suitable for real-time processing
-- Seamless integration with existing AstroFiler workflows
+Safety rule: the original file is never touched until the compressed copy has
+been written **and verified** against it. A failed compression leaves the
+original exactly as it was and cleans up its temporary file.
 
 Configuration:
 Set 'compress_fits=true' in library.ini (Options > Library) to enable automatic compression
 for new files during download and repository loading.
 """
 
-import os
-import gzip
-import lzma
-import bz2
-import shutil
-import logging
-import configparser
-import tempfile
-from galileo.library.config import load_config as load_library_config
-from pathlib import Path
-from typing import Optional, Tuple
-from astropy.io import fits
-import hashlib
+from __future__ import annotations
 
-# Import config for temp folder
-try:
-    from ..config import get_temp_folder
-except ImportError:
-    # Fallback if config module not available
-    def get_temp_folder():
-        return tempfile.gettempdir()
+import bz2
+import gzip
+import hashlib
+import logging
+import lzma
+import os
+import shutil
+import threading
+from collections import Counter
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
+from astropy.io import fits
+
+from galileo.library.config import load_config as load_library_config
 
 logger = logging.getLogger(__name__)
+
+_CHUNK_SIZE = 1024 * 1024
+_FITS_EXTENSIONS = ('.fits', '.fit', '.fts')
+_EXTERNAL_EXTENSIONS = ('.gz', '.xz', '.bz2', '.fz')
+_STREAM_OPENERS: dict[str, Callable[..., Any]] = {'gzip': gzip.open, 'lzma': lzma.open, 'bzip2': bz2.open}
+# The project convention for FITS tile compression; every ``fits_*`` setting maps to it.
+_TILE_COMPRESSION = 'GZIP_2'
+
+_STRUCTURAL_KEYWORDS = {'SIMPLE', 'BITPIX', 'NAXIS', 'EXTEND', 'PCOUNT', 'GCOUNT', 'CHECKSUM', 'DATASUM'}
+# Keywords a CompImageHDU (a BINTABLE extension) must not inherit from the source image header.
+_PRIMARY_SKIP = _STRUCTURAL_KEYWORDS | {f'NAXIS{i}' for i in range(1, 10)}
+_COMP_SKIP = _STRUCTURAL_KEYWORDS | {
+    'BSCALE', 'BZERO', 'XTENSION', 'TFIELDS', 'ZIMAGE', 'ZCMPTYPE', 'ZBITPIX', 'ZNAXIS',
+} | {
+    f'{prefix}{i}'
+    for i in range(1, 100)
+    for prefix in ('NAXIS', 'ZNAXIS', 'TTYPE', 'TFORM', 'TUNIT', 'TDIM')
+}
+
+
+def _compression_ratio(original_size: int, compressed_size: int) -> float:
+    """Percentage reduction; 0 for an empty original rather than a ZeroDivisionError."""
+    return (1 - compressed_size / original_size) * 100 if original_size else 0.0
+
+
+def _remove_quietly(path: str) -> None:
+    """Delete a temporary file, logging (not raising) if the OS refuses."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Could not remove temporary file %s: %s", path, exc)
+
+
+def _has_comp_image(path: str) -> bool:
+    """True if the FITS file at *path* holds a tile-compressed image HDU."""
+    try:
+        with fits.open(path) as hdul:
+            return any(isinstance(hdu, fits.CompImageHDU) for hdu in hdul)
+    except Exception:  # an unreadable file is simply "not compressed"
+        logger.debug("Could not inspect %s for tile compression", path, exc_info=True)
+        return False
+
+
+def _is_readable_fits(path: str) -> bool:
+    try:
+        with fits.open(path, mode='readonly'):
+            return True
+    except Exception:  # noqa: BLE001 - any failure to open means "not a usable FITS file"
+        return False
+
+
+def _find_image_hdu_index(hdul: fits.HDUList) -> int | None:
+    """Index of the first uncompressed image HDU that holds data (tables and CompImageHDUs don't count)."""
+    for idx, hdu in enumerate(hdul):
+        if isinstance(hdu, fits.CompImageHDU) or not isinstance(hdu, (fits.PrimaryHDU, fits.ImageHDU)):
+            continue
+        try:
+            if hdu.data is not None:
+                return idx
+        except Exception:  # an HDU whose data can't be read is not a candidate
+            logger.debug("HDU %d has unreadable data", idx, exc_info=True)
+    return None
+
+
+def _copy_header_cards(dst: fits.Header, src: fits.Header, skip: set[str]) -> list[str]:
+    """Copy every non-structural card from *src* to *dst*; return the keywords that could not be copied."""
+    failed: list[str] = []
+    for card in src.cards:
+        key = card.keyword
+        if not key or key in skip:
+            continue
+        try:
+            if key == 'COMMENT':
+                dst.add_comment(card.value)
+            elif key == 'HISTORY':
+                dst.add_history(card.value)
+            else:
+                dst[key] = (card.value, card.comment)
+        except Exception:  # noqa: BLE001 - recorded in the return value; the caller aborts on any failure
+            failed.append(key)
+    return failed
+
+
+def _tile_compress_hdu(src_hdu: fits.PrimaryHDU | fits.ImageHDU) -> fits.CompImageHDU:
+    """Build a tile-compressed copy of an image HDU, keeping its non-structural header cards."""
+    # quantize_level=0 disables quantization: astropy's default (16) makes floating-point
+    # images lossy, which would silently corrupt the photometry.
+    compressed_hdu = fits.CompImageHDU(
+        data=src_hdu.data, compression_type=_TILE_COMPRESSION, quantize_level=0,
+    )
+    failed = _copy_header_cards(compressed_hdu.header, src_hdu.header, _COMP_SKIP)
+    if failed:
+        raise ValueError(f"header cards could not be copied to the compressed HDU: {sorted(set(failed))}")
+
+    # Preserve EXTNAME when present
+    if 'EXTNAME' in src_hdu.header and 'EXTNAME' not in compressed_hdu.header:
+        compressed_hdu.header['EXTNAME'] = src_hdu.header['EXTNAME']
+
+    # Older astropy exposes the raw table header, already holding the tile-compression (Z*)
+    # keywords, and needs them to match the original image. Newer astropy derives them itself
+    # and would write our copies as stray reserved keywords (a VerifyWarning on every read).
+    if 'ZCMPTYPE' in compressed_hdu.header:
+        naxis = int(src_hdu.header.get('NAXIS', src_hdu.data.ndim))
+        compressed_hdu.header['ZIMAGE'] = (True, 'Tile-compressed image')
+        compressed_hdu.header['ZCMPTYPE'] = (_TILE_COMPRESSION, 'Compression algorithm')
+        compressed_hdu.header['ZNAXIS'] = (naxis, 'Number of uncompressed axes')
+        compressed_hdu.header['ZBITPIX'] = (int(src_hdu.header.get('BITPIX', -32)), 'Uncompressed data type')
+        for axis in range(1, naxis + 1):
+            n_key = f'NAXIS{axis}'
+            length = int(src_hdu.header[n_key]) if n_key in src_hdu.header else int(src_hdu.data.shape[-axis])
+            compressed_hdu.header[f'ZNAXIS{axis}'] = (length, f'Axis {axis} length (uncompressed)')
+    return compressed_hdu
+
+
+def _rebuild_with_compressed_image(hdul: fits.HDUList, target_idx: int) -> list[fits.hdu.base._BaseHDU]:
+    """The HDU list for the compressed file: *hdul* with its image at *target_idx* tile-compressed.
+
+    Raises if any extension or header card can't be carried over — a compressed copy that
+    silently lacks part of the original must never replace it.
+    """
+    if target_idx == 0:
+        # The image is in the PrimaryHDU; rewrite as an empty PrimaryHDU with the global
+        # metadata followed by a CompImageHDU holding the image.
+        primary = fits.PrimaryHDU()
+        failed = _copy_header_cards(primary.header, hdul[0].header, _PRIMARY_SKIP)
+        if failed:
+            raise ValueError(f"header cards could not be copied to the primary HDU: {sorted(set(failed))}")
+        return [primary, _tile_compress_hdu(hdul[0]), *(ext.copy() for ext in hdul[1:])]
+
+    return [
+        _tile_compress_hdu(hdu) if idx == target_idx else hdu.copy()
+        for idx, hdu in enumerate(hdul)
+    ]
+
+
+def _data_hdus(hdul: fits.HDUList) -> list[fits.hdu.base._BaseHDU]:
+    return [hdu for hdu in hdul if hdu.data is not None]
+
+
+def _data_equal(a: np.ndarray, b: np.ndarray) -> bool:
+    """Exact equality (NaN == NaN); handles table (record) arrays column by column."""
+    if a.shape != b.shape:
+        return False
+    names = a.dtype.names
+    if names or b.dtype.names:
+        if names is None or names != b.dtype.names:
+            return False
+        return all(_data_equal(np.asarray(a[name]), np.asarray(b[name])) for name in names)
+    both_float = a.dtype.kind in 'fc' and b.dtype.kind in 'fc'
+    return bool(np.array_equal(a, b, equal_nan=both_float))
+
+
+def _commentary_counts(hdul: fits.HDUList) -> Counter:
+    return Counter(
+        card.keyword for hdu in hdul for card in hdu.header.cards if card.keyword in ('COMMENT', 'HISTORY')
+    )
 
 
 class FitsCompressor:
     """
-    Handles FITS file compression and decompression using advanced lossless algorithms.
+    Handles FITS file compression and decompression using lossless algorithms.
     """
-    
-    def __init__(self, config_path: Optional[str] = None):
+
+    def __init__(self, config_path: str | None = None):
         """
         Initialize the FITS compressor.
-        
+
         Args:
             config_path: Path to configuration file
         """
         self.config = load_library_config(config_path)
-        
+
         # Get compression settings
         self.compression_enabled = self.config.getboolean('DEFAULT', 'compress_fits', fallback=False)
         self.compression_algorithm = self.config.get('DEFAULT', 'compression_algorithm', fallback='gzip')
         self.compression_level = self.config.getint('DEFAULT', 'compression_level', fallback=6)
         self.verify_compression = self.config.getboolean('DEFAULT', 'verify_compression', fallback=True)
-        
-        # Algorithm-specific settings
-        # FITS internal compression algorithms - optimized for data type
-        # RICE: Lossless for integer data (NINA compatible)
-        # GZIP: Lossless for floating-point data 
-        self.algorithms = {
+
+        # Algorithm-specific settings. Every ``fits_*`` entry produces GZIP_2 tile compression
+        # (the project convention, and the only one offered in Options > Library).
+        self.algorithms: dict[str, dict[str, Any]] = {
             'gzip': {'extension': '.gz', 'module': gzip, 'levels': (1, 9)},
-            'lzma': {'extension': '.xz', 'module': lzma, 'levels': (0, 9)}, 
+            'lzma': {'extension': '.xz', 'module': lzma, 'levels': (0, 9)},
             'bzip2': {'extension': '.bz2', 'module': bz2, 'levels': (1, 9)},
             'fits_rice': {'extension': '.fits', 'module': None, 'levels': (1, 9)},
             'fits_gzip1': {'extension': '.fits', 'module': None, 'levels': (1, 9)},
             'fits_gzip2': {'extension': '.fits', 'module': None, 'levels': (1, 9)},
-            'auto': {'extension': '.fits', 'module': None, 'levels': (1, 9)}  # Smart selection
+            'auto': {'extension': '.fits', 'module': None, 'levels': (1, 9)},
         }
-        
-        logger.info(f"FITS compression initialized: enabled={self.compression_enabled}, "
-                   f"algorithm={self.compression_algorithm}, level={self.compression_level}")
-    
-    def get_algorithm_info(self, algorithm: str = None):
+
+        logger.info("FITS compression initialized: enabled=%s, algorithm=%s, level=%s",
+                    self.compression_enabled, self.compression_algorithm, self.compression_level)
+
+    def get_algorithm_info(self, algorithm: str | None = None):
         """Get information about compression algorithm."""
         algo = algorithm or self.compression_algorithm
         return self.algorithms.get(algo, self.algorithms['gzip'])
-    
+
     def is_compressed(self, file_path: str) -> bool:
         """
         Check if a file is already compressed (external or internal FITS compression).
-        
+
         Args:
             file_path: Path to the file to check
-            
+
         Returns:
             True if file appears to be compressed, False otherwise
         """
-        # Check for common compression extensions
+        lower = file_path.lower()
         # - .gz/.xz/.bz2 are external stream compression
         # - .fz is the conventional suffix for FITS tile-compression outputs (fpack)
-        external_compressed_extensions = ['.gz', '.xz', '.bz2', '.fz']
-        if any(file_path.lower().endswith(ext) for ext in external_compressed_extensions):
+        if lower.endswith(_EXTERNAL_EXTENSIONS):
             return True
-        
-        # Check for FITS internal compression by examining the file structure
-        if file_path.lower().endswith(('.fits', '.fit', '.fts', '.fits.fz', '.fit.fz', '.fts.fz', '.fz')):
-            try:
-                with fits.open(file_path) as hdul:
-                    # Check if there are CompImageHDU (compressed image) extensions
-                    for hdu in hdul:
-                        if isinstance(hdu, fits.CompImageHDU):
-                            return True
-            except Exception:
-                # If we can't read the file, assume it's not compressed
-                pass
-        
-        return False
-    
+
+        # A plain .fits name may still hold tile-compressed data (we compress in place)
+        return lower.endswith(_FITS_EXTENSIONS) and _has_comp_image(file_path)
+
     def is_fits_file(self, file_path: str) -> bool:
         """
         Check if a file is a FITS file (compressed or uncompressed).
-        
+
         Args:
             file_path: Path to the file to check
-            
+
         Returns:
             True if file is a FITS file, False otherwise
         """
-        # Check for standard FITS extensions
-        fits_extensions = ['.fits', '.fit', '.fts']
-        
-        # Check direct FITS extensions
-        if any(file_path.lower().endswith(ext) for ext in fits_extensions):
+        lower = file_path.lower()
+        if lower.endswith(_FITS_EXTENSIONS):
             return True
-            
-        # Check for externally compressed FITS files
-        external_compressed_extensions = ['.gz', '.xz', '.bz2', '.fz']
-        for ext in external_compressed_extensions:
-            if file_path.lower().endswith(ext):
-                # Check if the base file (without compression extension) is a FITS file
-                base_path = file_path[:-len(ext)]
-                if any(base_path.lower().endswith(fits_ext) for fits_ext in fits_extensions):
-                    return True
-        
-        return False
-    
-    def get_compressed_path(self, original_path: str, algorithm: str = None) -> str:
+
+        # Externally compressed FITS files: the name without the compression suffix is FITS
+        return any(
+            lower.endswith(ext) and lower[:-len(ext)].endswith(_FITS_EXTENSIONS)
+            for ext in _EXTERNAL_EXTENSIONS
+        )
+
+    def get_compressed_path(self, original_path: str, algorithm: str | None = None) -> str:
         """
         Get the compressed version path for an original file.
-        
+
         Args:
             original_path: Path to the original file
             algorithm: Compression algorithm to use
-            
+
         Returns:
             Path where the compressed file should be stored
         """
         algo_info = self.get_algorithm_info(algorithm)
         return f"{original_path}{algo_info['extension']}"
-    
+
     def get_uncompressed_path(self, compressed_path: str) -> str:
         """
         Get the original file path from a compressed file path.
-        
+
         Args:
             compressed_path: Path to the compressed file
-            
+
         Returns:
             Path to the original uncompressed file
         """
-        # Remove compression extensions
-        if compressed_path.lower().endswith('.gz'):
-            return compressed_path[:-3]
-        elif compressed_path.lower().endswith('.xz'):
-            return compressed_path[:-3]
-        elif compressed_path.lower().endswith('.bz2'):
-            return compressed_path[:-4]
-        elif compressed_path.lower().endswith('.fz'):
-            return compressed_path[:-3]
-        else:
-            return compressed_path
-    
+        lower = compressed_path.lower()
+        for ext in _EXTERNAL_EXTENSIONS:
+            if lower.endswith(ext):
+                return compressed_path[:-len(ext)]
+        return compressed_path
+
     def calculate_file_hash(self, file_path: str) -> str:
         """
         Calculate SHA-256 hash of a file for verification.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             Hexadecimal hash string
         """
         sha256_hash = hashlib.sha256()
         with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
+            for chunk in iter(lambda: f.read(_CHUNK_SIZE), b""):
                 sha256_hash.update(chunk)
         return sha256_hash.hexdigest()
-    
-    def compress_fits_file(self, input_path: str, replace_original: bool = True, 
-                          algorithm: str = None) -> Optional[str]:
+
+    def compress_fits_file(self, input_path: str, replace_original: bool = True,
+                           algorithm: str | None = None) -> str | None:
         """
-        Compress a FITS file using advanced lossless compression.
-        
+        Compress a FITS file using lossless compression.
+
         Args:
             input_path: Path to the input FITS file
             replace_original: If True, replace the original file with compressed version
             algorithm: Compression algorithm ('gzip', 'lzma', 'bzip2', 'auto')
-            
+
         Returns:
             Path to the compressed file if successful, None if failed
         """
         try:
             if not os.path.exists(input_path):
-                logger.error(f"Input file does not exist: {input_path}")
+                logger.error("Input file does not exist: %s", input_path)
                 return None
-            
+
             if self.is_compressed(input_path):
-                logger.debug(f"File already compressed: {input_path}")
+                logger.debug("File already compressed: %s", input_path)
                 return input_path
-            
+
             # Verify it's a valid FITS file before compressing
-            try:
-                with fits.open(input_path, mode='readonly') as hdul:
-                    # Just check if we can open it
-                    pass
-            except Exception as e:
-                logger.error(f"Invalid FITS file, cannot compress: {input_path} - {e}")
+            if not _is_readable_fits(input_path):
+                logger.error("Invalid FITS file, cannot compress: %s", input_path)
                 return None
-            
-            # Select compression algorithm
+
             selected_algorithm = algorithm or self.compression_algorithm
 
-            # For auto-import, "auto" means FITS tile compression.
-            # The required convention for this project is GZIP_2.
+            # For auto-import, "auto" means FITS tile compression (GZIP_2).
             if selected_algorithm == 'auto':
                 selected_algorithm = 'fits_gzip2'
-            
-            # Ensure we have a valid algorithm (no auto-selection)
+
             if selected_algorithm not in self.algorithms:
-                logger.error(f"Unsupported compression algorithm: {selected_algorithm}")
+                logger.error("Unsupported compression algorithm: %s", selected_algorithm)
                 return None
-            
+
             return self._compress_with_algorithm(input_path, replace_original, selected_algorithm)
-                
-        except Exception as e:
-            logger.error(f"Error compressing FITS file {input_path}: {e}")
+
+        except Exception:  # never let compression break the import that called it
+            logger.exception("Error compressing FITS file %s", input_path)
             return None
-    
-    def _compress_with_algorithm(self, input_path: str, replace_original: bool, 
-                                algorithm: str) -> Optional[str]:
+
+    def _compress_stream(self, input_path: str, output_path: str, algorithm: str) -> None:
+        """Write a gzip/lzma/bzip2 copy of *input_path* to *output_path*."""
+        low, high = self.algorithms[algorithm]['levels']
+        level = min(max(self.compression_level, low), high)
+        level_kwarg = 'preset' if algorithm == 'lzma' else 'compresslevel'
+        with open(input_path, 'rb') as f_in, \
+                _STREAM_OPENERS[algorithm](output_path, 'wb', **{level_kwarg: level}) as f_out:
+            shutil.copyfileobj(f_in, f_out, _CHUNK_SIZE)
+
+    def _compress_with_algorithm(self, input_path: str, replace_original: bool,
+                                 algorithm: str) -> str | None:
         """
         Compress with a specific algorithm.
-        
+
         Args:
             input_path: Path to input file
             replace_original: Whether to replace original
             algorithm: Specific algorithm to use
-            
+
         Returns:
             Path to compressed file
         """
-        try:
-            algo_info = self.get_algorithm_info(algorithm)
-            output_path = self.get_compressed_path(input_path, algorithm)
-            
-            original_size = os.path.getsize(input_path)
-            
-            logger.info(f"Compressing FITS file with {algorithm}: {input_path}")
-            
-            # Compress based on algorithm
-            if algorithm == 'gzip':
-                with open(input_path, 'rb') as f_in:
-                    with gzip.open(output_path, 'wb', compresslevel=self.compression_level) as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            
-            elif algorithm == 'lzma':
-                with open(input_path, 'rb') as f_in:
-                    with lzma.open(output_path, 'wb', preset=self.compression_level) as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            
-            elif algorithm == 'bzip2':
-                with open(input_path, 'rb') as f_in:
-                    with bz2.open(output_path, 'wb', compresslevel=self.compression_level) as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            
-            elif algorithm.startswith('fits_'):
-                # FITS internal compression using astropy
-                return self._compress_fits_internal(input_path, replace_original, algorithm)
-            
-            else:
-                logger.error(f"Unsupported compression algorithm: {algorithm}")
-                return None
-            
-            compressed_size = os.path.getsize(output_path)
-            compression_ratio = (1 - compressed_size / original_size) * 100
-            
-            logger.info(f"{algorithm} compression complete: {original_size:,} bytes -> "
-                       f"{compressed_size:,} bytes ({compression_ratio:.1f}% reduction)")
-            
-            # Verify compression if enabled
-            if self.verify_compression:
-                if not self._verify_compression(output_path, input_path, algorithm):
-                    logger.error(f"{algorithm} compression verification failed for {input_path}")
-                    if os.path.exists(output_path):
-                        os.remove(output_path)
-                    return None
-                logger.debug(f"{algorithm} compression verification successful for {input_path}")
-            
-            # Replace original file if requested
-            if replace_original:
-                try:
-                    os.remove(input_path)
-                    logger.debug(f"Removed original file: {input_path}")
-                except Exception as e:
-                    logger.warning(f"Could not remove original file {input_path}: {e}")
-            
-            return output_path
-            
-        except Exception as e:
-            logger.error(f"Error compressing with {algorithm}: {input_path} - {e}")
+        if algorithm.startswith('fits_'):
+            return self._compress_fits_internal(input_path, replace_original, algorithm)
+        if algorithm not in _STREAM_OPENERS:
+            logger.error("Unsupported compression algorithm: %s", algorithm)
             return None
-    
-    def decompress_fits_file(self, compressed_path: str, output_path: Optional[str] = None, 
-                           replace_compressed: bool = False) -> Optional[str]:
+
+        output_path = self.get_compressed_path(input_path, algorithm)
+        part_path = f"{output_path}.part"
+        try:
+            original_size = os.path.getsize(input_path)
+            logger.info("Compressing FITS file with %s: %s", algorithm, input_path)
+            self._compress_stream(input_path, part_path, algorithm)
+
+            compressed_size = os.path.getsize(part_path)
+            logger.info("%s compression complete: %s bytes -> %s bytes (%.1f%% reduction)",
+                        algorithm, f"{original_size:,}", f"{compressed_size:,}",
+                        _compression_ratio(original_size, compressed_size))
+
+            if self.verify_compression:
+                if not self._verify_compression(part_path, input_path, algorithm):
+                    logger.error("%s compression verification failed for %s", algorithm, input_path)
+                    return None
+                logger.debug("%s compression verification successful for %s", algorithm, input_path)
+
+            os.replace(part_path, output_path)
+        except Exception:  # reported and turned into a None result
+            logger.exception("Error compressing with %s: %s", algorithm, input_path)
+            return None
+        finally:
+            if os.path.exists(part_path):
+                _remove_quietly(part_path)
+
+        if replace_original:
+            try:
+                os.remove(input_path)
+                logger.debug("Removed original file: %s", input_path)
+            except OSError as exc:
+                logger.warning("Could not remove original file %s: %s", input_path, exc)
+
+        return output_path
+
+    def decompress_fits_file(self, compressed_path: str, output_path: str | None = None,
+                             replace_compressed: bool = False) -> str | None:
         """
-        Decompress a compressed FITS file (supports multiple algorithms).
-        
+        Decompress a compressed FITS file (gzip, lzma or bzip2 streams).
+
+        Tile-compressed FITS (``.fz``, or a ``.fits`` compressed in place) is not handled here:
+        astropy reads it transparently, so there is nothing to decompress.
+
         Args:
             compressed_path: Path to the compressed file
             output_path: Path for the decompressed file (auto-generated if None)
             replace_compressed: If True, remove the compressed file after decompression
-            
+
         Returns:
             Path to the decompressed file if successful, None if failed
         """
         try:
             if not os.path.exists(compressed_path):
-                logger.error(f"Compressed file does not exist: {compressed_path}")
+                logger.error("Compressed file does not exist: %s", compressed_path)
                 return None
-            
+
             if not self.is_compressed(compressed_path):
-                logger.debug(f"File is not compressed: {compressed_path}")
+                logger.debug("File is not compressed: %s", compressed_path)
                 return compressed_path
-            
+
             if output_path is None:
                 output_path = self.get_uncompressed_path(compressed_path)
-            
-            # Detect compression algorithm from extension
-            algorithm = self._detect_compression_algorithm(compressed_path)
-            
-            logger.info(f"Decompressing FITS file with {algorithm}: {compressed_path}")
-            
-            compressed_size = os.path.getsize(compressed_path)
-            
-            # Decompress based on detected algorithm
-            if algorithm == 'gzip':
-                with gzip.open(compressed_path, 'rb') as f_in:
-                    with open(output_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            
-            elif algorithm == 'lzma':
-                with lzma.open(compressed_path, 'rb') as f_in:
-                    with open(output_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            
-            elif algorithm == 'bzip2':
-                with bz2.open(compressed_path, 'rb') as f_in:
-                    with open(output_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
 
-            elif algorithm == 'fits_internal':
-                # FITS tile-compressed files (.fz) are still valid FITS files and can be read
-                # directly by astropy/cfitsio. If an uncompressed copy is required, it can be
-                # produced by opening with astropy and rewriting to a new .fits path.
-                logger.error(
-                    f"Tile-compressed FITS (.fz) does not use stream decompression: {compressed_path}"
-                )
+            # Never write over the file we are reading from
+            if os.path.abspath(output_path) == os.path.abspath(compressed_path):
+                logger.error("Refusing to decompress %s onto itself", compressed_path)
                 return None
-            
-            else:
-                logger.error(f"Unsupported compression format: {compressed_path}")
+
+            algorithm = self._detect_compression_algorithm(compressed_path)
+            if algorithm == 'fits_internal':
+                logger.error("Tile-compressed FITS is read directly by astropy and has no stream "
+                             "decompression: %s", compressed_path)
                 return None
-            
-            decompressed_size = os.path.getsize(output_path)
-            
-            logger.info(f"{algorithm} decompression complete: {compressed_size:,} bytes -> {decompressed_size:,} bytes")
-            
-            # Verify decompressed file is valid FITS
+            if algorithm is None:
+                logger.error("Unsupported compression format: %s", compressed_path)
+                return None
+
+            logger.info("Decompressing FITS file with %s: %s", algorithm, compressed_path)
+            compressed_size = os.path.getsize(compressed_path)
+
+            # Decompress beside the target and only move it into place once it is valid FITS,
+            # so a failure never leaves (or deletes) a half-written output.
+            part_path = f"{output_path}.part"
             try:
-                with fits.open(output_path, mode='readonly') as hdul:
-                    # Just check if we can open it
-                    pass
-                logger.debug(f"Decompressed FITS file verification successful: {output_path}")
-            except Exception as e:
-                logger.error(f"Decompressed file is not valid FITS: {output_path} - {e}")
-                # Clean up invalid decompressed file
-                if os.path.exists(output_path):
-                    os.remove(output_path)
-                return None
-            
-            # Remove compressed file if requested
+                with _STREAM_OPENERS[algorithm](compressed_path, 'rb') as f_in, open(part_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out, _CHUNK_SIZE)
+
+                if not _is_readable_fits(part_path):
+                    logger.error("Decompressed file is not valid FITS: %s", compressed_path)
+                    return None
+
+                logger.info("%s decompression complete: %s bytes -> %s bytes", algorithm,
+                            f"{compressed_size:,}", f"{os.path.getsize(part_path):,}")
+                os.replace(part_path, output_path)
+            finally:
+                if os.path.exists(part_path):
+                    _remove_quietly(part_path)
+
             if replace_compressed:
                 try:
                     os.remove(compressed_path)
-                    logger.debug(f"Removed compressed file: {compressed_path}")
-                except Exception as e:
-                    logger.warning(f"Could not remove compressed file {compressed_path}: {e}")
-            
+                    logger.debug("Removed compressed file: %s", compressed_path)
+                except OSError as exc:
+                    logger.warning("Could not remove compressed file %s: %s", compressed_path, exc)
+
             return output_path
-            
-        except Exception as e:
-            logger.error(f"Error decompressing FITS file {compressed_path}: {e}")
+
+        except Exception:  # reported and turned into a None result
+            logger.exception("Error decompressing FITS file %s", compressed_path)
             return None
-    
-    def _detect_compression_algorithm(self, file_path: str) -> str:
+
+    def _detect_compression_algorithm(self, file_path: str) -> str | None:
         """
-        Detect compression algorithm from file extension.
-        
+        Detect the compression format of a file.
+
         Args:
             file_path: Path to compressed file
-            
+
         Returns:
-            Algorithm name
+            'gzip', 'lzma', 'bzip2', 'fits_internal' (tile-compressed FITS), or None if unrecognised
         """
-        file_lower = file_path.lower()
-        
-        if file_lower.endswith('.gz'):
-            return 'gzip'
-        elif file_lower.endswith('.xz'):
-            return 'lzma'
-        elif file_lower.endswith('.bz2'):
-            return 'bzip2'
-        elif file_lower.endswith('.fz'):
-            return 'fits_internal'
-        else:
-            return 'gzip'  # Default fallback
-    
+        lower = file_path.lower()
+        for extension, algorithm in (('.gz', 'gzip'), ('.xz', 'lzma'), ('.bz2', 'bzip2'), ('.fz', 'fits_internal')):
+            if lower.endswith(extension):
+                return algorithm
+
+        # No telling extension: a FITS file compressed in place shows in its structure
+        return 'fits_internal' if _has_comp_image(file_path) else None
+
     def _verify_compression(self, compressed_path: str, original_path: str, algorithm: str) -> bool:
         """
-        Verify that compression was successful by decompressing and comparing.
-        
+        Verify a stream-compressed file by decompressing it and comparing SHA-256 with the original.
+
         Args:
             compressed_path: Path to compressed file
             original_path: Path to original file
             algorithm: Compression algorithm used
-            
+
         Returns:
-            True if verification successful, False otherwise
+            True if the decompressed bytes match the original exactly
         """
-        try:
-            # Create temporary file for decompression test using configured temp folder
-            temp_folder = get_temp_folder()
-            with tempfile.NamedTemporaryFile(delete=False, dir=temp_folder) as temp_file:
-                temp_path = temp_file.name
-            
-            # Attempt decompression
-            if algorithm == 'gzip':
-                with gzip.open(compressed_path, 'rb') as f_in:
-                    with open(temp_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            elif algorithm == 'lzma':
-                with lzma.open(compressed_path, 'rb') as f_in:
-                    with open(temp_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            elif algorithm == 'bzip2':
-                with bz2.open(compressed_path, 'rb') as f_in:
-                    with open(temp_path, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-            else:
-                return False
-            
-            # Verify file sizes match
-            if os.path.getsize(temp_path) != os.path.getsize(original_path):
-                return False
-            
-            # Verify it's a valid FITS file
-            try:
-                with fits.open(temp_path, mode='readonly') as hdul:
-                    # Just check if we can open it
-                    pass
-            except Exception:
-                return False
-            
-            return True
-            
-        except Exception:
+        opener = _STREAM_OPENERS.get(algorithm)
+        if opener is None:
             return False
-        finally:
-            # Clean up temp file
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except:
-                pass
-    
-    def _select_optimal_compression(self, fits_path: str) -> Optional[str]:
-        """
-        Select optimal compression algorithm based on FITS data type.
-        
-        Args:
-            fits_path: Path to FITS file
-            
-        Returns:
-            Optimal algorithm name, or None if unable to determine
-        """
         try:
-            with fits.open(fits_path) as hdul:
-                # Find the primary data HDU
-                data_hdu = None
-                for hdu in hdul:
-                    if hasattr(hdu, 'data') and hdu.data is not None:
-                        data_hdu = hdu
-                        break
-                
-                if data_hdu is None:
-                    logger.warning("No data found in FITS file for compression analysis")
-                    return 'fits_gzip2'  # Default fallback
-                
-                data_dtype = data_hdu.data.dtype
-                logger.info(f"FITS data type detected: {data_dtype}")
-                
-                # Integer data: Use RICE (lossless, designed for integers, NINA compatible)
-                if data_dtype.kind in ['i', 'u']:  # signed or unsigned integer
-                    if data_dtype.itemsize <= 2:  # 8-bit or 16-bit integers
-                        logger.info("Using RICE compression for integer data (NINA compatible)")
-                        return 'fits_rice'
-                    else:  # 32-bit+ integers - RICE may not be optimal
-                        logger.info("Using GZIP-2 for large integer data") 
-                        return 'fits_gzip2'
-                
-                # Floating-point data: Use GZIP-2 (best compression, lossless)
-                elif data_dtype.kind == 'f':  # floating point
-                    logger.info("Using GZIP-2 compression for floating-point data")
-                    return 'fits_gzip2'
-                
-                # Complex or other data types: Use conservative GZIP-1
-                else:
-                    logger.info(f"Using GZIP-1 for unknown data type: {data_dtype}")
-                    return 'fits_gzip1'
-                
-        except Exception as e:
-            logger.error(f"Error analyzing FITS file for compression: {e}")
-            return 'fits_gzip2'  # Safe fallback
-    
-    def _compress_fits_internal(self, input_path: str, replace_original: bool, algorithm: str) -> Optional[str]:
+            digest = hashlib.sha256()
+            with opener(compressed_path, 'rb') as stream:
+                for chunk in iter(lambda: stream.read(_CHUNK_SIZE), b""):
+                    digest.update(chunk)
+            return digest.hexdigest() == self.calculate_file_hash(original_path)
+        except (OSError, EOFError, lzma.LZMAError):
+            logger.exception("Error verifying compressed file %s", compressed_path)
+            return False
+
+    def _compress_fits_internal(self, input_path: str, replace_original: bool, algorithm: str) -> str | None:
         """
         Compress FITS file using internal FITS compression (tile compression).
-        
+
+        The compressed copy is written to a temporary file, verified against the untouched
+        original, and only then moved into place, so the original survives any failure.
+
         Args:
             input_path: Path to input FITS file
-            replace_original: Whether to replace the original file
-            algorithm: FITS compression algorithm (auto, fits_rice, fits_gzip1, fits_gzip2)
-                      'auto' = smart selection based on data type
-            
+            replace_original: Whether to replace the original file (keeping its name)
+            algorithm: The ``fits_*`` setting; all of them produce GZIP_2 (the project convention)
+
         Returns:
             Path to compressed FITS file
         """
+        # When replacing the original (auto-import), keep the filename unchanged.
+        output_path = input_path if replace_original else f"{input_path}.fz"
+        temp_path = f"{output_path}.tmp"
         try:
-            # For imports we require FITS tile compression using GZIP_2.
-            # (Other algorithms are not used for this workflow.)
-            compression_type = 'GZIP_2'
-            
-            # Determine output path
-            # When replacing the original (auto-import), keep the filename unchanged.
-            if replace_original:
-                output_path = input_path
-                temp_path = input_path + '.tmp'
-            else:
-                output_path = f"{input_path}.fz"
-                temp_path = output_path + '.tmp'
-
             original_size = os.path.getsize(input_path)
-            
-            def _find_first_image_hdu_index(hdul: fits.HDUList) -> Optional[int]:
-                for idx, hdu in enumerate(hdul):
-                    try:
-                        if getattr(hdu, 'data', None) is not None:
-                            return idx
-                    except Exception:
-                        continue
+
+            with fits.open(input_path, memmap=False) as hdul:
+                target_idx = _find_image_hdu_index(hdul)
+                if target_idx is None:
+                    logger.debug("No image data found to compress: %s", input_path)
+                    return input_path
+                fits.HDUList(_rebuild_with_compressed_image(hdul, target_idx)).writeto(temp_path, overwrite=True)
+
+            if self.verify_compression and not self._verify_fits_internal_compression(temp_path, input_path):
+                logger.error("FITS %s compression verification failed for %s; original left untouched",
+                             algorithm, input_path)
                 return None
 
-            def _merge_nonstructural_header(dst: fits.Header, src: fits.Header, skip: set[str]) -> None:
-                for card in src.cards:
-                    key = card.keyword
-                    if not key or key in skip:
-                        continue
-                    if key in ('COMMENT', 'HISTORY'):
-                        # Preserve free-form cards
-                        try:
-                            dst.add_comment(card.value)
-                        except Exception:
-                            pass
-                        continue
-                    try:
-                        dst[key] = (card.value, card.comment)
-                    except Exception:
-                        # Some cards may be invalid for the destination HDU
-                        continue
+            os.replace(temp_path, output_path)
 
-            # Load and compress the FITS file
-            with fits.open(input_path, memmap=False) as hdul:
-                target_idx = _find_first_image_hdu_index(hdul)
-                if target_idx is None:
-                    logger.debug(f"No image data found to compress: {input_path}")
-                    return input_path
-
-                new_hdus: list[fits.hdu.base.ExtensionHDU | fits.PrimaryHDU] = []
-
-                if target_idx == 0:
-                    # Original image is in the PrimaryHDU; rewrite as:
-                    # - PrimaryHDU (no data) with global metadata
-                    # - CompImageHDU holding the image
-                    primary = fits.PrimaryHDU()
-                    skip_primary = {
-                        'SIMPLE', 'BITPIX', 'NAXIS', 'EXTEND', 'PCOUNT', 'GCOUNT',
-                        'CHECKSUM', 'DATASUM'
-                    }
-                    for i in range(1, 10):
-                        skip_primary.add(f'NAXIS{i}')
-                    _merge_nonstructural_header(primary.header, hdul[0].header, skip_primary)
-                    new_hdus.append(primary)
-
-                    src_hdu = hdul[0]
-                    compressed_hdu = fits.CompImageHDU(
-                        data=src_hdu.data,
-                        compression_type=compression_type,
-                    )
-
-                    # Copy metadata from original header, but do NOT copy structural keywords.
-                    # CompImageHDU is a BINTABLE extension and must not contain SIMPLE/NAXIS/...
-                    skip_comp = {
-                        'SIMPLE', 'BITPIX', 'NAXIS', 'EXTEND', 'PCOUNT', 'GCOUNT',
-                        'CHECKSUM', 'DATASUM', 'BSCALE', 'BZERO',
-                        'XTENSION', 'TFIELDS',
-                        'ZIMAGE', 'ZCMPTYPE', 'ZBITPIX', 'ZNAXIS'
-                    }
-                    for i in range(1, 100):
-                        skip_comp.add(f'NAXIS{i}')
-                        skip_comp.add(f'ZNAXIS{i}')
-                        skip_comp.add(f'TTYPE{i}')
-                        skip_comp.add(f'TFORM{i}')
-                        skip_comp.add(f'TUNIT{i}')
-                        skip_comp.add(f'TDIM{i}')
-                    _merge_nonstructural_header(compressed_hdu.header, src_hdu.header, skip_comp)
-
-                    # Ensure required FITS tile-compression keywords exist and match the original image.
-                    original_naxis = int(src_hdu.header.get('NAXIS', src_hdu.data.ndim))
-                    original_bitpix = int(src_hdu.header.get('BITPIX', -32))
-                    compressed_hdu.header['ZIMAGE'] = (True, 'Tile-compressed image')
-                    compressed_hdu.header['ZCMPTYPE'] = (compression_type, 'Compression algorithm')
-                    compressed_hdu.header['ZNAXIS'] = (original_naxis, 'Number of uncompressed axes')
-                    compressed_hdu.header['ZBITPIX'] = (original_bitpix, 'Uncompressed data type')
-                    for axis in range(1, original_naxis + 1):
-                        zn_key = f'ZNAXIS{axis}'
-                        n_key = f'NAXIS{axis}'
-                        if n_key in src_hdu.header:
-                            compressed_hdu.header[zn_key] = (int(src_hdu.header[n_key]), f'Axis {axis} length (uncompressed)')
-                        else:
-                            compressed_hdu.header[zn_key] = (int(src_hdu.data.shape[-axis]), f'Axis {axis} length (uncompressed)')
-
-                    new_hdus.append(compressed_hdu)
-
-                    # Preserve any additional extensions
-                    for ext in hdul[1:]:
-                        try:
-                            new_hdus.append(ext.copy())
-                        except Exception:
-                            pass
-                else:
-                    # Preserve primary HDU and compress the first image extension
-                    new_hdus.append(hdul[0].copy())
-                    for idx in range(1, len(hdul)):
-                        if idx != target_idx:
-                            new_hdus.append(hdul[idx].copy())
-                            continue
-
-                        src_hdu = hdul[idx]
-                        compressed_hdu = fits.CompImageHDU(
-                            data=src_hdu.data,
-                            compression_type=compression_type,
-                        )
-
-                        skip_comp = {
-                            'SIMPLE', 'BITPIX', 'NAXIS', 'EXTEND', 'PCOUNT', 'GCOUNT',
-                            'CHECKSUM', 'DATASUM', 'BSCALE', 'BZERO',
-                            'XTENSION', 'TFIELDS',
-                            'ZIMAGE', 'ZCMPTYPE', 'ZBITPIX', 'ZNAXIS'
-                        }
-                        for i in range(1, 100):
-                            skip_comp.add(f'NAXIS{i}')
-                            skip_comp.add(f'ZNAXIS{i}')
-                            skip_comp.add(f'TTYPE{i}')
-                            skip_comp.add(f'TFORM{i}')
-                            skip_comp.add(f'TUNIT{i}')
-                            skip_comp.add(f'TDIM{i}')
-                        _merge_nonstructural_header(compressed_hdu.header, src_hdu.header, skip_comp)
-
-                        # Preserve EXTNAME when present
-                        if 'EXTNAME' in src_hdu.header and 'EXTNAME' not in compressed_hdu.header:
-                            compressed_hdu.header['EXTNAME'] = src_hdu.header['EXTNAME']
-
-                        original_naxis = int(src_hdu.header.get('NAXIS', src_hdu.data.ndim))
-                        original_bitpix = int(src_hdu.header.get('BITPIX', -32))
-                        compressed_hdu.header['ZIMAGE'] = (True, 'Tile-compressed image')
-                        compressed_hdu.header['ZCMPTYPE'] = (compression_type, 'Compression algorithm')
-                        compressed_hdu.header['ZNAXIS'] = (original_naxis, 'Number of uncompressed axes')
-                        compressed_hdu.header['ZBITPIX'] = (original_bitpix, 'Uncompressed data type')
-                        for axis in range(1, original_naxis + 1):
-                            zn_key = f'ZNAXIS{axis}'
-                            n_key = f'NAXIS{axis}'
-                            if n_key in src_hdu.header:
-                                compressed_hdu.header[zn_key] = (int(src_hdu.header[n_key]), f'Axis {axis} length (uncompressed)')
-                            else:
-                                compressed_hdu.header[zn_key] = (int(src_hdu.data.shape[-axis]), f'Axis {axis} length (uncompressed)')
-
-                        new_hdus.append(compressed_hdu)
-
-                new_hdul = fits.HDUList(new_hdus)
-                new_hdul.writeto(temp_path, overwrite=True)
-
-            # Atomically move into place
-            try:
-                os.replace(temp_path, output_path)
-            except Exception:
-                # Fallback for filesystems where replace fails
-                if os.path.exists(output_path) and output_path != temp_path:
-                    os.remove(output_path)
-                shutil.move(temp_path, output_path)
             compressed_size = os.path.getsize(output_path)
-            compression_ratio = (1 - compressed_size / original_size) * 100
-            
-            logger.info(f"{algorithm} FITS compression complete: {original_size:,} bytes -> "
-                       f"{compressed_size:,} bytes ({compression_ratio:.1f}% reduction)")
-            
-            # Verify compression if enabled
-            if self.verify_compression:
-                if not self._verify_fits_internal_compression(output_path, input_path):
-                    logger.error(f"FITS {algorithm} compression verification failed")
-                    if os.path.exists(output_path) and output_path != input_path:
-                        os.remove(output_path)
-                    return None
-            
-            # If replacing original, we already overwrote it in-place.
-            
+            logger.info("%s FITS compression complete: %s bytes -> %s bytes (%.1f%% reduction)",
+                        algorithm, f"{original_size:,}", f"{compressed_size:,}",
+                        _compression_ratio(original_size, compressed_size))
             return output_path
-            
-        except Exception as e:
-            logger.error(f"Error in FITS internal compression {algorithm}: {input_path} - {e}")
+
+        except Exception:  # reported and turned into a None result; original is untouched
+            logger.exception("Error in FITS internal compression %s: %s", algorithm, input_path)
             return None
-    
+        finally:
+            if os.path.exists(temp_path):
+                _remove_quietly(temp_path)
+
     def _verify_fits_internal_compression(self, compressed_path: str, original_path: str) -> bool:
         """
-        Verify FITS internal compression by checking that data can be read and is approximately equal.
-        Note: FITS internal compression may involve dtype conversions (e.g., big-endian to little-endian)
-        which can cause minor floating-point differences.
-        
+        Verify FITS internal compression: every data HDU must decompress to exactly the
+        original values (NaN == NaN) and no HISTORY/COMMENT card may be lost.
+
         Args:
             compressed_path: Path to compressed FITS file
             original_path: Path to original FITS file
-            
+
         Returns:
             True if verification successful
         """
         try:
-            def _first_data_array(hdul: fits.HDUList):
-                for hdu in hdul:
-                    try:
-                        if getattr(hdu, 'data', None) is not None:
-                            return hdu.data
-                    except Exception:
-                        continue
-                return None
-
-            # Read both files and compare data
-            with fits.open(original_path, memmap=False) as orig_hdul:
-                with fits.open(compressed_path, memmap=False) as comp_hdul:
-                    orig_data = _first_data_array(orig_hdul)
-                    comp_data = _first_data_array(comp_hdul)
-
-                    if orig_data is None or comp_data is None:
-                        logger.error("Missing data when verifying FITS compression")
-                        return False
-
-                    # Check if data shapes match
-                    if orig_data.shape != comp_data.shape:
-                        logger.error(f"Shape mismatch: original {orig_data.shape} vs compressed {comp_data.shape}")
-                        return False
-
-                    import numpy as np
-                    if not np.allclose(orig_data, comp_data, rtol=1e-6, atol=1e-8):
-                        diff = np.abs(orig_data - comp_data)
-                        max_diff = float(np.max(diff))
-                        mean_diff = float(np.mean(diff))
-
-                        if max_diff < 1e-4 and mean_diff < 1e-5:
-                            logger.info(f"FITS compression: small differences due to dtype conversion (max: {max_diff:.2e}, mean: {mean_diff:.2e})")
-                            return True
-
-                        logger.error(f"FITS compression verification failed: max_diff={max_diff:.2e}, mean_diff={mean_diff:.2e}")
-                        return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error verifying FITS internal compression: {e}")
-            return False
-        """
-        Verify that a compressed file can be decompressed to match the original.
-        
-        Args:
-            compressed_path: Path to the compressed file
-            original_path: Path to the original file
-            algorithm: Compression algorithm used
-            
-        Returns:
-            True if verification passes, False otherwise
-        """
-        try:
-            # Create temporary file for decompression test using configured temp folder
-            temp_folder = get_temp_folder()
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.fits', dir=temp_folder) as temp_file:
-                temp_path = temp_file.name
-            
-            try:
-                # Decompress to temporary file using specific algorithm
-                if algorithm == 'gzip':
-                    with gzip.open(compressed_path, 'rb') as f_in:
-                        with open(temp_path, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                elif algorithm == 'lzma':
-                    with lzma.open(compressed_path, 'rb') as f_in:
-                        with open(temp_path, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                elif algorithm == 'bzip2':
-                    with bz2.open(compressed_path, 'rb') as f_in:
-                        with open(temp_path, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                else:
+            with fits.open(original_path, memmap=False) as orig_hdul, \
+                    fits.open(compressed_path, memmap=False) as comp_hdul:
+                orig_hdus = _data_hdus(orig_hdul)
+                comp_hdus = _data_hdus(comp_hdul)
+                if len(orig_hdus) != len(comp_hdus):
+                    logger.error("HDU count mismatch: original has %d data HDUs, compressed has %d",
+                                 len(orig_hdus), len(comp_hdus))
                     return False
-                
-                # Compare file hashes
-                original_hash = self.calculate_file_hash(original_path)
-                decompressed_hash = self.calculate_file_hash(temp_path)
-                
-                return original_hash == decompressed_hash
-                
-            finally:
-                # Clean up temporary file
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    
-        except Exception as e:
-            logger.error(f"Error verifying compressed file {compressed_path}: {e}")
+
+                for number, (orig, comp) in enumerate(zip(orig_hdus, comp_hdus, strict=True)):
+                    if not _data_equal(np.asarray(orig.data), np.asarray(comp.data)):
+                        logger.error("Data mismatch in data HDU %d after compression", number)
+                        return False
+
+                lost = _commentary_counts(orig_hdul) - _commentary_counts(comp_hdul)
+                if lost:
+                    logger.error("Header cards lost in compression: %s", dict(lost))
+                    return False
+            return True
+
+        except Exception:  # any failure to verify counts as "not verified"
+            logger.exception("Error verifying FITS internal compression")
             return False
-    
+
     def should_compress_file(self, file_path: str) -> bool:
         """
         Determine if a file should be compressed based on configuration and file properties.
-        
+
         Args:
             file_path: Path to the file to check
-            
+
         Returns:
             True if file should be compressed, False otherwise
         """
         if not self.compression_enabled:
             return False
-        
+
         if self.is_compressed(file_path):
             return False
-        
+
         # Only compress FITS files
-        if not file_path.lower().endswith(('.fits', '.fit', '.fts')):
+        if not file_path.lower().endswith(_FITS_EXTENSIONS):
             return False
-        
+
         # Check if file exists and is readable
         if not os.path.exists(file_path) or not os.access(file_path, os.R_OK):
             return False
-        
+
         # Check minimum file size (don't compress very small files)
         min_size = self.config.getint('DEFAULT', 'min_compression_size', fallback=1024)  # 1KB default
-        if os.path.getsize(file_path) < min_size:
-            return False
-        
-        return True
-    
-    def process_file_for_compression(self, file_path: str) -> Optional[str]:
+        return os.path.getsize(file_path) >= min_size
+
+    def process_file_for_compression(self, file_path: str) -> str | None:
         """
         Process a file for compression if appropriate.
-        
+
         This is the main entry point for automatic compression during file processing.
-        
+
         Args:
             file_path: Path to the file to process
-            
+
         Returns:
             Path to the final file (compressed or original) if successful, None if failed
         """
         try:
             if not self.should_compress_file(file_path):
-                logger.debug(f"Skipping compression for: {file_path}")
+                logger.debug("Skipping compression for: %s", file_path)
                 return file_path
-            
+
             compressed_path = self.compress_fits_file(file_path, replace_original=True)
-            
+
             if compressed_path:
-                logger.info(f"Successfully compressed: {file_path} -> {compressed_path}")
+                logger.info("Successfully compressed: %s -> %s", file_path, compressed_path)
                 return compressed_path
-            else:
-                logger.warning(f"Compression failed for: {file_path}")
-                return file_path
-                
-        except Exception as e:
-            logger.error(f"Error processing file for compression {file_path}: {e}")
+
+            logger.warning("Compression failed for: %s", file_path)
+            return file_path
+
+        except Exception:  # the file is still usable uncompressed
+            logger.exception("Error processing file for compression %s", file_path)
             return file_path
 
 
-# Global compressor instance
-_compressor_instance = None
+# One compressor per config path (None = the default library.ini). Settings are read when a
+# compressor is created, so call reset_fits_compressor() after the configuration changes.
+_compressors: dict[str | None, FitsCompressor] = {}
+_compressors_lock = threading.Lock()
 
-def get_fits_compressor(config_path: Optional[str] = None) -> FitsCompressor:
+
+def get_fits_compressor(config_path: str | None = None) -> FitsCompressor:
     """
-    Get a global FitsCompressor instance.
-    
+    Get the shared FitsCompressor for a configuration file.
+
     Args:
-        config_path: Path to configuration file
-        
+        config_path: Path to configuration file (None for the default library.ini)
+
     Returns:
         FitsCompressor instance
     """
-    global _compressor_instance
-    if _compressor_instance is None:
-        _compressor_instance = FitsCompressor(config_path)
-    return _compressor_instance
+    with _compressors_lock:
+        compressor = _compressors.get(config_path)
+        if compressor is None:
+            compressor = _compressors[config_path] = FitsCompressor(config_path)
+        return compressor
 
 
-def compress_fits_file(file_path: str) -> Optional[str]:
+def reset_fits_compressor() -> None:
+    """Drop the shared compressors so the next get_fits_compressor() re-reads the configuration."""
+    with _compressors_lock:
+        _compressors.clear()
+
+
+def compress_fits_file(file_path: str) -> str | None:
     """
     Convenience function to compress a FITS file.
-    
+
     Args:
         file_path: Path to the FITS file to compress
-        
+
     Returns:
         Path to compressed file if successful, original path if compression not enabled/failed
     """
@@ -958,7 +743,7 @@ def compress_fits_file(file_path: str) -> Optional[str]:
 def is_compression_enabled() -> bool:
     """
     Check if FITS compression is enabled in configuration.
-    
+
     Returns:
         True if compression is enabled, False otherwise
     """

@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<!--
+  Galileo project site
+  Copyright (C) 2025-2026 Gord Tulloch. Licensed under GPL-3.0-or-later.
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Galileo — Modern astrophotography imaging on INDI and ASCOM Alpaca</title>
+  <meta name="description" content="Galileo is an open-source, cross-platform astrophotography imaging application for Windows, macOS, Linux and Raspberry Pi, built on INDI and ASCOM Alpaca.">
+  <meta name="theme-color" content="#060912">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Galileo — Modern astrophotography imaging on every platform">
+  <meta property="og:description" content="Open-source imaging on INDI and ASCOM Alpaca: multi-mount observatories, live focus, plate solving, guiding, a star atlas and a full image library.">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/icon-64.png">
+  <link rel="apple-touch-icon" href="assets/icon-512.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    document.documentElement.classList.add('js');
+    try { if (localStorage.getItem('galileo-theme') === 'night') document.documentElement.dataset.theme = 'night'; } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <canvas id="stars" aria-hidden="true"></canvas>
+
+  <!-- ===================== Header ===================== -->
+  <header class="site-header" id="top">
+    <div class="container nav">
+      <a class="brand" href="#top" aria-label="Galileo — home">
+        <img src="assets/icon-64.png" width="34" height="34" alt="">
+        Galileo
+      </a>
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#why">Why Galileo</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#screenshots">Screenshots</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#status">Status</a></li>
+        <li><a href="#start">Get started</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="icon-btn" id="night" type="button" aria-pressed="false" title="Night-vision mode (red)" aria-label="Toggle night-vision red mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
+        <a class="btn btn-sm" href="https://github.com/gordtulloch/Galileo" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+          GitHub
+        </a>
+        <button class="icon-btn menu-toggle" id="menu" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ===================== Hero ===================== -->
+    <section class="hero" style="padding-top: clamp(32px, 5vw, 64px)">
+      <div class="container">
+        <img class="hero-logo" src="assets/logo.png" width="768" height="512" alt="Galileo — a portrait of Galileo Galilei beside a brass telescope, with the name set in a nebula-filled typeface">
+        <span class="pill"><span class="dot"></span> Pre-alpha · early development · GPL-3.0</span>
+        <h1>Astrophotography control, <span class="grad">on every platform.</span></h1>
+        <p class="lead">
+          Galileo is a modern, open-source imaging application built on <strong>INDI</strong> and <strong>ASCOM Alpaca</strong>.
+          One guided workflow for your cameras, mounts, focusers, plate solving and image library — from a Windows desktop to a Raspberry Pi.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#start">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Get started
+          </a>
+          <a class="btn" href="#screenshots">See it in action</a>
+        </div>
+        <div class="platforms" aria-label="Supported platforms">
+          <span>Windows</span><span>macOS</span><span>Linux</span><span>Raspberry Pi 5-class ARM</span>
+        </div>
+
+        <div class="window hero-window reveal">
+          <div class="window-bar"><i></i><i></i><i></i><b>Galileo — Star Atlas</b></div>
+          <img src="assets/screenshots/horizon.png" width="1915" height="1079" alt="Galileo's Star Atlas: a planetarium sky view with constellations, deep-sky objects and planets, with a horizon obstruction shaded in red.">
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Works with ===================== -->
+    <section style="padding: 8px 0 24px">
+      <div class="container">
+        <p class="note" style="margin:0 0 16px">Speaks the protocols and tools astrophotographers already use</p>
+        <div class="chips" style="justify-content:center">
+          <span class="chip">INDI</span><span class="chip">ASCOM Alpaca</span><span class="chip">PHD2</span><span class="chip">ASTAP</span><span class="chip">FITS</span><span class="chip">AAVSO</span><span class="chip">Seestar</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Why ===================== -->
+    <section id="why">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Why Galileo</span>
+          <h2>The imaging app the non-Windows world has been missing.</h2>
+        </div>
+        <div class="why">
+          <div class="card reveal">
+            <span class="num">01</span>
+            <h3>Close the UI/UX gap</h3>
+            <p>Existing cross-platform options like KStars/EKOS carry interfaces that have aged over a decade of incremental growth. Galileo brings a modern, guided imaging workflow to Windows, macOS, Linux and Raspberry Pi — using INDI and ASCOM Alpaca so it isn't tied to any one platform's driver ecosystem.</p>
+          </div>
+          <div class="card reveal">
+            <span class="num">02</span>
+            <h3>One cohesive application</h3>
+            <p>An image manager, a variable-star planner, observatory-automation scripts and an all-sky cloud classifier — built over time as separate tools. Galileo consolidates them into a single application instead of a pile of disconnected utilities. That consolidation is a primary goal, not an afterthought.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Features ===================== -->
+    <section id="features" class="band">
+      <div class="container">
+        <div class="section-head center reveal">
+          <span class="eyebrow">Features</span>
+          <h2>Everything from connecting the gear to cataloguing the frames.</h2>
+          <p>Each card is labelled with where it really stands today. Galileo is pre-alpha, and we'd rather you know exactly what runs now.</p>
+        </div>
+
+        <div class="features">
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>INDI + Alpaca, mixed freely</h3>
+            <p>Camera, mount, filter wheel, focuser, rotator, switches, flat panel, weather, dome and safety monitor. Real device scans, Alpaca Management API discovery and <code>.local</code> mDNS names such as a Seestar's <code>seestar.local</code>.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7l10-5Z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Multi-pier observatories</h3>
+            <p>Group several mounts into an Observatory. Each Pier holds one mount with one or more optical trains and cameras, selectable from the top bar and saved across restarts.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Live imaging</h3>
+            <p>A pan-and-zoom auto-stretch preview with histogram and per-frame statistics — mean, median, min, max, star count and HFR. Exposures run off the UI thread with a live countdown.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M22 12h-4"/><path d="M6 12H2"/><path d="M12 6V2"/><path d="M12 22v-4"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>PHD2 guiding</h3>
+            <p>Connect to PHD2 by host and port and watch it live: guide-star image, guide graph, drift and calibration plots, statistics and the event log — with Loop, Guide, Stop and Dither controls.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="1"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Autofocus you can watch</h3>
+            <p>Follow a run live: the frame being measured, star count, HFR and FWHM, and the HFR V-curve with its fit and best position. Star detection uses SEP, and heavy fitting runs off the UI thread.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Plate solving</h3>
+            <p><strong>Capture &amp; Solve</strong> with ASTAP, using the mount position as a hint — then sync, slew back until within your accuracy, or just report the error. <strong>Load &amp; Slew</strong> solves any FITS file.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Star Atlas</h3>
+            <p>A planetarium for your site and time: stars, Messier, Caldwell and NGC objects, Sun, Moon and planets, constellation lines, and click-to-identify. Upload a horizon obstruction table and Galileo can refuse slews into it.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Planning &amp; framing</h3>
+            <p>A search-criteria panel wired to the catalog backend, and a target and mosaic input panel wired to the field-of-view and mosaic-panel calculator.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg></span><span class="tag ok">Available</span></div>
+            <h3>Image library</h3>
+            <p>AstroFiler, built in: browse by object, group sessions, map FITS header values, find duplicates, merge objects and back up to Google Cloud Storage. Twelve command-line utilities cover scheduled and headless use.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 6h10"/><path d="M11 12h10"/><path d="M11 18h10"/><path d="m3 6 1.5 1.5L7 5"/><path d="m3 12 1.5 1.5L7 11"/><path d="m3 18 1.5 1.5L7 17"/></svg></span><span class="tag wip">Engine built · UI pending</span></div>
+            <h3>Sequencer &amp; scheduler</h3>
+            <p>A basic linear sequencer, an advanced instruction / condition / trigger engine, and a multi-night scheduler with altitude, moon and weather constraints. The logic exists and is tested; the screens are next.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><span class="tag wip">Engine built · UI pending</span></div>
+            <h3>Variable-star science</h3>
+            <p>AAVSO target planning and photometric analysis — VSTarget merged in as pre-loaded first-party plugins, with targets submitted straight into the scheduler.</p>
+          </article>
+
+          <article class="card feature reveal">
+            <div class="feature-top"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span><span class="tag plan">Planned</span></div>
+            <h3>Safety &amp; plugins</h3>
+            <p>Layered safety monitoring — hardware sensors and software classifiers both arrive as ordinary Safety Monitor devices — plus a watchdog, automated meridian flips and a third-party plugin manager.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Spotlights ===================== -->
+    <section id="spotlight">
+      <div class="container">
+        <div class="spot">
+          <div class="spot-text reveal">
+            <span class="eyebrow">Star Atlas</span>
+            <h3>See the sky your observatory actually has.</h3>
+            <p>Pick a time, or follow the clock, and Galileo draws the sky from your Observatory's location. Your real horizon — trees, buildings, the roll-off roof — is shaded on the map, so you can see what's truly imageable.</p>
+            <ul class="checks">
+              <li>9,000+ stars and 11,500+ deep-sky objects</li>
+              <li>Messier, Caldwell and NGC catalogs, added from the panel</li>
+              <li>Sun, Moon and planets, constellation outlines and boundaries</li>
+              <li>Click to identify, double-click to centre and track</li>
+              <li>Optionally refuse slews into your horizon obstruction</li>
+            </ul>
+          </div>
+          <a class="window zoomable shot-open reveal" href="assets/screenshots/horizon.png" data-full="assets/screenshots/horizon.png" data-title="Star Atlas" data-desc="Sky view with a shaded horizon obstruction">
+            <div class="window-bar"><i></i><i></i><i></i><b>Star Atlas · Horizon</b></div>
+            <img src="assets/screenshots/horizon.png" width="1915" height="1079" loading="lazy" decoding="async" alt="Star Atlas with constellations and a red-shaded horizon obstruction.">
+          </a>
+        </div>
+
+        <div class="spot flip">
+          <div class="spot-text reveal">
+            <span class="eyebrow">Solve &amp; Focus</span>
+            <h3>Get on target, then get sharp.</h3>
+            <p>Capture &amp; Solve takes an exposure, solves it with ASTAP, and either syncs the mount, slews back until you're inside your accuracy target, or just tells you how far off you are. Every solve is listed with its error plotted, whichever part of Galileo started it.</p>
+            <ul class="checks">
+              <li>Mount position used as the solver's search hint</li>
+              <li>Sync, slew-to-target or report-only</li>
+              <li>Live autofocus V-curve with fit and best position</li>
+              <li>Screens update only while a run is in progress</li>
+            </ul>
+          </div>
+          <a class="window zoomable shot-open reveal" href="assets/screenshots/solve.png" data-full="assets/screenshots/solve.png" data-title="Plate solving" data-desc="Capture &amp; Solve, solution results and error plot">
+            <div class="window-bar"><i></i><i></i><i></i><b>Solve</b></div>
+            <img src="assets/screenshots/solve.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Galileo's Solve screen with solver controls, solution results table and an arcsecond error target plot.">
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Gallery ===================== -->
+    <section id="screenshots" class="band">
+      <div class="container">
+        <div class="section-head center reveal">
+          <span class="eyebrow">Screenshots</span>
+          <h2>A calm, dark interface built for the dark.</h2>
+          <p>A sidebar for each stage of the night, a context panel for its controls, and the Observatory, Pier, optics and camera always one click away. Click any screenshot to enlarge.</p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Screenshot categories">
+          <button class="tab" role="tab" aria-selected="true" data-filter="all">All</button>
+          <button class="tab" role="tab" aria-selected="false" data-filter="equipment">Equipment</button>
+          <button class="tab" role="tab" aria-selected="false" data-filter="imaging">Imaging</button>
+          <button class="tab" role="tab" aria-selected="false" data-filter="planning">Planning &amp; library</button>
+        </div>
+
+        <div class="gallery" id="gallery">
+          <a class="shot" href="assets/screenshots/imaging.png" data-cat="imaging" data-full="assets/screenshots/imaging.png" data-title="Imaging" data-desc="Capture settings, view controls and frame statistics">
+            <div class="thumb"><img src="assets/screenshots/imaging.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Imaging screen with capture settings, view options and statistics."></div>
+            <div class="cap"><strong>Imaging</strong><span>Capture, auto-stretch view, live statistics</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/guiding.png" data-cat="imaging" data-full="assets/screenshots/guiding.png" data-title="Guiding" data-desc="PHD2 connection, guide graph and statistics">
+            <div class="thumb"><img src="assets/screenshots/guiding.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Guiding screen connected to PHD2."></div>
+            <div class="cap"><strong>Guiding</strong><span>PHD2 state, graph, drift and calibration</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/focus.png" data-cat="imaging" data-full="assets/screenshots/focus.png" data-title="Focus" data-desc="Autofocus controls and V-curve">
+            <div class="thumb"><img src="assets/screenshots/focus.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Focus screen with focuser controls and an empty V-curve plot."></div>
+            <div class="cap"><strong>Focus</strong><span>Autofocus with live HFR V-curve</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/solve.png" data-cat="imaging" data-full="assets/screenshots/solve.png" data-title="Solve" data-desc="Plate solving with ASTAP">
+            <div class="thumb"><img src="assets/screenshots/solve.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Solve screen with solver controls and results."></div>
+            <div class="cap"><strong>Solve</strong><span>Capture &amp; Solve, Load &amp; Slew</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/horizon.png" data-cat="planning" data-full="assets/screenshots/horizon.png" data-title="Star Atlas" data-desc="Sky view with horizon obstruction">
+            <div class="thumb"><img src="assets/screenshots/horizon.png" width="1915" height="1079" loading="lazy" decoding="async" alt="Star Atlas with horizon obstruction."></div>
+            <div class="cap"><strong>Star Atlas</strong><span>Planetarium with your real horizon</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/libraryoptions.png" data-cat="planning" data-full="assets/screenshots/libraryoptions.png" data-title="Library options" data-desc="Image library settings">
+            <div class="thumb"><img src="assets/screenshots/libraryoptions.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Library options page."></div>
+            <div class="cap"><strong>Library options</strong><span>AstroFiler settings, inside Galileo</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/cameras.png" data-cat="equipment" data-full="assets/screenshots/cameras.png" data-title="Cameras" data-desc="Driver, server and port connection panel with live log">
+            <div class="thumb"><img src="assets/screenshots/cameras.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Camera equipment connection panel."></div>
+            <div class="cap"><strong>Cameras</strong><span>INDI or Alpaca, scanned live</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/mount.png" data-cat="equipment" data-full="assets/screenshots/mount.png" data-title="Mount" data-desc="Mount connection panel">
+            <div class="thumb"><img src="assets/screenshots/mount.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Mount equipment connection panel."></div>
+            <div class="cap"><strong>Mount</strong><span>One per Pier</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/filterwheel.png" data-cat="equipment" data-full="assets/screenshots/filterwheel.png" data-title="Filter wheel" data-desc="Filter wheel connection panel">
+            <div class="thumb"><img src="assets/screenshots/filterwheel.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Filter wheel equipment panel."></div>
+            <div class="cap"><strong>Filter wheel</strong><span>Filter changes follow your selection</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/focuser.png" data-cat="equipment" data-full="assets/screenshots/focuser.png" data-title="Focuser" data-desc="Focuser connection panel">
+            <div class="thumb"><img src="assets/screenshots/focuser.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Focuser equipment panel."></div>
+            <div class="cap"><strong>Focuser</strong><span>Position and temperature</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/rotater.png" data-cat="equipment" data-full="assets/screenshots/rotater.png" data-title="Rotator" data-desc="Rotator connection panel">
+            <div class="thumb"><img src="assets/screenshots/rotater.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Rotator equipment panel."></div>
+            <div class="cap"><strong>Rotator</strong><span>Camera angle control</span></div>
+          </a>
+          <a class="shot" href="assets/screenshots/optics.png" data-cat="equipment" data-full="assets/screenshots/optics.png" data-title="Optics" data-desc="Optical train configuration">
+            <div class="thumb"><img src="assets/screenshots/optics.png" width="1919" height="1079" loading="lazy" decoding="async" alt="Optical train configuration panel."></div>
+            <div class="cap"><strong>Optics</strong><span>Multiple optical trains per mount</span></div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Observatory model ===================== -->
+    <section id="observatory">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Built for real observatories</span>
+          <h2>More than one telescope? That's the point.</h2>
+          <p>Galileo models the way an observatory is actually laid out, going beyond what EKOS supports: several independent mounts under one roof, each with its own sequencer, sharing what should be shared.</p>
+        </div>
+        <div class="obs">
+          <div class="card reveal">
+            <span class="lvl">OBSERVATORY</span>
+            <h3>The site</h3>
+            <p>Name, latitude and longitude, timezone, address and owner. Shared resources — a roll-off roof or dome, safety monitors — can be scoped to the whole Observatory or to a single Pier.</p>
+          </div>
+          <div class="card reveal">
+            <span class="lvl">PIER</span>
+            <h3>One mount, its own workflow</h3>
+            <p>Every Pier owns a mount and runs its own independent sequencer and scheduler. A fault on one Pier's device is isolated and doesn't take the others down.</p>
+          </div>
+          <div class="card reveal">
+            <span class="lvl">OPTICAL TRAIN</span>
+            <h3>Telescopes and cameras</h3>
+            <p>A Pier carries one or more optical trains — tube, camera, filter wheel, focuser, rotator — with INDI and Alpaca devices freely mixed within the same setup.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Architecture ===================== -->
+    <section id="architecture" class="band">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Architecture</span>
+          <h2>Hexagonal by design, so hardware stays at the edge.</h2>
+        </div>
+        <div class="arch">
+          <div class="arch-text reveal">
+            <p style="color:var(--muted)">Galileo's domain logic is plain Python that knows nothing about INDI, Alpaca, Qt or the filesystem. It talks to abstract device ports, and adapters plug into them.</p>
+            <h3>Event-bus decoupling</h3>
+            <p>Modules never call each other directly. A safety monitor's "unsafe" event reaches the sequencer over the bus, and the library and history modules subscribe to frame-written events — which is what isolates faults between devices.</p>
+            <h3>A UI that never blocks</h3>
+            <p>The Qt thread owns the event loop. Network I/O runs on asyncio, INDI on a per-server reader thread through a native protocol client, and CPU-bound star detection and curve fitting in a process pool.</p>
+            <h3>One plugin boundary</h3>
+            <p>Plugins register against the very same ports Galileo uses internally — there's no separate plugin API. The variable-star modules ship as first-party plugins, the reference for that boundary.</p>
+          </div>
+
+          <div class="stack reveal" role="img" aria-label="Layered architecture: user interface and plugins on top, an event bus and domain core in the middle, INDI, Alpaca, external-tool and persistence adapters below, then physical devices.">
+            <div class="layer">
+              <small>Interface &amp; extensions</small>
+              <div class="chips"><span class="chip">PySide6 / Qt UI</span><span class="chip">First-party plugins</span><span class="chip">Third-party plugins</span><span class="chip">CLI utilities</span></div>
+            </div>
+            <div class="arrow">▲ ▼</div>
+            <div class="layer core">
+              <small>Domain core · no INDI, Alpaca, Qt or filesystem imports</small>
+              <div class="chips"><span class="chip">Sequencer</span><span class="chip">Scheduler</span><span class="chip">Autofocus</span><span class="chip">Plate solve</span><span class="chip">Meridian flip</span><span class="chip">Calibration</span><span class="chip">Safety</span><span class="chip">Library</span><span class="chip">Device pool per Pier</span></div>
+            </div>
+            <div class="bus">EventBus — publish / subscribe between all modules</div>
+            <div class="arrow">▲ ▼</div>
+            <div class="layer">
+              <small>Adapters implementing the ports</small>
+              <div class="chips"><span class="chip">INDI client</span><span class="chip">Alpaca (HTTP)</span><span class="chip">PHD2</span><span class="chip">ASTAP</span><span class="chip">Peewee / SQLite</span></div>
+            </div>
+            <div class="arrow">▲ ▼</div>
+            <div class="layer">
+              <small>Your gear</small>
+              <div class="chips"><span class="chip">Cameras</span><span class="chip">Mounts</span><span class="chip">Filter wheels</span><span class="chip">Focusers</span><span class="chip">Rotators</span><span class="chip">Domes</span><span class="chip">Weather &amp; safety</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stackline reveal">
+          <span class="chip">Python 3.11+</span><span class="chip">PySide6</span><span class="chip">asyncio + qasync</span><span class="chip">SEP star detection</span><span class="chip">astropy</span><span class="chip">Peewee ORM</span><span class="chip">FITS-first I/O</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Status ===================== -->
+    <section id="status">
+      <div class="container">
+        <div class="section-head center reveal">
+          <span class="eyebrow">Project status</span>
+          <h2>Honest about where we are.</h2>
+          <p>Galileo is a runnable desktop application today — not just a design document — but it's pre-alpha. Some screens are still placeholders.</p>
+        </div>
+        <div class="road">
+          <div class="card now reveal">
+            <h3><span class="tag ok">Available now</span></h3>
+            <ul>
+              <li><b>Equipment</b> connection panels for every device category</li>
+              <li><b>Observatories &amp; Piers</b>, persisted across restarts</li>
+              <li><b>Star Atlas</b> with horizon obstruction</li>
+              <li><b>Planning</b> and <b>Framing</b> input panels</li>
+              <li><b>Imaging</b> with live preview and statistics</li>
+              <li><b>Guiding</b> (PHD2), <b>Focus</b> and <b>Solve</b> (ASTAP)</li>
+              <li><b>Library</b> screens and command-line utilities</li>
+              <li>Runtime logging with a live tail on each device screen</li>
+            </ul>
+          </div>
+          <div class="card next reveal">
+            <h3><span class="tag wip">Engine built · UI pending</span></h3>
+            <ul>
+              <li><b>Sequencer</b> — basic and advanced</li>
+              <li><b>Scheduler</b> — multi-night job queue</li>
+              <li><b>Variable Stars</b> — AAVSO planning and photometry</li>
+              <li>Most Options pages beyond Library, Star Atlas and Planning</li>
+              <li>Focus tools: Aberration Inspector, CFZ and Advisor</li>
+            </ul>
+          </div>
+          <div class="card later reveal">
+            <h3><span class="tag plan">Planned</span></h3>
+            <ul>
+              <li><b>Polar alignment</b></li>
+              <li><b>Automated meridian flip</b> workflow</li>
+              <li><b>Layered safety</b> with independent watchdog</li>
+              <li><b>Plugin manager</b> for third-party plugins</li>
+              <li>Comets, satellites and an FOV / mount overlay on the atlas</li>
+              <li>A proper cross-platform installer</li>
+            </ul>
+          </div>
+        </div>
+        <p class="note reveal">Requirements, design and test traceability live in the repository's <a href="https://github.com/gordtulloch/Galileo/tree/main/docs">docs</a> folder; the <a href="https://github.com/gordtulloch/Galileo/blob/main/CHANGELOG.md">changelog</a> tracks every change.</p>
+      </div>
+    </section>
+
+    <!-- ===================== Get started ===================== -->
+    <section id="start" class="band">
+      <div class="container">
+        <div class="start">
+          <div class="reveal">
+            <span class="eyebrow">Get started</span>
+            <div class="section-head" style="margin-bottom:0;margin-top:0">
+              <h2>Download it and give it a try.</h2>
+              <p>Galileo runs from source today. A full multiplatform installer is planned.</p>
+            </div>
+            <ol class="steps">
+              <li><strong>Install Python 3.11 or newer</strong><span>Then clone the repository.</span></li>
+              <li><strong>Create a virtual environment and install</strong><span>The requirements file pulls in everything the app needs.</span></li>
+              <li><strong>Launch</strong><span>The launch scripts find the project's <code>.venv</code> for you and start Galileo maximized.</span></li>
+            </ol>
+            <div class="reqs">
+              <span class="chip">Plate solving: ASTAP + star database</span>
+              <span class="chip">Guiding: PHD2</span>
+              <span class="chip">Devices: INDI server or Alpaca</span>
+            </div>
+          </div>
+
+          <div class="term reveal">
+            <div class="term-bar">
+              <div class="term-tabs" role="tablist" aria-label="Operating system">
+                <button role="tab" aria-selected="true" data-os="win">Windows</button>
+                <button role="tab" aria-selected="false" data-os="nix">macOS / Linux</button>
+              </div>
+              <button class="copy" type="button" id="copy">Copy</button>
+            </div>
+<pre id="cmd-win" data-os="win"><span class="c"># PowerShell</span>
+<span class="p">$</span> git clone https://github.com/gordtulloch/Galileo.git
+<span class="p">$</span> cd Galileo
+<span class="p">$</span> python -m venv .venv
+<span class="p">$</span> .venv\Scripts\pip install -r requirements.txt
+<span class="p">$</span> .\run.ps1</pre>
+<pre id="cmd-nix" data-os="nix" hidden><span class="c"># Terminal — or Git Bash on Windows</span>
+<span class="p">$</span> git clone https://github.com/gordtulloch/Galileo.git
+<span class="p">$</span> cd Galileo
+<span class="p">$</span> python3 -m venv .venv
+<span class="p">$</span> .venv/bin/pip install -r requirements.txt
+<span class="p">$</span> ./run.sh</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Family ===================== -->
+    <section id="family">
+      <div class="container">
+        <div class="section-head center reveal">
+          <span class="eyebrow">Built on</span>
+          <h2>Years of prior work, in one place.</h2>
+          <p>Galileo consolidates and builds on the author's existing projects — merged, ported or selectively harvested.</p>
+        </div>
+        <div class="family">
+          <a class="card reveal" href="https://github.com/gordtulloch/astrofiler-gui" rel="noopener">
+            <h3>AstroFiler <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></h3>
+            <p>Image cataloguing and calibration. Existing AstroFiler databases open unchanged.</p>
+            <span class="how">Merged in full</span>
+          </a>
+          <a class="card reveal" href="https://github.com/gordtulloch/VSTarget" rel="noopener">
+            <h3>VSTarget <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></h3>
+            <p>AAVSO variable-star target planning and photometry, shipped as first-party plugins.</p>
+            <span class="how">Merged in full</span>
+          </a>
+          <a class="card reveal" href="https://github.com/gordtulloch/obsy" rel="noopener">
+            <h3>Obsy <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></h3>
+            <p>Target-visibility and sky-survey-thumbnail logic, now part of the Star Atlas and Framing Assistant.</p>
+            <span class="how">Ported</span>
+          </a>
+          <a class="card reveal" href="https://github.com/gordtulloch/AstroLlama" rel="noopener">
+            <h3>AstroLlama <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></h3>
+            <p>Selectively harvested for specific device-abstraction and safety-sensor functionality.</p>
+            <span class="how">Harvested</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Test bed ===================== -->
+    <section style="padding-top:0">
+      <div class="container">
+        <div class="testbed reveal">
+          <div>
+            <span class="eyebrow">Reference environment</span>
+            <h2>Designed against a real, multi-pier observatory.</h2>
+            <p>Galileo's design is validated against the author's own observatory: a roll-off-roof shed with an INDI weather station and rain monitor, and two independent Piers, both connected over ASCOM Alpaca.</p>
+          </div>
+          <ul>
+            <li>Two Piers<span>Seestar S30 and Seestar S30 Pro, via Alpaca</span></li>
+            <li>Roll-off roof<span>indi-rolloffino</span></li>
+            <li>Weather &amp; rain<span>indi-argentweather · indi-hydreon</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== Footer ===================== -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="foot">
+        <div>
+          <a class="brand" href="#top"><img src="assets/icon-64.png" width="34" height="34" alt="">Galileo</a>
+          <p>An open-source, cross-platform astrophotography imaging application built on INDI and ASCOM Alpaca.</p>
+        </div>
+        <div>
+          <h4>Project</h4>
+          <ul>
+            <li><a href="https://github.com/gordtulloch/Galileo" rel="noopener">GitHub repository</a></li>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/CHANGELOG.md" rel="noopener">Changelog</a></li>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/CONTRIBUTING.md" rel="noopener">Contributing</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Design docs</h4>
+          <ul>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/docs/PSD.md" rel="noopener">Scope (PSD)</a></li>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/docs/SRS.md" rel="noopener">Requirements (SRS)</a></li>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/docs/SDD.md" rel="noopener">Design (SDD)</a></li>
+            <li><a href="https://github.com/gordtulloch/Galileo/blob/main/docs/RTM.md" rel="noopener">Traceability (RTM)</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Built on</h4>
+          <ul>
+            <li><a href="https://indilib.org/" rel="noopener">INDI</a></li>
+            <li><a href="https://ascom-standards.org/AlpacaDeveloper/" rel="noopener">ASCOM Alpaca</a></li>
+            <li><a href="https://doc.qt.io/qtforpython/" rel="noopener">PySide6</a></li>
+          </ul>
+        </div>
+      </div>
+      <p class="legal">Copyright © 2025–2026 <a href="https://github.com/gordtulloch" rel="noopener">Gord Tulloch</a>. Licensed under <a href="https://github.com/gordtulloch/Galileo/blob/main/LICENSE" rel="noopener">GPL-3.0-or-later</a>.</p>
+    </div>
+  </footer>
+
+  <!-- Lightbox -->
+  <dialog class="lightbox" id="lightbox" aria-label="Screenshot viewer">
+    <div class="lb-body">
+      <div class="lb-img"><img id="lb-img" src="" alt=""></div>
+      <div class="lb-bar">
+        <p><strong id="lb-title"></strong><span id="lb-desc"></span></p>
+        <div class="lb-btns">
+          <button class="btn btn-sm" type="button" id="lb-prev" aria-label="Previous screenshot">← Prev</button>
+          <button class="btn btn-sm" type="button" id="lb-next" aria-label="Next screenshot">Next →</button>
+          <button class="btn btn-sm" type="button" id="lb-close">Close</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

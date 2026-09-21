@@ -247,10 +247,10 @@ class fitsProcessing:
                 
                 try:
                     # Define progress callback for this operation
-                    def operation_progress(percentage, message):
+                    def operation_progress(percentage, message, *, completed=completed_operations):
                         if progress_callback:
                             # Map operation progress to overall progress
-                            base_progress = int((completed_operations / total_operations) * 100)
+                            base_progress = int((completed / total_operations) * 100)
                             operation_progress_range = int(100 / total_operations)
                             overall_progress = base_progress + int((percentage * operation_progress_range) / 100)
                             progress_callback(overall_progress, message)

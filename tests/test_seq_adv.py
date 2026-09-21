@@ -144,6 +144,85 @@ def test_tc_seq_adv_060_save_and_reuse_instruction_template(tmp_path):
     assert len(loaded_grp.instructions) == 2
 
 
+@pytest.mark.requirement("TC-SEQ-ADV-060")
+@pytest.mark.priority("P2")
+def test_tc_seq_adv_060_template_round_trip_keeps_instruction_parameters(tmp_path):
+    """SEQ-ADV-060: A reloaded template has the saved instructions with their saved parameters, not class defaults."""
+    seq_mod = pytest.importorskip("galileo.sequencer.advanced")
+    grp = seq_mod.InstructionGroup(name="Mixed")
+    grp.add_instruction(seq_mod.CaptureInstruction(filter="Ha", duration=300.0, count=10))
+    grp.add_instruction(seq_mod.SlewInstruction(ra_deg=83.8, dec_deg=-5.4))
+    grp.add_instruction(seq_mod.WaitInstruction(duration_s=12.5))
+    grp.add_instruction(seq_mod.AutofocusInstruction())      # no parameters
+
+    tpl_file = tmp_path / "mixed.gtpl"
+    seq_mod.save_template(grp, tpl_file)
+    loaded = seq_mod.load_template(tpl_file)
+
+    assert [type(i) for i in loaded.instructions] == [type(i) for i in grp.instructions]
+    assert loaded.instructions == grp.instructions           # dataclass equality: every field matches
+    assert loaded.instructions[0].filter == "Ha" and loaded.instructions[0].count == 10
+
+
+@pytest.mark.requirement("TC-SEQ-ADV-060")
+@pytest.mark.priority("P2")
+def test_tc_seq_adv_060_old_templates_without_parameters_still_load(tmp_path):
+    """SEQ-ADV-060: Templates saved before parameters were stored (type and label only) load with the instruction defaults."""
+    import json
+
+    seq_mod = pytest.importorskip("galileo.sequencer.advanced")
+    tpl_file = tmp_path / "old.gtpl"
+    tpl_file.write_text(json.dumps({
+        "name": "Old", "instructions": [{"type": "CaptureInstruction", "label": "Capture"}],
+    }), encoding="utf-8")
+
+    loaded = seq_mod.load_template(tpl_file)
+
+    assert loaded.instructions == [seq_mod.CaptureInstruction()]
+
+
+@pytest.mark.requirement("TC-SEQ-ADV-060")
+@pytest.mark.priority("P2")
+@pytest.mark.parametrize("type_name", ["NoSuchInstruction", "Path", "logger", "BaseInstruction", "InstructionGroup"])
+def test_tc_seq_adv_060_template_with_unknown_or_non_instruction_type_is_rejected(tmp_path, type_name):
+    """SEQ-ADV-060: A template naming an unregistered type — including other names in the module — fails loudly instead of dropping the step."""
+    import json
+
+    seq_mod = pytest.importorskip("galileo.sequencer.advanced")
+    tpl_file = tmp_path / "bad.gtpl"
+    tpl_file.write_text(json.dumps({"name": "Bad", "instructions": [{"type": type_name}]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unknown instruction type"):
+        seq_mod.load_template(tpl_file)
+
+
+@pytest.mark.requirement("TC-SEQ-ADV-060")
+@pytest.mark.priority("P2")
+def test_tc_seq_adv_060_template_can_use_plugin_registered_instruction(tmp_path):
+    """SEQ-ADV-060 / SEQ-ADV-070: A template containing a plugin-registered instruction type reloads through the registry."""
+    from dataclasses import dataclass
+
+    seq_mod = pytest.importorskip("galileo.sequencer.advanced")
+
+    @dataclass
+    class PluginTemplateInstruction(seq_mod.BaseInstruction):
+        label = "PluginTemplate"
+        level: int = 1
+
+        async def execute(self, context):
+            pass
+
+    seq_mod.InstructionRegistry.instance().register(PluginTemplateInstruction)
+    grp = seq_mod.InstructionGroup(name="WithPlugin")
+    grp.add_instruction(PluginTemplateInstruction(level=7))
+    tpl_file = tmp_path / "plugin.gtpl"
+    seq_mod.save_template(grp, tpl_file)
+
+    loaded = seq_mod.load_template(tpl_file)
+
+    assert loaded.instructions == [PluginTemplateInstruction(level=7)]
+
+
 # ---------------------------------------------------------------------------
 # TC-SEQ-ADV-070
 # ---------------------------------------------------------------------------

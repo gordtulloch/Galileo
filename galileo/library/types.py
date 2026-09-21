@@ -70,7 +70,6 @@ class SessionInfo(Protocol):
     file_count: int
     
 # Processing callbacks
-ProgressCallback = Protocol
 
 class ProgressCallback(Protocol):
     """Protocol for progress reporting callbacks."""

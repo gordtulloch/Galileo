@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -280,8 +281,11 @@ def _simbad_magnitude_sync(name: str) -> float:
         if table is None or len(table) == 0:
             return 99.0
         value = float(table[0]["V"])
-        return value if value == value else 99.0  # NaN check
+        # Simbad reports "no V magnitude" as NaN (or a masked cell); never pass a
+        # non-finite value on as if it were a magnitude.
+        return value if math.isfinite(value) else 99.0
     except Exception:
+        logger.debug("Simbad V-magnitude lookup failed for %r", name, exc_info=True)
         return 99.0
 
 
@@ -515,7 +519,7 @@ class SkyAtlas:
         date: str | None = None,
     ) -> dict:
         """Return an altitude-over-time chart for *obj* from *location*."""
-        from galileo.planning.visibility import altitude_chart, HorizonProfile
+        from galileo.planning.visibility import altitude_chart
         horizon = getattr(location, "_horizon", None)
         return altitude_chart(obj.ra_deg, obj.dec_deg, location, date, horizon)
 

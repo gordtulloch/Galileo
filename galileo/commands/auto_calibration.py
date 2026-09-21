@@ -550,7 +550,7 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
         else:
             # Analyze light frames by default
             query = fitsFile.select().where(
-                fitsFile.fitsFileType == 'LIGHT',
+                fitsFile.fitsFileType == 'LIGHT FRAME',
                 fitsFile.fitsFileName.is_null(False),
                 fitsFile.fitsFileSoftDelete == False
             )

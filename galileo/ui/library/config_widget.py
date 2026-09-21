@@ -460,7 +460,11 @@ class ConfigWidget(QWidget):
             
             # Write to the library settings file
             save_library_config(config)
-            
+
+            # The shared compressor read its settings when first created
+            from galileo.library.core.compress_files import reset_fits_compressor
+            reset_fits_compressor()
+
             logger.info("Settings saved to library.ini!")
             QMessageBox.information(self, "Success", "Settings saved successfully!")
             

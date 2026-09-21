@@ -301,29 +301,6 @@ class MappingsWidget(QWidget):
             logger.error(f"Error saving mappings: {e}")
             QMessageBox.critical(self, "Error", f"Error saving mappings: {e}")
     
-    def get_current_values_for_card(self, card):
-        """Get current values for a specific FITS header card from the database"""
-        try:
-            if card == "TELESCOP":
-                values = set([f.fitsFileTelescop for f in FitsFileModel.select().distinct() if f.fitsFileTelescop])
-            elif card == "INSTRUME":
-                values = set([f.fitsFileInstrument for f in FitsFileModel.select().distinct() if f.fitsFileInstrument])
-            elif card == "OBSERVER":
-                values = set([f.fitsFileObserver for f in FitsFileModel.select().distinct() if f.fitsFileObserver])
-            elif card == "FILTER":
-                values = set([f.fitsFileFilter for f in FitsFileModel.select().distinct() if f.fitsFileFilter])
-            elif card == "NOTES":
-                values = set([f.fitsFileNotes for f in FitsFileModel.select().distinct() if f.fitsFileNotes])
-            elif card == "OBJECT":
-                values = set([f.fitsFileObject for f in FitsFileModel.select().distinct() if f.fitsFileObject])
-            else:
-                values = set()
-            
-            return sorted(list(values))
-        except Exception as e:
-            logger.error(f"Error getting current values for {card}: {e}")
-            return [""]
-    
     def update_current_values(self, row_widget):
         """Update the current and replace dropdowns based on the selected card"""
         card = row_widget.card_combo.currentText()

@@ -841,3 +841,345 @@ def test_mappings_page_saves_and_applies_mappings(window, library, monkeypatch):
 
     assert [(m.card, m.current, m.replace) for m in Mapping.select()] == [("TELESCOP", "Scope 1", "TestScope")]
     assert applied == [True]
+
+
+# ---------------------------------------------------------------------------
+# FITS compression on ingest (LIB-010 / LIB-030): must never damage the original
+# ---------------------------------------------------------------------------
+
+def _compression_fixture(tmp_path, name, data, *, commentary=False, extra_ext=None):
+    """Write a FITS file for the compression tests; returns its path as ``str``."""
+    from astropy.io import fits
+
+    primary = fits.PrimaryHDU(data)
+    primary.header["OBJECT"] = "M31"
+    if commentary:
+        primary.header.add_history("calibrated by pipeline")
+        primary.header.add_comment("keep me")
+    path = tmp_path / name
+    fits.HDUList([primary, *(extra_ext or [])]).writeto(path)
+    return str(path)
+
+
+def _image_data(kind):
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    if kind == "uint16":
+        return (rng.random((60, 80)) * 60000).astype("uint16")
+    if kind == "int16":
+        return rng.integers(-3000, 3000, (60, 80)).astype("int16")
+    if kind == "float32":
+        return rng.normal(1000, 50, (60, 80)).astype("float32")
+    if kind == "float32-nan":
+        data = rng.normal(1000, 50, (60, 80)).astype("float32")
+        data[3, 3] = float("nan")
+        return data
+    return rng.normal(0, 1, (3, 20, 30)).astype("float32")      # "cube"
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("kind", ["uint16", "int16", "float32", "float32-nan", "cube"])
+def test_tc_lib_010_in_place_tile_compression_is_lossless(tmp_path, kind):
+    """LIB-010: Ingest-time FITS compression is lossless — integer, float, NaN-bearing and 3-D images read back bit for bit."""
+    import numpy as np
+    from astropy.io import fits
+
+    from galileo.library.core.compress_files import FitsCompressor
+
+    original = _image_data(kind)
+    path = _compression_fixture(tmp_path, "frame.fits", original)
+
+    assert FitsCompressor(tmp_path / "none.ini").compress_fits_file(path, algorithm="fits_gzip2") == path
+
+    with fits.open(path) as hdul:
+        compressed = [h for h in hdul if isinstance(h, fits.CompImageHDU)]
+        assert len(compressed) == 1
+        assert np.array_equal(compressed[0].data, original, equal_nan=original.dtype.kind == "f")
+        assert hdul[0].header["OBJECT"] == "M31"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_compression_keeps_history_comments_and_extensions(tmp_path):
+    """LIB-010: Compression keeps HISTORY as HISTORY, COMMENT as COMMENT, and every other extension."""
+    import numpy as np
+    from astropy.io import fits
+
+    from galileo.library.core.compress_files import FitsCompressor
+
+    table = fits.BinTableHDU.from_columns(
+        [fits.Column(name="flux", format="E", array=np.array([1.5, float("nan"), 3.0], dtype="f4")),
+         fits.Column(name="name", format="8A", array=np.array(["a", "bb", "ccc"]))],
+        name="CAT",
+    )
+    path = _compression_fixture(tmp_path, "frame.fits", _image_data("uint16"), commentary=True, extra_ext=[table])
+
+    assert FitsCompressor(tmp_path / "none.ini").compress_fits_file(path, algorithm="fits_gzip2") == path
+
+    with fits.open(path) as hdul:
+        assert [type(h).__name__ for h in hdul] == ["PrimaryHDU", "CompImageHDU", "BinTableHDU"]
+        cards = [(c.keyword, c.value) for h in hdul for c in h.header.cards]
+        assert ("HISTORY", "calibrated by pipeline") in cards
+        assert ("COMMENT", "keep me") in cards
+        assert hdul[2].data["name"].tolist() == ["a", "bb", "ccc"]
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("failure", ["verification", "header-copy"])
+def test_tc_lib_010_failed_compression_leaves_original_untouched(tmp_path, monkeypatch, failure):
+    """LIB-010: If compression can't be verified (or the header can't be carried over), the original is byte-identical and no temp file remains."""
+    from galileo.library.core import compress_files
+    from galileo.library.core.compress_files import FitsCompressor
+
+    path = _compression_fixture(tmp_path, "frame.fits", _image_data("float32"))
+    before = Path(path).read_bytes()
+    compressor = FitsCompressor(tmp_path / "none.ini")
+    if failure == "verification":
+        monkeypatch.setattr(compressor, "_verify_fits_internal_compression", lambda *_: False)
+    else:
+        monkeypatch.setattr(compress_files, "_copy_header_cards", lambda *_: ["BADCARD"])
+
+    assert compressor.compress_fits_file(path, algorithm="fits_gzip2") is None
+
+    assert Path(path).read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["frame.fits"]
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_verifier_compares_against_the_original_not_itself(tmp_path):
+    """LIB-010: The verifier detects a data difference (and accepts NaN == NaN) instead of comparing a file with itself."""
+    from galileo.library.core.compress_files import FitsCompressor
+
+    compressor = FitsCompressor(tmp_path / "none.ini")
+    base = _image_data("float32-nan")
+    changed = base.copy()
+    changed[10, 10] += 0.5
+    a = _compression_fixture(tmp_path, "a.fits", base)
+    same = _compression_fixture(tmp_path, "same.fits", base)
+    different = _compression_fixture(tmp_path, "different.fits", changed)
+
+    assert compressor._verify_fits_internal_compression(same, a)
+    assert not compressor._verify_fits_internal_compression(different, a)
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_decompressing_in_place_compressed_file_never_destroys_it(tmp_path):
+    """LIB-010: Asking to decompress a tile-compressed .fits (compressed in place) is refused; the file survives untouched."""
+    from astropy.io import fits
+
+    from galileo.library.core.compress_files import FitsCompressor
+
+    path = _compression_fixture(tmp_path, "frame.fits", _image_data("uint16"))
+    compressor = FitsCompressor(tmp_path / "none.ini")
+    assert compressor.compress_fits_file(path, algorithm="fits_gzip2") == path
+    before = Path(path).read_bytes()
+
+    assert compressor.decompress_fits_file(path) is None
+
+    assert Path(path).read_bytes() == before
+    with fits.open(path) as hdul:
+        assert any(isinstance(h, fits.CompImageHDU) for h in hdul)
+    assert compressor.decompress_fits_file(path, output_path=path) is None
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("algorithm", ["gzip", "lzma", "bzip2"])
+def test_tc_lib_010_stream_compression_round_trips_byte_for_byte(tmp_path, algorithm):
+    """LIB-010: gzip/lzma/bzip2 compression is verified by hash, replaces the original, and decompresses byte-identically."""
+    from galileo.library.core.compress_files import FitsCompressor
+
+    path = _compression_fixture(tmp_path, "frame.fits", _image_data("uint16"))
+    before = Path(path).read_bytes()
+    compressor = FitsCompressor(tmp_path / "none.ini")
+
+    packed = compressor.compress_fits_file(path, algorithm=algorithm)
+
+    assert packed == compressor.get_compressed_path(path, algorithm) and Path(packed).exists()
+    assert not Path(path).exists() and not list(tmp_path.glob("*.part"))
+    assert compressor.decompress_fits_file(packed) == path
+    assert Path(path).read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# Auto-regeneration failure handling (LIB-040)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LIB-040")
+@pytest.mark.priority("MVP")
+def test_tc_lib_040_failed_auto_regeneration_does_not_start_another_regeneration(qt_app, library, monkeypatch):
+    """LIB-040: When session auto-regeneration after an import fails, the failure is logged; no second regeneration or dialog is started."""
+    from PySide6.QtWidgets import QMessageBox
+    from galileo.ui.library import sessions_widget as sw
+
+    widget = sw.SessionsWidget()
+    dialogs = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: dialogs.append(("information", a)))
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: dialogs.append(("critical", a)))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("regeneration failed")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("the failure handler must not run a regeneration itself")
+
+    monkeypatch.setattr(widget, "_do_regenerate_sessions_new_only", fail)
+    monkeypatch.setattr(sw, "fitsProcessing", forbidden)
+
+    widget.auto_regenerate_sessions()      # must swallow the failure quietly
+
+    assert dialogs == []
+
+
+# ---------------------------------------------------------------------------
+# Auto-calibration workflow wiring and progress reporting (LIB-050/060/070/130)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+@pytest.mark.parametrize("force, dry_run", [(False, False), (True, False), (False, True), (True, True)])
+def test_tc_lib_130_complete_workflow_hands_each_option_to_the_right_step(monkeypatch, force, dry_run):
+    """LIB-130: The complete auto-calibration workflow passes --force/--dry-run and the progress callback to each step's own parameters (a shifted positional argument once made the calibrate step always a dry run)."""
+    import configparser
+    import inspect
+
+    from galileo.library.core import auto_calibration as ac
+
+    calls = {}
+
+    def recorder(name, real, result):
+        signature = inspect.signature(real)
+
+        def fake(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            calls[name] = dict(bound.arguments)
+            callback = calls[name].get("progress_callback")
+            if callback:
+                callback(50, f"{name} halfway")
+            return result
+        return fake
+
+    real = {name: getattr(ac, name) for name in (
+        "analyze_calibration_opportunities", "create_master_frames",
+        "calibrate_light_frames", "perform_quality_assessment")}
+    for name, result in (("analyze_calibration_opportunities", {"total_opportunities": 1}),
+                         ("create_master_frames", True), ("calibrate_light_frames", True),
+                         ("perform_quality_assessment", True)):
+        monkeypatch.setattr(ac, name, recorder(name, real[name], result))
+
+    reported = []
+    ok = ac.run_complete_workflow(configparser.ConfigParser(), session_id="7", force=force, dry_run=dry_run,
+                                  progress_callback=lambda pct, msg: reported.append((pct, msg)))
+
+    assert ok is True
+    masters, calibrate = calls["create_master_frames"], calls["calibrate_light_frames"]
+    assert (masters["force"], masters["dry_run"], masters["verbose"]) == (force, dry_run, False)
+    assert (calibrate["force_recalibrate"], calibrate["dry_run"]) == (force, dry_run)
+    assert calibrate["session_id"] == masters["session_id"] == "7"
+    for step in ("analyze_calibration_opportunities", "create_master_frames",
+                 "calibrate_light_frames", "perform_quality_assessment"):
+        assert callable(calls[step]["progress_callback"]), f"{step} was not given the progress callback"
+    # Each step's own progress is scaled into its 25 % slice of the overall bar.
+    assert (12, "analyze_calibration_opportunities halfway") in reported
+    assert (37, "create_master_frames halfway") in reported
+    assert (62, "calibrate_light_frames halfway") in reported
+    assert (87, "perform_quality_assessment halfway") in reported
+
+
+@pytest.mark.requirement("TC-LIB-060")
+@pytest.mark.priority("MVP")
+def test_tc_lib_060_light_calibration_reports_progress_per_session(monkeypatch):
+    """LIB-060: Light-frame calibration reports each session's progress against that session's own position in the run, and calibrates exactly the requested sessions."""
+    import configparser
+
+    from galileo.library.core import light_calibration as lc
+    from galileo.library.core.auto_calibration import calibrate_light_frames
+
+    calibrated = []
+
+    def fake_calibrate(session_id, progress_callback=None, force_recalibrate=False):
+        calibrated.append(session_id)
+        progress_callback("working")
+        return {"success": True, "calibrated_count": 1, "skipped_count": 0, "error_count": 0}
+
+    monkeypatch.setattr(lc, "calibrate_session_lights", fake_calibrate)
+    monkeypatch.setattr(lc, "find_light_sessions_for_calibration", lambda: ["a", "b"])
+    monkeypatch.setattr(lc, "get_calibration_statistics", lambda: {
+        "calibrated_frames": 0, "total_light_frames": 0, "calibration_percentage": 0.0})
+
+    reported = []
+    assert calibrate_light_frames(configparser.ConfigParser(),
+                                  progress_callback=lambda pct, msg: reported.append((pct, msg))) is True
+
+    assert calibrated == ["a", "b"]
+    assert reported == [
+        (10, "Finding light sessions..."),
+        (20, "Calibrating session 1/2..."), (20, "Session 1: working"),
+        (55, "Calibrating session 2/2..."), (55, "Session 2: working"),
+        (100, "Calibration complete - 2 frames processed"),
+    ]
+
+    calibrated.clear()
+    assert calibrate_light_frames(configparser.ConfigParser(), session_id="only") is True
+    assert calibrated == ["only"]                 # an explicit session is calibrated, not the discovered ones
+
+
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("MVP")
+def test_tc_lib_050_master_creation_reports_progress_within_each_sessions_band(library):
+    """LIB-050: Master-frame creation reports each session's per-master progress inside that session's own share of the overall bar."""
+    reported = []
+    from galileo.library.core.auto_calibration import create_master_frames
+
+    assert create_master_frames(calibration_ready(library),
+                                progress_callback=lambda pct, msg: reported.append((pct, msg))) is True
+
+    starts = [(index, pct) for index, (pct, msg) in enumerate(reported) if msg.startswith("Processing session")]
+    assert len(starts) >= 2 and starts[0][1] == 20
+    assert [pct for _, pct in starts] == sorted({pct for _, pct in starts})       # each session starts further along
+    ends = [pct for _, pct in starts[1:]] + [90]
+    detail = 0
+    for (first, low), high in zip(starts, ends, strict=True):
+        last = next((index for index, _ in starts if index > first), len(reported) - 1)
+        for pct, msg in reported[first + 1:last]:
+            assert low <= pct <= high, f"{msg!r} at {pct}% is outside its session's {low}-{high}% band"
+            detail += msg.startswith("Creating ") and " masters: " in msg
+    assert detail, "no per-master progress was reported"
+
+
+@pytest.mark.requirement("TC-LIB-070")
+@pytest.mark.priority("MVP")
+def test_tc_lib_070_quality_assessment_reports_each_frame_in_order(library, monkeypatch):
+    """LIB-070: Quality assessment reports progress for each frame as its own i/N, in order."""
+    import configparser
+
+    from galileo.library.core import enhanced_quality
+    from galileo.library.core.auto_calibration import perform_quality_assessment
+    from galileo.library.models import fitsFile
+
+    write_light_frames(library.incoming)
+    ingest(library)
+    total = fitsFile.select().where(fitsFile.fitsFileType == "LIGHT FRAME").count()
+    assert total >= 2
+
+    class FakeAnalyzer:
+        def analyze_and_update_file(self, path, file_id, progress_callback=None):
+            progress_callback(50, "halfway")
+            return {"status": "success"}
+
+    monkeypatch.setattr(enhanced_quality, "EnhancedQualityAnalyzer", FakeAnalyzer)
+    reported = []
+
+    assert perform_quality_assessment(configparser.ConfigParser(),
+                                      progress_callback=lambda pct, msg: reported.append((pct, msg))) is True
+
+    per_frame = [msg for _, msg in reported if msg.endswith("halfway")]
+    assert [msg.split("(")[1].split(")")[0] for msg in per_frame] == [f"{n}/{total}" for n in range(1, total + 1)]
+    assert reported[-1] == (100, "Quality assessment complete")

@@ -272,8 +272,8 @@ def create_master_frames(config: configparser.ConfigParser, session_id: Optional
         total_sessions = len(viable_sessions)
         
         for i, session in enumerate(viable_sessions):
+            base_progress = 20 + (i * 70 // total_sessions)
             if progress_callback:
-                base_progress = 20 + (i * 70 // total_sessions)
                 progress_callback(base_progress, f"Processing session {i+1}/{total_sessions}...")
             
             session_files = fitsFile.select().where(fitsFile.fitsFileSession == session.fitsSessionId)
@@ -308,12 +308,14 @@ def create_master_frames(config: configparser.ConfigParser, session_id: Optional
             
             try:
                 # Create master frame
-                def master_progress(progress, total, message):
+                # This session's values are bound as defaults so the callback keeps reporting
+                # against its own session even if it is ever invoked after the loop moves on.
+                def master_progress(progress, total, message, *, base_progress=base_progress, cal_type=session.cal_type):
                     if progress_callback:
                         # Map master creation progress to overall progress
                         percentage = (progress * 100) // total if total > 0 else 0
                         session_progress = base_progress + (percentage * 70 // total_sessions // 100)
-                        progress_callback(session_progress, f"Creating {session.cal_type} masters: {percentage}% - {message}")
+                        progress_callback(session_progress, f"Creating {cal_type} masters: {percentage}% - {message}")
                 
                 master_path = master_manager.create_master_from_session(
                     session.fitsSessionId, 
@@ -402,25 +404,25 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: Option
         total_processed = 0
         total_sessions = len(light_sessions)
         
-        for i, session_id in enumerate(light_sessions):
+        for i, light_session_id in enumerate(light_sessions):
+            base_progress = 20 + (i * 70 // total_sessions)
             if progress_callback:
-                base_progress = 20 + (i * 70 // total_sessions) 
                 progress_callback(base_progress, f"Calibrating session {i+1}/{total_sessions}...")
-            
+
             if dry_run:
-                logging.info(f"DRY RUN: Would calibrate session {session_id}")
+                logging.info(f"DRY RUN: Would calibrate session {light_session_id}")
                 calibrated_count += 1
                 continue
             
             try:
                 # Create progress callback for this session
-                def session_progress(message):
+                def session_progress(message, *, base_progress=base_progress, position=i + 1):
                     if progress_callback:
-                        progress_callback(base_progress, f"Session {i+1}: {message}")
-                
+                        progress_callback(base_progress, f"Session {position}: {message}")
+
                 # Calibrate the session using the core light calibration module
                 result = calibrate_session_lights(
-                    session_id=session_id,
+                    session_id=light_session_id,
                     progress_callback=session_progress,
                     force_recalibrate=force_recalibrate
                 )
@@ -429,18 +431,18 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: Option
                     total_processed += result.get('calibrated_count', 0)
                     calibrated_count += 1
                     
-                    logging.info(f"Session {session_id} calibration completed: "
+                    logging.info(f"Session {light_session_id} calibration completed: "
                                f"{result['calibrated_count']} processed, "
                                f"{result['skipped_count']} skipped, "
                                f"{result['error_count']} errors")
                 else:
                     error_count += 1
                     error_msg = result.get('error', 'Unknown error')
-                    logging.warning(f"Session {session_id} calibration failed: {error_msg}")
+                    logging.warning(f"Session {light_session_id} calibration failed: {error_msg}")
                 
             except Exception as e:
                 error_count += 1
-                logging.error(f"Error calibrating session {session_id}: {e}")
+                logging.error(f"Error calibrating session {light_session_id}: {e}")
                 continue
         
         # Get final calibration statistics
@@ -492,7 +494,7 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: Op
             logging.info("Assessing quality of all light frames...")
             # Focus on light frames for quality assessment
             files_to_analyze = list(fitsFile.select().where(
-                fitsFile.fitsFileType == 'LIGHT',
+                fitsFile.fitsFileType == 'LIGHT FRAME',
                 fitsFile.fitsFileName.is_null(False),
                 fitsFile.fitsFileSoftDelete == False
             ).limit(100))  # Limit to prevent overwhelming analysis
@@ -510,14 +512,14 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: Op
         for i, fits_file in enumerate(files_to_analyze):
             try:
                 # Create progress callback for individual file
-                def file_progress(percentage, message):
+                def file_progress(percentage, message, *, index=i, current_file=fits_file):
                     # Calculate overall progress
                     file_progress_weight = 80.0 / len(files_to_analyze)  # 80% for file analysis
-                    overall_progress = 10 + (i * file_progress_weight) + (percentage * file_progress_weight / 100)
-                    
+                    overall_progress = 10 + (index * file_progress_weight) + (percentage * file_progress_weight / 100)
+
                     if progress_callback:
-                        progress_callback(int(overall_progress), 
-                                        f"Analyzing {fits_file.fitsFileObject} ({i+1}/{len(files_to_analyze)}): {message}")
+                        progress_callback(int(overall_progress),
+                                        f"Analyzing {current_file.fitsFileObject} ({index+1}/{len(files_to_analyze)}): {message}")
                 
                 # Perform quality analysis
                 quality_results = analyzer.analyze_and_update_file(
@@ -579,11 +581,11 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: Optiona
         ]
         
         for i, (step, description) in enumerate(steps):
+            base_progress = i * 25
             if progress_callback:
-                base_progress = i * 25
                 progress_callback(base_progress, description)
-            
-            def step_progress(percentage, message):
+
+            def step_progress(percentage, message, *, base_progress=base_progress):
                 if progress_callback:
                     step_progress_val = base_progress + (percentage * 25 // 100)
                     progress_callback(step_progress_val, message)
@@ -594,17 +596,19 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: Optiona
                     return False
                     
             elif step == "masters":
-                success = create_master_frames(config, session_id, force, dry_run, step_progress)
+                success = create_master_frames(config, session_id, force=force, dry_run=dry_run,
+                                               progress_callback=step_progress)
                 if not success:
                     return False
                     
             elif step == "calibrate":
-                success = calibrate_light_frames(config, session_id, dry_run, step_progress)
+                success = calibrate_light_frames(config, session_id, force_recalibrate=force, dry_run=dry_run,
+                                                 progress_callback=step_progress)
                 if not success:
                     return False
                     
             elif step == "quality":
-                success = perform_quality_assessment(config, session_id, False, step_progress)
+                success = perform_quality_assessment(config, session_id, progress_callback=step_progress)
                 if not success:
                     return False
         

@@ -14,8 +14,12 @@ domain logic itself.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from galileo.exceptions import MountParkedError, SlewObstructedError
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QButtonGroup
 
 logger = logging.getLogger(__name__)
 
