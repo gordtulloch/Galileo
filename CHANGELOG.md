@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **README refreshed with current screenshots and up-to-date counts.** Added the Imaging tab's portrait-layout screenshot (`assets/screenshots/imaging portrait.png`, showing the layout described in the `IMG-120`/`IMG-130` changelog entry) to the Screenshots section, and corrected the test-count badge and the Status section's test and requirement counts, all of which had drifted behind the codebase: `pytest -m "not soak and not hardware and not integration"` now passes 639 of 646 collected tests (1 skipped, 6 deselected), up from the previously shown 244/488, and `docs/SRS.md` now carries 272 numbered requirements, up from 235.
+
 ### Removed
 
 - **The Library's statistics dashboard is gone, and the Library no longer has tabs.** The Statistics tab on Images and the whole `StatsWidget` (`galileo/ui/library/stats_widget.py`, ported from AstroFiler) are removed, along with `test_tc_lib_080_*`. Requirement `LIB-080` (a repository statistics dashboard) is therefore not met; it and `TC-LIB-080` are still in the SRS/RTM, and `TODO.md` notes that they need reinstating or retiring. Images and Dedup are now single screens, and **Merge Objects** is its own item in the Library menu, after Dedup, with its own icon. The **Siril CLI** path is removed from Options > Library > General (nothing reads it any more; the `siril_cli_path` key is no longer written, and any existing value in `library.ini` is ignored). The separate PySiril timeout and logging settings on the Calibration tab were left as they were.

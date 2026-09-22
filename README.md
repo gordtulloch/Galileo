@@ -5,7 +5,7 @@
 ![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
 ![Status: Pre-alpha](https://img.shields.io/badge/status-pre--alpha%20%E2%80%94%20early%20development-orange.svg)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
-![Tests](https://img.shields.io/badge/tests-244%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-639%20passing-brightgreen.svg)
 
 A cross-platform Python-based astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) Supports a mix of INDI and Alpaca devices on multiple piers per observatory, multiple optical tubes and cameras per mount.  
 
@@ -20,8 +20,8 @@ Two things motivate this project:
 
 **Pre-alpha — early development.** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Download it and give it a try today! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
 
-- **Design docs**: a complete Project Scope Document, a Software Requirements Specification (235 numbered requirements across 27 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
-- **Automated tests**: 488 passing (plus a handful of soak/hardware/installer-artifact tests that are intentionally skipped outside a real overnight/CI run) covering every SRS domain — see [Running the tests](#running-the-tests).
+- **Design docs**: a complete Project Scope Document, a Software Requirements Specification (272 numbered requirements across 27 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
+- **Automated tests**: 639 passing (plus 1 skipped and 6 soak/hardware/integration tests deselected outside a real overnight/CI run, out of 646 collected) covering every SRS domain — see [Running the tests](#running-the-tests).
 - **What's working today**:
   - A dark-themed shell — a primary icon sidebar (Equipment, Star Atlas, Planning, Framing, Imaging, Guiding, Focus, Solve, Library, Science, Options — with Planning opening onto Targets, Sequence and Scheduler, and Science onto Variable Stars) plus a context-sensitive second panel per section, a top-bar Observatory/Pier selector, and a status bar.
   - **Guiding** (its own sidebar section, below Imaging): connects to PHD2 by host and port and shows its live state — guide-star image, guide graph, drift and calibration plots, guide statistics and event log — with Loop/Guide/Stop/Dither/exposure controls.
@@ -120,6 +120,8 @@ Contributions are welcome. All contributors must agree to the Contributor Licens
 ### Imaging
 
 ![Imaging](assets/screenshots/imaging.png)
+
+![Imaging (portrait layout)](assets/screenshots/imaging%20portrait.png)
 
 ![Guiding](assets/screenshots/guiding.png)
 
