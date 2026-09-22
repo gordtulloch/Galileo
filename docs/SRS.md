@@ -138,6 +138,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-MNT-020 | The system shall display current mount right ascension/declination, altitude/azimuth, pier side, and tracking state, refreshed on a bounded polling interval. | MVP |
 | EQP-MNT-030 | The system shall support mount sync-to-coordinates as issued by the plate-solving workflow (traces to `PLT-030`). | MVP |
 | EQP-MNT-040 | The system shall support slewing to and tracking a non-sidereal target (e.g. comet, asteroid, satellite) at a custom tracking rate, where the mount backend supports it. | P2 |
+| EQP-MNT-050 | On completion of a slew, the system shall enable mount tracking at the rate appropriate to the target: the lunar rate where the target is the Moon, the solar rate where it is the Sun, and the sidereal rate otherwise. The rate shall be selected before tracking is enabled, and a mount that cannot select a rate shall still be left tracking (traces to `EQP-MNT-010`, `IMG-140`). | MVP |
 | EQP-FW-010 | The system shall enumerate configured filter names/slots and issue filter-change commands, exposing change-in-progress status. | MVP |
 | EQP-FW-020 | The system shall allow per-filter focus-offset configuration for use by the autofocus and filter-change workflows. | MVP |
 | EQP-FOC-010 | The system shall issue absolute and relative focuser move commands and display current position and temperature (where supported). | MVP |
@@ -167,7 +168,8 @@ Refined against the KStars/EKOS "Optical Trains" model (Project Scope Document, 
 | PROF-080 | The system shall support multiple concurrently defined optical trains within one equipment profile, each independently selectable by the imaging, sequencer, and framing modules. | MVP |
 | PROF-090 | The system shall automatically derive effective focal length and plate scale for framing (`FRAME-010`) and plate-solving (`PLT`) calculations from the active optical train's chained components, rather than requiring manual re-entry per setup. | MVP |
 | PROF-100 | The system shall allow one or more optical tubes to be defined per Pier, each with a name, focal length, aperture, optical system (Newtonian, Schmidt-Cassegrain, Mak-Cassegrain, Refractor, or Other), and image alignment (reversed and/or inverted), and shall allow any device already configured on that Pier to be associated with a tube. Optics is an Equipment-section category rather than a device category (`ARCH-010`): it supplies the telescope/lens end of the optical train in `PROF-070`. | MVP |
-| PROF-110 | The system shall provide a selector in the top bar, beside the Pier selector, listing the selected Pier's optical tubes (`PROF-100`) so the user can choose which one the current screen works with. It shall be shown on the Framing and Imaging screens, and only those; with no tubes defined it shall remain visible but disabled. | MVP |
+| PROF-110 | The system shall provide a selector in the top bar, beside the Pier selector, listing the selected Pier's optical tubes (`PROF-100`) so the user can choose which one the current screen works with. It shall be shown on the Framing, Imaging and Solve screens, and only those; with no tubes defined it shall remain visible but disabled. | MVP |
+| PROF-120 | The system shall provide a Camera selector in the top bar, beside the optical-tube selector, listing the selected Pier's configured cameras, and shall show it on exactly the screens that show the optical-tube selector. It shall be shown whatever the number of cameras configured, shall indicate for each whether that camera is connected, and with none configured shall remain visible but disabled. The camera chosen shall be the one the capture screens use, and a screen refusing to capture shall name the selected camera (traces to `PROF-110`, `EQP-CAM-010`). | MVP |
 
 ### 4.3a `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -199,6 +201,12 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | IMG-090 | The system shall display live exposure countdown and camera/download status during an in-progress capture. | MVP |
 | IMG-100 | The system shall allow saving the currently displayed frame independently of the automatic sequence save path. | P2 |
 | IMG-110 | The system shall let the user turn on debayering of the displayed frame from a one-shot-colour camera, using a Bayer pattern (RGGB, GRBG, GBRG or BGGR) that the user sets per camera on its Equipment page and that defaults to RGGB. Debayering shall not alter the frame's raw pixel data, statistics or saved file (traces to `IMG-020`). | MVP |
+| IMG-120 | The system shall detect whether the displayed frame is portrait or landscape and lay the imaging tab out for it: for a portrait frame the preview shall be a full-height column one third of the tab's width, with the mount nudge pad, histogram, progress display and log moved to the left of it, beside the capture settings. A checkbox shall let the user choose portrait or landscape manually instead of following the frame (traces to `IMG-010`). | P2 |
+| IMG-130 | The system shall provide a mount nudge pad (N/S/E/W) on the imaging tab that moves the connected mount briefly, at a user-chosen speed and duration, while exposures are in progress, with a control to stop all motion. Axis directions shall match the Mount page's jog pad (traces to `EQP-MNT-010`). | P2 |
+| IMG-140 | The system shall keep a current object for each Pier, set to the item most recently selected in the Star Atlas and shown at the top right of the window. Frames the imaging tab saves and the frames captured for plate solving shall be named after it, and Capture & Solve with the Slew to Target action shall slew the mount to its coordinates and correct until the solution is within the accuracy of them (traces to `SKYMAP-010`, `PLT-070`). | P2 |
+| IMG-150 | The imaging tab shall let the user set the number of frames one Capture takes and the camera gain to use, take that many frames sequentially with the tab's settings, and stop a series on request. It shall offer an option, on by default, to write each captured frame to a scratch folder and register it in the image library so it appears on the library's Images screen. Frames written by the imaging tab shall carry every FITS header card the application can determine, including every card the library derives file and folder names from (traces to `META-010`, `LIB-150`). | P2 |
+| IMG-160 | The imaging tab shall offer a live-stacking option which, for a capture run of more than two frames, shall register each captured frame against the first of the run and combine it into a running mean that replaces the displayed frame, rather than each exposure discarding the last. The stack shall be saveable both to the image library and to a file of the user's choosing, and the saved stack shall record the number of frames combined and the total integration time. Individual frames shall continue to be catalogued separately (traces to `IMG-010`, `IMG-150`). | P2 |
+| IMG-170 | An Imaging settings screen shall let the user set a desired FITS sample format (BITPIX) for frames the imaging tab saves, offered as "Auto" (the smallest portable format that fits each frame without losing data) or a fixed 8, 16, 32 or -32; the fixed choices shall clip out-of-range values and round a float to the nearest integer rather than wrapping or raising. No frame the application writes, under any setting, shall use a 64-bit sample format, which common solving and analysis tools cannot read (traces to `META-010`). | P2 |
 
 ### 4.5 `SEQ` — Sequencer (Basic)
 
@@ -269,6 +277,7 @@ A live, rendered sky view — distinct from the catalog-based `SKY` and the FOV-
 | SKYMAP-060 | The system shall allow slewing the connected mount directly to a location clicked or selected on the sky map. | P2 |
 | SKYMAP-070 | The system shall allow a horizon obstruction table of azimuth/altitude pairs to be uploaded from a file for the Observatory (Options > Star Atlas), and shall shade the obstructed sky from the horizon up to each obstruction's altitude in a translucent colour on the sky map, toggleable with a "Horizon" option, so that stars behind it remain visible. | P2 |
 | SKYMAP-080 | Where the "Do not slew where obstructed" option is enabled (Options > Planning) and a horizon obstruction table is defined, the system shall refuse any mount slew whose altitude/azimuth falls inside an obstruction and report the error "Unable to slew to that area, it is obstructed". | P2 |
+| SKYMAP-090 | The system shall draw a labelled telescope reticle on the sky map for each Pier in the current Observatory, positioned where that Pier's mount reports it is pointing and, where the mount cannot be read, at the Pier's current object. A reticle shall be updated while its mount slews, so the slew's progress can be watched, and shall indicate both that a slew is running and the position it is heading for. The reticles shall be toggleable with a "Telescope markers" option (traces to `SKYMAP-050`, `IMG-140`). | P2 |
 
 ### 4.8b `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 
@@ -572,14 +581,14 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 |---|---|---|---|---|
 | ARCH | 8 | 6 | 2 | 0 |
 | OBS | 8 | 0 | 8 | 0 |
-| EQP (generic + device) | 26 | 18 | 8 | 0 |
-| PROF | 11 | 10 | 1 | 0 |
-| IMG | 11 | 8 | 3 | 0 |
+| EQP (generic + device) | 27 | 19 | 8 | 0 |
+| PROF | 12 | 11 | 1 | 0 |
+| IMG | 17 | 8 | 9 | 0 |
 | SEQ | 9 | 8 | 0 | 1 |
 | SEQ-ADV | 10 | 0 | 9 | 1 |
 | SKY | 9 | 6 | 3 | 0 |
 | FRAME | 6 | 0 | 5 | 1 |
-| SKYMAP | 8 | 3 | 5 | 0 |
+| SKYMAP | 9 | 3 | 6 | 0 |
 | SCHED | 10 | 8 | 2 | 0 |
 | CAL | 6 | 5 | 1 | 0 |
 | FOC | 9 | 6 | 3 | 0 |
@@ -606,7 +615,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (`PLUG-
 | NFR-SEC | 2 | 1 | 1 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **247** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
+| **Total** | **256** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3) | | | |
 
 ---
 

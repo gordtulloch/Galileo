@@ -159,12 +159,6 @@ class AutofocusService:
             coeffs = fit_parabola(positions, hfr_values)
             best = int(round(vertex_of_parabola(coeffs)))
             self._last_best_position = best
-            result = AutofocusResult(
-                success=True,
-                best_position=best,
-                sample_points=list(zip(positions, hfr_values)),
-                curve_coefficients=coeffs,
-            )
         except Exception as exc:
             await self._move_to(initial_position)
             result = AutofocusResult(
@@ -172,14 +166,27 @@ class AutofocusService:
                 failure_reason=str(exc),
                 sample_points=list(zip(positions, hfr_values)),
             )
+            self.last_run = result
+            return result
 
+        # FOC-020: the routine isn't done at "computed the best position" — it
+        # must actually move the focuser there and confirm with an exposure.
+        await self.apply_and_confirm(best)
+        result = AutofocusResult(
+            success=True,
+            best_position=best,
+            sample_points=list(zip(positions, hfr_values)),
+            curve_coefficients=coeffs,
+        )
         self.last_run = result
         return result
 
     async def apply_and_confirm(self, best_position: int) -> None:
-        """Move to *best_position* and take a confirmation exposure (FOC-020)."""
+        """Move to *best_position* and take a confirmation exposure (FOC-020),
+        so whatever is watching the run gets a look at focus at the position
+        actually used, not just the last sweep sample."""
         await self._move_to(best_position)
-        await self._measure_hfr()
+        await self._measure_hfr(confirm=True)
 
     async def run_manual(self, step_size: int = 200, num_points: int = 9) -> AutofocusResult:
         """User-initiated autofocus run (FOC-050)."""
@@ -216,8 +223,12 @@ class AutofocusService:
         if self._focuser is not None:
             await self._focuser.move_to(position)
 
-    async def _measure_hfr(self) -> float:
-        """Take a short exposure and return the mean HFR of detected stars."""
+    async def _measure_hfr(self, confirm: bool = False) -> float:
+        """Take a short exposure and return the mean HFR of detected stars.
+
+        *confirm* marks this as the post-move confirmation exposure rather
+        than a sweep sample, so a listener (the Focus screen) can show it
+        without folding it into the V-curve."""
         if self._camera is None:
             return 2.0
         await self._camera.start_exposure(duration=self.exposure_s)
@@ -228,7 +239,7 @@ class AutofocusService:
         logger.info("Focuser position %d: %d stars, HFR %.2f.", self._current_position, star_count, hfr)
         self._publish(FocusFrameEvent(
             source="autofocus", position=self._current_position, frame=frame,
-            hfr=hfr, fwhm=hfr * _FWHM_PER_HFR, star_count=star_count,
+            hfr=hfr, fwhm=hfr * _FWHM_PER_HFR, star_count=star_count, confirm=confirm,
         ))
         return hfr
 
@@ -277,25 +288,51 @@ def _compute_regional_hfr(frame) -> AberrationResult:
     return AberrationResult(regions=regions)
 
 
+def _to_2d(frame):
+    """Collapse a colour frame to one plane for star detection — SEP requires 2-D,
+    and colour carries no extra information here (same conversion as
+    ``galileo.platesolve.frame_for_solver``: Alpaca hands back ``(height, width, 3)``,
+    a FITS cube is plane-first)."""
+    import numpy as np
+    array = np.asarray(frame)
+    if array.ndim <= 2:
+        return array
+    if array.shape[-1] in (3, 4):
+        colour_axis = array.ndim - 1
+    elif array.shape[0] in (3, 4):
+        colour_axis = 0
+    else:
+        colour_axis = min(range(array.ndim), key=lambda axis: array.shape[axis])
+    return array.mean(axis=colour_axis)
+
+
 def _measure_stars(frame) -> tuple[float, int]:
     """``(hfr, star_count)`` for *frame*, detecting stars with SEP if available.
 
     The HFR falls back to 2.0 when no stars are found and to a crude contrast
-    estimate when SEP is unavailable; the star count is 0 in both cases."""
+    estimate when SEP is unavailable or fails; the star count is 0 in both cases."""
+    import numpy as np
+    array = _to_2d(frame)
     try:
         import sep
-        import numpy as np
-        data = frame.astype(np.float64)
+        data = array.astype(np.float64)
         bkg = sep.Background(data)
         data_sub = data - bkg
         objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
         if len(objects) == 0:
             return 2.0, 0
-        # Approximate HFR as FWHM/2 via flux-radius
-        return float(np.median(objects["a"] + objects["b"]) / 2), len(objects)
+        # True half-flux radius (the radius enclosing 50% of each object's flux),
+        # not the "a"/"b" shape-fit axes — those are ~1-2px even for a defocused
+        # star and were producing sub-pixel "HFR" values an order of magnitude
+        # too small.
+        radii, _flags = sep.flux_radius(
+            data_sub, objects["x"], objects["y"], 6.0 * objects["a"], 0.5,
+            normflux=objects["flux"], subpix=5,
+        )
+        return float(np.median(radii)), len(objects)
     except Exception:
-        import numpy as np
-        return float(np.std(frame) / (np.mean(frame) + 1e-6) * 2.0) or 2.0, 0
+        logger.exception("Star detection failed; falling back to a contrast-based HFR estimate.")
+        return float(np.std(array) / (np.mean(array) + 1e-6) * 2.0) or 2.0, 0
 
 
 def _compute_hfr(frame) -> float:

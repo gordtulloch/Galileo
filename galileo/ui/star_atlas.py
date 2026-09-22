@@ -45,6 +45,10 @@ _CONSTELLATION_LABEL_COLOR = QColor(190, 140, 215, 200)
 _DSO_COLOR = QColor(120, 200, 150)
 _BODY_COLOR = QColor(255, 214, 120)
 _SELECT_COLOR = QColor(255, 90, 90)
+# Telescope reticles (SKYMAP-090): where each Pier is pointing, and where it is on its way to.
+_PIER_COLOR = QColor(120, 225, 255)
+_PIER_SLEWING_COLOR = QColor(255, 190, 90)
+_PIER_TARGET_COLOR = QColor(140, 175, 200)
 # Horizon obstructions: translucent, so the stars behind them can still be seen.
 _OBSTRUCTION_RGBA = (220, 40, 40, 95)
 
@@ -53,7 +57,8 @@ MAX_MAG_LIMIT = 7.0
 # The on/off options the page offers as checkboxes. These and the chosen deep-sky
 # catalogs are remembered between runs.
 PERSISTED_TOGGLES = ("show_grid", "show_boundaries", "show_lines", "abbreviate_constellations",
-                     "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky", "show_horizon")
+                     "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky", "show_horizon",
+                     "show_pier_markers")
 
 
 def _prefs_path():
@@ -143,6 +148,9 @@ class StarAtlasView(QWidget):
         self.daylight_sky = True
         self.show_horizon = False       # shade the horizon obstructions (Options > Star Atlas)
         self._horizon: "HorizonProfile | None" = None
+        # Telescope reticles, one per Pier (SKYMAP-090); the page refills these as the mounts move.
+        self.show_pier_markers = True
+        self.pier_markers: list[dict[str, Any]] = []
 
         self.view = sa.Viewport()
         self.selected: dict[str, Any] | None = None
@@ -256,6 +264,14 @@ class StarAtlasView(QWidget):
 
     def set_option(self, name: str, value: Any) -> None:
         setattr(self, name, value)
+        self.update()
+
+    def set_pier_markers(self, markers: "list[dict[str, Any]]") -> None:
+        """Show a reticle for each Pier (SKYMAP-090). Each marker is a dict with J2000
+        ``ra_deg``/``dec_deg``, a ``label``, and optional ``slewing`` (drawn dashed and in a
+        different colour) and ``target`` (the J2000 position it is slewing to, drawn as a fainter
+        reticle joined to the telescope's by a line). Replaces whatever was shown before."""
+        self.pier_markers = list(markers)
         self.update()
 
     def set_horizon(self, horizon: "HorizonProfile | None") -> None:
@@ -445,6 +461,7 @@ class StarAtlasView(QWidget):
         self._draw_horizon(p, vp)
         self._draw_labels(p, vp, sets)
         self._draw_selection(p, vp)
+        self._draw_pier_markers(p, vp)
         self._draw_overlay(p)
         p.end()
 
@@ -660,6 +677,62 @@ class StarAtlasView(QWidget):
                 p.setPen(QPen(color, 1.5))
                 p.setBrush(Qt.NoBrush)
                 p.drawEllipse(QPointF(x[0], y[0]), 14, 14)
+
+    def _draw_pier_markers(self, p: QPainter, vp) -> None:
+        """Draw each Pier's telescope reticle (SKYMAP-090). A mount that is slewing is drawn in
+        the slewing colour with a line to its target, so the reticle can be watched crossing the
+        sky as the slew runs."""
+        if not self.show_pier_markers:
+            return
+        font = QFont(p.font())
+        font.setPointSizeF(8.5)
+        font.setBold(True)
+        p.setFont(font)
+        for marker in self.pier_markers:
+            here = self._marker_point(vp, marker)
+            if here is None:
+                continue
+            slewing = bool(marker.get("slewing"))
+            color = _PIER_SLEWING_COLOR if slewing else _PIER_COLOR
+            target = marker.get("target")
+            there = self._marker_point(vp, target) if target else None
+            if there is not None and math.hypot(there[0] - here[0], there[1] - here[1]) > 4:
+                # Where it is headed, and the path still to go.
+                p.setPen(QPen(_PIER_TARGET_COLOR, 1.0, Qt.DotLine))
+                p.drawLine(QPointF(*here), QPointF(*there))
+                self._draw_reticle(p, there, _PIER_TARGET_COLOR, dashed=False, radius=8)
+            self._draw_reticle(p, here, color, dashed=slewing)
+            label = str(marker.get("label") or "")
+            if label:
+                p.setPen(color)
+                p.drawText(QPointF(here[0] + 20, here[1] - 8), label)
+
+    def _marker_point(self, vp, marker) -> "tuple[float, float] | None":
+        """Screen position of a marker's J2000 coordinates, or ``None`` if it isn't in view."""
+        if not marker:
+            return None
+        try:
+            alt, az = self._altaz_arrays(np.array([float(marker["ra_deg"])]), np.array([float(marker["dec_deg"])]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        x, y, vis = vp.project(alt, az)
+        return (float(x[0]), float(y[0])) if vis[0] else None
+
+    @staticmethod
+    def _draw_reticle(p: QPainter, point: "tuple[float, float]", color: QColor,
+                      dashed: bool = False, radius: float = 13.0) -> None:
+        """A circle with four ticks and a gap in the middle, so what it is on stays visible."""
+        x, y = point
+        pen = QPen(color, 1.6)
+        if dashed:
+            pen.setStyle(Qt.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(x, y), radius, radius)
+        p.setPen(QPen(color, 1.6))
+        inner, outer = radius * 0.45, radius * 1.5
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            p.drawLine(QPointF(x + dx * inner, y + dy * inner), QPointF(x + dx * outer, y + dy * outer))
 
     def _draw_overlay(self, p: QPainter) -> None:
         font = QFont(p.font())

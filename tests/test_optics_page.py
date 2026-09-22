@@ -409,3 +409,112 @@ def test_imaging_filter_move_failure_is_reported_not_raised(window):
     _pick_filter(window, "R")
     assert window._imaging_filter_thread is None
     assert "failed" in window._window.statusBar().currentMessage()
+
+
+# --- The top-bar Camera selector (PROF-120) ---------------------------------
+
+def _camera_selector_shown(window):
+    return not window._camera_combo.isHidden() and not window._camera_label.isHidden()
+
+
+def _cameras_shown(window):
+    combo = window._camera_combo
+    return [combo.itemText(i) for i in range(combo.count())]
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_camera_selector_appears_wherever_the_optics_selector_does(window):
+    """PROF-120: the Camera selector is shown on exactly the screens that choose the optics — an optical train is the tube and its camera."""
+    save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, device_name="ASI2600")
+    for section in ("equipment", "planning", "framing", "imaging", "solve", "science"):
+        _open_section(window, section)
+        assert _camera_selector_shown(window) == _optics_selector_shown(window), section
+    for section in ("framing", "imaging", "solve"):
+        _open_section(window, section)
+        assert _camera_selector_shown(window), f"{section} chooses the optics, so it chooses the camera"
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_a_single_camera_is_still_shown(window):
+    """PROF-120: the selector is shown even with one camera, so which camera a screen will use is never left to be inferred."""
+    save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, device_name="ASI2600")
+    _open_section(window, "solve")
+    assert _camera_selector_shown(window) and window._camera_combo.isEnabled()
+    assert len(_cameras_shown(window)) == 1
+    assert "Primary Camera" in _cameras_shown(window)[0] and "ASI2600" in _cameras_shown(window)[0]
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_selector_says_whether_the_camera_is_connected(window):
+    """PROF-120: each entry says whether that camera is connected, so a screen that refuses to capture shows its reason."""
+    save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, device_name="ASI2600")
+    _open_section(window, "solve")
+    assert _cameras_shown(window) == ["Primary Camera — ASI2600 (not connected)"]
+
+    window._camera_backends["primary camera"] = object()
+    window._refresh_camera_combo()
+    assert _cameras_shown(window) == ["Primary Camera — ASI2600"]
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_with_no_camera_configured_the_selector_stays_but_is_disabled(window):
+    """PROF-120: with no camera configured the selector remains visible but disabled, saying where to set one up."""
+    _open_section(window, "solve")
+    assert _camera_selector_shown(window) and not window._camera_combo.isEnabled()
+    assert _cameras_shown(window) == ["None configured — see Equipment > Camera"]
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_choosing_a_camera_changes_the_one_screens_use(window):
+    """PROF-120: picking a camera in the selector is what the capture screens then use."""
+    for slot in ("primary", "camera_2"):
+        save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1,
+                           device_name=f"cam {slot}", slot=slot)
+    _open_section(window, "solve")
+    combo = window._camera_combo
+    assert combo.count() == 2 and window._active_camera_slot == "primary"
+    # Primary first, whatever order the database hands the slots back in.
+    assert [combo.itemData(i) for i in range(2)] == ["primary", "camera_2"]
+
+    combo.setCurrentIndex(1)
+    combo.activated.emit(1)
+    assert window._active_camera_slot == "camera_2"
+
+    from galileo.ui.app_window import _camera_backend_key_for_slot
+    second = object()
+    window._camera_backends[_camera_backend_key_for_slot("camera_2")] = second
+    from galileo.ui.solve import SolvePage
+    assert SolvePage(window)._camera() is second, "the Solve screen uses the selected camera"
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_the_no_camera_message_names_the_selected_camera(window):
+    """PROF-120: refusing to capture says which camera is selected and what to do, not just "connect a camera"."""
+    message = window.camera_not_connected_message()
+    assert "Primary Camera" in message and "Equipment > Camera" in message
+    assert "No Primary Camera is configured" in message, "nothing is saved for this Pier yet"
+
+    save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, device_name="ASI2600")
+    message = window.camera_not_connected_message()
+    assert "ASI2600" in message and "not connected" in message
+
+
+@pytest.mark.requirement("TC-PROF-120")
+@pytest.mark.priority("MVP")
+def test_tc_prof_120_camera_slots_are_listed_primary_first(window):
+    """PROF-120: saved slots come back in slot order, not the database's — "camera_2" must not sort ahead of "primary"."""
+    from galileo.observatory import list_device_config_slots
+    for slot in ("camera_3", "primary", "camera_2"):
+        save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1,
+                           device_name=f"cam {slot}", slot=slot)
+    assert list_device_config_slots(window.pier, "camera") == ["primary", "camera_2", "camera_3"]
+
+    _open_section(window, "solve")
+    assert [c.split(" —")[0] for c in _cameras_shown(window)] == ["Primary Camera", "Camera 2", "Camera 3"]
+    assert window._active_camera_slot == "primary"

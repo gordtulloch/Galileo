@@ -649,3 +649,210 @@ async def test_tc_plt_010_real_astap_solves_a_synthetic_star_field(tmp_path):
     fits.PrimaryHDU(np.random.default_rng(1).normal(1000, 30, (600, 800)).astype(np.float32)).writeto(noise)
     result = await solver.solve(noise, hint=(ra0, dec0))
     assert result.success is False and result.failure_reason
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+async def test_tc_plt_070_captured_frames_tell_the_solver_the_image_scale(tmp_path):
+    """PLT-070: a frame captured for solving carries the pixel size, focal length and Bayer pattern, so the solver can work out the image scale itself instead of searching for it."""
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    rig = _Rig(tmp_path)
+    rig.workflow.frame_metadata = {
+        "focal_length_mm": 1000.0, "pixel_size_x_um": 3.76, "pixel_size_y_um": 3.76,
+        "bayer_pattern": "RGGB", "telescope": "Newt 200", "instrument": "ASI2600MC",
+    }
+    rig.solver._run_solver = AsyncMock(return_value=rig.ok(10.0, 41.0))
+
+    await rig.workflow.capture_and_solve(plt_mod.SolveSettings(action=plt_mod.SolveAction.NOTHING))
+
+    frame = next((tmp_path / "solve").glob("solve_*.fits"))
+    hdr = fits.getheader(frame)
+    assert hdr["FOCALLEN"] == 1000.0 and hdr["XPIXSZ"] == 3.76 and hdr["YPIXSZ"] == 3.76
+    assert hdr["BAYERPAT"] == "RGGB", "a one-shot-colour sensor's mosaic layout"
+    assert hdr["TELESCOP"] == "Newt 200" and hdr["INSTRUME"] == "ASI2600MC"
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+async def test_tc_plt_070_a_frame_with_nothing_configured_is_still_written(tmp_path):
+    """PLT-070: with no optics or camera configured the frame is still written, just without the scale keywords — solving is then the solver's own search."""
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    rig = _Rig(tmp_path)
+    rig.solver._run_solver = AsyncMock(return_value=rig.ok(10.0, 41.0))
+
+    await rig.workflow.capture_and_solve(plt_mod.SolveSettings(action=plt_mod.SolveAction.NOTHING))
+
+    frame = next((tmp_path / "solve").glob("solve_*.fits"))
+    hdr = fits.getheader(frame)
+    assert "FOCALLEN" not in hdr and "BAYERPAT" not in hdr
+    assert fits.getdata(frame).shape == (40, 60), "the pixels are what matter and they are there"
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_frames_are_written_in_a_format_the_solver_can_read(tmp_path):
+    """PLT-070: whatever the camera hands back, the frame written for the solver is a single plane at a bit depth solvers accept — a 64-bit or multi-plane FITS is rejected as a broken file."""
+    import json
+    import numpy as np
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+
+    # Alpaca builds its image from JSON numbers, which numpy makes 64-bit integers.
+    alpaca = np.asarray(json.loads(json.dumps([[100, 200], [300, 400]]))).swapaxes(0, 1)
+    assert alpaca.dtype == np.int64, "the case this guards against"
+    colour = np.asarray(json.loads(json.dumps([[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]])))
+
+    for name, data in (("alpaca_mono", alpaca), ("alpaca_colour", colour),
+                       ("indi", np.zeros((4, 4), dtype=np.uint16)),
+                       ("float", np.zeros((4, 4))),
+                       ("planes_first", np.zeros((3, 4, 5), dtype=np.uint16))):
+        path = tmp_path / f"{name}.fits"
+        plt_mod._write_frame(data, path)
+        hdr = fits.getheader(path)
+        assert hdr["NAXIS"] == 2, f"{name}: one plane, not a cube"
+        assert hdr["BITPIX"] in (16, -32), f"{name}: BITPIX {hdr['BITPIX']} is not one solvers read"
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_solve_frame_puts_bzero_bscale_ahead_of_the_header_not_after_it(tmp_path):
+    """PLT-070: for a 16-bit-unsigned solve frame, BSCALE/BZERO must land right after NAXIS2, ahead of the
+    instrument keywords — ASTAP refused a real captured frame with "Error reading the image file" when they
+    landed at the end instead, even though astropy (and Tenmon) read the exact same bytes without complaint."""
+    import numpy as np
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+
+    # The real reported case: an Alpaca-sourced 1920x1080 frame with typical solve metadata.
+    data = np.random.default_rng(0).integers(0, 60000, size=(1920, 1080), dtype=np.int64)
+    path = tmp_path / "solve_frame.fits"
+    plt_mod._write_frame(data, path, metadata={
+        "telescope": "Newt 200", "instrument": "ZWO ASI294MC Pro",
+        "focal_length_mm": 1000.0, "pixel_size_x_um": 4.63, "aperture_mm": 200.0,
+    })
+
+    header = fits.getheader(path)
+    keys = list(header.keys())
+    assert "BZERO" in keys and "BSCALE" in keys
+    first_custom = min(keys.index(k) for k in ("TELESCOP", "INSTRUME", "FOCALLEN"))
+    assert keys.index("BZERO") < first_custom and keys.index("BSCALE") < first_custom
+    assert keys.index("BZERO") - keys.index("NAXIS2") <= 3, "nothing but structural cards between them"
+
+    # And the data is unharmed by any of this.
+    data16 = np.clip(data, 0, 65535).astype(np.uint16)
+    assert np.array_equal(fits.getdata(path), data16)
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_preparing_a_frame_keeps_its_pixels():
+    """PLT-070: converting a frame for the solver preserves the image — the stars have to survive it."""
+    import numpy as np
+    plt_mod = pytest.importorskip("galileo.platesolve")
+
+    mono = np.array([[10, 20], [30, 40]], dtype=np.int64)
+    assert np.array_equal(plt_mod.frame_for_solver(mono), mono)
+
+    # Colour planes are averaged, which is what a solver wants: one luminance image.
+    colour = np.zeros((2, 2, 3), dtype=np.int64)
+    colour[..., 0], colour[..., 1], colour[..., 2] = 30, 60, 90
+    assert np.allclose(plt_mod.frame_for_solver(colour), 60.0)
+
+    # Data too big for 16 bits keeps its values rather than wrapping round.
+    wide = np.array([[0, 200000]], dtype=np.int64)
+    prepared = plt_mod.frame_for_solver(wide)
+    assert prepared.dtype == np.int32 and prepared.max() == 200000
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_a_file_loaded_from_disk_is_rewritten_into_a_readable_form(tmp_path):
+    """PLT-070: Load & Slew accepts the FITS files that exist in the wild — tile-compressed, three-plane colour, 64-bit — by rewriting them, not copying them."""
+    import numpy as np
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    data = (np.random.default_rng(0).random((60, 80)) * 1000).astype(np.uint16)
+
+    compressed = tmp_path / "compressed.fits"
+    fits.HDUList([fits.PrimaryHDU(), fits.CompImageHDU(data, compression_type="RICE_1")]).writeto(compressed)
+    colour = tmp_path / "colour.fits"
+    fits.PrimaryHDU(np.stack([data] * 3)).writeto(colour)
+    wide = tmp_path / "int64.fits"
+    header = fits.Header()
+    header["FOCALLEN"], header["XPIXSZ"] = 1000.0, 3.76
+    fits.PrimaryHDU(data.astype(np.int64), header=header).writeto(wide)
+
+    for source in (compressed, colour, wide):
+        out = tmp_path / f"{source.stem}_solver.fits"
+        plt_mod._normalise_fits(source, out)
+        result = fits.getheader(out)
+        assert result["NAXIS"] == 2, f"{source.name}: one plane"
+        assert result["BITPIX"] in (16, -32), f"{source.name}: BITPIX {result['BITPIX']}"
+
+    # What the solver could use from the original header is kept.
+    kept = fits.getheader(tmp_path / "int64_solver.fits")
+    assert kept["FOCALLEN"] == 1000.0 and kept["XPIXSZ"] == 3.76
+
+    with pytest.raises(ValueError):
+        plt_mod._normalise_fits(_headers_only(tmp_path), tmp_path / "nope.fits")
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_a_rewritten_file_also_puts_bzero_bscale_ahead_of_the_kept_header(tmp_path):
+    """PLT-070: Load & Slew's rewrite has the same ordering requirement as a freshly captured solve frame — the
+    kept source-header cards (WCS, focal length, …) must not push BSCALE/BZERO past NAXIS2."""
+    import numpy as np
+    from astropy.io import fits
+    plt_mod = pytest.importorskip("galileo.platesolve")
+
+    data = (np.random.default_rng(0).random((60, 80)) * 60000).astype(np.uint16)
+    source = tmp_path / "loaded.fits"
+    header = fits.Header()
+    header["TELESCOP"], header["FOCALLEN"], header["CRVAL1"] = "Newt 200", 1000.0, 10.5
+    fits.PrimaryHDU(data.astype(np.int64), header=header).writeto(source)
+
+    out = tmp_path / "rewritten.fits"
+    plt_mod._normalise_fits(source, out)
+
+    keys = list(fits.getheader(out).keys())
+    assert "BZERO" in keys and "BSCALE" in keys
+    first_kept = min(keys.index(k) for k in ("TELESCOP", "FOCALLEN", "CRVAL1"))
+    assert keys.index("BZERO") < first_kept and keys.index("BSCALE") < first_kept
+
+
+def _headers_only(tmp_path):
+    from astropy.io import fits
+    path = tmp_path / "no_image.fits"
+    fits.PrimaryHDU().writeto(path, overwrite=True)
+    return path
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+async def test_tc_plt_070_a_solver_rejecting_the_file_says_what_it_was_given(tmp_path, sample_fits_file):
+    """PLT-070: "Error reading the image file" on its own says nothing, so the frame's actual shape and bit depth are reported with it."""
+    from unittest.mock import AsyncMock, MagicMock
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    solver = plt_mod.PlateSolver(backend="astap", executable=str(sample_fits_file))
+
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"", b""))
+    process.returncode = 16          # ASTAP: could not read the image file
+
+    async def fake_exec(*args, **kwargs):
+        return process
+
+    import asyncio as _asyncio
+    original = _asyncio.create_subprocess_exec
+    _asyncio.create_subprocess_exec = fake_exec
+    try:
+        result = await solver.solve(sample_fits_file)
+    finally:
+        _asyncio.create_subprocess_exec = original
+
+    assert result.success is False
+    assert "Error reading the image file" in result.failure_reason
+    assert "100x100" in result.failure_reason and "BITPIX" in result.failure_reason

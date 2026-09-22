@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How often the Star Atlas re-reads a mount's position for its reticle (SKYMAP-090).
+_POINTING_POLL_MS = 3000
+_SLEWING_POLL_MS = 1000
+
 _PARKED_MESSAGE = "The mount is parked — unpark it first."
 _OBSTRUCTED_MESSAGE = "Unable to slew to that area, it is obstructed"
 
@@ -97,7 +101,9 @@ _OPTICS_SECTIONS = ("framing", "imaging", "solve")
 
 # Primary sections that take frames from one of the Pier's cameras, and so show
 # the top bar's Camera selector (when the Pier has more than one).
-_CAMERA_SECTIONS = ("imaging", "solve")
+# The camera selector appears wherever the optics selector does: an optical train is the tube
+# *and* the camera it feeds, so a screen that needs one needs the other.
+_CAMERA_SECTIONS = _OPTICS_SECTIONS
 
 EQUIPMENT_CATEGORIES = [
     ("camera", "Camera", "camera"),
@@ -249,6 +255,11 @@ class AppWindow:
         self._camera_backends: dict[str, object] = {}
         self._imaging_capture_thread = None
         self._imaging_filter_thread = None
+        # Where each Pier's telescope is pointing, for the Star Atlas reticles (SKYMAP-090):
+        # {pier key: {"ra_deg", "dec_deg", "slewing"}}, refreshed by polling the connected mount.
+        self._pier_pointing: dict = {}
+        self._pier_poll_thread = None
+        self._tracking_thread = None     # waits for a slew to end, then starts tracking (EQP-MNT-050)
         self._current_primary_section = "equipment"
         self._active_camera_slot = "primary"
         self._active_optics_position = 0
@@ -353,8 +364,43 @@ class AppWindow:
         layout.addWidget(self._camera_combo)
 
         layout.addStretch(1)
+
+        # The selected Pier's current object (IMG-140): whatever was last picked in the Star Atlas.
+        self._current_object_label = QLabel()
+        self._current_object_label.setObjectName("CurrentObjectLabel")
+        self._current_object_label.setToolTip(
+            "The current object of this Pier, set by selecting an item in the Star Atlas. Captured frames "
+            "are named after it, and Solve's Slew to Target slews to it.")
+        layout.addWidget(self._current_object_label)
+        self._refresh_current_object()
+
         self._load_observatories()
         return bar
+
+    def current_object(self):
+        """The selected Pier's current object (IMG-140), or ``None``."""
+        from galileo.current_object import get_current_objects
+        return get_current_objects().get(self._current_pier)
+
+    def _set_current_object(self, atlas_obj: dict) -> None:
+        """A Star Atlas item was selected: it becomes the selected Pier's current object."""
+        from galileo.current_object import CurrentObject, get_current_objects
+        if self._current_pier is None:
+            self._window.statusBar().showMessage("Create a Pier to keep a current object.", 4000)
+            return
+        get_current_objects().set(self._current_pier, CurrentObject.from_atlas(atlas_obj))
+        self._refresh_current_object()
+
+    def _refresh_current_object(self) -> None:
+        """Show the current object at the top right, and tell the Solve page what it now targets."""
+        obj = self.current_object()
+        self._current_object_label.setText(f"Current object: {obj.name}" if obj is not None else "Current object: none")
+        solve = self._device_pages.get("solve") or {}
+        if "refresh_target" in solve:
+            solve["refresh_target"]()
+        refresh_markers = getattr(self, "_star_atlas_refresh_markers", None)
+        if refresh_markers is not None:
+            refresh_markers()
 
     def _load_observatories(self) -> None:
         """Populate the Observatory combo from persisted records (settings
@@ -682,10 +728,11 @@ class AppWindow:
     # --- Top bar: Camera selection (Imaging screen, multi-camera Piers) -----
 
     def _refresh_camera_combo(self) -> None:
-        """Show the top-bar Camera selector only while on a screen that
-        captures frames (``_CAMERA_SECTIONS``) and only when the current Pier
-        has more than one configured camera slot — otherwise there is nothing
-        to choose between."""
+        """Fill the top-bar Camera selector and show it on every screen that also chooses the
+        optics (``_CAMERA_SECTIONS``). It is shown even when the Pier has only one camera: the
+        screens that capture frames can do nothing without it, so which camera they will use — and
+        whether it is connected — has to be visible rather than inferred. With none configured it
+        stays visible but disabled, pointing at where to configure one."""
         from galileo.observatory import list_device_config_slots, get_device_config
 
         combo = self._camera_combo
@@ -708,7 +755,13 @@ class AppWindow:
                     cfg = None
             if cfg is not None and cfg.device_name:
                 label = f"{label} — {cfg.device_name}"
+            if self._camera_backends.get(_camera_backend_key_for_slot(slot)) is None:
+                # Without this the selector looks the same whether or not the camera answered,
+                # and a screen refusing to capture looks like it has no reason to.
+                label = f"{label} (not connected)"
             combo.addItem(label, slot)
+        if not slots:
+            combo.addItem("None configured — see Equipment > Camera")
 
         if self._active_camera_slot not in slots:
             self._active_camera_slot = slots[0] if slots else "primary"
@@ -717,7 +770,8 @@ class AppWindow:
             combo.setCurrentIndex(idx)
         combo.blockSignals(False)
 
-        show = len(slots) > 1 and self._current_primary_section in _CAMERA_SECTIONS
+        combo.setEnabled(bool(slots))
+        show = self._current_primary_section in _CAMERA_SECTIONS
         combo.setVisible(show)
         self._camera_label.setVisible(show)
 
@@ -759,6 +813,7 @@ class AppWindow:
         option_builders["library"] = self._build_library_settings_page
         option_builders["star_atlas"] = self._build_star_atlas_settings_page
         option_builders["planning"] = self._build_planning_settings_page
+        option_builders["imaging"] = self._build_imaging_settings_page
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
@@ -870,6 +925,7 @@ class AppWindow:
         from galileo.ui.library.pages import LibraryScreens
 
         screens = LibraryScreens(on_configure=self._open_library_settings)
+        self._library_screens = screens
         return self._build_submenu_page(
             LIBRARY_ITEMS, {item_id: (lambda item_id=item_id: screens.page(item_id)) for item_id, _l, _i in LIBRARY_ITEMS})
 
@@ -2347,6 +2403,7 @@ class AppWindow:
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
                 return
             logger.info("Mount: slew requested to RA %.4fh Dec %.4f°", ra_hours, dec_deg)
+            self._track_when_slew_finishes(adapter)
 
         ra_slew_btn.clicked.connect(_slew_radec_clicked)
         dec_slew_btn.clicked.connect(_slew_radec_clicked)
@@ -2371,6 +2428,7 @@ class AppWindow:
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
                 return
             logger.info("Mount: slew requested to Alt %.4f° Az %.4f°", alt_deg, az_deg)
+            self._track_when_slew_finishes(adapter)
 
         alt_slew_btn.clicked.connect(_slew_altaz_clicked)
         az_slew_btn.clicked.connect(_slew_altaz_clicked)
@@ -2564,6 +2622,8 @@ class AppWindow:
 
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page
+        # The jog pad's axis reversal, so the Imaging page's nudge pad points the same way.
+        state["axis_reversed"] = lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked())
         self._device_pages["mount"] = state
         reload_page()
         autoconnect_page()
@@ -3970,7 +4030,7 @@ class AppWindow:
         screen."""
         from galileo.ui.solve import SolvePage
         page = SolvePage(self)
-        self._device_pages["solve"] = {"reload": page.reload}
+        self._device_pages["solve"] = {"reload": page.reload, "refresh_target": page.refresh_target}
         return page
 
     def _build_device_config_page(self, cat_id: str, label: str) -> "QWidget":
@@ -4222,6 +4282,7 @@ class AppWindow:
         self._refresh_optics_combo()
         self._refresh_camera_combo()
         self._refresh_imaging_filters()
+        self._refresh_current_object()
         refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
         if refresh_star_atlas_site is not None:
             refresh_star_atlas_site()
@@ -4258,6 +4319,191 @@ class AppWindow:
         refresh_table = getattr(self, "_horizon_table_refresh", None)
         if refresh_table is not None:
             refresh_table(points)
+
+    def pier_markers(self) -> list:
+        """A telescope reticle for each Pier in the current Observatory (SKYMAP-090).
+
+        A Pier whose mount Galileo has read reports where it is actually pointing, so its reticle
+        moves across the sky as it slews; its current object is shown as the target it is heading
+        for. A Pier with no reading falls back to its current object's position, labelled as the
+        target rather than the telescope. Only the selected Pier's mount is connected at a time
+        (the Equipment pages reconnect on every Pier change), so the other Piers normally show
+        their target alone."""
+        from galileo.current_object import get_current_objects, pier_key
+        from galileo.observatory import list_piers
+
+        if self._current_observatory is None:
+            return []
+        try:
+            piers = list_piers(self._current_observatory)
+        except Exception:
+            logger.exception("Could not load the Piers for the Star Atlas markers")
+            return []
+
+        objects = get_current_objects()
+        markers = []
+        for pier in piers:
+            target = objects.get(pier)
+            target_point = {"ra_deg": target.ra_deg, "dec_deg": target.dec_deg} if target is not None else None
+            pointing = self._pier_pointing.get(pier_key(pier))
+            if pointing is not None:
+                label = f"{pier.name} → {target.name}" if target is not None else pier.name
+                if pointing.get("slewing"):
+                    label += " (slewing)"
+                markers.append({"ra_deg": pointing["ra_deg"], "dec_deg": pointing["dec_deg"],
+                                "label": label, "slewing": bool(pointing.get("slewing")),
+                                "target": target_point})
+            elif target_point is not None:
+                markers.append({**target_point, "label": f"{pier.name} → {target.name}", "slewing": False})
+        return markers
+
+    def _poll_pier_pointing(self, on_done=None) -> None:
+        """Read the connected mount's position off the Qt UI thread and remember it for the Star
+        Atlas reticles (SKYMAP-090). One poll at a time; a mount that can't be read is forgotten,
+        so its reticle falls back to the Pier's target rather than freezing where it last was."""
+        from galileo.current_object import pier_key
+
+        mount = (self._device_pages.get("mount") or {}).get("adapter")
+        key = pier_key(self._current_pier)
+        if mount is None or key is None:
+            if self._pier_pointing.pop(key, None) is not None and on_done is not None:
+                on_done()
+            return
+        if self._pier_poll_thread is not None:
+            return
+
+        def done(status) -> None:
+            self._pier_poll_thread = None
+            pointing = None
+            if status:
+                ra_hours, dec = status.get("right_ascension"), status.get("declination")
+                if ra_hours is not None and dec is not None:
+                    from galileo.platesolve import mount_frame_to_j2000
+                    ra_deg, dec_deg = mount_frame_to_j2000(ra_hours * 15.0, dec, status.get("equatorial_system"))
+                    pointing = {"ra_deg": ra_deg, "dec_deg": dec_deg, "slewing": bool(status.get("slewing"))}
+            if pointing is None:
+                self._pier_pointing.pop(key, None)
+            else:
+                self._pier_pointing[key] = pointing
+            if on_done is not None:
+                on_done()
+
+        thread = _MountPositionThread(mount, self._window)
+        thread.position.connect(done)
+        self._pier_poll_thread = thread
+        thread.start()
+
+    def _track_when_slew_finishes(self, mount, target=None) -> None:
+        """Once the slew that was just started finishes, track at the rate the target needs
+        (EQP-MNT-050) — solar for the Sun, lunar for the Moon, sidereal for everything else.
+
+        Waiting for a slew can take minutes, so it happens on a worker thread. With no *target*
+        given (the Mount page's own coordinate slews, which name nothing) the Pier's current
+        object stands in, since that is what the user last said they were working on."""
+        if mount is None:
+            return
+        if self._tracking_thread is not None:
+            return          # a slew already has one waiting; the later one wins by finishing later
+        target = target if target is not None else self.current_object()
+
+        def done(rate: str) -> None:
+            self._tracking_thread = None
+            if rate:
+                self._window.statusBar().showMessage(f"Slew finished — tracking at the {rate} rate.", 5000)
+
+        def failed(message: str) -> None:
+            self._tracking_thread = None
+            logger.error("Could not start tracking after the slew: %s", message)
+            self._window.statusBar().showMessage("Slew finished, but tracking could not be started — see log.", 8000)
+
+        thread = _ResumeTrackingThread(mount, target, self._window)
+        thread.done.connect(done)
+        thread.failed.connect(failed)
+        self._tracking_thread = thread
+        thread.start()
+
+    def camera_not_connected_message(self) -> str:
+        """Why a screen can't capture: which camera the top-bar selector is on, and what to do."""
+        from galileo.observatory import get_device_config
+        name = _camera_slot_label(self._active_camera_slot)
+        if self._current_pier is not None:
+            try:
+                cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
+            except Exception:
+                cfg = None
+            if cfg is None:
+                return (f"No {name} is configured for this Pier. Set one up on Equipment > Camera, "
+                        "then choose it in the Camera selector at the top of the window.")
+            if cfg.device_name:
+                name = f"{name} ({cfg.device_name})"
+        return (f"{name} is selected but not connected. Connect it on Equipment > Camera, or pick "
+                "another camera in the Camera selector at the top of the window.")
+
+    def _imaging_frame_context(self) -> dict:
+        """What the Imaging page knows about the rig, as FITS header values for
+        ``ImagingService.frame_context`` (IMG-150): telescope and camera, optics, the site, where the
+        mount is pointing and what it is aiming at, and the focuser position. Whatever can't be found
+        is left out; nothing here may stop a capture."""
+        import asyncio
+        from galileo.ui.imaging import format_dec_dms, format_ra_hms
+
+        context: dict = {}
+        tube = self.active_optical_tube()
+        if tube is not None:
+            context.update(telescope=tube.name, focal_length_mm=tube.focal_length_mm or None,
+                           aperture_mm=tube.aperture_mm or None)
+        camera_backend = self._camera_backends.get(_camera_backend_key_for_slot(self._active_camera_slot))
+        pier = self._current_pier
+        camera_cfg = None
+        if pier is not None:
+            from galileo.observatory import get_device_config
+            try:
+                camera_cfg = get_device_config(pier, "camera", slot=self._active_camera_slot)
+            except Exception:
+                logger.exception("Could not load the camera's configuration for the FITS header")
+        if camera_cfg is not None:
+            context.update(instrument=camera_cfg.device_name or camera_cfg.sensor_name,
+                           pixel_size_x_um=camera_cfg.pixel_size_um, pixel_size_y_um=camera_cfg.pixel_size_um,
+                           bayer_pattern=camera_cfg.bayer_pattern)
+        context.setdefault("instrument", getattr(camera_backend, "device_name", None))
+
+        site_lat = site_long = None
+        if pier is not None:
+            try:
+                observatory = pier.observatory
+                site_lat, site_long = observatory.latitude, observatory.longitude
+                context.update(site=observatory.name, observer=observatory.owner)
+            except Exception:
+                logger.exception("Could not read the Observatory for the FITS header")
+
+        pointing = None
+        mount = (self._device_pages.get("mount") or {}).get("adapter")
+        if mount is not None:
+            try:
+                status = asyncio.run(mount.get_status()) or {}
+                ra_hours, dec = status.get("right_ascension"), status.get("declination")
+                if ra_hours is not None and dec is not None:
+                    from galileo.platesolve import mount_frame_to_j2000
+                    pointing = mount_frame_to_j2000(ra_hours * 15.0, dec, status.get("equatorial_system"))
+                context["pier_side"] = status.get("side_of_pier")
+                if site_lat is None:
+                    site_lat, site_long = status.get("site_latitude"), status.get("site_longitude")
+            except Exception:
+                logger.warning("Could not read the mount's position for the FITS header", exc_info=True)
+        context.update(site_lat_deg=site_lat, site_long_deg=site_long)
+
+        target = self.current_object()
+        if target is not None:
+            context.update(objctra=format_ra_hms(target.ra_deg), objctdec=format_dec_dms(target.dec_deg))
+        aim = pointing or ((target.ra_deg, target.dec_deg) if target is not None else None)
+        if aim is not None:
+            context.update(ra_deg=aim[0], dec_deg=aim[1])
+
+        focuser = ((self._device_pages.get("focuser") or {}).get("get_adapter") or (lambda: None))()
+        position = getattr(focuser, "position", None)
+        if isinstance(position, int) and position > 0:
+            context["focus_position"] = position
+        return {key: value for key, value in context.items() if value not in (None, "")}
 
     def _mount_to_object(self, action: str, obj: dict) -> bool:
         """Point the current Pier's mount at a Star Atlas *obj*: ``"goto"`` slews
@@ -4304,6 +4550,8 @@ class AppWindow:
         logger.info("Mount: %s to %s (RA %.4fh Dec %.4f°)", action, obj["name"], ra_deg / 15.0, dec_deg)
         self._window.statusBar().showMessage(
             f"Slewing the mount to {obj['name']}." if action == "goto" else f"Mount synced to {obj['name']}.", 4000)
+        if action == "goto":
+            self._track_when_slew_finishes(adapter, obj)
         return True
 
     def _connect_device_adapter(self, category, driver: str, server: str, port: int, device_name: str):
@@ -4391,6 +4639,7 @@ class AppWindow:
             )
             return
         self._camera_backends[slot_label] = adapter
+        self._refresh_camera_combo()      # the selector shows which cameras are connected
         self._window.statusBar().showMessage(f"Connected to {slot_label} {device_name!r}.", 4000)
 
     # --- Imaging page (live preview / histogram / stats / manual capture) ---
@@ -4405,14 +4654,15 @@ class AppWindow:
         one-off manual shots, not a queue."""
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QGroupBox,
-            QComboBox, QDoubleSpinBox, QPushButton, QCheckBox, QProgressBar,
+            QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QProgressBar,
             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame,
-            QFileDialog, QMessageBox,
+            QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu,
         )
-        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtCore import Qt, QTimer, QObject, QEvent
         from PySide6.QtGui import QPixmap, QImage
 
-        from galileo.ui.imaging import ImagingService
+        from galileo.livestack import LIVE_STACK_MIN_FRAMES
+        from galileo.ui.imaging import DEFAULT_GAIN, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE
 
         page = QWidget()
         page.setObjectName("ImagingPage")
@@ -4421,9 +4671,16 @@ class AppWindow:
         root.setSpacing(0)
 
         # --- left: capture + view settings ----------------------------------
+        # In a scroll area because the panel also holds the nudge pad and, for a
+        # portrait frame, the histogram, progress bar and log (IMG-120).
+        settings_scroll = QScrollArea()
+        settings_scroll.setFixedWidth(300)
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setFrameShape(QFrame.NoFrame)
+        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         settings_panel = QFrame()
         settings_panel.setObjectName("ImagingSettingsPanel")
-        settings_panel.setFixedWidth(300)
+        settings_scroll.setWidget(settings_panel)
         settings_layout = QVBoxLayout(settings_panel)
         settings_layout.setContentsMargins(16, 16, 16, 16)
         settings_layout.setSpacing(10)
@@ -4442,6 +4699,27 @@ class AppWindow:
         exposure_spin.setSuffix(" s")
         capture_form.addRow("Exposure", exposure_spin)
 
+        quantity_spin = QSpinBox()
+        quantity_spin.setRange(1, 9999)
+        quantity_spin.setValue(1)
+        quantity_spin.setToolTip("How many frames Capture takes, one after another, with these settings (IMG-150).")
+        capture_form.addRow("Quantity", quantity_spin)
+
+        gain_spin = QSpinBox()
+        gain_spin.setRange(0, 100000)
+        gain_spin.setValue(DEFAULT_GAIN)
+        gain_spin.setToolTip("Camera gain for each exposure. 0 leaves the camera as it is configured (IMG-150).")
+        capture_form.addRow("Gain", gain_spin)
+
+        live_stack_check = QCheckBox("Live Stack")
+        live_stack_check.setToolTip(
+            f"Build the frames of one Capture into a single image instead of each replacing the last "
+            f"(IMG-160): every frame is aligned to the first and added to a running mean, so the preview, "
+            f"statistics and histogram improve as the run goes on. Applies to runs of "
+            f"{LIVE_STACK_MIN_FRAMES} frames or more. Each frame still goes to the Library on its own; "
+            f"use Save Stack for the stacked image.")
+        capture_form.addRow(live_stack_check)
+
         frame_type_combo = QComboBox()
         frame_type_combo.addItems(["Light", "Dark", "Flat", "Bias"])
         capture_form.addRow("Type", frame_type_combo)
@@ -4459,15 +4737,37 @@ class AppWindow:
 
         settings_layout.addWidget(capture_group)
 
+        capture_row = QHBoxLayout()
         capture_btn = QPushButton("Capture")
         capture_btn.setObjectName("AccentButton")
-        capture_btn.setToolTip("Manual single exposure, independent of any running sequence (IMG-070).")
-        settings_layout.addWidget(capture_btn)
+        capture_btn.setToolTip(
+            "Take Quantity frames one after another with these settings, independent of any running "
+            "sequence (IMG-070, IMG-150).")
+        capture_row.addWidget(capture_btn, 1)
+        stop_capture_btn = QPushButton("Stop")
+        stop_capture_btn.setToolTip("Abandon the exposure in progress and take no more frames.")
+        stop_capture_btn.setEnabled(False)
+        capture_row.addWidget(stop_capture_btn)
+        settings_layout.addLayout(capture_row)
 
         save_frame_btn = QPushButton("Save Frame…")
-        save_frame_btn.setToolTip("Save the currently displayed frame independently of the sequence save path (IMG-100).")
+        save_frame_btn.setToolTip("Save the currently displayed frame to disk as a FITS file, with all the "
+                                  "header cards Galileo can fill in (IMG-100, IMG-150).")
         save_frame_btn.setEnabled(False)
         settings_layout.addWidget(save_frame_btn)
+
+        save_stack_btn = QPushButton("Save Stack…")
+        save_stack_btn.setToolTip("Save the live stack to the Library or to a FITS file (IMG-160).")
+        save_stack_btn.setEnabled(False)
+        settings_layout.addWidget(save_stack_btn)
+
+        auto_save_check = QCheckBox("Auto-Save to Library")
+        auto_save_check.setChecked(True)
+        auto_save_check.setToolTip(
+            "Write each captured frame to a scratch folder and register it in the Library, which files it "
+            "in the repository — it then appears on Library > Images (IMG-150). Needs the repository folder "
+            "set in Options > Library.")
+        settings_layout.addWidget(auto_save_check)
 
         view_group = QGroupBox("View")
         view_form = QFormLayout(view_group)
@@ -4494,6 +4794,19 @@ class AppWindow:
         reset_view_btn = QPushButton("Reset View")
         view_form.addRow(reset_view_btn)
 
+        orientation_check = QCheckBox("Choose layout manually")
+        orientation_check.setToolTip(
+            "By default the page lays itself out for the shape of the frame: a portrait frame gets the "
+            "whole right side, with the histogram and log moved to the left (IMG-120). Tick this to "
+            "pick the layout yourself."
+        )
+        view_form.addRow(orientation_check)
+        orientation_combo = QComboBox()
+        orientation_combo.addItem("Landscape", LANDSCAPE)
+        orientation_combo.addItem("Portrait", PORTRAIT)
+        orientation_combo.setEnabled(False)
+        view_form.addRow("Layout", orientation_combo)
+
         settings_layout.addWidget(view_group)
 
         stats_group = QGroupBox("Statistics")
@@ -4508,8 +4821,58 @@ class AppWindow:
             stats_form.addRow(label_text, value_label)
         settings_layout.addWidget(stats_group)
 
+        nudge_group = QGroupBox("Mount Nudge")
+        nudge_layout = QVBoxLayout(nudge_group)
+        nudge_grid = QGridLayout()
+        nudge_north_btn, nudge_west_btn = QPushButton("N"), QPushButton("W")
+        nudge_stop_btn = QPushButton("Stop")
+        nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
+        nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn}
+        for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
+            btn.setObjectName("AccentButton")
+            btn.setFixedSize(44, 44)
+        nudge_grid.addWidget(nudge_north_btn, 0, 1)
+        nudge_grid.addWidget(nudge_west_btn, 1, 0)
+        nudge_grid.addWidget(nudge_stop_btn, 1, 1)
+        nudge_grid.addWidget(nudge_east_btn, 1, 2)
+        nudge_grid.addWidget(nudge_south_btn, 2, 1)
+        nudge_grid.setAlignment(Qt.AlignHCenter)
+        nudge_layout.addLayout(nudge_grid)
+        nudge_form = QFormLayout()
+        nudge_rate_combo = QComboBox()
+        for name, rate in NUDGE_RATES.items():
+            nudge_rate_combo.addItem(f"{name} ({rate:g}°/s)", rate)
+        nudge_rate_combo.setCurrentIndex(1)
+        nudge_rate_combo.setToolTip("How fast the mount moves during a nudge.")
+        nudge_form.addRow("Speed", nudge_rate_combo)
+        nudge_duration_spin = QDoubleSpinBox()
+        nudge_duration_spin.setRange(0.1, 10.0)
+        nudge_duration_spin.setSingleStep(0.1)
+        nudge_duration_spin.setDecimals(1)
+        nudge_duration_spin.setValue(0.5)
+        nudge_duration_spin.setSuffix(" s")
+        nudge_duration_spin.setToolTip("How long the mount moves for each press.")
+        nudge_form.addRow("Duration", nudge_duration_spin)
+        nudge_layout.addLayout(nudge_form)
+        nudge_group.setToolTip(
+            "Nudge the telescope while exposing (IMG-130). Uses the mount connected on Equipment > Mount, "
+            "with the same axis directions as its jog pad."
+        )
+        settings_layout.addWidget(nudge_group)
+
         settings_layout.addStretch(1)
-        root.addWidget(settings_panel)
+        root.addWidget(settings_scroll)
+
+        # A column between the settings and the preview, used only for a portrait
+        # frame (IMG-120): it takes the width the narrow preview leaves free and
+        # holds the histogram, progress bar and log.
+        dock_panel = QWidget()
+        dock_layout = QVBoxLayout(dock_panel)
+        dock_layout.setContentsMargins(8, 16, 8, 16)
+        dock_layout.setSpacing(6)
+        dock_layout.addStretch(1)
+        dock_panel.setVisible(False)
+        root.addWidget(dock_panel, 1)
 
         # --- right: live preview, histogram, progress, log ------------------
         content = QWidget()
@@ -4531,7 +4894,9 @@ class AppWindow:
         histogram.set_color(self._theme.accent_color)
         content_layout.addWidget(histogram)
 
-        progress_row = QHBoxLayout()
+        progress_widget = QWidget()   # a widget, not a bare layout, so it can move with the rest (IMG-120)
+        progress_row = QHBoxLayout(progress_widget)
+        progress_row.setContentsMargins(0, 0, 0, 0)
         status_label = QLabel("Idle")
         progress_row.addWidget(status_label)
         progress_bar = QProgressBar()
@@ -4539,16 +4904,70 @@ class AppWindow:
         progress_bar.setValue(0)
         progress_bar.setTextVisible(False)
         progress_row.addWidget(progress_bar, 1)
-        content_layout.addLayout(progress_row)
 
         log_heading = QLabel("Log")
         log_heading.setObjectName("CriteriaHeading")
-        content_layout.addWidget(log_heading)
         log_pane = self._build_log_pane()
         self._log_panes.append(log_pane)
-        content_layout.addWidget(log_pane)
 
         root.addWidget(content, 1)
+
+        # --- landscape / portrait layout (IMG-120) -----------------------------
+        # Landscape: preview on top of the right side, histogram/progress/log
+        # beneath it. Portrait: the preview is a full-height column one third of
+        # the page wide, and the nudge pad, histogram, progress and log sit in the
+        # column to its left, beside the settings.
+        secondary_widgets = (histogram, progress_widget, log_heading, log_pane)
+        nudge_slot = settings_layout.indexOf(nudge_group)   # where the nudge pad sits in landscape
+        layout_state = {"orientation": None}
+        unlimited_width = 16777215   # QWIDGETSIZE_MAX
+
+        def _log_height(lines: int) -> int:
+            return log_pane.fontMetrics().lineSpacing() * lines + log_pane.frameWidth() * 2 + 8
+
+        def _fit_preview_width() -> None:
+            """Portrait: the preview column is a third of the page's width."""
+            if layout_state["orientation"] == PORTRAIT:
+                content.setFixedWidth(max(1, page.width() // 3))
+            else:
+                content.setMinimumWidth(0)
+                content.setMaximumWidth(unlimited_width)
+
+        def _apply_orientation() -> None:
+            orientation = service.orientation
+            if orientation == layout_state["orientation"]:
+                return
+            layout_state["orientation"] = orientation
+            portrait = orientation == PORTRAIT
+            for widget in (*secondary_widgets, nudge_group):
+                content_layout.removeWidget(widget)
+                dock_layout.removeWidget(widget)
+                settings_layout.removeWidget(widget)
+            if portrait:
+                # The nudge pad leads the middle column; the rest follow, above its trailing stretch.
+                for i, widget in enumerate((nudge_group, *secondary_widgets)):
+                    dock_layout.insertWidget(i, widget)
+                    widget.setVisible(True)
+            else:
+                settings_layout.insertWidget(nudge_slot, nudge_group)
+                nudge_group.setVisible(True)
+                for widget in secondary_widgets:
+                    content_layout.addWidget(widget)
+                    widget.setVisible(True)
+            dock_panel.setVisible(portrait)
+            histogram.setFixedHeight(120 if portrait else 80)
+            log_pane.setFixedHeight(_log_height(12 if portrait else 10))
+            content_layout.setContentsMargins(*((8, 8, 8, 8) if portrait else (24, 20, 24, 20)))
+            _fit_preview_width()
+
+        class _PageResizeWatcher(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Resize:
+                    _fit_preview_width()
+                return False
+
+        resize_watcher = _PageResizeWatcher(page)
+        page.installEventFilter(resize_watcher)
 
         # --- wiring -----------------------------------------------------------
         def _selected_camera_backend():
@@ -4632,73 +5051,212 @@ class AppWindow:
         debayer_check.toggled.connect(_debayer_toggled)
         self._imaging_debayer_check = debayer_check
 
-        countdown = {"timer": None, "start": 0.0, "duration": 0.0}
+        def _orientation_choice_changed(*_args) -> None:
+            if orientation_check.isChecked():
+                service.set_manual_orientation(orientation_combo.currentData())
+            else:
+                service.set_manual_orientation(None)
+            _apply_orientation()
+
+        def _manual_orientation_toggled(checked: bool) -> None:
+            orientation_combo.setEnabled(checked)
+            if checked:
+                # Start from what the page is showing now, so ticking the box doesn't move anything.
+                orientation_combo.blockSignals(True)
+                orientation_combo.setCurrentIndex(orientation_combo.findData(service.orientation))
+                orientation_combo.blockSignals(False)
+            _orientation_choice_changed()
+
+        orientation_check.toggled.connect(_manual_orientation_toggled)
+        orientation_combo.currentIndexChanged.connect(_orientation_choice_changed)
+
+        # --- mount nudge (IMG-130) ---------------------------------------------
+        nudge_state = {"thread": None}
+
+        def _nudge_mount_adapter():
+            return (self._device_pages.get("mount") or {}).get("adapter")
+
+        def _set_nudge_busy(busy: bool) -> None:
+            for btn in nudge_dir_buttons.values():
+                btn.setEnabled(not busy)
+
+        def _nudge(direction: str) -> None:
+            mount = _nudge_mount_adapter()
+            if mount is None:
+                self._window.statusBar().showMessage("Connect the mount on Equipment > Mount to nudge it.", 4000)
+                return
+            if nudge_state["thread"] is not None:
+                return
+            reversed_getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
+            reversed_axes = reversed_getter() if reversed_getter is not None else (False, False)
+            rate, duration = nudge_rate_combo.currentData(), nudge_duration_spin.value()
+
+            def done() -> None:
+                nudge_state["thread"] = None
+                _set_nudge_busy(False)
+
+            def failed(message: str) -> None:
+                done()
+                if "parked" in message.lower():
+                    self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                else:
+                    self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
+                logger.error("Mount nudge %s failed: %s", direction, message)
+
+            thread = _NudgeThread(mount, direction, rate, duration, reversed_axes, self._window)
+            thread.finished_ok.connect(done)
+            thread.failed.connect(failed)
+            nudge_state["thread"] = thread
+            _set_nudge_busy(True)
+            logger.info("Mount: nudge %s at %g°/s for %.1fs", direction, rate, duration)
+            thread.start()
+
+        for direction, btn in nudge_dir_buttons.items():
+            btn.clicked.connect(lambda _checked=False, d=direction: _nudge(d))
+
+        def _nudge_stop() -> None:
+            mount = _nudge_mount_adapter()
+            if mount is None:
+                return
+            import asyncio
+            try:
+                asyncio.run(mount.move_axis(0, 0.0))
+                asyncio.run(mount.move_axis(1, 0.0))
+            except Exception:
+                logger.exception("Mount nudge stop failed")
+            logger.info("Mount: nudge Stop requested")
+
+        nudge_stop_btn.clicked.connect(_nudge_stop)
+
+        self._imaging_ui = {
+            "settings_panel": settings_panel, "dock_panel": dock_panel, "page": page,
+            "fit_preview_width": _fit_preview_width, "content": content, "preview": preview_view,
+            "histogram": histogram, "progress": progress_widget, "log": log_pane,
+            "orientation_check": orientation_check, "orientation_combo": orientation_combo,
+            "apply_orientation": _apply_orientation, "layout_state": layout_state,
+            "quantity": quantity_spin, "gain": gain_spin, "auto_save": auto_save_check,
+            "capture_button": capture_btn, "stop_button": stop_capture_btn, "status": status_label,
+            "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
+            "nudge_rate": nudge_rate_combo, "nudge_duration": nudge_duration_spin,
+            "nudge_state": nudge_state,
+        }
+
+        countdown = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
 
         def _tick_countdown() -> None:
             import time
             elapsed = time.monotonic() - countdown["start"]
             remaining = max(0.0, countdown["duration"] - elapsed)
-            progress_bar.setValue(int(min(1.0, elapsed / countdown["duration"]) * 1000) if countdown["duration"] else 1000)
-            if remaining > 0:
-                status_label.setText(f"Exposing… {remaining:0.1f}s left")
-            else:
-                status_label.setText("Downloading…")
+            fraction = min(1.0, elapsed / countdown["duration"]) if countdown["duration"] else 1.0
+            frame, total = countdown["frame"], countdown["total"]
+            progress_bar.setValue(int((frame - 1 + fraction) / total * 1000))
+            prefix = f"Frame {frame} of {total} — " if total > 1 else ""
+            status_label.setText(f"{prefix}Exposing… {remaining:0.1f}s left" if remaining > 0 else f"{prefix}Downloading…")
 
-        def on_capture_finished() -> None:
-            timer = countdown["timer"]
-            if timer is not None:
-                timer.stop()
-            capture_btn.setEnabled(True)
-            progress_bar.setValue(1000)
-            status_label.setText(f"Complete — {service.debayer_note}" if service.debayer_note else "Complete")
+        def on_frame_started(frame: int, total: int) -> None:
+            import time
+            countdown["start"], countdown["frame"], countdown["total"] = time.monotonic(), frame, total
+
+        def on_frame_done(_frame: int, _total: int) -> None:
+            # Each frame is shown as it arrives, not only the last one of a series.
             _refresh_preview()
             _refresh_stats()
             _refresh_histogram()
+            _apply_orientation()
             save_frame_btn.setEnabled(service.current_frame is not None)
-            self._window.statusBar().showMessage("Capture complete.", 4000)
-            self._imaging_capture_thread = None
+            save_stack_btn.setEnabled(service.stack_frame_count > 0)
 
-        def on_capture_failed(message: str) -> None:
+        def _refresh_library_images() -> None:
+            images = getattr(getattr(self, "_library_screens", None), "images", None)
+            if images is None:
+                return              # the Library hasn't been opened yet; it reads the catalog when it is
+            try:
+                images.load_fits_data()
+            except Exception:
+                logger.exception("Could not refresh Library > Images")
+
+        def _end_capture() -> None:
             timer = countdown["timer"]
             if timer is not None:
                 timer.stop()
             capture_btn.setEnabled(True)
+            stop_capture_btn.setEnabled(False)
+            self._imaging_capture_thread = None
+
+        def _series_summary() -> str:
+            done, total = service.series_done, service.series_total
+            text = ("Stopped" if service.stop_requested else "Complete") + (f" — {done} of {total} frames" if total > 1 or service.stop_requested else "")
+            if service.debayer_note:
+                text += f" — {service.debayer_note}"
+            if service.auto_save_to_library:
+                added = len(service.library_ids)
+                text += f" — {added} added to the Library" if added else " — none added to the Library"
+                if service.library_note:
+                    text += f". {service.library_note}"
+            if service.stacker.summary:
+                text += f" — {service.stacker.summary}"
+            return text
+
+        def on_capture_finished() -> None:
+            _end_capture()
+            progress_bar.setValue(1000)
+            save_stack_btn.setEnabled(service.stack_frame_count > 0)
+            summary = _series_summary()
+            status_label.setText(summary)
+            status_label.setToolTip(summary)
+            on_frame_done(0, 0)
+            if service.library_ids:
+                _refresh_library_images()
+            self._window.statusBar().showMessage(summary, 6000)
+
+        def on_capture_failed(message: str) -> None:
+            _end_capture()
             status_label.setText("Idle")
             progress_bar.setValue(0)
             logger.error("Manual capture failed: %s", message)
+            if service.library_ids:
+                _refresh_library_images()
             self._window.statusBar().showMessage("Capture failed — see log.", 6000)
-            self._imaging_capture_thread = None
 
         def do_capture() -> None:
             service._camera = _selected_camera_backend()
             if service._camera is None:
                 QMessageBox.information(
-                    self._window, "No camera connected",
-                    "Connect a camera on the Camera equipment page first.",
+                    self._window, "No camera connected", self.camera_not_connected_message(),
                 )
                 return
             if self._imaging_filter_thread is not None:
                 self._window.statusBar().showMessage("Wait for the filter wheel to finish moving.", 4000)
                 return
 
+            current = self.current_object()
+            service.object_name = current.name if current is not None else ""
             duration = exposure_spin.value()
+            quantity = quantity_spin.value()
             frame_type = frame_type_combo.currentText()
             filter_name = filter_combo.currentText().strip()
+            service.gain = gain_spin.value()
+            service.auto_save_to_library = auto_save_check.isChecked()
+            service.live_stack_enabled = live_stack_check.isChecked()
+            service.frame_context = self._imaging_frame_context()
             _use_camera_bayer_pattern(rebuild=False)
 
             import time
-            countdown["start"] = time.monotonic()
-            countdown["duration"] = duration
+            countdown.update(start=time.monotonic(), duration=duration, frame=1, total=quantity)
             capture_btn.setEnabled(False)
+            stop_capture_btn.setEnabled(True)
             progress_bar.setValue(0)
-            status_label.setText(f"Exposing… {duration:0.1f}s left")
+            status_label.setToolTip("")
+            _tick_countdown()
 
             timer = QTimer(page)
             timer.timeout.connect(_tick_countdown)
             timer.start(100)
             countdown["timer"] = timer
 
-            thread = _CaptureThread(service, duration, filter_name, frame_type, page)
+            thread = _CaptureThread(service, quantity, duration, filter_name, frame_type, page)
+            thread.frame_started.connect(on_frame_started)
+            thread.frame_done.connect(on_frame_done)
             thread.finished_ok.connect(on_capture_finished)
             thread.failed.connect(on_capture_failed)
             self._imaging_capture_thread = thread
@@ -4706,11 +5264,26 @@ class AppWindow:
 
         capture_btn.clicked.connect(do_capture)
 
+        def stop_capture() -> None:
+            service.request_stop()
+            status_label.setText("Stopping…")
+            camera = service._camera
+            if camera is not None:
+                import asyncio
+                try:
+                    asyncio.run(camera.abort_exposure())
+                except Exception:
+                    logger.exception("Could not abort the exposure")
+
+        stop_capture_btn.clicked.connect(stop_capture)
+
         def save_frame() -> None:
             if service.current_frame is None:
                 return
+            current = self.current_object()
+            service.object_name = current.name if current is not None else ""
             path, _ = QFileDialog.getSaveFileName(
-                self._window, "Save Frame", "frame.fits", "FITS files (*.fits *.fit)",
+                self._window, "Save Frame", service.suggested_filename(), "FITS files (*.fits *.fit)",
             )
             if not path:
                 return
@@ -4725,6 +5298,59 @@ class AppWindow:
 
         save_frame_btn.clicked.connect(save_frame)
 
+        def save_stack_to_file() -> None:
+            path, _ = QFileDialog.getSaveFileName(
+                self._window, "Save Stack", service.stack_filename(), "FITS files (*.fits *.fit)",
+            )
+            if not path:
+                return
+            try:
+                service.save_stack(path)
+            except Exception:
+                logger.exception("Could not save the stack to %s", path)
+                self._window.statusBar().showMessage("Could not save the stack — see log.", 6000)
+                return
+            logger.info("Saved the stack of %d frames to %s", service.stack_frame_count, path)
+            self._window.statusBar().showMessage(f"Saved the stack to {path}.", 4000)
+
+        def save_stack_to_library() -> None:
+            current = self.current_object()
+            service.object_name = current.name if current is not None else ""
+            try:
+                file_id = service.save_stack_to_library()
+            except Exception:
+                logger.exception("Could not add the stack to the Library")
+                self._window.statusBar().showMessage("Could not add the stack to the Library — see log.", 6000)
+                return
+            if file_id:
+                _refresh_library_images()
+                message = f"Added the stack of {service.stack_frame_count} frames to the Library."
+                if service.library_note:
+                    message += f" {service.library_note}"
+                self._window.statusBar().showMessage(message, 6000)
+            else:
+                self._window.statusBar().showMessage(
+                    service.library_note or "The stack was not added to the Library — see log.", 8000)
+
+        def save_stack() -> None:
+            """Ask where the stack should go — the Library files it in the repository, a file
+            puts it wherever the user says."""
+            if service.stack_frame_count == 0:
+                return
+            menu = QMenu(page)
+            to_library = menu.addAction("Save to Library")
+            to_file = menu.addAction("Save to File…")
+            to_library.triggered.connect(save_stack_to_library)
+            to_file.triggered.connect(save_stack_to_file)
+            menu.exec(save_stack_btn.mapToGlobal(save_stack_btn.rect().bottomLeft()))
+
+        save_stack_btn.clicked.connect(save_stack)
+        self._imaging_ui.update({
+            "live_stack": live_stack_check, "save_stack_button": save_stack_btn,
+            "save_stack_to_library": save_stack_to_library, "save_stack_to_file": save_stack_to_file,
+        })
+
+        _apply_orientation()
         return page
 
     # --- Star Atlas page (planetarium) ------------------------------------
@@ -4735,7 +5361,7 @@ class AppWindow:
         filling the rest. The site follows the selected Pier's Observatory."""
         import calendar
         import datetime as dt
-        from PySide6.QtCore import QDateTime, Qt
+        from PySide6.QtCore import QDateTime, Qt, QTimer
         from PySide6.QtWidgets import (
             QCheckBox, QDateTimeEdit, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
             QLabel, QLineEdit, QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget,
@@ -4812,7 +5438,8 @@ class AppWindow:
                    ("Deep-sky objects", "show_dsos"),
                    ("Sun, Moon && planets", "show_bodies"), ("Labels", "show_labels"),
                    ("Ground", "show_ground"), ("Daylight sky", "daylight_sky"),
-                   ("Horizon", "show_horizon"))
+                   ("Horizon", "show_horizon"),
+                   ("Telescope markers", "show_pier_markers"))
         for text, attr in toggles:
             box = QCheckBox(text)
             box.setChecked(getattr(view, attr))
@@ -5006,6 +5633,7 @@ class AppWindow:
         mag_spin.valueChanged.connect(lambda v: view.set_option("mag_limit", v))
         dso_mag_spin.valueChanged.connect(lambda v: view.set_option("dso_mag_limit", v))
         view.objectSelected.connect(show_object)
+        view.objectSelected.connect(self._set_current_object)
 
         def show_context_menu(obj, global_pos) -> None:
             menu = QMenu(view)
@@ -5032,8 +5660,24 @@ class AppWindow:
 
         view.catalogsLoaded.connect(show_catalog_status)
 
+        # Telescope reticles (SKYMAP-090). The mount is polled only while this page is on
+        # screen, and more often while a slew is running so the reticle keeps up with it.
+        def refresh_markers() -> None:
+            view.set_pier_markers(self.pier_markers())
+
+        def poll_markers() -> None:
+            self._poll_pier_pointing(on_done=refresh_markers)
+            slewing = any(m.get("slewing") for m in view.pier_markers)
+            marker_timer.setInterval(_SLEWING_POLL_MS if slewing else _POINTING_POLL_MS)
+
+        marker_timer = QTimer(page)
+        marker_timer.timeout.connect(_when_visible(page, poll_markers))
+        marker_timer.start(_POINTING_POLL_MS)
+
         self._star_atlas_refresh_site = refresh_site
         self._star_atlas_set_horizon = view.set_horizon
+        self._star_atlas_refresh_markers = refresh_markers
+        refresh_markers()
         refresh_site()
         sync_time_field()
         on_live(True)
@@ -5184,6 +5828,74 @@ class AppWindow:
             self._apply_horizon()
 
         block.toggled.connect(changed)
+        return page
+
+    # --- Options > Imaging ---------------------------------------------------
+
+    def _build_imaging_settings_page(self) -> "QWidget":
+        """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)."""
+        from PySide6.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
+        from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
+        from galileo.metadata import BITPIX_AUTO, BITPIX_CHOICES
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Imaging settings")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        layout.addLayout(form)
+
+        # Label -> stored value. "Auto" writes unsigned 16-bit where the data fits and 32-bit
+        # float otherwise — the pre-existing, still the default, behaviour.
+        labels = {
+            BITPIX_AUTO: "Auto (recommended)",
+            8: "8 (unsigned integer)",
+            16: "16 (unsigned integer)",
+            32: "32 (signed integer)",
+            -32: "-32 (floating point)",
+        }
+        bitpix_combo = QComboBox()
+        for value in BITPIX_CHOICES:
+            bitpix_combo.addItem(labels[value], value)
+        bitpix_combo.setToolTip(
+            "The pixel format frames are saved in — Save Frame, Auto-Save to Library and Save Stack "
+            "on the Imaging tab (IMG-170). Auto picks the smallest of these that fits each frame "
+            "without losing data. A fixed value writes every frame in that one format instead, for "
+            "downstream tools that expect one consistent format; values outside its range are clipped "
+            "and a float is rounded to the nearest integer. Every value here is one other astronomy "
+            "software actually reads — Galileo never writes a 64-bit FITS, which ASTAP and Tenmon "
+            "both refuse as an unsupported sample format."
+        )
+        settings = load_imaging_settings()
+        idx = bitpix_combo.findData(settings["bitpix"])
+        bitpix_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        form.addRow("Desired BITPIX", bitpix_combo)
+
+        hint = QLabel(
+            "Applies to frames the Imaging tab saves. Frames captured for plate solving always use "
+            "whichever of these formats best fits, regardless of this setting, since that is about "
+            "what the solver can read rather than a preference."
+        )
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        def changed(index: int) -> None:
+            settings["bitpix"] = bitpix_combo.itemData(index)
+            save_imaging_settings(settings)
+            # Take effect on the page already built, not only on the next launch.
+            service = getattr(self, "_imaging_service", None)
+            if service is not None:
+                service.bitpix = settings["bitpix"]
+
+        bitpix_combo.currentIndexChanged.connect(changed)
         return page
 
     # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---
@@ -5530,10 +6242,14 @@ class _CaptureThread(QThread if _HAS_QT else object):
 
     finished_ok = Signal() if _HAS_QT else None
     failed = Signal(str) if _HAS_QT else None
+    frame_started = Signal(int, int) if _HAS_QT else None     # (frame number, frames in the series)
+    frame_done = Signal(int, int) if _HAS_QT else None
 
-    def __init__(self, service, duration: float, filter_name: str, frame_type: str, parent=None) -> None:
+    def __init__(self, service, quantity: int, duration: float, filter_name: str, frame_type: str,
+                 parent=None) -> None:
         super().__init__(parent)
         self._service = service
+        self._quantity = quantity
         self._duration = duration
         self._filter_name = filter_name
         self._frame_type = frame_type
@@ -5541,14 +6257,14 @@ class _CaptureThread(QThread if _HAS_QT else object):
     def run(self) -> None:
         import asyncio
         try:
-            asyncio.run(self._service.capture_and_preview(
-                duration=self._duration,
-                filter_name=self._filter_name,
-                frame_type=self._frame_type,
+            asyncio.run(self._service.capture_series(
+                self._quantity, self._duration, self._filter_name, self._frame_type,
+                on_frame_start=self.frame_started.emit, on_frame_done=self.frame_done.emit,
             ))
         except Exception as exc:
-            self.failed.emit(str(exc))
-            return
+            if not self._service.stop_requested:
+                self.failed.emit(str(exc))
+                return
         self.finished_ok.emit()
 
 
@@ -5569,6 +6285,76 @@ class _FilterMoveThread(QThread if _HAS_QT else object):
         import asyncio
         try:
             asyncio.run(self._wheel.move_to(self._index))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit()
+
+
+class _ResumeTrackingThread(QThread if _HAS_QT else object):
+    """Waits for a slew to finish and then starts tracking at the target's rate (EQP-MNT-050).
+
+    Off the Qt UI thread because the wait lasts as long as the slew does — minutes, for a mount
+    crossing the sky — and the window must stay responsive throughout."""
+
+    done = Signal(str) if _HAS_QT else None          # the rate set, or "" if the mount never settled
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, mount, target=None, parent=None) -> None:
+        super().__init__(parent)
+        self._mount = mount
+        self._target = target
+
+    def run(self) -> None:
+        import asyncio
+        from galileo.tracking import resume_tracking
+        try:
+            rate = asyncio.run(resume_tracking(self._mount, self._target))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(rate or "")
+
+
+class _MountPositionThread(QThread if _HAS_QT else object):
+    """Reads one mount's position off the Qt UI thread, for the Star Atlas telescope reticles
+    (SKYMAP-090). A mount that can't be read reports nothing rather than failing: the reticle is
+    a convenience, and a slow or absent mount must not stall the sky view."""
+
+    position = Signal(object) if _HAS_QT else None      # the mount's status dict, or None
+
+    def __init__(self, mount, parent=None) -> None:
+        super().__init__(parent)
+        self._mount = mount
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            status = asyncio.run(self._mount.get_status()) or {}
+        except Exception:
+            logger.debug("Could not read the mount position for the Star Atlas", exc_info=True)
+            status = None
+        self.position.emit(status)
+
+
+class _NudgeThread(QThread if _HAS_QT else object):
+    """Runs one mount nudge (IMG-130) off the Qt UI thread: the mount moves for
+    the nudge's duration, and blocking the UI for that long would freeze the
+    Imaging page's exposure countdown while the user is watching it."""
+
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, mount, direction: str, rate: float, duration: float,
+                 reversed_axes: tuple, parent=None) -> None:
+        super().__init__(parent)
+        self._args = (mount, direction, rate, duration, reversed_axes)
+
+    def run(self) -> None:
+        import asyncio
+        from galileo.ui.imaging import nudge_mount
+        try:
+            asyncio.run(nudge_mount(*self._args))
         except Exception as exc:
             self.failed.emit(str(exc))
             return

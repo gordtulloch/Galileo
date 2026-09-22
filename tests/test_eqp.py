@@ -630,3 +630,244 @@ async def test_tc_eqp_cam_010_alpaca_exposure_failure_is_reported(monkeypatch):
     cam._IMAGE_MARGIN_S = -1.0                          # deadline already passed
     with pytest.raises(DeviceError, match="did not finish"):
         await cam.get_image_array()
+
+
+# ---------------------------------------------------------------------------
+# EQP-MNT-050 — tracking resumes at the target's own rate when a slew finishes
+# ---------------------------------------------------------------------------
+
+class _TrackingMount:
+    """A mount that reports itself slewing for a few polls, then arrived."""
+
+    def __init__(self, slewing_polls=2, can_select_rate=True, fail_rate=False):
+        self.calls: list = []
+        self.polls = 0
+        self._slewing_polls = slewing_polls
+        self._fail_rate = fail_rate
+        if not can_select_rate:
+            self.set_tracking_rate_mode = None
+
+    async def get_status(self):
+        self.polls += 1
+        return {"slewing": self.polls <= self._slewing_polls}
+
+    async def set_tracking_rate_mode(self, mode):
+        if self._fail_rate:
+            raise RuntimeError("this mount will not change rate")
+        self.calls.append(("rate", mode))
+
+    async def set_tracking(self, enabled):
+        self.calls.append(("tracking", enabled))
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("target, expected", [
+    ("Moon", "Lunar"),
+    ("moon", "Lunar"),
+    ("Sun", "Solar"),
+    ("  SUN  ", "Solar"),
+    ("Vega", "Sidereal"),
+    ("M 31", "Sidereal"),
+    ("Jupiter", "Sidereal"),
+    (None, "Sidereal"),
+    ("", "Sidereal"),
+])
+def test_tc_eqp_mnt_050_rate_follows_the_target(target, expected):
+    """EQP-MNT-050: the Sun and Moon get their own rates; everything else, and nothing at all, tracks sidereal."""
+    from galileo.tracking import tracking_rate_for
+    assert tracking_rate_for(target) == expected
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_050_the_target_can_be_an_object_or_a_dict():
+    """EQP-MNT-050: the rate can be worked out from a current object or a Star Atlas selection, not just a name."""
+    from galileo.current_object import CurrentObject
+    from galileo.tracking import tracking_rate_for
+    assert tracking_rate_for(CurrentObject("Moon", 0.0, 0.0, kind="Moon")) == "Lunar"
+    assert tracking_rate_for({"kind": "body", "name": "Sun", "ra_deg": 0.0, "dec_deg": 0.0}) == "Solar"
+    assert tracking_rate_for(CurrentObject("M 42", 83.8, -5.4, kind="Nebula")) == "Sidereal"
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_tracking_starts_only_once_the_slew_has_finished():
+    """EQP-MNT-050: the mount is left alone until it reports it has stopped slewing, then tracking is turned on."""
+    from galileo.tracking import resume_tracking
+    mount = _TrackingMount(slewing_polls=3)
+
+    rate = await resume_tracking(mount, "Vega")
+
+    assert mount.polls > 3, "it waited for the slew"
+    assert rate == "Sidereal"
+    # The rate is chosen before tracking is switched on, so it never tracks at the wrong one.
+    assert mount.calls == [("rate", "Sidereal"), ("tracking", True)]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_the_moon_and_sun_get_their_own_rates_after_a_slew():
+    """EQP-MNT-050: slewing to the Moon leaves the mount tracking lunar, and to the Sun, solar."""
+    from galileo.tracking import resume_tracking
+    for target, expected in (("Moon", "Lunar"), ("Sun", "Solar")):
+        mount = _TrackingMount(slewing_polls=1)
+        assert await resume_tracking(mount, target) == expected
+        assert mount.calls == [("rate", expected), ("tracking", True)]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_a_mount_that_never_settles_is_left_alone():
+    """EQP-MNT-050: a slew that never ends does not get tracking commands piled on top of it."""
+    from galileo.tracking import resume_tracking
+    mount = _TrackingMount(slewing_polls=10_000)
+
+    assert await resume_tracking(mount, "Vega", timeout_s=0.3) is None
+    assert mount.calls == [], "nothing was sent to a mount that is still moving"
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_a_mount_that_cannot_select_a_rate_still_tracks():
+    """EQP-MNT-050: a mount with no rate selection, or one that refuses, is still left tracking — sidereal is what it does anyway."""
+    from galileo.tracking import resume_tracking
+    without = _TrackingMount(slewing_polls=1, can_select_rate=False)
+    assert await resume_tracking(without, "Moon") == "Lunar"
+    assert without.calls == [("tracking", True)]
+
+    refuses = _TrackingMount(slewing_polls=1, fail_rate=True)
+    assert await resume_tracking(refuses, "Moon") == "Lunar"
+    assert refuses.calls == [("tracking", True)]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_a_mount_that_does_not_report_slewing_is_not_waited_on_forever():
+    """EQP-MNT-050: a mount that can't say whether it is slewing is taken as arrived rather than never tracked."""
+    from galileo.tracking import resume_tracking
+
+    class _Quiet(_TrackingMount):
+        async def get_status(self):
+            self.polls += 1
+            return {}           # no 'slewing' key at all
+
+    mount = _Quiet()
+    assert await resume_tracking(mount, "Vega") == "Sidereal"
+    assert mount.calls == [("rate", "Sidereal"), ("tracking", True)]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_a_slow_starting_mount_is_still_waited_for():
+    """EQP-MNT-050: a mount that hasn't begun moving when first asked is not mistaken for one that has arrived."""
+    import galileo.tracking as tracking_mod
+    from galileo.tracking import resume_tracking
+
+    class _SlowToStart(_TrackingMount):
+        async def get_status(self):
+            self.polls += 1
+            # Not moving yet for the first two polls, then slewing, then arrived.
+            return {"slewing": 3 <= self.polls <= 5}
+
+    mount = _SlowToStart()
+    assert await resume_tracking(mount, "Vega") == "Sidereal"
+    assert mount.polls > 5, "it did not take the initial 'not slewing' as 'already arrived'"
+    assert tracking_mod._START_GRACE_S > 0
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_050_plate_solving_leaves_the_mount_tracking(tmp_path):
+    """EQP-MNT-050: a Slew to Target run leaves the mount tracking the object it centred on."""
+    from unittest.mock import AsyncMock
+    plt = pytest.importorskip("galileo.platesolve")
+    import numpy as np
+    from unittest.mock import MagicMock
+
+    calls: list = []
+    camera = MagicMock()
+    camera.start_exposure = AsyncMock()
+    camera.get_image_array = AsyncMock(return_value=np.full((40, 60), 100, dtype=np.uint16))
+    mount = MagicMock()
+    mount.get_status = AsyncMock(return_value={
+        "right_ascension": 100.0 / 15.0, "declination": 20.0, "equatorial_system": "J2000", "slewing": False})
+    mount.slew_to_coordinates = AsyncMock()
+    mount.sync_to_coordinates = AsyncMock()
+    mount.set_tracking_rate_mode = AsyncMock(side_effect=lambda mode: calls.append(("rate", mode)))
+    mount.set_tracking = AsyncMock(side_effect=lambda enabled: calls.append(("tracking", enabled)))
+
+    solver = plt.PlateSolver(backend="astap", executable="unused")
+    solver._run_solver = AsyncMock(return_value=plt.SolveResult(
+        success=True, ra_deg=10.0, dec_deg=41.0, rotation_deg=0.0, scale_arcsec_px=3.0))
+    workflow = plt.SolveWorkflow(solver, camera=camera, mount=mount, work_dir=tmp_path / "solve")
+    workflow.set_target(10.0, 41.0, name="Moon")
+
+    await workflow.capture_and_solve(plt.SolveSettings(action=plt.SolveAction.SLEW_TO_TARGET, settle_s=0.0))
+
+    assert ("rate", "Lunar") in calls and ("tracking", True) in calls
+
+
+@pytest.fixture
+def window(tmp_path):
+    """A built AppWindow for the two cases that go through the Star Atlas Goto. Only those tests
+    request it, so the rest of this file stays free of Qt."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "tracking.db")
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.app_window import AppWindow
+
+    win = AppWindow()
+    win.app = app
+    win._current_pier = create_pier(create_observatory("Tracking Obs"), "Pier A")
+    yield win
+    win._window.close()
+    db.close()
+
+
+def _wait_for_tracking(window):
+    thread = window._tracking_thread
+    if thread is not None:
+        thread.wait(10000)
+        window.app.processEvents()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_050_star_atlas_goto_leaves_the_mount_tracking(window):
+    """EQP-MNT-050: a Goto from the Star Atlas ends with the mount tracking that object at its own rate."""
+    mount = _TrackingMount(slewing_polls=1)
+    mount.slew_to_coordinates = _async_noop
+    mount.sync_to_coordinates = _async_noop
+    window._device_pages["mount"]["adapter"] = mount
+
+    moon = {"kind": "body", "name": "Moon", "type": "Moon", "ra_deg": 100.0, "dec_deg": 20.0, "alt": 45.0}
+    assert window._mount_to_object("goto", moon) is True
+    _wait_for_tracking(window)
+
+    assert mount.calls == [("rate", "Lunar"), ("tracking", True)]
+
+
+@pytest.mark.requirement("TC-EQP-MNT-050")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_050_a_sync_does_not_start_tracking(window):
+    """EQP-MNT-050: Sync only tells the mount where it is — nothing moved, so nothing is resumed."""
+    mount = _TrackingMount(slewing_polls=0)
+    mount.slew_to_coordinates = _async_noop
+    mount.sync_to_coordinates = _async_noop
+    window._device_pages["mount"]["adapter"] = mount
+
+    vega = {"kind": "star", "name": "Vega", "type": "Star", "ra_deg": 279.2, "dec_deg": 38.8, "alt": 60.0}
+    assert window._mount_to_object("sync", vega) is True
+    _wait_for_tracking(window)
+
+    assert mount.calls == []
+    assert window._tracking_thread is None
+
+
+async def _async_noop(*args, **kwargs):
+    return None

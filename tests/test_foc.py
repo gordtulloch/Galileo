@@ -38,7 +38,7 @@ async def test_tc_foc_010_hfr_curve_fit_to_best_focus(mock_indi_camera, mock_foc
 
     call_idx = [0]
 
-    async def mock_measure_hfr():
+    async def mock_measure_hfr(confirm=False):
         hfr = hfr_values[call_idx[0] % len(hfr_values)]
         call_idx[0] += 1
         return hfr
@@ -99,7 +99,7 @@ async def test_tc_foc_040_record_run_for_later_review(foc_service, tmp_path):
     hfr_values = [_synthetic_hfr(p, best=5000) for p in positions]
     call_idx = [0]
 
-    async def mock_hfr():
+    async def mock_hfr(confirm=False):
         v = hfr_values[call_idx[0] % len(hfr_values)]
         call_idx[0] += 1
         return v
@@ -220,23 +220,30 @@ def focus_events(foc_service, monkeypatch):
 
 @pytest.mark.requirement("TC-FOC-090")
 @pytest.mark.priority("MVP")
-async def test_tc_foc_090_run_publishes_start_each_frame_and_completion(foc_service, focus_events):
+async def test_tc_foc_090_run_publishes_start_each_frame_and_completion(foc_service, mock_focuser, focus_events):
     """FOC-090: a run reports its start, every measured frame (with star count, HFR, FWHM) and its result."""
     foc_service.exposure_s = 2.5
     result = await foc_service.run(step_size=100, num_points=5)
 
+    # 5 sweep frames plus 1 confirmation frame at the best-focus position (FOC-020)
     kinds = [type(e).__name__ for e in focus_events]
-    assert kinds == ["FocusStartedEvent"] + ["FocusFrameEvent"] * 5 + ["FocusCompleteEvent"]
+    assert kinds == ["FocusStartedEvent"] + ["FocusFrameEvent"] * 6 + ["FocusCompleteEvent"]
     started, *frames, complete = focus_events
+    sweep_frames, confirm_frame = frames[:5], frames[5]
     assert started.payload["positions"] == [4800, 4900, 5000, 5100, 5200]
-    assert [f.payload["position"] for f in frames] == started.payload["positions"]
-    assert frames[2].payload["hfr"] == pytest.approx(1.0)
-    assert frames[2].payload["fwhm"] == pytest.approx(1.5)
-    assert frames[2].payload["star_count"] == 12
-    assert frames[0].payload["frame"].shape == (20, 30)
+    assert [f.payload["position"] for f in sweep_frames] == started.payload["positions"]
+    assert sweep_frames[2].payload["hfr"] == pytest.approx(1.0)
+    assert sweep_frames[2].payload["fwhm"] == pytest.approx(1.5)
+    assert sweep_frames[2].payload["star_count"] == 12
+    assert sweep_frames[0].payload["frame"].shape == (20, 30)
+    assert all(not f.payload.get("confirm", False) for f in sweep_frames)
     assert complete.payload["result"] is result and result.success
-    # each frame is a fresh exposure of the configured length
-    assert foc_service._camera.start_exposure.await_count == 5
+    # the focuser actually ends up at the computed best-focus position
+    assert confirm_frame.payload["position"] == result.best_position
+    assert confirm_frame.payload["confirm"] is True
+    mock_focuser.move_to.assert_called_with(result.best_position)
+    # each frame is a fresh exposure of the configured length, including the confirmation
+    assert foc_service._camera.start_exposure.await_count == 6
     foc_service._camera.start_exposure.assert_awaited_with(duration=2.5)
 
 

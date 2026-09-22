@@ -70,13 +70,20 @@ class SolveCompleteEvent(Event):
     """A plate solve finished; ``fits_path`` is the frame and ``result`` its ``SolveResult``
     (success or not — see ``SolveResult.failure_reason``)."""
 
+class CurrentObjectChangedEvent(Event):
+    """A Pier's current object changed. Payload: ``pier`` (the key from
+    ``galileo.current_object.pier_key``) and ``object`` (a ``CurrentObject``,
+    or ``None`` when it was cleared)."""
+
 class FocusStartedEvent(Event):
     """An autofocus run began. Payload: ``positions`` (the planned sweep),
     ``initial_position``, ``step_size``, ``num_points``."""
 
 class FocusFrameEvent(Event):
     """One autofocus exposure was measured. Payload: ``position``, ``frame``
-    (the raw array), ``hfr``, ``fwhm`` and ``star_count``."""
+    (the raw array), ``hfr``, ``fwhm``, ``star_count`` and ``confirm`` (True
+    for the post-move confirmation exposure taken at the computed best
+    position, False for a sweep sample)."""
 
 class FocusCompleteEvent(Event):
     """An autofocus run ended, however it ended. Payload: ``result`` (an

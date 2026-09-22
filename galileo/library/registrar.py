@@ -50,6 +50,33 @@ class LibraryRegistrar:
             fitsFile.update(fitsFileSession=session_id).where(fitsFile.fitsFileId == file_id).execute()
         return file_id
 
+    def register_capture(self, path: Path | str) -> str | None:
+        """Catalog a frame captured by hand (IMG-150) and move it into the repository.
+
+        Unlike :meth:`register_frame` the file is *moved* — it was written to a scratch folder and
+        must not be left there — into the folder the Library's naming scheme gives it (for a light
+        frame, ``Light/<object>/<telescope>/<instrument>/<date>``). Returns the catalog id, or
+        ``None`` if the frame was not registered; a frame that was not registered is left where it
+        is. Nothing is done when no repository folder is configured, since the file would otherwise
+        be moved into the working directory.
+        """
+        from galileo.library.config import get_repository_path
+        from galileo.library.core import fitsProcessing
+
+        path = Path(path)
+        if not get_repository_path():
+            logger.warning("Frame not added to the Library: no repository folder is set (Options > Library).")
+            return None
+        try:
+            file_id = fitsProcessing().registerFitsImage(str(path.parent), path.name, moveFiles=True)
+        except Exception:
+            logger.exception("Frame was not added to the Library: %s", path)
+            return None
+        if not file_id:
+            logger.warning("Frame was not added to the Library: %s", path)
+            return None
+        return file_id
+
     def entry_count(self) -> int:
         """Number of catalogued frames."""
         return fitsFile.select().count()

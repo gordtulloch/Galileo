@@ -30,6 +30,7 @@ from galileo.bus import SolveCompleteEvent, SolveStartedEvent, get_bus
 from galileo.observatory import (
     create_observatory,
     create_pier,
+    delete_device_config,
     save_device_config,
 )
 from galileo.platesolve import (
@@ -180,7 +181,7 @@ def test_tc_plt_070_solve_is_a_top_level_section(window):
     assert [s[0] for s in PRIMARY_SECTIONS].index("solve") > [s[0] for s in PRIMARY_SECTIONS].index("imaging")
     assert ("solve", "Solve", "solve") in OPTIONS_ITEMS
     assert "solve" in ICONS and not make_icon("solve", "#ffffff").isNull()
-    assert set(window._device_pages["solve"]) == {"reload"}
+    assert set(window._device_pages["solve"]) == {"reload", "refresh_target"}      # and no auto-connect
 
 
 def test_tc_plt_070_screen_has_the_reference_elements(page):
@@ -212,7 +213,7 @@ def test_tc_plt_070_controls_offer_only_what_can_act(page):
 
 
 def test_tc_plt_070_top_bar_selectors_follow_the_solve_screen(window):
-    """PLT-070: The top bar offers the Optics selector on Solve (it needs the optical train) and the Camera selector when there are several."""
+    """PLT-070: Solve needs an optical train, so the top bar offers both the Optics and the Camera selector there — and neither off it."""
     for slot in ("primary", "camera_2"):
         save_device_config(window.pier, "camera", driver="Alpaca", server="x", port=1, device_name=f"cam {slot}", slot=slot)
     _open(window, "equipment")
@@ -223,6 +224,11 @@ def test_tc_plt_070_top_bar_selectors_follow_the_solve_screen(window):
     window._refresh_optics_combo()
     window._refresh_camera_combo()
     assert window._optics_combo.isVisibleTo(window._window) and window._camera_combo.isVisibleTo(window._window)
+
+    # And with a single camera too: which camera Solve will use is never left to be inferred.
+    delete_device_config(window.pier, "camera", slot="camera_2")
+    window._refresh_camera_combo()
+    assert window._camera_combo.isVisibleTo(window._window) and window._camera_combo.count() == 1
 
 
 # ---------------------------------------------------------------------------

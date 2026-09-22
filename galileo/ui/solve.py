@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
 )
 
 from galileo.bus import SolveCompleteEvent, SolveStartedEvent, get_bus
+from galileo.current_object import get_current_objects
 from galileo.platesolve import (
     PlateSolver,
     SolveAction,
@@ -303,6 +304,7 @@ class SolvePage(QWidget):
         self._build()
         self._set_running(False)
         self.refresh_view()
+        self.refresh_target()
 
         self.solve_started.connect(self._on_solve_started)
         self.solve_finished.connect(self._on_solve_finished)
@@ -383,12 +385,16 @@ class SolvePage(QWidget):
         }
         self.action_radios[SolveAction.SYNC].setToolTip("Tell the mount where it is really pointing.")
         self.action_radios[SolveAction.SLEW_TO_TARGET].setToolTip(
-            "Sync the mount to the solution, then slew back to the target (where the mount was pointing "
-            "when Capture & Solve began) and solve again — until within Accuracy.")
+            "Slew to the target, then solve, sync and slew again until within Accuracy. The target is the "
+            "Pier's current object (picked in the Star Atlas); with none, it is where the mount was "
+            "pointing when Capture & Solve began.")
         self.action_radios[SolveAction.NOTHING].setToolTip("Only solve; leave the mount alone.")
         self.action_radios[SolveAction.NOTHING].setChecked(True)
         for radio in self.action_radios.values():
             layout.addWidget(radio)
+        self.target_label = QLabel()
+        self.target_label.setWordWrap(True)
+        layout.addWidget(self.target_label)
         box.addWidget(action)
 
         # Telescope Coordinates --------------------------------------------
@@ -555,6 +561,7 @@ class SolvePage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._in_focus = True
+        self.refresh_target()
         self.refresh_view()
         self._show_latest_frame()
         self.poll_mount()
@@ -568,8 +575,20 @@ class SolvePage(QWidget):
         self._mount_timer.stop()
         self._log_timer.stop()
 
+    def current_object(self):
+        """The selected Pier's current object (IMG-140), or ``None``."""
+        return get_current_objects().get(self._window._current_pier)
+
+    def refresh_target(self) -> None:
+        """Say what Slew to Target will aim at."""
+        obj = self.current_object()
+        self.target_label.setText(
+            f"Target: {obj.name}" if obj is not None
+            else "Target: where the mount points when a run begins (pick an object in the Star Atlas to choose one)")
+
     def reload(self) -> None:
         """A different Pier was selected: its mount is not the one on show."""
+        self.refresh_target()
         self.scope_ra.clear()
         self.scope_dec.clear()
         if self.isVisible():
@@ -772,6 +791,32 @@ class SolvePage(QWidget):
         return (getattr(tube, "focal_length_mm", None) or None, getattr(tube, "aperture_mm", None) or None,
                 pixel_um or None)
 
+    def _frame_metadata(self) -> dict:
+        """What the solver should be told about the frames this page captures: the pixel size and
+        focal length it can derive the image scale from, and the Bayer pattern of a one-shot-colour
+        sensor. Anything not configured is left out rather than guessed at."""
+        focal, aperture, pixel_um = self._optics()
+        meta: dict = {"focal_length_mm": focal, "aperture_mm": aperture,
+                      "pixel_size_x_um": pixel_um, "pixel_size_y_um": pixel_um,
+                      "frame_type": "Light", "software": "Galileo"}
+        tube = self._window.active_optical_tube()
+        if tube is not None:
+            meta["telescope"] = tube.name
+        pier = self._window._current_pier
+        if pier is not None:
+            from galileo.observatory import get_device_config
+            try:
+                cfg = get_device_config(pier, "camera", slot=self._window._active_camera_slot)
+            except Exception:
+                logger.exception("Could not load the camera's configuration for the solve frame")
+                cfg = None
+            if cfg is not None:
+                meta["instrument"] = cfg.device_name or cfg.sensor_name
+                # The Bayer pattern is saved for every camera and defaults to RGGB, so it says
+                # nothing about whether this sensor is actually colour. Claiming a mosaic a mono
+                # camera does not have would only mislead the solver, so it is left out.
+        return {key: value for key, value in meta.items() if value not in (None, "")}
+
     def _scale_hint(self) -> float | None:
         focal, _aperture, pixel_um = self._optics()
         return _ARCSEC_PER_RAD_UM_MM * pixel_um / focal if focal and pixel_um else None
@@ -835,11 +880,15 @@ class SolvePage(QWidget):
         log, so this is all it takes for a line to appear there."""
         logger.info("%s", message)
 
-    def _begin(self, run) -> None:
+    def _begin(self, run, use_current_object: bool = False) -> None:
         solver = self.make_solver()
         if solver is None:
             return
-        self._workflow = SolveWorkflow(solver, camera=self._camera(), mount=self._mount(), log=self._post)
+        self._workflow = SolveWorkflow(solver, camera=self._camera(), mount=self._mount(), log=self._post,
+                                       frame_metadata=self._frame_metadata())
+        obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
+        if obj is not None:
+            self._workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)
         self._run_target_active = True
         self._set_running(True)
 
@@ -857,14 +906,14 @@ class SolvePage(QWidget):
             return
         if self._camera() is None:
             QMessageBox.information(self._window._window, "No camera connected",
-                                    "Connect a camera on the Camera equipment page first.")
+                                    self._window.camera_not_connected_message())
             return
         settings = SolveSettings(
             exposure_s=self.exposure_spin.value(), action=self._selected_action(),
             accuracy_arcsec=float(self.accuracy_spin.value()), settle_s=self.settle_spin.value() / 1000.0,
             scale_hint_arcsec_px=self._scale_hint(),
         )
-        self._begin(lambda workflow: workflow.capture_and_solve(settings))
+        self._begin(lambda workflow: workflow.capture_and_solve(settings), use_current_object=True)
 
     def load_and_slew(self) -> None:
         if self._running:

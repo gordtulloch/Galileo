@@ -362,11 +362,12 @@ class FocusPage(QWidget):
 
     def _on_frame_event(self, event) -> None:
         if not self._receiving:
-            return  # a frame outside a run (e.g. a confirmation exposure) is not shown
+            return  # a frame outside a run entirely (nothing is displaying it) is not shown
         payload = event.payload
         self._frame.emit({
             "position": payload["position"], "hfr": payload["hfr"], "fwhm": payload["fwhm"],
             "star_count": payload["star_count"], "preview": _preview(payload["frame"]),
+            "confirm": payload.get("confirm", False),
         })
 
     def _on_complete_event(self, event) -> None:
@@ -388,8 +389,13 @@ class FocusPage(QWidget):
         self.stats_label.setText(
             f"Stars: {payload['star_count']}  HFR: {payload['hfr']:.2f}  FWHM: {payload['fwhm']:.2f}")
         self.position_label.setText(str(payload["position"]))
-        self.plot.add_point(payload["position"], payload["hfr"])
-        self.status_label.setText(f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…")
+        if payload["confirm"]:
+            # The post-move confirmation exposure at the computed best position: shown
+            # so focus can be checked visually, but it isn't a sweep sample for the curve.
+            self.status_label.setText(f"Focus complete — confirming at position {payload['position']}…")
+        else:
+            self.plot.add_point(payload["position"], payload["hfr"])
+            self.status_label.setText(f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…")
 
     def _on_complete(self, result) -> None:
         self._active = False

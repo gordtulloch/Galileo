@@ -242,7 +242,8 @@ def test_tc_foc_090_auto_focus_button_runs_a_sweep_and_shows_it(window, page, ri
 
     assert _pump(window, lambda: page._service is None and page.status_label.text().startswith("Focus complete"))
     assert [p for p, _ in page.plot.points] == [4700, 4800, 4900, 5000, 5100, 5200, 5300]
-    assert camera.exposures == [1.5] * 7
+    # 7 sweep exposures plus 1 confirmation exposure at the computed best position (FOC-020)
+    assert camera.exposures == [1.5] * 8
     assert abs(page.plot.best_position - 5020) < 50
     assert page.stats_label.text().startswith("Stars: 11")
     assert _drawn(page)

@@ -220,3 +220,93 @@ def test_tc_meta_050_custom_static_fits_keywords(tmp_path):
     with fits.open(out_path) as hdul:
         assert hdul[0].header["OBSERVER"] == "Alice"
         assert hdul[0].header["SITENAME"] == "Backyard"
+
+
+# ---------------------------------------------------------------------------
+# Pixel format — what other astronomy software can actually open
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-META-010")
+@pytest.mark.priority("MVP")
+def test_tc_meta_010_written_frames_use_a_pixel_format_other_software_reads(tmp_path):
+    """META-010: no frame Galileo writes uses a 64-bit sample format — legal FITS, and astropy reads it, but ASTAP and Tenmon reject it."""
+    import json
+    import numpy as np
+    from astropy.io import fits
+    from galileo.metadata import FitsMetadataWriter
+
+    # An Alpaca camera's image arrives as JSON numbers, which numpy makes 64-bit integers.
+    alpaca = np.asarray(json.loads(json.dumps([[100, 200], [300, 400]]))).swapaxes(0, 1)
+    assert alpaca.dtype == np.int64, "the case this guards against"
+
+    for name, data in (("alpaca", alpaca), ("float64", np.zeros((4, 4))),
+                       ("uint16", np.zeros((4, 4), dtype=np.uint16)),
+                       ("float32", np.zeros((4, 4), dtype=np.float32))):
+        path = FitsMetadataWriter(output_dir=tmp_path).write(data, {"object": "M 31"}, filename=f"{name}.fits")
+        bitpix = fits.getheader(path)["BITPIX"]
+        assert bitpix in (8, 16, 32, -32), f"{name}: BITPIX {bitpix} is not one other tools read"
+
+
+@pytest.mark.requirement("TC-META-010")
+@pytest.mark.priority("MVP")
+def test_tc_meta_010_normalising_pixels_keeps_the_image():
+    """META-010: converting to a portable sample format preserves the pixel values and leaves an already-portable frame untouched."""
+    import numpy as np
+    from galileo.metadata import normalise_pixels
+
+    counts = np.array([[0, 1000], [30000, 65535]], dtype=np.int64)
+    converted = normalise_pixels(counts)
+    assert converted.dtype == np.uint16 and np.array_equal(converted, counts)
+
+    # Already portable: handed back as-is, not copied into something else.
+    for dtype in (np.uint16, np.int16, np.int32, np.float32, np.uint8):
+        original = np.zeros((2, 2), dtype=dtype)
+        assert normalise_pixels(original) is original
+
+    # Beyond 16 bits, and negatives, keep their values rather than wrapping round.
+    wide = normalise_pixels(np.array([[-5, 200000]], dtype=np.int64))
+    assert wide.dtype == np.int32 and wide.tolist() == [[-5, 200000]]
+    stacked = normalise_pixels(np.array([[1.5, 2.5]], dtype=np.float64))
+    assert stacked.dtype == np.float32 and stacked.tolist() == [[1.5, 2.5]]
+
+
+@pytest.mark.requirement("TC-META-010")
+@pytest.mark.priority("MVP")
+def test_tc_meta_010_bscale_bzero_land_right_after_naxis_not_after_custom_keywords():
+    """META-010: for unsigned pixel data, BSCALE/BZERO must come immediately after NAXIS2, ahead of every custom
+    keyword — ASTAP's parser refuses a file where they land at the end, behind the rest of the header, even though
+    it is otherwise entirely standard FITS that astropy (and Tenmon) read without complaint."""
+    import numpy as np
+    from galileo.metadata import build_primary_hdu
+
+    # uint16 needs the unsigned-integer BZERO/BSCALE convention; uint8 does not (BZERO defaults to 0).
+    for dtype, expect_bscale in ((np.uint16, True), (np.uint8, False)):
+        data = np.zeros((10, 10), dtype=dtype)
+        hdu = build_primary_hdu(data, {"object": "M 31", "telescope": "Newt 200", "instrument": "ASI294"})
+        keys = list(hdu.header.keys())
+        naxis2 = keys.index("NAXIS2")
+        custom_positions = [keys.index(k) for k in ("OBJECT", "TELESCOP", "INSTRUME")]
+        if expect_bscale:
+            assert "BZERO" in keys and "BSCALE" in keys
+            assert keys.index("BZERO") < min(custom_positions), f"{dtype}: BZERO must precede custom keywords"
+            assert keys.index("BSCALE") < min(custom_positions), f"{dtype}: BSCALE must precede custom keywords"
+            # Nothing but structural cards (e.g. EXTEND) sits between NAXIS2 and BZERO/BSCALE.
+            assert keys.index("BZERO") - naxis2 <= 3, f"{dtype}: BZERO is not right after NAXIS2"
+        else:
+            assert "BZERO" not in keys, f"{dtype}: signed/8-bit data needs no BZERO"
+
+
+@pytest.mark.requirement("TC-META-010")
+@pytest.mark.priority("MVP")
+def test_tc_meta_010_build_primary_hdu_round_trips_and_keeps_extra_cards():
+    """META-010: build_primary_hdu's output is readable, its pixels survive, and extra_cards (session keywords, DATE) still land after the metadata cards."""
+    import numpy as np
+    from astropy.io import fits
+    from galileo.metadata import build_primary_hdu
+
+    data = np.arange(100, dtype=np.uint16).reshape(10, 10)
+    hdu = build_primary_hdu(data, {"object": "M 31"}, extra_cards=[("SITEELEV", 250), ("DATE", "2026-01-01T00:00:00")])
+    assert np.array_equal(hdu.data, data)
+    keys = list(hdu.header.keys())
+    assert keys.index("OBJECT") < keys.index("SITEELEV") < keys.index("DATE")
+    assert hdu.header["SITEELEV"] == 250 and hdu.header["DATE"] == "2026-01-01T00:00:00"

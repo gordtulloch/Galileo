@@ -455,8 +455,17 @@ class AlpacaCameraAdapter(AlpacaAdapter):
     def get_capabilities(self) -> DeviceCapabilities:
         return DeviceCapabilities(has_cooler=True, can_set_gain=True, can_bin=True)
 
-    async def start_exposure(self, duration: float, **kwargs) -> None:
-        await self._put("startexposure", Duration=duration, Light=True)
+    async def start_exposure(self, duration: float, gain: int = 0, frame_type: str = "Light", **kwargs) -> None:
+        # gain 0 means "leave as configured", as for INDI. Not every camera has an adjustable gain,
+        # and a refusal shouldn't cost the exposure.
+        if gain:
+            try:
+                await self._put("gain", Gain=int(gain))
+            except Exception:
+                logger.warning("Could not set gain %s on %s; exposing with its current gain", gain, self.base_url)
+        # ASCOM's Light flag is False for frames taken with the shutter closed.
+        dark = any(word in frame_type.lower() for word in ("dark", "bias"))
+        await self._put("startexposure", Duration=duration, Light=not dark)
         self._exposure_s = float(duration)
 
     async def abort_exposure(self) -> None:
@@ -492,7 +501,9 @@ class AlpacaCameraAdapter(AlpacaAdapter):
         await self._put("setccdtemperature", SetCCDTemperature=temp_c)
 
     def get_temperature(self) -> float:
-        return float(self._properties.get("CCD_TEMPERATURE", -10.0))
+        """Sensor temperature in °C, or NaN when none has been read (nothing polls it yet)."""
+        value = self._properties.get("CCD_TEMPERATURE")
+        return float("nan") if value is None else float(value)
 
     def get_cooler_power(self) -> float:
         return float(self._properties.get("COOLER_POWER", 0.0))

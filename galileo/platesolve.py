@@ -35,6 +35,8 @@ _KNOWN_LOCATIONS = {
 }
 
 # ASTAP's process exit codes (from its command-line documentation), used when it left no ERROR line behind.
+_ASTAP_UNREADABLE = 16      # ASTAP could not read the image file it was given
+
 _ASTAP_EXIT_REASONS = {
     1: "No solution found",
     2: "Not enough stars detected",
@@ -233,6 +235,11 @@ class PlateSolver:
             or stderr.decode(errors="replace").strip()[:200]
             or f"ASTAP exited with code {proc.returncode}"
         )
+        if proc.returncode == _ASTAP_UNREADABLE:
+            # The solver never got as far as looking for stars, so what it was handed is the whole
+            # story — without this the user has nothing to go on but "error reading the image file".
+            reason = f"{reason} — it was given {_describe_fits(fits_path)}"
+        logger.info("ASTAP failed (%s): %s", reason, " ".join(cmd))
         return SolveResult(success=False, failure_reason=reason)
 
     async def _run_astrometry(self, fits_path: Path) -> SolveResult:
@@ -379,21 +386,35 @@ class SolveWorkflow:
         mount=None,
         work_dir: Path | str | None = None,
         log: Callable[[str], None] | None = None,
+        frame_metadata: "dict | None" = None,
     ) -> None:
         self.solver = solver
         self.camera = camera
         self.mount = mount
+        # Header values for the frames this workflow captures, so the solver knows the image scale
+        # and whether the sensor is one-shot-colour. Keyed as galileo.metadata expects.
+        self.frame_metadata: dict = dict(frame_metadata or {})
         self._work_dir = Path(work_dir) if work_dir is not None else None
         self._log = log or (lambda message: None)
         # J2000 (ra_deg, dec_deg) the mount should end up at; taken from the mount when a run
         # starts if not already set.
         self.target: tuple[float, float] | None = None
+        self.object_name = ""              # what the target is called; goes into the solve frames' file names
+        self._target_preset = False        # the caller chose the target, so the mount isn't already "there"
         self.results: list[SolveResult] = []
         self.stopped = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
 
     # --- Control ----------------------------------------------------------
+
+    def set_target(self, ra_deg: float, dec_deg: float, name: str = "") -> None:
+        """Aim the run at a chosen J2000 position (an object picked in the Star Atlas) rather than
+        wherever the mount happens to be pointing when it starts. Slew to Target then slews there
+        first, and corrects until the solution is within the accuracy of it."""
+        self.target = (ra_deg, dec_deg)
+        self.object_name = name
+        self._target_preset = True
 
     def stop(self) -> None:
         """Cancel the run in progress. Thread-safe; a no-op when nothing is running."""
@@ -407,6 +428,12 @@ class SolveWorkflow:
             self._work_dir = get_cache_dir() / "solve"
         self._work_dir.mkdir(parents=True, exist_ok=True)
         return self._work_dir / f"{stem}.fits"
+
+    def _frame_stem(self, suffix: str) -> str:
+        """``solve_<object>_<timestamp>_<suffix>`` — the ``solve_`` prefix is what pruning looks for."""
+        from galileo.current_object import safe_file_stem
+        name = safe_file_stem(self.object_name)
+        return f"solve_{name + '_' if name else ''}{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{suffix}"
 
     def _prune_work_dir(self) -> None:
         """Frames are only kept so the screen can show them; drop all but the newest few."""
@@ -499,6 +526,19 @@ class SolveWorkflow:
             action = SolveAction.NOTHING
         iterations = settings.max_iterations if action is SolveAction.SLEW_TO_TARGET else 1
 
+        if action is SolveAction.SLEW_TO_TARGET and self._target_preset and self.target is not None and hint is not None:
+            # Go to the chosen object first, so the first frame is taken there rather than wherever
+            # the mount was; the loop below then corrects any remaining error.
+            d_ra, d_dec = angular_offset_arcsec(*hint, *self.target)
+            if math.hypot(d_ra, d_dec) > settings.accuracy_arcsec:
+                name = f" ({self.object_name})" if self.object_name else ""
+                self._log(f"Slewing to the target{name} before solving.")
+                await self._slew(self.target, system)
+                await asyncio.sleep(settings.settle_s)
+                position = await self._mount_position()
+                if position is not None:
+                    hint = mount_frame_to_j2000(position[0], position[1], system)
+
         for attempt in range(iterations):
             frame = await self._capture(settings, attempt)
             if frame is None:
@@ -534,12 +574,14 @@ class SolveWorkflow:
 
     async def _solve_file(self, source: Path, slew: bool) -> None:
         self._log(f"Loading {source.name}…")
-        frame = self._work_path(f"solve_{dt.datetime.now():%Y%m%d_%H%M%S_%f}_loaded")
+        frame = self._work_path(self._frame_stem("loaded"))
         try:
-            import shutil
-            shutil.copyfile(source, frame)
-        except OSError as exc:
-            self._log(f"Could not read {source}: {exc}")
+            # Re-written rather than copied: the file may be tile-compressed, hold its image in a
+            # later HDU, be three-plane colour or carry 64-bit pixels, none of which a solver reads.
+            # Solving a copy is still the point — ASTAP writes its solution into the file it is given.
+            await asyncio.to_thread(_normalise_fits, source, frame)
+        except Exception as exc:
+            self._log(f"Could not read {source.name}: {exc}")
             return
         result = await self._solve(frame, None, SolveSettings())
         if not (result.success and slew) or result.ra_deg is None or result.dec_deg is None:
@@ -560,8 +602,8 @@ class SolveWorkflow:
             data = await self.camera.get_image_array()
             if data is None:
                 raise RuntimeError("the camera returned no image")
-            frame = self._work_path(f"solve_{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{attempt}")
-            await asyncio.to_thread(_write_frame, data, frame)
+            frame = self._work_path(self._frame_stem(str(attempt)))
+            await asyncio.to_thread(_write_frame, data, frame, self.frame_metadata)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -607,17 +649,118 @@ class SolveWorkflow:
         self._log(f"Slewing to RA:{_hms(coords[0])} DEC:{_dms(coords[1])}…")
         await self.mount.slew_to_coordinates(ra, dec)
         await self._wait_for_slew()
+        await self._resume_tracking()
+
+    async def _resume_tracking(self) -> None:
+        """Track the target at its own rate now the mount has arrived (EQP-MNT-050). A failure
+        here is logged and no more: the solve itself succeeded, and saying otherwise would be
+        misleading."""
+        from galileo.tracking import set_tracking_rate
+        try:
+            rate = await set_tracking_rate(self.mount, self.object_name)
+        except Exception as exc:
+            self._log(f"Could not start tracking after the slew: {exc}")
+            return
+        self._log(f"Tracking at the {rate} rate.")
 
 
-def _write_frame(data, path: Path) -> None:
-    """Write a camera frame as FITS for the solver. A colour frame is stored plane-first,
-    which is how FITS (and ASTAP) expect it."""
+def frame_for_solver(data):
+    """A camera frame as a single-plane image in a pixel format every solver reads.
+
+    Two conversions, both of which a solver will otherwise refuse the file over:
+
+    * **One plane.** A colour frame arrives with three (Alpaca hands back ``(height, width, 3)``),
+      and colour carries no astrometric information, so the planes are averaged into one. This also
+      avoids writing a three-dimensional FITS, which solvers handle inconsistently at best.
+    * **A type that fits.** Handled by :func:`galileo.metadata.normalise_pixels`, which every
+      frame Galileo writes goes through: a 64-bit image is legal FITS but ASTAP reads it as a
+      broken file.
+    """
     import numpy as np
-    from astropy.io import fits
+    from galileo.metadata import normalise_pixels
     array = np.asarray(data)
-    if array.ndim == 3:
-        array = np.moveaxis(array, -1, 0)
-    fits.PrimaryHDU(array).writeto(path, overwrite=True)
+    if array.ndim > 2:
+        # RGB or RGBA, at whichever end the source puts it: Alpaca hands back (height, width, 3),
+        # while a FITS cube is plane-first. Anything else falls back to the shortest axis.
+        if array.shape[-1] in (3, 4):
+            colour_axis = array.ndim - 1
+        elif array.shape[0] in (3, 4):
+            colour_axis = 0
+        else:
+            colour_axis = min(range(array.ndim), key=lambda axis: array.shape[axis])
+        array = array.mean(axis=colour_axis)
+    return normalise_pixels(array)
+
+
+def _write_frame(data, path: Path, metadata: "dict | None" = None) -> None:
+    """Write a camera frame as FITS for the solver, in a form it can read (:func:`frame_for_solver`).
+
+    *metadata* carries what the solver can use to work out the scale for itself — the pixel size
+    (``XPIXSZ``/``YPIXSZ``), the focal length (``FOCALLEN``) and, for a one-shot-colour sensor, the
+    mosaic layout (``BAYERPAT``). Without them a solver has to search a wide range of image scales,
+    which is a common reason a perfectly good frame fails to solve.
+
+    Built via :func:`galileo.metadata.build_primary_hdu`, which places the header cards *after* the
+    block astropy writes for the pixel data (not merged in before it) — ASTAP refuses a file with
+    the ``BSCALE``/``BZERO`` unsigned-integer cards pushed to the end behind custom keywords, which
+    is what merging a header in at construction produces; see that function for the detail."""
+    from galileo.metadata import build_primary_hdu
+    build_primary_hdu(frame_for_solver(data), metadata or {}).writeto(path, overwrite=True)
+
+
+def _image_hdu(hdul):
+    """The first HDU in *hdul* holding a 2-D-or-larger image. A tile-compressed FITS keeps its
+    image in a later HDU, so the primary one is not always the picture."""
+    for hdu in hdul:
+        data = getattr(hdu, "data", None)
+        if data is not None and getattr(data, "ndim", 0) >= 2:
+            return hdu
+    return None
+
+
+def _normalise_fits(source: Path, destination: Path) -> None:
+    """Read the image out of *source* — whatever HDU, compression, plane count or bit depth it
+    uses — and write it to *destination* in the form a solver can read.
+
+    The source's own header is kept, minus the structural keywords that describe the old layout,
+    so anything the solver can use (focal length, pixel size, a previous solution's WCS) survives.
+
+    Built from the data alone first, then extended with what is kept of the source header — not by
+    merging that header in at construction — for the same reason :func:`galileo.metadata.build_primary_hdu`
+    is: astropy would otherwise place the new pixel data's ``BSCALE``/``BZERO`` cards after the kept
+    header instead of directly after ``NAXIS2``, which ASTAP's parser refuses to read.
+    """
+    from astropy.io import fits
+    with fits.open(source, memmap=False) as hdul:
+        hdu = _image_hdu(hdul)
+        if hdu is None:
+            raise ValueError("it holds no image")
+        data, header = hdu.data, hdu.header.copy()
+    for keyword in ("SIMPLE", "XTENSION", "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3",
+                    "EXTEND", "PCOUNT", "GCOUNT", "BZERO", "BSCALE", "BLANK", "CHECKSUM", "DATASUM"):
+        header.remove(keyword, ignore_missing=True, remove_all=True)
+    new_hdu = fits.PrimaryHDU(frame_for_solver(data))
+    for card in header.cards:
+        new_hdu.header.append(card)
+    new_hdu.writeto(destination, overwrite=True)
+
+
+def _describe_fits(path: Path) -> str:
+    """What a FITS file actually holds, for a message about a solver refusing it."""
+    try:
+        size_mb = path.stat().st_size / 1e6
+    except OSError:
+        return f"{path.name}, which is missing"
+    try:
+        from astropy.io import fits
+        with fits.open(path, memmap=False) as hdul:
+            hdu = _image_hdu(hdul)
+            if hdu is None:
+                return f"{path.name} ({size_mb:.1f} MB), which holds no image"
+            shape = "x".join(str(n) for n in reversed(hdu.data.shape))
+            return f"{path.name}: {shape}, BITPIX {hdu.header.get('BITPIX')}, {size_mb:.1f} MB"
+    except Exception as exc:
+        return f"{path.name} ({size_mb:.1f} MB), which could not be read here either: {exc}"
 
 
 def _image_height_px(path: Path) -> int:

@@ -926,3 +926,208 @@ def test_obstructed_goto_reports_the_error_in_the_status_bar(window):
     window._device_pages["mount"]["adapter"] = _ObstructedMount("J2000")
     assert window._mount_to_object("goto", vega) is False
     assert "Unable to slew to that area, it is obstructed" in window._window.statusBar().currentMessage()
+
+
+# ---------------------------------------------------------------------------
+# SKYMAP-090 — a telescope reticle per Pier, tracking slews
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _fresh_current_objects():
+    """The current-object store is process-wide and keyed by Pier id, and every test builds a fresh
+    database whose ids restart at 1 — so clear it, or one test's target shows up in the next."""
+    import galileo.current_object as co
+    co._default_store = None
+    yield
+    co._default_store = None
+
+
+class _ReticleMount:
+    """A mount whose reported position can be moved between polls, as during a slew."""
+
+    def __init__(self, ra_deg=279.235, dec_deg=38.784, slewing=False, system="J2000"):
+        self.ra_deg, self.dec_deg, self.slewing, self.system = ra_deg, dec_deg, slewing, system
+        self.polls = 0
+
+    async def get_status(self):
+        self.polls += 1
+        return {"right_ascension": self.ra_deg / 15.0, "declination": self.dec_deg,
+                "equatorial_system": self.system, "slewing": self.slewing}
+
+
+class _SilentMount:
+    async def get_status(self):
+        raise RuntimeError("the mount stopped answering")
+
+
+def _poll(window):
+    """Poll the mount as the page's timer does, then wait for the worker thread and its signal."""
+    done = []
+    window._poll_pier_pointing(on_done=lambda: done.append(True))
+    thread = window._pier_poll_thread
+    if thread is not None:
+        thread.wait(5000)
+        window.app.processEvents()
+    return done
+
+
+def _two_piers(window):
+    from galileo.observatory import create_observatory, create_pier
+    observatory = create_observatory("Reticle Obs")
+    window._current_observatory = observatory
+    pier_a, pier_b = create_pier(observatory, "Pier A"), create_pier(observatory, "Pier B")
+    window._current_pier = pier_a
+    return pier_a, pier_b
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_each_pier_gets_a_labelled_reticle(window):
+    """SKYMAP-090: every Pier in the current Observatory with something to show gets a labelled reticle."""
+    from galileo.current_object import CurrentObject, get_current_objects
+    pier_a, pier_b = _two_piers(window)
+    assert window.pier_markers() == [], "nothing known about either Pier yet"
+
+    get_current_objects().set(pier_a, CurrentObject("M 31", 10.6847, 41.2687))
+    get_current_objects().set(pier_b, CurrentObject("M 42", 83.822, -5.391))
+    markers = window.pier_markers()
+
+    assert [m["label"] for m in markers] == ["Pier A → M 31", "Pier B → M 42"]
+    assert markers[0]["ra_deg"] == pytest.approx(10.6847) and markers[1]["dec_deg"] == pytest.approx(-5.391)
+    assert not any(m["slewing"] for m in markers)
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_reticle_follows_the_mount_and_moves_as_it_slews(window):
+    """SKYMAP-090: a connected mount's reticle sits where it is really pointing and moves with it, so a slew can be watched."""
+    from galileo.current_object import CurrentObject, get_current_objects
+    pier_a, _pier_b = _two_piers(window)
+    get_current_objects().set(pier_a, CurrentObject("M 31", 10.6847, 41.2687))
+    mount = _ReticleMount(ra_deg=200.0, dec_deg=10.0, slewing=True)
+    window._device_pages["mount"]["adapter"] = mount
+
+    _poll(window)
+    marker = window.pier_markers()[0]
+    assert marker["ra_deg"] == pytest.approx(200.0, abs=1e-6) and marker["dec_deg"] == pytest.approx(10.0, abs=1e-6)
+    assert marker["slewing"] is True and marker["label"] == "Pier A → M 31 (slewing)"
+    # The target is carried too, so the view can draw where the mount is heading.
+    assert marker["target"] == {"ra_deg": pytest.approx(10.6847), "dec_deg": pytest.approx(41.2687)}
+
+    mount.ra_deg, mount.dec_deg = 100.0, 30.0      # the slew has run on
+    _poll(window)
+    moved = window.pier_markers()[0]
+    assert moved["ra_deg"] == pytest.approx(100.0, abs=1e-6), "the reticle followed the mount"
+
+    mount.ra_deg, mount.dec_deg, mount.slewing = 10.6847, 41.2687, False
+    _poll(window)
+    arrived = window.pier_markers()[0]
+    assert arrived["slewing"] is False and arrived["label"] == "Pier A → M 31"
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_a_mount_reporting_jnow_is_converted_for_the_map(window):
+    """SKYMAP-090: a mount that reports coordinates of date is converted to J2000, which is what the map draws in."""
+    from galileo.platesolve import j2000_to_mount_frame
+    pier_a, _ = _two_piers(window)
+    j2000 = (37.95, 89.26)                                  # Polaris, which has precessed a long way
+    jnow = j2000_to_mount_frame(*j2000, "JNOW")
+    window._device_pages["mount"]["adapter"] = _ReticleMount(ra_deg=jnow[0], dec_deg=jnow[1], system="JNOW")
+
+    _poll(window)
+    marker = window.pier_markers()[0]
+    assert marker["ra_deg"] == pytest.approx(j2000[0], abs=1e-4)
+    assert marker["dec_deg"] == pytest.approx(j2000[1], abs=1e-4)
+    assert marker["label"] == "Pier A", "no current object, so just the Pier's name"
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_an_unreadable_mount_falls_back_to_the_target(window):
+    """SKYMAP-090: when the mount can't be read the reticle shows the Pier's target rather than freezing where it last was."""
+    from galileo.current_object import CurrentObject, get_current_objects
+    pier_a, _ = _two_piers(window)
+    get_current_objects().set(pier_a, CurrentObject("M 31", 10.6847, 41.2687))
+    window._device_pages["mount"]["adapter"] = _ReticleMount(ra_deg=200.0, dec_deg=10.0)
+    _poll(window)
+    assert window.pier_markers()[0]["ra_deg"] == pytest.approx(200.0, abs=1e-6)
+
+    window._device_pages["mount"]["adapter"] = _SilentMount()
+    _poll(window)
+    marker = window.pier_markers()[0]
+    assert marker["ra_deg"] == pytest.approx(10.6847), "back to the target"
+    assert marker["slewing"] is False
+
+    window._device_pages["mount"]["adapter"] = None       # disconnected entirely
+    _poll(window)
+    assert window.pier_markers()[0]["ra_deg"] == pytest.approx(10.6847)
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_the_mount_is_read_off_the_ui_thread(window):
+    """SKYMAP-090: the mount is read on a worker thread — a slow mount must never stall the sky view."""
+    import threading
+    _two_piers(window)
+    seen = {}
+
+    class _ThreadRecordingMount(_ReticleMount):
+        async def get_status(self):
+            seen["thread"] = threading.current_thread().ident
+            return await super().get_status()
+
+    window._device_pages["mount"]["adapter"] = _ThreadRecordingMount()
+    _poll(window)
+    assert seen["thread"] != threading.current_thread().ident
+    assert window._pier_poll_thread is None, "the thread is released once it reports"
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_the_view_draws_a_reticle_for_each_marker(view):
+    """SKYMAP-090: the sky view draws the reticles it is given, and the Telescope markers option turns them off."""
+    def painted(v):
+        return v.grab().toImage()
+
+    # Vega is near the zenith for this fixture, so a reticle on it lands in view.
+    vega = {"ra_deg": 279.235, "dec_deg": 38.784}
+    blank = painted(view)
+    view.set_pier_markers([{**vega, "label": "Pier A → Vega", "slewing": False}])
+    assert view.pier_markers and painted(view) != blank, "the reticle changed what is drawn"
+
+    view.set_option("show_pier_markers", False)
+    assert painted(view) == blank, "turning Telescope markers off removes them"
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_a_marker_off_the_map_or_malformed_is_skipped(view):
+    """SKYMAP-090: a reticle outside the view, or one missing coordinates, is skipped rather than drawn wrongly or raising."""
+    def paint(v):
+        return v.grab().toImage()
+
+    blank = paint(view)
+    below = {"ra_deg": (279.235 + 180.0) % 360.0, "dec_deg": -38.784}      # opposite the zenith: under the horizon
+    view.set_pier_markers([below | {"label": "Pier A"}, {"label": "Pier B (no coordinates)"}])
+    assert paint(view) == blank
+
+
+@pytest.mark.requirement("TC-SKYMAP-090")
+@pytest.mark.priority("P2")
+def test_tc_skymap_090_telescope_markers_is_a_remembered_option(tmp_path, monkeypatch):
+    """SKYMAP-090: Telescope markers is on by default and remembered between runs, like the other display options."""
+    import galileo.platform as platform_mod
+    from galileo.ui.star_atlas import PERSISTED_TOGGLES, StarAtlasView, load_display_prefs, save_display_prefs
+    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: tmp_path)
+    assert "show_pier_markers" in PERSISTED_TOGGLES
+
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    v = StarAtlasView()
+    try:
+        assert v.show_pier_markers is True
+        v.show_pier_markers = False
+        save_display_prefs(v)
+        assert load_display_prefs()["show_pier_markers"] is False
+    finally:
+        v.close()

@@ -265,15 +265,33 @@ def delete_device_config(pier: "PierRecord", category: str, slot: str = "primary
     ).execute()
 
 
+def _slot_sort_key(slot: str) -> tuple:
+    """Sort key putting "primary" first, then "<name>_<n>" by number, then the rest by name."""
+    from galileo.library.models.device_config import PRIMARY_SLOT
+    if slot == PRIMARY_SLOT:
+        return (0, 0, "")
+    prefix, _, suffix = slot.rpartition("_")
+    if prefix and suffix.isdigit():
+        return (1, int(suffix), prefix)
+    return (2, 0, slot)
+
+
 def list_device_config_slots(pier: "PierRecord", category: str) -> list[str]:
     """Return every slot name saved for *category* on *pier* — used by the
     Camera page on load to know how many additional camera panels (beyond
-    the always-present "primary") to rebuild."""
+    the always-present "primary") to rebuild.
+
+    In slot order: "primary" first, then the numbered slots ("camera_2",
+    "camera_3", …) by number, then anything else alphabetically. The database
+    returns rows in whatever order it finds them — with the unique index on
+    (pier, category, slot) that is alphabetical, which puts "camera_2" before
+    "primary" — so callers that show these to the user, or take the first as a
+    default, must not be left to that."""
     from galileo.library.models.device_config import DeviceConfigRecord
     rows = DeviceConfigRecord.select(DeviceConfigRecord.slot).where(
         (DeviceConfigRecord.pier == pier) & (DeviceConfigRecord.category == category)
     )
-    return [row.slot for row in rows]
+    return sorted((row.slot for row in rows), key=_slot_sort_key)
 
 
 def list_device_configs(pier: "PierRecord") -> list["DeviceConfigRecord"]:
