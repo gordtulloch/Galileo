@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The wiki's Getting Started Guide (`Wiki/1.-Getting-Started-Guide.md`) now covers the current object, multi-frame capture and live stacking.** It described only a single manual exposure and said nothing about picking a target — features added to Imaging and the Star Atlas since it was written. "Take your first exposure" is now split into a new "Pick a target (optional)" section (Star Atlas current object: names saved frames, is what Solve's *Slew to Target* slews to, per-Pier and session-only) and "Capture a frame", which adds the Quantity/Gain run, Auto-Save to Library, Live Stack/Save Stack…, the Mount Nudge panel and the automatic portrait layout; the Solve row in the add-ons table now names the current object as its slew target. No screenshots or other pages changed.
+
 - **README refreshed with current screenshots and up-to-date counts.** Added the Imaging tab's portrait-layout screenshot (`assets/screenshots/imaging portrait.png`, showing the layout described in the `IMG-120`/`IMG-130` changelog entry) to the Screenshots section, and corrected the test-count badge and the Status section's test and requirement counts, all of which had drifted behind the codebase: `pytest -m "not soak and not hardware and not integration"` now passes 639 of 646 collected tests (1 skipped, 6 deselected), up from the previously shown 244/488, and `docs/SRS.md` now carries 272 numbered requirements, up from 235.
 
 ### Removed
