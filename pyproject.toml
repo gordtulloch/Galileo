@@ -42,6 +42,7 @@ dependencies = [
     # Network adapters
     "requests>=2.28",
     "paramiko>=3.0",          # SFTP
+    "keyring>=24.0",          # OS credential store (NFR-SEC-010) — was already transitively pulled in by astroquery
     # Library (AstroFiler): master frames, cloud sync, smart-telescope shares, XISF import, statistics
     "scipy>=1.7",
     "matplotlib>=3.3",

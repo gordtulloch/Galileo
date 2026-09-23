@@ -491,6 +491,8 @@ Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo — the 
 
 ### 4.22 `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
+**`LIB-080` is retired** (left as a gap rather than renumbering, matching this document's ID conventions elsewhere): it specified a repository statistics dashboard (frame counts by object/filter/date/instrument, quality-metric trends), whose `StatsWidget` implementation and Library-screen tab were removed on request; retiring the requirement here brings the SRS/RTM back in line with that decision rather than leaving an MVP requirement permanently unmet with no code behind it and no one building toward it.
+
 | ID | Requirement | Priority |
 |---|---|---|
 | LIB-010 | The system shall recursively scan a configured repository location, ingest discovered FITS files, and extract their header metadata into a catalog. XISF files shall also be ingested, converted best-effort to FITS at ingest time (Galileo's sole internal/output format per `EXT-060`) — an XISF file whose metadata or pixel data cannot be fully mapped shall still be converted with a logged warning identifying what was lost, rather than silently dropped or rejected outright. | MVP |
@@ -500,7 +502,6 @@ Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo — the 
 | LIB-050 | The system shall create master bias, dark, and flat calibration frames from a linked calibration session. | MVP |
 | LIB-060 | The system shall apply a matching master calibration frame set (dark subtraction, flat division) to a selected group of light frames in one user action. | MVP |
 | LIB-070 | The system shall compute and store per-frame quality metrics (FWHM, HFR, eccentricity, SNR) for ingested frames, supporting later filtering and sorting by quality. | MVP |
-| LIB-080 | The system shall present a repository statistics dashboard summarizing frame counts by object, filter, date, and instrument, and quality-metric trends over time. | MVP |
 | LIB-090 | The system shall browse and selectively download files from a SEESTAR or StellarMate smart telescope over SMB/CIFS (traces to `EXT-080`), enhancing headers as needed during ingest. | MVP |
 | LIB-100 | The system shall browse and selectively download files from an iTelescope network share over FTPS (traces to `EXT-080`). | P2 |
 | LIB-110 | The system shall browse and selectively download files from a DWARF smart telescope over FTP (traces to `EXT-080`), as an experimental capability. | P3 |
@@ -567,6 +568,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 |---|---|---|
 | NFR-SEC-010 | The system shall not transmit equipment-profile credentials or location data to any external service without explicit user configuration and consent. | MVP |
 | NFR-SEC-020 | The system shall document the security implications of exposing an INDI server or Alpaca device over a WAN and shall not itself weaken a network-exposed device's authentication where the backend protocol supports it. | P2 |
+| NFR-SEC-030 | User-supplied third-party service passwords (e.g. iTelescope's FTPS credential) shall be stored in the OS credential store, not in plaintext in an application config file; a plaintext credential left by an older version shall be migrated on next read and removed from the config file. | P2 |
 
 ### 5.8 `NFR-OFFLINE` — Offline Operation
 
@@ -612,14 +614,14 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |
-| LIB | 16 | 11 | 4 | 1 |
+| LIB | 15 | 10 | 4 | 1 |
 | NFR-PERF | 3 | 3 | 0 | 0 |
 | NFR-REL | 4 | 3 | 1 | 0 |
 | NFR-PORT | 2 | 2 | 0 | 0 |
 | NFR-EXT | 1 | 0 | 1 | 0 |
 | NFR-USE | 2 | 1 | 1 | 0 |
 | NFR-I18N | 1 | 1 | 0 | 0 |
-| NFR-SEC | 2 | 1 | 1 | 0 |
+| NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
 | **Total** | **258** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |

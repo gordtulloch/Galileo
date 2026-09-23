@@ -400,12 +400,12 @@ def test_star_atlas_section_sits_above_planning():
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
 def test_planning_and_science_sections_carry_their_own_menus(window):
-    """Planning opens onto Targets (the catalog lookup), Sequence and Scheduler; Science holds Variable Stars;
+    """Planning opens onto Targets (the catalog lookup), Sessions and Scheduler; Science holds Variable Stars;
     Library holds AstroFiler's screens. None of those is a top-level section any more."""
     from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
     assert ids == ["equipment", "star_atlas", "planning", "framing", "imaging", "guiding", "focus", "solve", "library", "science"]
-    assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sequencer", "Sequence"), ("scheduler", "Scheduler")]
+    assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sessions", "Sessions"), ("scheduler", "Scheduler")]
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
     assert [i[:2] for i in LIBRARY_ITEMS] == [
         ("images", "Images"), ("sessions", "Sessions"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
@@ -418,7 +418,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert ["Targets", "Sequence", "Scheduler"] in menus and ["Variable Stars"] in menus
+    assert ["Targets", "Sessions", "Scheduler"] in menus and ["Variable Stars"] in menus
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 
@@ -892,6 +892,62 @@ def test_options_star_atlas_uploads_a_horizon_and_the_atlas_shows_it(horizon_env
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[-1]))
     upload.click()
     assert warned and table.rowCount() == 4                           # rejected, previous table kept
+
+
+@pytest.mark.requirement("TC-SKY-040")
+@pytest.mark.priority("P2")
+def test_options_star_atlas_edits_horizon_points_directly(horizon_env, window):
+    """SKY-040: Options > Star Atlas lets a user add, edit, remove and save horizon
+    obstruction points directly in the table, not only by uploading a file."""
+    from PySide6.QtWidgets import QMessageBox, QPushButton, QTableWidget
+    from galileo.observatory import create_observatory, list_horizon_points
+    window._select_observatory(create_observatory("Home", 40.0, 0.0))
+    table = next(t for t in window._options_page.findChildren(QTableWidget))
+
+    def button(text):
+        return next(b for b in window._options_page.findChildren(QPushButton) if b.text() == text)
+
+    add_btn, remove_btn, save_btn = button("Add Point"), button("Remove Selected"), button("Save Changes")
+    assert not remove_btn.isEnabled()  # nothing to remove yet
+
+    # Add two points and edit their values directly.
+    add_btn.click()
+    table.item(0, 0).setText("45")
+    table.item(0, 1).setText("12")
+    add_btn.click()
+    table.item(1, 0).setText("10")
+    table.item(1, 1).setText("8")
+    assert table.rowCount() == 2 and remove_btn.isEnabled()
+
+    save_btn.click()
+    # Saved sorted by azimuth, regardless of entry order — and saving refreshes the table
+    # from the database, so its rows are now in that same azimuth order too: (10, 8), (45, 12).
+    assert list_horizon_points(window._current_observatory) == [(10.0, 8.0), (45.0, 12.0)]
+    assert table.item(0, 0).text() == "10" and table.item(1, 0).text() == "45"
+
+    # An out-of-range value is rejected — nothing is saved, the table is left as typed.
+    table.item(1, 1).setText("999")  # row 1 is (45, 12); this makes it (45, 999)
+    warned: list = []
+    import unittest.mock as mock
+    with mock.patch.object(QMessageBox, "warning", lambda *a, **k: warned.append(a[-1])):
+        save_btn.click()
+    assert warned
+    assert list_horizon_points(window._current_observatory) == [(10.0, 8.0), (45.0, 12.0)]  # unchanged
+
+    # Restore it, then remove row 0 (10, 8) and save again, leaving only (45, 12).
+    table.item(1, 1).setText("12")
+    table.selectRow(0)
+    remove_btn.click()
+    assert table.rowCount() == 1
+    save_btn.click()
+    assert list_horizon_points(window._current_observatory) == [(45.0, 12.0)]
+
+    # Removing the one remaining row and saving clears the horizon entirely.
+    table.selectRow(0)
+    remove_btn.click()
+    save_btn.click()
+    assert list_horizon_points(window._current_observatory) == []
+    assert not remove_btn.isEnabled()  # table is empty again
 
 
 @pytest.mark.requirement("TC-SKYMAP-080")

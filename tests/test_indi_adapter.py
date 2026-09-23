@@ -319,7 +319,8 @@ async def test_tc_eqp_mnt_010_status_slew_park_and_tracking(server):
 @pytest.mark.requirement("TC-EQP-MNT-010")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_mnt_010_parked_mount_is_not_sent_movement_commands(server):
-    """EQP-MNT-010: while parked, slews, jogs and find-home are refused before anything is sent; stopping and unparking still work."""
+    """EQP-MNT-010: while parked, slews, jogs, find-home, sync and enabling tracking are all refused before
+    anything is sent; stopping, disabling tracking and unparking still work."""
     mount = make(indi.IndiMountAdapter, server, MOUNT)
     await mount.connect()
     try:
@@ -329,15 +330,20 @@ async def test_tc_eqp_mnt_010_parked_mount_is_not_sent_movement_commands(server)
             mount.slew_to_altaz(alt=45.0, az=90.0),
             mount.move_axis(1, 0.5),
             mount.find_home(),
+            mount.sync_to_coordinates(ra=180.0, dec=45.0),
+            mount.set_tracking(True),
         ):
             with pytest.raises(MountParkedError, match="parked"):
                 await refused
         await asyncio.sleep(0.1)
-        for prop in ("EQUATORIAL_EOD_COORD", "HORIZONTAL_COORD", "TELESCOPE_MOTION_NS", "TELESCOPE_HOME", "ON_COORD_SET"):
+        for prop in ("EQUATORIAL_EOD_COORD", "HORIZONTAL_COORD", "TELESCOPE_MOTION_NS", "TELESCOPE_HOME",
+                     "ON_COORD_SET", "TELESCOPE_TRACK_STATE"):
             assert commands(server, MOUNT, prop) == [], prop
 
         await mount.move_axis(1, 0.0)   # a stop is always allowed
         await sent(server, MOUNT, "TELESCOPE_MOTION_NS", {"MOTION_NORTH": "Off", "MOTION_SOUTH": "Off"})
+        await mount.set_tracking(False)   # disabling tracking is always allowed
+        await sent(server, MOUNT, "TELESCOPE_TRACK_STATE", {"TRACK_ON": "Off", "TRACK_OFF": "On"})
         await mount.abort_slew()
         await sent(server, MOUNT, "TELESCOPE_ABORT_MOTION")
     finally:

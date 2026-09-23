@@ -601,6 +601,8 @@ class IndiMountAdapter(IndiAdapter):
         self._set_sw(prop, {positive: rate > 0, negative: rate < 0})
 
     async def set_tracking(self, enabled: bool) -> None:
+        if enabled:
+            self._refuse_if_parked("set_tracking")
         self._log_interaction("set_tracking", enabled=enabled)
         self._set_sw("TELESCOPE_TRACK_STATE", {"TRACK_ON": enabled, "TRACK_OFF": not enabled})
         self.is_tracking = enabled
@@ -616,6 +618,7 @@ class IndiMountAdapter(IndiAdapter):
         self._select("TELESCOPE_TRACK_MODE", self._TRACK_MODES.get(mode, "TRACK_SIDEREAL"))
 
     async def sync_to_coordinates(self, ra: float, dec: float) -> None:
+        self._refuse_if_parked("sync_to_coordinates")
         self._log_interaction("sync_to_coordinates", ra=ra, dec=dec)
         self._select("ON_COORD_SET", "SYNC")
         self._set_num("EQUATORIAL_EOD_COORD", {"RA": ra / 15.0, "DEC": dec})

@@ -618,6 +618,8 @@ class AlpacaMountAdapter(AlpacaAdapter):
         await self._put("moveaxis", Axis=axis, Rate=rate)
 
     async def set_tracking(self, enabled: bool) -> None:
+        if enabled:
+            await self._refuse_if_parked("set_tracking")
         await self._put("tracking", Tracking=enabled)
         self.is_tracking = enabled
 
@@ -637,6 +639,7 @@ class AlpacaMountAdapter(AlpacaAdapter):
         await self._put("trackingrate", TrackingRate=idx)
 
     async def sync_to_coordinates(self, ra: float, dec: float) -> None:
+        await self._refuse_if_parked("sync_to_coordinates")
         await self._put("synctocoordinates", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 

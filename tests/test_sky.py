@@ -201,6 +201,35 @@ async def test_tc_sky_090_geocode_location_name(observing_location):
     assert "Europe" in result["timezone"]
 
 
+@pytest.mark.requirement("TC-SKY-090")
+@pytest.mark.priority("P2")
+def test_tc_sky_090_new_observatory_dialog_look_up_button_fills_coordinates(tmp_path, monkeypatch):
+    """SKY-090: the New Observatory dialog's Look up button resolves an address to lat/long/timezone."""
+    from PySide6 import QtWidgets
+
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "geocode_test.db")
+    from galileo.ui.app_window import AppWindow
+    import galileo.planning.sky_atlas as sky_mod
+
+    win = AppWindow()
+    try:
+        monkeypatch.setattr(sky_mod, "geocode_location", AsyncMock(return_value={
+            "latitude": 51.4994, "longitude": -0.1248, "timezone": "Europe/London",
+        }))
+        resolved = win._geocode_observatory_address("Westminster, London")
+        assert resolved == {"latitude": 51.4994, "longitude": -0.1248, "timezone": "Europe/London"}
+
+        # An address that resolves to nothing (or a blank one) is reported as "not found", not a crash.
+        monkeypatch.setattr(sky_mod, "geocode_location", AsyncMock(return_value={}))
+        assert win._geocode_observatory_address("nowhere in particular") is None
+        assert win._geocode_observatory_address("   ") is None
+    finally:
+        win._window.close()
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # TC-SKY-100
 # ---------------------------------------------------------------------------

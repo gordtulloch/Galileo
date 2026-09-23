@@ -84,3 +84,57 @@ def get_temp_folder() -> str:
         os.makedirs(temp_folder, exist_ok=True)
         return os.path.abspath(temp_folder)
     return tempfile.gettempdir()
+
+
+# ---------------------------------------------------------------------------
+# iTelescope password (NFR-SEC-010): the OS keychain, not library.ini in plain text
+# ---------------------------------------------------------------------------
+
+_KEYRING_SERVICE = "galileo-library"
+_KEYRING_ITELESCOPE_USER = "itelescope"
+
+
+def get_itelescope_password() -> str:
+    """The iTelescope FTPS password, from the OS keychain.
+
+    A plaintext ``itelescope_password`` left in ``library.ini`` by an older version is migrated
+    into the keychain and stripped from the file the first time this is called. If the keychain
+    itself is unavailable (no backend on a headless Linux box, a locked keychain, …) this logs a
+    warning and returns an empty string rather than raising — the caller is expected to treat that
+    the same as "no password configured".
+    """
+    stored = None
+    try:
+        import keyring
+        stored = keyring.get_password(_KEYRING_SERVICE, _KEYRING_ITELESCOPE_USER)
+    except Exception:
+        logger.warning("Could not read the iTelescope password from the OS keychain", exc_info=True)
+
+    if stored:
+        return stored
+
+    config = load_config()
+    legacy = config.get("DEFAULT", "itelescope_password", fallback="").strip()
+    if legacy:
+        set_itelescope_password(legacy)
+        config.remove_option("DEFAULT", "itelescope_password")
+        save_config(config)
+        logger.info("Migrated the iTelescope password from library.ini into the OS keychain")
+        return legacy
+
+    return ""
+
+
+def set_itelescope_password(password: str) -> None:
+    """Store the iTelescope FTPS password in the OS keychain rather than ``library.ini``."""
+    try:
+        import keyring
+        if password:
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_ITELESCOPE_USER, password)
+        else:
+            try:
+                keyring.delete_password(_KEYRING_SERVICE, _KEYRING_ITELESCOPE_USER)
+            except Exception:
+                pass  # nothing was stored, or this backend can't delete — either way, nothing to do
+    except Exception:
+        logger.warning("Could not save the iTelescope password to the OS keychain", exc_info=True)

@@ -77,7 +77,7 @@ OPTIONS_ITEMS = list(PRIMARY_SECTIONS)
 # section_id -> [(item_id, label, icon_name)].
 PLANNING_ITEMS = [
     ("targets", "Targets", "sky_atlas"),
-    ("sequencer", "Sequence", "sequencer"),
+    ("sessions", "Sessions", "sequencer"),
     ("scheduler", "Scheduler", "scheduler"),
 ]
 SCIENCE_ITEMS = [
@@ -383,13 +383,18 @@ class AppWindow:
         return get_current_objects().get(self._current_pier)
 
     def _set_current_object(self, atlas_obj: dict) -> None:
-        """A Star Atlas item was selected: it becomes the selected Pier's current object."""
+        """A Star Atlas item was selected: it becomes the selected Pier's current object,
+        and auto-creates a session pre-populated with a Target block for it (SES-160,
+        traces to SKY-050) if the Sessions page has been built."""
         from galileo.current_object import CurrentObject, get_current_objects
         if self._current_pier is None:
             self._window.statusBar().showMessage("Create a Pier to keep a current object.", 4000)
             return
         get_current_objects().set(self._current_pier, CurrentObject.from_atlas(atlas_obj))
         self._refresh_current_object()
+        create_session = self._device_pages.get("sessions", {}).get("create_session_for_target")
+        if create_session is not None:
+            create_session(str(atlas_obj["name"]), float(atlas_obj["ra_deg"]), float(atlas_obj["dec_deg"]))
 
     def _refresh_current_object(self) -> None:
         """Show the current object at the top right, and tell the Solve page what it now targets."""
@@ -447,10 +452,22 @@ class AppWindow:
             return name or None
         return None
 
+    def _geocode_observatory_address(self, place_name: str) -> "dict | None":
+        """Resolve *place_name* to latitude/longitude/timezone (SKY-090), or ``None`` if it
+        couldn't be resolved (blank input, no network, or nothing matched)."""
+        place_name = place_name.strip()
+        if not place_name:
+            return None
+        import asyncio
+        from galileo.planning.sky_atlas import geocode_location
+        result = asyncio.run(geocode_location(place_name))
+        return result or None
+
     def _prompt_new_observatory(self) -> "dict | None":
         """Modal Name/Lat/Long/Timezone/Physical Address/Owner dialog for New Observatory."""
         from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
+            QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox,
+            QPushButton, QDialogButtonBox, QMessageBox,
         )
 
         dialog = QDialog(self._window)
@@ -476,8 +493,29 @@ class AppWindow:
         tz_edit.setPlaceholderText("e.g. America/Toronto")
         form.addRow("Timezone", tz_edit)
 
+        address_row = QHBoxLayout()
         address_edit = QLineEdit()
-        form.addRow("Physical Address", address_edit)
+        address_row.addWidget(address_edit)
+        lookup_button = QPushButton("Look up")
+        lookup_button.setToolTip(
+            "Fill in Latitude, Longitude and Timezone from this address (SKY-090). "
+            "Requires internet access."
+        )
+
+        def _do_lookup() -> None:
+            resolved = self._geocode_observatory_address(address_edit.text())
+            if resolved is None:
+                QMessageBox.warning(dialog, "Location Not Found",
+                                     "Could not resolve that address to a location. "
+                                     "Check your internet connection or enter the coordinates manually.")
+                return
+            lat_edit.setValue(resolved["latitude"])
+            long_edit.setValue(resolved["longitude"])
+            tz_edit.setText(resolved["timezone"])
+
+        lookup_button.clicked.connect(_do_lookup)
+        address_row.addWidget(lookup_button)
+        form.addRow("Physical Address", address_row)
 
         owner_edit = QLineEdit()
         form.addRow("Owner", owner_edit)
@@ -791,7 +829,8 @@ class AppWindow:
             "equipment": self._build_equipment_page,
             "star_atlas": self._build_star_atlas_page,
             "planning": lambda: self._build_submenu_page(
-                PLANNING_ITEMS, {"targets": self._build_sky_atlas_page}),
+                PLANNING_ITEMS, {"targets": self._build_sky_atlas_page,
+                                  "sessions": self._build_sessions_page}),
             "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
             "library": self._build_library_page,
             "framing": self._build_framing_page,
@@ -4023,6 +4062,17 @@ class AppWindow:
         from galileo.ui.focus import FocusPage
         return FocusPage(self)
 
+    def _build_sessions_page(self) -> "QWidget":
+        """Planning > Sessions (SES-100 … SES-230): per-Pier, block-based session
+        authoring — see ``galileo.ui.sessions``."""
+        from galileo.ui.sessions import SessionsPageWidget
+        page = SessionsPageWidget(self)
+        self._device_pages["sessions"] = {
+            "reload": page.reload,
+            "create_session_for_target": page.create_session_for_target,
+        }
+        return page
+
     def _build_solve_page(self) -> "QWidget":
         """Solve page (a primary sidebar section): plate solving, with the frame
         being solved and its results on show (PLT-070) — see ``galileo.ui.solve``.
@@ -5688,9 +5738,9 @@ class AppWindow:
 
     def _build_star_atlas_settings_page(self) -> "QWidget":
         """Options > Star Atlas: upload a file of azimuth/altitude pairs describing the
-        horizon obstructions at the current Observatory. They are kept in a table shown
-        here, shaded on the Star Atlas by its "Horizon" checkbox, and (with Options >
-        Planning) used to refuse slews into them."""
+        horizon obstructions at the current Observatory, or edit them point by point
+        (SKY-040). They are kept in a table shown here, shaded on the Star Atlas by its
+        "Horizon" checkbox, and (with Options > Planning) used to refuse slews into them."""
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import (
             QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
@@ -5713,10 +5763,11 @@ class AppWindow:
         layout.addWidget(subtitle)
 
         hint = QLabel(
-            "Upload a text file with one “azimuth altitude” pair per line (degrees; azimuth from north "
-            "through east, 0–360; altitude 0–90). Each altitude is the height of the obstruction at that "
-            "azimuth — the sky below it is blocked. The values are joined by straight lines, wrapping "
-            "through north. Turn on “Horizon” on the Star Atlas to see them shaded.")
+            "Upload a text file with one “azimuth altitude” pair per line, or edit points directly "
+            "in the table below (degrees; azimuth from north through east, 0–360; altitude 0–90). "
+            "Each altitude is the height of the obstruction at that azimuth — the sky below it is "
+            "blocked. The values are joined by straight lines, wrapping through north. Turn on "
+            "“Horizon” on the Star Atlas to see them shaded.")
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -5726,8 +5777,18 @@ class AppWindow:
         upload_btn.setObjectName("AccentButton")
         clear_btn = QPushButton("Clear")
         clear_btn.setToolTip("Delete this Observatory's horizon obstruction table")
+        add_point_btn = QPushButton("Add Point")
+        add_point_btn.setToolTip("Add a new azimuth/altitude row to edit")
+        remove_point_btn = QPushButton("Remove Selected")
+        remove_point_btn.setToolTip("Remove the selected row(s)")
+        save_points_btn = QPushButton("Save Changes")
+        save_points_btn.setObjectName("AccentButton")
+        save_points_btn.setToolTip("Save edits made directly in the table")
         buttons.addWidget(upload_btn)
         buttons.addWidget(clear_btn)
+        buttons.addWidget(add_point_btn)
+        buttons.addWidget(remove_point_btn)
+        buttons.addWidget(save_points_btn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
@@ -5737,7 +5798,7 @@ class AppWindow:
 
         table = QTableWidget(0, 2)
         table.setHorizontalHeaderLabels(["Azimuth (°)", "Altitude (°)"])
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -5757,8 +5818,12 @@ class AppWindow:
                 status.setText(f"{len(points)} obstruction points for {observatory.name}.")
             else:
                 status.setText(f"No horizon obstructions defined for {observatory.name}.")
-            upload_btn.setEnabled(observatory is not None)
+            has_observatory = observatory is not None
+            upload_btn.setEnabled(has_observatory)
             clear_btn.setEnabled(bool(points))
+            add_point_btn.setEnabled(has_observatory)
+            remove_point_btn.setEnabled(has_observatory and table.rowCount() > 0)
+            save_points_btn.setEnabled(has_observatory)
 
         def store(points: list) -> None:
             try:
@@ -5787,8 +5852,46 @@ class AppWindow:
             store(points)
             self._window.statusBar().showMessage(f"Loaded {len(points)} horizon obstruction points.", 5000)
 
+        def add_point() -> None:
+            row = table.rowCount()
+            table.setRowCount(row + 1)
+            for col in (0, 1):
+                item = QTableWidgetItem("0")
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, col, item)
+            remove_point_btn.setEnabled(True)
+            table.editItem(table.item(row, 0))
+
+        def remove_selected() -> None:
+            for row in sorted({idx.row() for idx in table.selectedIndexes()}, reverse=True):
+                table.removeRow(row)
+            remove_point_btn.setEnabled(table.rowCount() > 0)
+
+        def save_edits() -> None:
+            points: list[tuple[float, float]] = []
+            for row in range(table.rowCount()):
+                az_item, alt_item = table.item(row, 0), table.item(row, 1)
+                try:
+                    az, alt = float(az_item.text() if az_item else ""), float(alt_item.text() if alt_item else "")
+                except ValueError:
+                    QMessageBox.warning(self._window, "Horizon",
+                                         f"Row {row + 1}: azimuth and altitude must both be numbers.")
+                    return
+                if not (0.0 <= az <= 360.0) or not (0.0 <= alt <= 90.0):
+                    QMessageBox.warning(self._window, "Horizon",
+                                         f"Row {row + 1}: azimuth must be 0–360° and altitude 0–90° "
+                                         f"(got {az:g}, {alt:g}).")
+                    return
+                points.append((az, alt))
+            points.sort(key=lambda p: p[0])
+            store(points)
+            self._window.statusBar().showMessage(f"Saved {len(points)} horizon obstruction points.", 5000)
+
         upload_btn.clicked.connect(upload)
         clear_btn.clicked.connect(lambda: store([]))
+        add_point_btn.clicked.connect(add_point)
+        remove_point_btn.clicked.connect(remove_selected)
+        save_points_btn.clicked.connect(save_edits)
         self._horizon_table_refresh = refresh
         refresh([])
         return page

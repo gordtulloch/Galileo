@@ -416,28 +416,6 @@ def test_tc_lib_070_compute_quality_metrics(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TC-LIB-080
-# ---------------------------------------------------------------------------
-
-@pytest.mark.requirement("TC-LIB-080")
-@pytest.mark.priority("MVP")
-def test_tc_lib_080_repository_statistics_dashboard(library):
-    """LIB-080: Present a repository statistics dashboard summarizing frame counts by object, filter, date, and instrument, and quality-metric trends over time."""
-    stats_mod = pytest.importorskip("galileo.library.core.statistics")
-
-    write_light_frames(library.incoming)
-    ingest(library)
-
-    dashboard = stats_mod.RepositoryStatistics().build_dashboard()
-
-    assert "counts_by_object" in dashboard
-    assert "counts_by_filter" in dashboard
-    assert "counts_by_date" in dashboard
-    assert "counts_by_instrument" in dashboard
-    assert "quality_trend" in dashboard  # quality-metric trend over time
-
-
-# ---------------------------------------------------------------------------
 # TC-LIB-090 … TC-LIB-110  (smart-telescope adapters)
 # ---------------------------------------------------------------------------
 

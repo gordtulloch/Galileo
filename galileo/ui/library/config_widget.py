@@ -6,7 +6,12 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QGroupBox, QLineEdit, QPushButton, QCheckBox, 
                                QComboBox, QSpinBox, QFileDialog, QMessageBox,
                                QApplication, QTabWidget)
-from galileo.library.config import load_config as load_library_config, save_config as save_library_config
+from galileo.library.config import (
+    get_itelescope_password,
+    load_config as load_library_config,
+    save_config as save_library_config,
+    set_itelescope_password,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -447,9 +452,11 @@ class ConfigWidget(QWidget):
             config.set('DEFAULT', 'pysiril_debug_logging', str(self.pysiril_debug_logging.isChecked()))
             config.set('DEFAULT', 'frame_processing_method', self.frame_processing_method.currentText())
             
-            # iTelescope settings
+            # iTelescope settings — the password goes to the OS keychain (NFR-SEC-010), not the ini file
             config.set('DEFAULT', 'itelescope_username', self.itelescope_username.text().strip())
-            config.set('DEFAULT', 'itelescope_password', self.itelescope_password.text().strip())
+            if config.has_option('DEFAULT', 'itelescope_password'):
+                config.remove_option('DEFAULT', 'itelescope_password')
+            set_itelescope_password(self.itelescope_password.text().strip())
             
             # FITS compression settings
             config.set('DEFAULT', 'compress_fits', str(self.compress_fits.isChecked()))
@@ -586,9 +593,7 @@ class ConfigWidget(QWidget):
                 itelescope_username = config.get('DEFAULT', 'itelescope_username')
                 self.itelescope_username.setText(itelescope_username)
             
-            if config.has_option('DEFAULT', 'itelescope_password'):
-                itelescope_password = config.get('DEFAULT', 'itelescope_password')
-                self.itelescope_password.setText(itelescope_password)
+            self.itelescope_password.setText(get_itelescope_password())
             
             # Load FITS compression settings
             if config.has_option('DEFAULT', 'compress_fits'):

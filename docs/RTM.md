@@ -394,7 +394,6 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-050` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-050` |
 | `LIB-060` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-060` |
 | `LIB-070` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-070` |
-| `LIB-080` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-080` |
 | `LIB-090` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-090` |
 | `LIB-100` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-100` |
 | `LIB-110` | P3 | SDD 4.23 `galileo.library` | Test | `TC-LIB-110` |
@@ -457,6 +456,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 |---|---|---|---|---|
 | `NFR-SEC-010` | MVP | SDD Sec 7: A cross-cutting constraint on every adapter that talks to an external service (`galileo.adapters.*`, `galileo.plugins.vstarget.*`, `galileo.library`'s cloud-sync adapter, Open-Meteo clients) — enforced by code review/security review, not one module | Test | `TC-NFR-SEC-010` |
 | `NFR-SEC-020` | P2 | SDD Sec 7: A documentation deliverable (user-facing docs), not a code module — tracked here so it isn't lost, not because it traces to a component | Inspection | `TC-NFR-SEC-020` |
+| `NFR-SEC-030` | P2 | SDD Sec 7: `galileo.library.config`'s `get_itelescope_password`/`set_itelescope_password`, wrapping `keyring` | Test | `TC-NFR-SEC-030` |
 
 ### `NFR-OFFLINE` — Offline Operation
 
@@ -503,14 +503,14 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
-| `LIB` | 16 | 11 | 4 | 1 |
+| `LIB` | 15 | 10 | 4 | 1 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
 | `NFR-EXT` | 1 | 0 | 1 | 0 |
 | `NFR-USE` | 2 | 1 | 1 | 0 |
 | `NFR-I18N` | 1 | 1 | 0 | 0 |
-| `NFR-SEC` | 2 | 1 | 1 | 0 |
+| `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **272** | **161** | **97** | **14** |
+| **Total** | **272** | **160** | **98** | **14** |

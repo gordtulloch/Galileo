@@ -77,6 +77,10 @@ class EquipmentProfile:
     version: int = 1
     piers: list[PierConfig] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "EquipmentProfile":
+        return _profile_from_dict(d)
+
 
 # ---------------------------------------------------------------------------
 # Profile manager

@@ -278,6 +278,56 @@ def test_tc_nfr_sec_020_indi_alpaca_wan_security_documentation():
         pytest.skip("galileo package not yet installed")
 
 
+@pytest.mark.requirement("TC-NFR-SEC-030")
+@pytest.mark.priority("P2")
+def test_tc_nfr_sec_030_itelescope_password_stored_in_keychain_not_plaintext(tmp_path, monkeypatch):
+    """NFR-SEC-030: the iTelescope password lives in the OS keychain; a plaintext one left in library.ini
+    by an older version is migrated on next read and stripped from the file."""
+    import keyring
+    from galileo.library import config as library_config
+
+    # Fake the OS keychain so this test never touches the real one.
+    store: dict[tuple[str, str], str] = {}
+
+    def fake_get_password(service, username):
+        return store.get((service, username))
+
+    def fake_set_password(service, username, password):
+        store[(service, username)] = password
+
+    def fake_delete_password(service, username):
+        if (service, username) not in store:
+            raise keyring.errors.PasswordDeleteError("not found")
+        del store[(service, username)]
+
+    monkeypatch.setattr(keyring, "get_password", fake_get_password)
+    monkeypatch.setattr(keyring, "set_password", fake_set_password)
+    monkeypatch.setattr(keyring, "delete_password", fake_delete_password)
+
+    ini = tmp_path / "library.ini"
+    library_config.set_config_path(ini)
+    try:
+        # Round-trip through the keychain: never written to library.ini in plaintext.
+        library_config.set_itelescope_password("s3cret")
+        assert library_config.get_itelescope_password() == "s3cret"
+        assert store[("galileo-library", "itelescope")] == "s3cret"
+        assert not ini.exists() or "itelescope_password" not in ini.read_text()
+
+        # A plaintext password left by an older version is migrated in and removed from the file.
+        store.clear()
+        ini.write_text("[DEFAULT]\nitelescope_password = legacy123\n")
+        assert library_config.get_itelescope_password() == "legacy123"
+        assert store[("galileo-library", "itelescope")] == "legacy123"
+        assert "itelescope_password" not in ini.read_text()
+
+        # Clearing the password doesn't raise even when nothing is stored.
+        store.clear()
+        library_config.set_itelescope_password("")
+        assert library_config.get_itelescope_password() == ""
+    finally:
+        library_config.set_config_path(None)
+
+
 # ===========================================================================
 # NFR-OFFLINE — Offline Operation
 # ===========================================================================

@@ -381,6 +381,31 @@ class LoopWhileAboveHorizonCondition(BaseCondition):
         return alt >= min_alt
 
 
+@dataclass
+class WaitUntilTimeCondition(BaseCondition):
+    """Pause until a clock time (SES-310) — the same "keep going while now < target"
+    primitive as LoopUntilTimeCondition, offered under its own name since a Wait
+    wraps nothing (it just blocks) rather than repeating contained blocks."""
+    time_utc: str = ""
+
+    def evaluate(self, context: dict) -> bool:
+        import datetime
+        if not self.time_utc:
+            return False
+        target = datetime.datetime.fromisoformat(self.time_utc)
+        return datetime.datetime.utcnow() < target
+
+
+@dataclass
+class WaitForAltitudeCondition(BaseCondition):
+    """Pause until the current target (or sun) crosses an altitude threshold (SES-310)."""
+    min_altitude_deg: float = 20.0
+
+    def evaluate(self, context: dict) -> bool:
+        alt = context.get("target_altitude_deg", 90.0)
+        return alt < self.min_altitude_deg
+
+
 # ---------------------------------------------------------------------------
 # Built-in trigger types (SEQ-ADV-040)
 # ---------------------------------------------------------------------------

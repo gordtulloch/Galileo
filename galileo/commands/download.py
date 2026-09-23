@@ -375,8 +375,9 @@ def main():
             if not args.username and not args.password:
                 # Check if credentials are in config
                 try:
+                    from galileo.library.config import get_itelescope_password
                     config_username = config.get('DEFAULT', 'itelescope_username', fallback='')
-                    config_password = config.get('DEFAULT', 'itelescope_password', fallback='')
+                    config_password = get_itelescope_password()
                     if not config_username or not config_password:
                         logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
                         return 1

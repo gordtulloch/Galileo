@@ -34,7 +34,7 @@ def adv_ses():
 def sessions_screen(minimal_profile):
     ui_mod = pytest.importorskip("galileo.ui.sessions")
     profile_mod = pytest.importorskip("galileo.equipment.profiles")
-    profile = profile_mod.Profile.from_dict(minimal_profile)
+    profile = profile_mod.EquipmentProfile.from_dict(minimal_profile)
     screen = ui_mod.SessionsScreen(profile=profile)
     return screen
 

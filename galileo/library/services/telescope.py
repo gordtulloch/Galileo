@@ -9,7 +9,7 @@ import ipaddress
 import os
 import logging
 import configparser
-from galileo.library.config import load_config as load_library_config
+from galileo.library.config import get_itelescope_password, load_config as load_library_config
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import ftplib
@@ -72,14 +72,11 @@ class SmartTelescopeManager:
         }
     
     def get_itelescope_credentials(self):
-        """Get iTelescope credentials from configuration file."""
+        """Get iTelescope credentials — username from the config file, password from the OS keychain (NFR-SEC-010)."""
         try:
             config = load_library_config()
-            
             username = config.get('DEFAULT', 'itelescope_username', fallback='')
-            password = config.get('DEFAULT', 'itelescope_password', fallback='')
-            
-            return username.strip(), password.strip()
+            return username.strip(), get_itelescope_password().strip()
         except Exception as e:
             logger.error(f"Error reading iTelescope credentials: {e}")
             return '', ''

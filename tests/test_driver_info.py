@@ -174,23 +174,25 @@ def _alpaca_mount(parked):
 @pytest.mark.requirement("TC-EQP-MNT-010")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_mnt_010_alpaca_parked_mount_is_not_sent_movement_commands():
-    """EQP-MNT-010: an Alpaca mount that reports AtPark refuses slews, jogs and find-home without sending them;
-    stopping, aborting and unparking still go through."""
+    """EQP-MNT-010: an Alpaca mount that reports AtPark refuses slews, jogs, find-home, sync and enabling
+    tracking without sending them; stopping, disabling tracking, aborting and unparking still go through."""
     from galileo.exceptions import MountParkedError
 
     mount = _alpaca_mount(True)
     for refused in (
         mount.slew_to_coordinates(180.0, 45.0), mount.slew_to_altaz(45.0, 90.0),
         mount.move_axis(0, 0.5), mount.find_home(),
+        mount.sync_to_coordinates(180.0, 45.0), mount.set_tracking(True),
     ):
         with pytest.raises(MountParkedError, match="parked"):
             await refused
     assert mount.puts == []
 
     await mount.move_axis(0, 0.0)
+    await mount.set_tracking(False)
     await mount.abort_slew()
     await mount.unpark()
-    assert [p[0] for p in mount.puts] == ["moveaxis", "abortslew", "unpark"]
+    assert [p[0] for p in mount.puts] == ["moveaxis", "tracking", "abortslew", "unpark"]
 
 
 @pytest.mark.requirement("TC-EQP-MNT-010")
