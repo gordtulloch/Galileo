@@ -11,15 +11,15 @@ from typing import TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from galileo.vstarget.planning.models import TransformationCoefficients
-    from galileo.vstarget.analysis.photometry import StandardFieldObservation
+    from galileo.plugins.vstarget.planning.models import TransformationCoefficients
+    from galileo.plugins.vstarget.analysis.photometry import StandardFieldObservation
 
 
 def compute_transformation_coefficients(
     observations: "list[StandardFieldObservation]",
 ) -> "TransformationCoefficients":
     """Least-squares fit AAVSO transformation coefficients from standard-field obs (VST-AN-060)."""
-    from galileo.vstarget.planning.models import TransformationCoefficients
+    from galileo.plugins.vstarget.planning.models import TransformationCoefficients
     try:
         import numpy as np
 

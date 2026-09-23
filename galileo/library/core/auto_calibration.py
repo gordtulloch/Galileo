@@ -5,6 +5,7 @@ This module contains the core auto-calibration functions extracted from AutoCali
 for direct use by the GUI, avoiding subprocess calls.
 """
 
+import csv
 import logging
 import os
 import configparser
@@ -465,7 +466,50 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: Option
         return False
 
 
-def perform_quality_assessment(config: configparser.ConfigParser, session_id: Optional[str] = None, 
+def generate_quality_report(results_by_file: List[Any], session_id: Optional[str] = None):
+    """Write a CSV quality report for a completed quality assessment pass.
+
+    *results_by_file* is a list of ``(fitsFile, quality_results)`` pairs, where
+    ``quality_results`` is whatever :meth:`EnhancedQualityAnalyzer.analyze_and_update_file`
+    (or the exception handler around it) returned. Returns the path written.
+    """
+    from galileo.platform import get_reports_dir
+
+    fieldnames = [
+        "file", "object", "telescope", "instrument", "status",
+        "star_count", "avg_fwhm_arcsec", "avg_eccentricity", "avg_hfr_arcsec",
+        "image_snr", "image_scale", "message",
+    ]
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = f"-{session_id}" if session_id else ""
+    report_path = get_reports_dir() / f"quality-report{suffix}-{timestamp}.csv"
+
+    successful = sum(1 for _f, r in results_by_file if r.get("status") == "success")
+    with open(report_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for fits_file, quality_results in results_by_file:
+            writer.writerow({
+                "file": fits_file.fitsFileName,
+                "object": fits_file.fitsFileObject,
+                "telescope": fits_file.fitsFileTelescop,
+                "instrument": fits_file.fitsFileInstrument,
+                "status": quality_results.get("status"),
+                "star_count": quality_results.get("star_count"),
+                "avg_fwhm_arcsec": quality_results.get("avg_fwhm_arcsec"),
+                "avg_eccentricity": quality_results.get("avg_eccentricity"),
+                "avg_hfr_arcsec": quality_results.get("avg_hfr_arcsec"),
+                "image_snr": quality_results.get("image_snr"),
+                "image_scale": quality_results.get("image_scale"),
+                "message": quality_results.get("message", ""),
+            })
+        writer.writerow({})
+        writer.writerow({"file": "SUMMARY", "status": f"{successful}/{len(results_by_file)} successful"})
+
+    return report_path
+
+
+def perform_quality_assessment(config: configparser.ConfigParser, session_id: Optional[str] = None,
                               generate_report: bool = False, progress_callback=None) -> bool:
     """
     Perform enhanced quality assessment on frames using SEP-based star detection.
@@ -508,7 +552,8 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: Op
         # Analyze each file
         successful_analyses = 0
         failed_analyses = 0
-        
+        results_by_file: List[tuple] = []
+
         for i, fits_file in enumerate(files_to_analyze):
             try:
                 # Create progress callback for individual file
@@ -520,37 +565,42 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: Op
                     if progress_callback:
                         progress_callback(int(overall_progress),
                                         f"Analyzing {current_file.fitsFileObject} ({index+1}/{len(files_to_analyze)}): {message}")
-                
+
                 # Perform quality analysis
                 quality_results = analyzer.analyze_and_update_file(
-                    fits_file.fitsFileName, 
+                    fits_file.fitsFileName,
                     fits_file.fitsFileId,
                     progress_callback=file_progress
                 )
-                
+                results_by_file.append((fits_file, quality_results))
+
                 if quality_results.get("status") == "success":
                     successful_analyses += 1
                     logging.debug(f"Successfully analyzed {fits_file.fitsFileName}")
                 else:
                     failed_analyses += 1
                     logging.warning(f"Failed to analyze {fits_file.fitsFileName}: {quality_results.get('message', 'Unknown error')}")
-                
+
             except Exception as e:
                 failed_analyses += 1
+                results_by_file.append((fits_file, {"status": "error", "message": str(e)}))
                 logging.error(f"Error analyzing {fits_file.fitsFileName}: {e}")
                 continue
-        
+
         # Update progress
         if progress_callback:
             progress_callback(90, "Finalizing quality assessment...")
-        
+
         # Log results
         logging.info(f"Quality assessment completed: {successful_analyses} successful, {failed_analyses} failed")
-        
+
         if generate_report:
-            # TODO: Generate quality report using the database metrics
-            logging.info("Quality report generation requested but not yet implemented")
-        
+            try:
+                report_path = generate_quality_report(results_by_file, session_id=session_id)
+                logging.info(f"Quality report written to {report_path}")
+            except Exception as e:
+                logging.error(f"Error generating quality report: {e}")
+
         if progress_callback:
             progress_callback(100, "Quality assessment complete")
         

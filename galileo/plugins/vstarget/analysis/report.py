@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from galileo.vstarget.analysis.photometry import PhotometryResult
+    from galileo.plugins.vstarget.analysis.photometry import PhotometryResult
 
 _REPORT_HEADER = "#TYPE=EXTENDED\n#OBSCODE=\n#SOFTWARE=Galileo\n#DELIM=,\n#DATE=JD\n#OBSTYPE=CCD\n"
 

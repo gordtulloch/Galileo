@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""OBS — Multi-Mount Observatory Management (TC-OBS-010 … TC-OBS-080)."""
+"""OBS — Multi-Mount Observatory Management (TC-OBS-010 … TC-OBS-090)."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -203,3 +203,33 @@ async def test_tc_obs_080_concurrent_device_sets_in_single_instance(two_pier_obs
 
     pier1.device_pool.connect_all.assert_called_once()
     pier2.device_pool.connect_all.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TC-OBS-090
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-OBS-090")
+@pytest.mark.priority("P2")
+def test_tc_obs_090_observatory_carries_operator_contact_details():
+    """OBS-090: Allow an Observatory record to carry the operator's own contact details — email address, phone/SMS number, and which channel(s) NOTIF should use — since being notified is scoped to the person running the Observatory, not to an individual Pier within it (traces to NOTIF-020, NOTIF-040)."""
+    obs_mod = pytest.importorskip("galileo.observatory")
+    obs = obs_mod.Observatory(name="Backyard")
+
+    assert obs.contact_details is None  # unset by default
+
+    obs.set_contact_details(
+        email="operator@example.com", phone_number="+15551234567", channels=["email", "sms"],
+    )
+
+    assert obs.contact_details.email == "operator@example.com"
+    assert obs.contact_details.phone_number == "+15551234567"
+    assert obs.contact_details.channels == ["email", "sms"]
+
+    # One contact record per Observatory, not per Pier.
+    pier1 = obs_mod.Pier(name="Pier-1")
+    pier2 = obs_mod.Pier(name="Pier-2")
+    obs.add_pier(pier1)
+    obs.add_pier(pier2)
+    assert not hasattr(pier1, "contact_details")
+    assert not hasattr(pier2, "contact_details")

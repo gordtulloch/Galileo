@@ -27,35 +27,35 @@ This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the S
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `VST-EXT-010` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-EXT-010` |
+| `VST-EXT-010` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-EXT-010` |
 
 ### `VST` — Variable Star Target Planning
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `VST-010` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-010` |
-| `VST-020` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-020` |
-| `VST-030` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-030` |
-| `VST-040` | P2 | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-040` |
-| `VST-050` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-050` |
-| `VST-060` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-060` |
-| `VST-070` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-070` |
-| `VST-080` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-080` |
-| `VST-090` | MVP | SDD 3.1 `galileo.vstarget.planning` | Test | `TC-VST-090` |
+| `VST-010` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-010` |
+| `VST-020` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-020` |
+| `VST-030` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-030` |
+| `VST-040` | P2 | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-040` |
+| `VST-050` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-050` |
+| `VST-060` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-060` |
+| `VST-070` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-070` |
+| `VST-080` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-080` |
+| `VST-090` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-090` |
 
 ### `VST-AN` — Variable Star Analysis & Photometry
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `VST-AN-010` | MVP | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-010` |
-| `VST-AN-020` | MVP | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-020` |
-| `VST-AN-030` | MVP | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-030` |
-| `VST-AN-040` | MVP | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-040` |
-| `VST-AN-050` | MVP | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-050` |
-| `VST-AN-060` | P2 | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-060` |
-| `VST-AN-070` | P2 | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-070` |
-| `VST-AN-080` | P2 | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-080` |
-| `VST-AN-090` | P2 | SDD 3.2 `galileo.vstarget.analysis` | Test | `TC-VST-AN-090` |
+| `VST-AN-010` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-010` |
+| `VST-AN-020` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-020` |
+| `VST-AN-030` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-030` |
+| `VST-AN-040` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-040` |
+| `VST-AN-050` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-050` |
+| `VST-AN-060` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-060` |
+| `VST-AN-070` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-070` |
+| `VST-AN-080` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-080` |
+| `VST-AN-090` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-090` |
 
 ---
 

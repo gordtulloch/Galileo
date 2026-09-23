@@ -10,16 +10,16 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-# Re-exported so callers can do ``from galileo.vstarget.analysis import Foo``
-from galileo.vstarget.analysis.exposure import ExposureTimeCalculator  # noqa: F401
-from galileo.vstarget.analysis.finder_chart import FinderChartRenderer  # noqa: F401
-from galileo.vstarget.analysis.photometry import (  # noqa: F401
+# Re-exported so callers can do ``from galileo.plugins.vstarget.analysis import Foo``
+from galileo.plugins.vstarget.analysis.exposure import ExposureTimeCalculator  # noqa: F401
+from galileo.plugins.vstarget.analysis.finder_chart import FinderChartRenderer  # noqa: F401
+from galileo.plugins.vstarget.analysis.photometry import (  # noqa: F401
     AperturePhotometryEngine,
     PhotometryResult,
     StandardFieldObservation,
 )
-from galileo.vstarget.analysis.sftp_downloader import SftpImageRetriever  # noqa: F401
-from galileo.vstarget.planning.models import TransformationCoefficients  # noqa: F401
+from galileo.plugins.vstarget.analysis.sftp_downloader import SftpImageRetriever  # noqa: F401
+from galileo.plugins.vstarget.planning.models import TransformationCoefficients  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,12 @@ class VariableStarAnalysis:
 
     # --- Image retrieval (VST-AN-010) ------------------------------------
 
-    # SftpImageRetriever is in galileo.vstarget.analysis.sftp_downloader
+    # SftpImageRetriever is in galileo.plugins.vstarget.analysis.sftp_downloader
 
     # --- Plate solving (VST-AN-020) --------------------------------------
 
     async def solve_image(self, fits_path: "Path | str"):
-        from galileo.vstarget.analysis.platesolve import solve_fits
+        from galileo.plugins.vstarget.analysis.platesolve import solve_fits
         if self._solver is not None:
             return await self._solver.solve(fits_path)
         return await solve_fits(fits_path)
@@ -48,7 +48,7 @@ class VariableStarAnalysis:
     # --- Stacking (VST-AN-030) -------------------------------------------
 
     async def stack(self, frames: "list[Path]", output_path: "Path | str") -> Path:
-        from galileo.vstarget.analysis.stack import stack_frames
+        from galileo.plugins.vstarget.analysis.stack import stack_frames
         return await stack_frames(frames, output_path)
 
     # --- Photometry (VST-AN-040) -----------------------------------------
@@ -113,15 +113,17 @@ class VariableStarAnalysis:
     # --- AAVSO report (VST-AN-050) ---------------------------------------
 
     def export_aavso_report(self, measurements: list, output_path: "Path | str") -> None:
-        from galileo.vstarget.analysis.report import save_aavso_report
+        from galileo.plugins.vstarget.analysis.report import save_aavso_report
         save_aavso_report(measurements, output_path)
 
     # --- Transformation coefficients (VST-AN-060, VST-AN-070) ----------
 
     async def compute_transformation_coefficients(self, observations: list):
-        from galileo.vstarget.analysis.transform_generator import compute_transformation_coefficients
+        from galileo.plugins.vstarget.analysis.transform_generator import compute_transformation_coefficients
         return compute_transformation_coefficients(observations)
 
-    def apply_transformation(self, result):
-        from galileo.vstarget.analysis.transform_apply import apply_transformation
-        return apply_transformation(result, self._transformation_coefficients)
+    def apply_transformation(self, results):
+        """Apply the stored coefficients to *results* — the same-epoch, same-target measurements
+        across filters (one ``PhotometryResult`` per filter), not one filter in isolation."""
+        from galileo.plugins.vstarget.analysis.transform_apply import apply_transformation
+        return apply_transformation(results, self._transformation_coefficients)

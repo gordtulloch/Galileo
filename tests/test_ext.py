@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""EXT — External Interface Requirements (TC-EXT-010 … TC-EXT-140)."""
+"""EXT — External Interface Requirements (TC-EXT-010 … TC-EXT-150).
+
+EXT-100 (AAVSO Target Tool API) is retired from core: it covered a
+VSTarget-plugin-only integration and now lives as VST-EXT-010 in
+docs/plugins/vstarget/SRS.md, tested in tests/test_vst.py.
+"""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -197,29 +202,19 @@ def test_tc_ext_090_google_cloud_storage_sync():
 
 
 # ---------------------------------------------------------------------------
-# TC-EXT-100
-# ---------------------------------------------------------------------------
-
-@pytest.mark.requirement("TC-EXT-100")
-@pytest.mark.priority("MVP")
-def test_tc_ext_100_aavso_target_tool_api():
-    """EXT-100: Retrieve variable-star target data from the AAVSO Target Tool API."""
-    vst = pytest.importorskip("galileo.vstarget.planning")
-    client = vst.AavsoTargetToolClient.__new__(vst.AavsoTargetToolClient)
-    assert hasattr(client, "fetch_targets"), "Must expose fetch_targets(section)"
-
-
-# ---------------------------------------------------------------------------
 # TC-EXT-110
 # ---------------------------------------------------------------------------
+# Note: EXT-100 (AAVSO Target Tool API) is retired from core — it covered a
+# VSTarget-plugin-only integration and now lives as TC-VST-EXT-010 in
+# tests/test_vst.py, matching docs/plugins/vstarget/SRS.md.
 
 @pytest.mark.requirement("TC-EXT-110")
 @pytest.mark.priority("MVP")
 def test_tc_ext_110_simbad_coordinate_lookup():
-    """EXT-110: Query the Simbad astronomical database for target coordinate/magnitude lookup."""
-    vst = pytest.importorskip("galileo.vstarget.planning")
-    assert hasattr(vst, "SimbadClient"), "SimbadClient must be present"
-    client = vst.SimbadClient.__new__(vst.SimbadClient)
+    """EXT-110: Query the Simbad astronomical database for target coordinate/magnitude lookup — genuinely shared infrastructure, also backing SKY-100's fallback lookup (not AAVSO-specific)."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    assert hasattr(sky_mod, "SimbadClient"), "SimbadClient must be present"
+    client = sky_mod.SimbadClient.__new__(sky_mod.SimbadClient)
     assert hasattr(client, "lookup"), "SimbadClient must expose lookup(target_name)"
 
 
@@ -230,10 +225,10 @@ def test_tc_ext_110_simbad_coordinate_lookup():
 @pytest.mark.requirement("TC-EXT-120")
 @pytest.mark.priority("MVP")
 def test_tc_ext_120_sftp_remote_telescope_retrieval():
-    """EXT-120: Retrieve calibrated FITS images from a remote-telescope data server via SFTP."""
-    analysis = pytest.importorskip("galileo.vstarget.analysis")
-    assert hasattr(analysis, "SftpImageRetriever"), "SftpImageRetriever must be present"
-    retriever = analysis.SftpImageRetriever.__new__(analysis.SftpImageRetriever)
+    """EXT-120: Retrieve calibrated FITS images from a remote-telescope data server via SFTP, in addition to the FTP/FTPS access already required by EXT-080 — the adapter lives in core galileo.library.adapters, reused (not owned) by the VSTarget plugin."""
+    adapters = pytest.importorskip("galileo.library.adapters")
+    assert hasattr(adapters, "SftpImageRetriever"), "SftpImageRetriever must be present"
+    retriever = adapters.SftpImageRetriever.__new__(adapters.SftpImageRetriever)
     assert hasattr(retriever, "download"), "SftpImageRetriever must expose download()"
 
 
@@ -263,3 +258,28 @@ def test_tc_ext_140_cli_batch_commands():
     pytest.importorskip("galileo.commands.load_repo")
     pytest.importorskip("galileo.commands.auto_calibration")
     pytest.importorskip("galileo.commands.cloud_sync")
+
+
+# ---------------------------------------------------------------------------
+# TC-EXT-150
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EXT-150")
+@pytest.mark.priority("P2")
+async def test_tc_ext_150_telescopius_optional_and_never_a_dependency():
+    """EXT-150: Optionally query the Telescopius API for object search/target-suggestion data and observing-list import (traces to SKY-110/SKY-120), authenticated exclusively via a user-supplied Telescopius API key — its absence or unavailability shall not degrade SKY-010/SKY-070/SKY-100's offline-first behavior."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    atlas = sky_mod.SkyAtlas()
+
+    # No API key configured -> Telescopius is simply not queried, no error raised.
+    atlas.set_telescopius_api_key(None)
+    with patch.object(sky_mod, "_search_telescopius_sync") as mock_telescopius:
+        results = await atlas.search_online("M42")
+        assert any("M42" in obj.designations for obj in results), "offline-first path still works"
+        mock_telescopius.assert_not_called()
+
+    # API key configured but the service is unreachable -> degrades gracefully, no exception.
+    atlas.set_telescopius_api_key("user-supplied-key")
+    with patch.object(sky_mod, "_search_telescopius_sync", side_effect=OSError("unreachable")):
+        results = await atlas.search_online("M42")
+        assert any("M42" in obj.designations for obj in results), "offline-first path unaffected"

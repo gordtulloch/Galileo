@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-170)."""
+"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-180)."""
 
 import pytest
 from types import SimpleNamespace
@@ -1511,4 +1511,33 @@ def test_tc_img_170_changing_the_option_saves_it_and_updates_the_running_service
     combo.setCurrentIndex(combo.findData(16))
 
     assert load_imaging_settings()["bitpix"] == 16
+
+
+# ---------------------------------------------------------------------------
+# TC-IMG-180 — Framing… control
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+def test_tc_img_180_framing_control_opens_assistant_against_selected_train(imaging_service):
+    """IMG-180: The imaging tab provides a Framing… control that opens the Framing Assistant (FRAME-070) against the currently selected camera/optical train for immediate-imaging use."""
+    frame_mod = pytest.importorskip("galileo.planning.framing")
+
+    asst = imaging_service.open_framing_assistant()
+
+    assert isinstance(asst, frame_mod.FramingAssistant)
+    assert asst.opening_context is imaging_service
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+def test_tc_img_180_mosaic_defined_and_run_directly_from_the_tab(imaging_service):
+    """IMG-180: Including defining and, where a mosaic grid is defined, running a mosaic capture directly from the tab (mosaic execution traces to FRAME-090)."""
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=2, overlap_pct=10.0)
+    asst.set_mosaic(mosaic)
+
+    imaging_service.run_mosaic_from_framing(asst)
+
+    assert imaging_service.active_mosaic is mosaic
     assert window._imaging_service.bitpix == 16

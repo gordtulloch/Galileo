@@ -36,7 +36,8 @@ COMMAND_MODULES = [
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
-def write_frame(folder, name, frame_type, obj, exposure, seed, *, filt="", date="2026-09-16T22:00:00", level=1000.0):
+def write_frame(folder, name, frame_type, obj, exposure, seed, *, filt="", date="2026-09-16T22:00:00", level=1000.0,
+                 telescop="TestScope", instrume="TestCam"):
     """Write a small FITS frame with the headers the library sorts on."""
     np = pytest.importorskip("numpy")
     fits = pytest.importorskip("astropy.io.fits")
@@ -46,7 +47,7 @@ def write_frame(folder, name, frame_type, obj, exposure, seed, *, filt="", date=
         hdr["FILTER"] = filt
     hdr["DATE-OBS"], hdr["CCD-TEMP"] = date, -10.0
     hdr["XBINNING"] = hdr["YBINNING"] = 1
-    hdr["TELESCOP"], hdr["INSTRUME"], hdr["GAIN"], hdr["OFFSET"] = "TestScope", "TestCam", 100, 10
+    hdr["TELESCOP"], hdr["INSTRUME"], hdr["GAIN"], hdr["OFFSET"] = telescop, instrume, 100, 10
     data = np.random.default_rng(seed).normal(level, 10, (64, 64)).astype("float32")
     path = Path(folder) / name
     fits.PrimaryHDU(data, header=hdr).writeto(path)
@@ -361,6 +362,24 @@ def test_tc_lib_060_apply_calibration_to_lights(library):
     assert len(lights) == 3 and all(f.fitsFileCalibrated == 1 for f in lights)
 
 
+@pytest.mark.requirement("TC-LIB-060")
+@pytest.mark.priority("P2")
+def test_tc_lib_060_workflow_reports_the_real_calibrated_frame_count(library):
+    """LIB-060: runAutoCalibrationWorkflow's light_frames_calibrated is the frames actually calibrated
+    in this run, not a fixed placeholder count."""
+    from galileo.library.core import fitsProcessing
+    from galileo.library.core.auto_calibration import create_master_frames
+
+    config = calibration_ready(library)
+    assert create_master_frames(config) is True
+    fitsProcessing().linkSessions()
+
+    results = fitsProcessing().runAutoCalibrationWorkflow(operations=["calibrate"])
+
+    assert results["status"] == "success" and not results["errors"]
+    assert results["light_frames_calibrated"] == 3
+
+
 # ---------------------------------------------------------------------------
 # TC-LIB-070
 # ---------------------------------------------------------------------------
@@ -394,6 +413,28 @@ def test_tc_lib_070_compute_quality_metrics(tmp_path):
     session_fields = {f.name for f in fitsSession._meta.sorted_fields}
     assert {"fitsFileAvgFWHMArcsec", "fitsFileAvgHFRArcsec", "fitsFileAvgEccentricity", "fitsFileImageSNR"} <= frame_fields
     assert {"fitsSessionAvgFWHMArcsec", "fitsSessionAvgHFRArcsec", "fitsSessionAvgEccentricity", "fitsSessionImageSNR"} <= session_fields
+
+
+# ---------------------------------------------------------------------------
+# TC-LIB-080
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LIB-080")
+@pytest.mark.priority("MVP")
+def test_tc_lib_080_repository_statistics_dashboard(library):
+    """LIB-080: Present a repository statistics dashboard summarizing frame counts by object, filter, date, and instrument, and quality-metric trends over time."""
+    stats_mod = pytest.importorskip("galileo.library.core.statistics")
+
+    write_light_frames(library.incoming)
+    ingest(library)
+
+    dashboard = stats_mod.RepositoryStatistics().build_dashboard()
+
+    assert "counts_by_object" in dashboard
+    assert "counts_by_filter" in dashboard
+    assert "counts_by_date" in dashboard
+    assert "counts_by_instrument" in dashboard
+    assert "quality_trend" in dashboard  # quality-metric trend over time
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +884,65 @@ def test_mappings_page_saves_and_applies_mappings(window, library, monkeypatch):
     assert applied == [True]
 
 
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("P2")
+def test_mappings_apply_button_gates_each_effect_on_its_own_checkbox(window, library, monkeypatch):
+    """The Mappings page's per-row Apply button gates the catalog update, the on-disk FITS header
+    rewrite, and the file move independently on their own checkbox, rather than one combined flag."""
+    from astropy.io import fits as astropy_fits
+    from PySide6 import QtWidgets
+    from galileo.library.models import fitsFile as FitsFileModel
+    from galileo.ui.library.mappings_dialog import MappingsWidget
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *a, **k: QtWidgets.QMessageBox.Yes)
+
+    write_frame(library.incoming, "a.fits", "Light Frame", "M42", 60, 1, telescop="ScopeA")
+    write_frame(library.incoming, "b.fits", "Light Frame", "M42", 60, 2, telescop="ScopeB")
+    write_frame(library.incoming, "c.fits", "Light Frame", "M42", 60, 3, telescop="ScopeC")
+    ingest(library)
+
+    def record_for(telescope):
+        return FitsFileModel.get(FitsFileModel.fitsFileTelescop == telescope)
+
+    page = library_menu(window)
+    page._secondary_nav.select("mappings")
+    mappings = window._window.findChildren(MappingsWidget)[0]
+
+    def apply_row(current, replace, *, apply_to_db, update_headers, reorganize):
+        row = mappings.mapping_rows[0]
+        row.card_combo.setCurrentText("TELESCOP")
+        row.current_combo.setCurrentText(current)
+        row.replace_combo.setCurrentText(replace)
+        mappings.apply_to_database_checkbox.setChecked(apply_to_db)
+        mappings.update_files_checkbox.setChecked(update_headers)
+        mappings.reorganize_files_checkbox.setChecked(reorganize)
+        mappings.apply_single_mapping(row)
+
+    # "Apply mappings to database" alone: the catalog record changes, the file on disk is untouched.
+    old_path = record_for("ScopeA").fitsFileName
+    apply_row("ScopeA", "NewA", apply_to_db=True, update_headers=False, reorganize=False)
+    assert record_for("NewA").fitsFileName == old_path
+    assert astropy_fits.getheader(old_path)["TELESCOP"] == "ScopeA"
+
+    # "Update FITS headers on disk" alone: the file's header changes, the catalog record doesn't.
+    old_path = record_for("ScopeB").fitsFileName
+    apply_row("ScopeB", "NewB", apply_to_db=False, update_headers=True, reorganize=False)
+    assert record_for("ScopeB").fitsFileName == old_path
+    assert astropy_fits.getheader(old_path)["TELESCOP"] == "NewB"
+
+    # "Reorganize repository folders" alone: the file moves and its catalog path follows, but
+    # the TELESCOP field/header value itself is left alone.
+    old_path = record_for("ScopeC").fitsFileName
+    apply_row("ScopeC", "NewC", apply_to_db=False, update_headers=False, reorganize=True)
+    moved = record_for("ScopeC")
+    assert moved.fitsFileName != old_path
+    assert "NewC" in moved.fitsFileName
+    assert not os.path.exists(old_path)
+    assert astropy_fits.getheader(moved.fitsFileName)["TELESCOP"] == "ScopeC"
+
+
 # ---------------------------------------------------------------------------
 # FITS compression on ingest (LIB-010 / LIB-030): must never damage the original
 # ---------------------------------------------------------------------------
@@ -1183,3 +1283,45 @@ def test_tc_lib_070_quality_assessment_reports_each_frame_in_order(library, monk
     per_frame = [msg for _, msg in reported if msg.endswith("halfway")]
     assert [msg.split("(")[1].split(")")[0] for msg in per_frame] == [f"{n}/{total}" for n in range(1, total + 1)]
     assert reported[-1] == (100, "Quality assessment complete")
+
+
+@pytest.mark.requirement("TC-LIB-070")
+@pytest.mark.priority("P2")
+def test_tc_lib_070_quality_assessment_writes_a_report_when_requested(library, monkeypatch, tmp_path):
+    """LIB-070: passing generate_report writes a per-file CSV quality report, not just a log line."""
+    import configparser
+    import csv
+
+    import galileo.platform
+    from galileo.library.core import enhanced_quality
+    from galileo.library.core.auto_calibration import perform_quality_assessment
+    from galileo.library.models import fitsFile
+
+    write_light_frames(library.incoming)
+    ingest(library)
+    total = fitsFile.select().where(fitsFile.fitsFileType == "LIGHT FRAME").count()
+
+    reports_dir = tmp_path / "reports"
+
+    def fake_get_reports_dir():
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        return reports_dir
+
+    monkeypatch.setattr(galileo.platform, "get_reports_dir", fake_get_reports_dir)
+
+    class FakeAnalyzer:
+        def analyze_and_update_file(self, path, file_id, progress_callback=None):
+            return {"status": "success", "star_count": 42, "avg_hfr_arcsec": 1.5}
+
+    monkeypatch.setattr(enhanced_quality, "EnhancedQualityAnalyzer", FakeAnalyzer)
+
+    assert perform_quality_assessment(configparser.ConfigParser(), generate_report=True) is True
+
+    reports = list(reports_dir.glob("quality-report-*.csv"))
+    assert len(reports) == 1
+    with open(reports[0], newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    data_rows = [r for r in rows if r.get("file")]
+    assert len(data_rows) == total + 1, "one row per analyzed file plus the summary row"
+    assert all(r["star_count"] == "42" and r["avg_hfr_arcsec"] == "1.5" for r in data_rows[:-1])
+    assert data_rows[-1]["file"] == "SUMMARY" and f"{total}/{total}" in data_rows[-1]["status"]

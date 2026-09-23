@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""VST — Variable Star Target Planning (TC-VST-010 … TC-VST-090)."""
+"""VST / VST-EXT — Variable Star Target Planning (TC-VST-010 … TC-VST-090, TC-VST-EXT-010).
+
+VST-EXT-010 is this plugin's own external-interface requirement (docs/plugins/vstarget/SRS.md
+Section 1.3's plugin-local `EXT` sub-prefix), relocated here from core's former EXT-100.
+"""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -9,8 +13,25 @@ from unittest.mock import AsyncMock, MagicMock
 
 @pytest.fixture
 def vst_planner():
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     return vst_mod.VariableStarPlanner()
+
+
+# ---------------------------------------------------------------------------
+# TC-VST-EXT-010
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-VST-EXT-010")
+@pytest.mark.priority("MVP")
+def test_tc_vst_ext_010_aavso_target_tool_and_vsp_apis():
+    """VST-EXT-010: Retrieve variable-star target data from the AAVSO Target Tool API and comparison-star data from the AAVSO VSP API."""
+    vst = pytest.importorskip("galileo.plugins.vstarget.planning")
+
+    target_client = vst.AavsoTargetToolClient.__new__(vst.AavsoTargetToolClient)
+    assert hasattr(target_client, "fetch_targets"), "Must expose fetch_targets(section)"
+
+    vsp_client = vst.AavsoVspClient.__new__(vst.AavsoVspClient)
+    assert hasattr(vsp_client, "fetch_comparison_stars"), "Must expose fetch_comparison_stars(target)"
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +42,7 @@ def vst_planner():
 @pytest.mark.priority("MVP")
 async def test_tc_vst_010_sync_from_aavso_target_tool(vst_planner):
     """VST-010: Sync variable-star targets from AAVSO Target Tool API; filterable by observing section."""
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     vst_planner._aavso_client = vst_mod.AavsoTargetToolClient.__new__(vst_mod.AavsoTargetToolClient)
     vst_planner._aavso_client.fetch_targets = AsyncMock(return_value=[
         {"name": "Z UMa", "section": "LPV", "ra": 152.6, "dec": 57.9},
@@ -105,7 +126,7 @@ def test_tc_vst_040_import_target_list_from_file(vst_planner, tmp_path):
 @pytest.mark.priority("MVP")
 def test_tc_vst_050_observation_plan_editor(vst_planner):
     """VST-050: Observation-plan editor with per-target filter, exposure count, interval, and binning."""
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     plan = vst_mod.ObservationPlan(target_name="R Leo")
     plan.add_filter_config(filter_name="V", exposure_s=60.0, count=3, interval_s=120.0, binning=1)
     plan.add_filter_config(filter_name="B", exposure_s=90.0, count=3, interval_s=120.0, binning=1)
@@ -123,7 +144,7 @@ def test_tc_vst_050_observation_plan_editor(vst_planner):
 @pytest.mark.priority("MVP")
 def test_tc_vst_060_generate_acp_observing_script(vst_planner, tmp_path):
     """VST-060: Generate an ACP-compatible observing script with targets ordered by right ascension."""
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     plans = [
         vst_mod.ObservationPlan(target_name="Mira", ra_deg=34.8),
         vst_mod.ObservationPlan(target_name="R Leo", ra_deg=154.0),
@@ -149,12 +170,12 @@ def test_tc_vst_060_generate_acp_observing_script(vst_planner, tmp_path):
 @pytest.mark.priority("MVP")
 def test_tc_vst_070_persist_plans_across_restarts(vst_planner, tmp_path):
     """VST-070: Persist observation plans across application restarts."""
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     plan = vst_mod.ObservationPlan(target_name="R Leo", ra_deg=154.0)
     vst_planner.set_persistence(tmp_path / "plans.db")
     vst_planner.save_plan(plan)
 
-    vst_mod2 = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod2 = pytest.importorskip("galileo.plugins.vstarget.planning")
     planner2 = vst_mod2.VariableStarPlanner()
     planner2.set_persistence(tmp_path / "plans.db")
     loaded = planner2.load_plans()
@@ -169,7 +190,7 @@ def test_tc_vst_070_persist_plans_across_restarts(vst_planner, tmp_path):
 @pytest.mark.priority("MVP")
 async def test_tc_vst_080_simbad_coordinate_fallback(vst_planner):
     """VST-080: Look up target coordinates via Simbad when not already in synced AAVSO catalog data."""
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
     vst_planner._simbad = vst_mod.SimbadClient.__new__(vst_mod.SimbadClient)
     vst_planner._simbad.lookup = AsyncMock(return_value={"ra_deg": 154.0, "dec_deg": 11.4, "magnitude_v": 8.5})
 
@@ -187,7 +208,7 @@ async def test_tc_vst_080_simbad_coordinate_fallback(vst_planner):
 async def test_tc_vst_090_submit_target_to_scheduler_from_vst_ui(vst_planner):
     """VST-090: Submit a variable-star target with observation plan directly to SCHED job queue from VST UI."""
     sched_mod = pytest.importorskip("galileo.scheduler")
-    vst_mod = pytest.importorskip("galileo.vstarget.planning")
+    vst_mod = pytest.importorskip("galileo.plugins.vstarget.planning")
 
     mock_scheduler = MagicMock()
     mock_scheduler.add_job = MagicMock()

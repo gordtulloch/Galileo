@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""LOG — Diagnostics & Logging (TC-LOG-010 … TC-LOG-040)."""
+"""LOG — Diagnostics & Logging (TC-LOG-010 … TC-LOG-060)."""
 
 import pytest
 from unittest.mock import MagicMock
@@ -95,3 +95,50 @@ def test_tc_log_040_export_support_bundle(diag_service, tmp_path):
     with zipfile.ZipFile(bundle_path) as z:
         names = z.namelist()
         assert any(".log" in n for n in names), "Bundle must contain at least one log file"
+
+
+# ---------------------------------------------------------------------------
+# TC-LOG-050
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LOG-050")
+@pytest.mark.priority("MVP")
+def test_tc_log_050_log_file_resets_each_run_rather_than_appending(tmp_path):
+    """LOG-050: The logging service shall reset (start a new, truncated) datestamped log file at the beginning of every application run, rather than appending to a prior run's log."""
+    diag_mod = pytest.importorskip("galileo.diagnostics")
+
+    first_run = diag_mod.DiagnosticsService(log_dir=tmp_path)
+    first_run.log_info("Message from run 1")
+    log_files = list(tmp_path.glob("*.log"))
+    assert len(log_files) == 1
+    log_path = log_files[0]
+    assert "Message from run 1" in log_path.read_text()
+
+    # A new run against the same datestamped file starts truncated, not appended.
+    second_run = diag_mod.DiagnosticsService(log_dir=tmp_path)
+    second_run.log_info("Message from run 2")
+
+    content = log_path.read_text()
+    assert "Message from run 2" in content
+    assert "Message from run 1" not in content
+
+
+# ---------------------------------------------------------------------------
+# TC-LOG-060
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LOG-060")
+@pytest.mark.priority("P2")
+def test_tc_log_060_recent_log_pane_on_equipment_screens(diag_service):
+    """LOG-060: Display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer."""
+    diag_mod = pytest.importorskip("galileo.diagnostics")
+
+    for i in range(15):
+        diag_service.log_info(f"Camera event {i}")
+
+    pane = diag_mod.RecentLogPane(service=diag_service, min_visible_lines=10)
+
+    assert pane.min_visible_lines >= 10
+    visible = pane.get_visible_entries()
+    assert len(visible) >= 10
+    assert visible[-1].message == "Camera event 14", "most recent entries are shown"

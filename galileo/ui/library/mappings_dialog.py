@@ -401,8 +401,11 @@ class MappingsWidget(QWidget):
                 }
                 
                 # Apply the mapping to database records
-                update_files = self.update_files_checkbox.isChecked()
+                apply_to_db = self.apply_to_database_checkbox.isChecked()
+                update_headers = self.update_files_checkbox.isChecked()
+                reorganize_files = self.reorganize_files_checkbox.isChecked()
                 total_updates = 0
+                headers_updated = 0
                 files_moved = 0
                 
                 if mapping_to_apply['card'] in ['TELESCOP', 'INSTRUME', 'OBJECT']:
@@ -448,42 +451,44 @@ class MappingsWidget(QWidget):
                         
                         if mapping_to_apply['replace']:
                             old_file_path = fits_file.fitsFileName
-                            
-                            # Update database record
-                            setattr(fits_file, field_name, mapping_to_apply['replace'])
-                            fits_file.save()
-                            total_updates += 1
-                            
-                            # Update FITS header and move files if requested
-                            if update_files and old_file_path and os.path.exists(old_file_path):
+
+                            # Update the catalog record's own field (Apply mappings to database)
+                            if apply_to_db:
+                                setattr(fits_file, field_name, mapping_to_apply['replace'])
+                                fits_file.save()
+                                total_updates += 1
+
+                            # Rewrite the FITS header on disk (Update FITS headers on disk)
+                            if update_headers and old_file_path and os.path.exists(old_file_path):
                                 try:
-                                    # First update the FITS header
                                     with fits.open(old_file_path, mode='update') as hdul:
                                         hdul[0].header[mapping_to_apply['card']] = mapping_to_apply['replace']
-                                        hdul[0].header.comments[mapping_to_apply['card']] = 'Updated via Astrofiler mapping'
+                                        hdul[0].header.comments[mapping_to_apply['card']] = 'Updated via Galileo mapping'
                                         hdul.flush()
-                                    
-                                    # Now determine if file needs to be moved to new folder structure
+                                    headers_updated += 1
+                                except Exception as e:
+                                    logger.error(f"Error updating FITS header for {old_file_path}: {e}")
+
+                            # Move the file to the mapped folder structure (Reorganize repository folders)
+                            if reorganize_files and old_file_path and os.path.exists(old_file_path):
+                                try:
                                     new_file_path = self._calculate_new_file_path(old_file_path, mapping_to_apply)
-                                    
+
                                     if new_file_path and new_file_path != old_file_path:
-                                        # Create new directory if it doesn't exist
                                         new_dir = os.path.dirname(new_file_path)
                                         os.makedirs(new_dir, exist_ok=True)
-                                        
-                                        # Move the file
+
                                         shutil.move(old_file_path, new_file_path)
                                         files_moved += 1
-                                        
-                                        # Update database with new file path
+
+                                        # Keep the catalog's file pointer in sync with the move
                                         fits_file.fitsFileName = new_file_path.replace('\\', '/')
                                         fits_file.save()
-                                        
+
                                         logger.info(f"Moved file: {old_file_path} -> {new_file_path}")
-                                    
                                 except Exception as e:
-                                    logger.error(f"Error updating FITS header/moving file {old_file_path}: {e}")
-                    
+                                    logger.error(f"Error moving file {old_file_path}: {e}")
+
                     if files_moved > 0:
                         logger.info(f"Moved {files_moved} files to new folder structure")
 
@@ -536,22 +541,24 @@ class MappingsWidget(QWidget):
                     """)
                 
                 # Show success message
-                if total_updates > 0:
-                    message = f"Successfully saved mapping to database and updated {total_updates} database records."
-                    if update_files and files_moved > 0:
-                        message += f"\nMoved {files_moved} files to new folder structure."
-                    elif update_files:
-                        message += f"\nUpdated FITS headers for {total_updates} files."
-                    
+                if total_updates > 0 or headers_updated > 0 or files_moved > 0:
+                    message = "Mapping saved to database."
+                    if total_updates > 0:
+                        message += f"\nUpdated {total_updates} catalog record(s)."
+                    if headers_updated > 0:
+                        message += f"\nRewrote the FITS header of {headers_updated} file(s) on disk."
+                    if files_moved > 0:
+                        message += f"\nMoved {files_moved} file(s) to the new folder structure."
+
                     QMessageBox.information(
-                        self, 
-                        "Mapping Applied", 
+                        self,
+                        "Mapping Applied",
                         message
                     )
                 else:
                     QMessageBox.information(
-                        self, 
-                        "Mapping Applied", 
+                        self,
+                        "Mapping Applied",
                         "Mapping saved to database successfully. No matching records found to update."
                     )
                 
@@ -660,127 +667,3 @@ class MappingsWidget(QWidget):
         except Exception as e:
             logger.error(f"Error calculating new file path for {old_file_path}: {e}")
             return None
-    
-    def apply_database_mappings(self):
-        """Apply the mappings to the database based on the current rows"""
-        try:
-            total_mappings = len(self.mapping_rows)
-            if total_mappings == 0:
-                QMessageBox.information(self, "No Mappings", "No mappings to apply.")
-                return
-            
-            # Confirm with the user
-            reply = QMessageBox.question(self, "Confirm Apply Mappings",
-                f"Are you sure you want to apply {total_mappings} mapping(s) to the database?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            
-            if reply == QMessageBox.Yes:
-                # Begin a transaction
-                with MappingModel._meta.database.transaction():
-                    for row_widget in self.mapping_rows:
-                        card = row_widget.card_combo.currentText()
-                        current = row_widget.current_combo.currentText()
-                        replace = row_widget.replace_combo.currentText()
-                        
-                        if card and replace:  # Only apply if both card and replace are provided
-                            # Update or insert the mapping in the database
-                            MappingModel.insert(
-                                card=card,
-                                current=current,
-                                replace=replace
-                            ).on_conflict_replace().execute()
-                
-                QMessageBox.information(self, "Success", f"Applied {total_mappings} mapping(s) to the database.")
-            else:
-                QMessageBox.information(self, "Cancelled", "Apply mappings cancelled.")
-        except Exception as e:
-            logger.error(f"Error applying database mappings: {e}")
-            QMessageBox.critical(self, "Error", f"Error applying mappings to database: {e}")
-    
-    def reorganize_repository_files(self):
-        """Reorganize files in the repository based on the current mappings"""
-        try:
-            total_files = len(self.mapping_rows)
-            if total_files == 0:
-                QMessageBox.information(self, "No Files", "No files to reorganize.")
-                return
-            
-            # Confirm with the user
-            reply = QMessageBox.question(self, "Confirm Reorganize Files",
-                f"Are you sure you want to reorganize {total_files} file(s) in the repository?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            
-            if reply == QMessageBox.Yes:
-                # Begin reorganization
-                for row_widget in self.mapping_rows:
-                    card = row_widget.card_combo.currentText()
-                    current = row_widget.current_combo.currentText()
-                    replace = row_widget.replace_combo.currentText()
-                    
-                    if card and replace:  # Only reorganize if both card and replace are provided
-                        self.reorganize_file(card, current, replace)
-                
-                QMessageBox.information(self, "Success", f"Reorganized {total_files} file(s) in the repository.")
-            else:
-                QMessageBox.information(self, "Cancelled", "Reorganize files cancelled.")
-        except Exception as e:
-            logger.error(f"Error reorganizing repository files: {e}")
-            QMessageBox.critical(self, "Error", f"Error reorganizing files: {e}")
-    
-    def reorganize_file(self, card, current, replace):
-        """Reorganize a single file based on the mapping"""
-        try:
-            # Implement the file reorganization logic here
-            # For example, moving the file to a new location based on the mapping
-            pass  # TODO: Replace with actual reorganization code
-        except Exception as e:
-            logger.error(f"Error reorganizing file {current}: {e}")
-    
-    def calculate_new_file_path(self, current_path, card, new_value):
-        """Calculate the new file path based on the current path, card, and new value"""
-        try:
-            # Implement the logic to calculate the new file path
-            # For example, replacing a part of the path based on the mapping
-            return current_path  # TODO: Replace with actual path calculation
-        except Exception as e:
-            logger.error(f"Error calculating new file path for {current_path}: {e}")
-            return current_path
-    
-    def cleanup_empty_directories(self, path):
-        """Remove empty directories recursively starting from the given path"""
-        try:
-            # Implement the logic to remove empty directories
-            # For example, using os.rmdir or shutil.rmtree
-            pass  # TODO: Replace with actual cleanup code
-        except Exception as e:
-            logger.error(f"Error cleaning up empty directories starting from {path}: {e}")
-    
-    def apply_file_folder_mappings(self):
-        """Apply file and folder mappings based on the current rows"""
-        try:
-            total_mappings = len(self.mapping_rows)
-            if total_mappings == 0:
-                QMessageBox.information(self, "No Mappings", "No file or folder mappings to apply.")
-                return
-            
-            # Confirm with the user
-            reply = QMessageBox.question(self, "Confirm Apply File/Folder Mappings",
-                f"Are you sure you want to apply {total_mappings} file/folder mapping(s)?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            
-            if reply == QMessageBox.Yes:
-                for row_widget in self.mapping_rows:
-                    card = row_widget.card_combo.currentText()
-                    current = row_widget.current_combo.currentText()
-                    replace = row_widget.replace_combo.currentText()
-                    
-                    if card and replace:  # Only apply if both card and replace are provided
-                        # TODO: Implement the logic to apply file and folder mappings
-                        pass
-                
-                QMessageBox.information(self, "Success", f"Applied {total_mappings} file/folder mapping(s).")
-            else:
-                QMessageBox.information(self, "Cancelled", "Apply file/folder mappings cancelled.")
-        except Exception as e:
-            logger.error(f"Error applying file/folder mappings: {e}")
-            QMessageBox.critical(self, "Error", f"Error applying file/folder mappings: {e}")

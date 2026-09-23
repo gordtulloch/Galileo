@@ -1,12 +1,12 @@
 """
 Core modules for AstroFiler application.
 
-This package contains modular components extracted from the original monolithic 
+This package contains modular components extracted from the original monolithic
 astrofiler_file.py for better maintainability and organization:
 
 - utils: Common utility functions
-- file_processing: FITS file handling and database operations  
-- calibration: Master frame creation and calibration processing
+- file_processing: FITS file handling and database operations
+- auto_calibration / light_calibration / master_manager: Master frame creation and calibration processing
 - enhanced_quality: Advanced image quality assessment with SEP star detection
 - repository: File organization and repository management
 """
@@ -22,7 +22,6 @@ __version__ = "1.2.0"
 
 # Import key classes and functions for convenient access
 from .file_processing import FileProcessor
-from .calibration import CalibrationProcessor
 from .enhanced_quality import EnhancedQualityAnalyzer
 from .repository import RepositoryManager
 from .master_manager import MasterFrameManager, get_master_manager
@@ -49,7 +48,6 @@ class fitsProcessing:
     def __init__(self) -> None:
         """Initialize all processor components."""
         self.file_processor = FileProcessor()
-        self.calibration_processor = CalibrationProcessor()
         self.quality_analyzer = EnhancedQualityAnalyzer()
         self.repository_manager = RepositoryManager()
         self.master_manager = get_master_manager()  # Advanced master frame management
@@ -166,21 +164,6 @@ class fitsProcessing:
         """Convert XISF to FITS - original signature."""
         return self.file_processor.convertXisfToFits(xisf_file_path, outputFile=None)
     
-    def createMasterCalibrationFrames(self, progress_callback=None):
-        """Create master calibration frames - original signature."""
-        return self.calibration_processor.createMasterCalibrationFrames(
-            sessionList=None, imageType=None, progressbar=progress_callback)
-    
-    def createMasterCalibrationFramesForSessions(self, session_list, progress_callback=None):
-        """Create master calibration frames for specific sessions."""
-        return self.calibration_processor.createMasterCalibrationFrames(
-            sessionList=session_list, imageType=None, progressbar=progress_callback)
-    
-    def checkCalibrationSessionsForMasters(self, min_files=2, progress_callback=None):
-        """Check calibration sessions for masters - original signature."""
-        return self.calibration_processor.checkCalibrationSessionsForMasters(
-            progressbar=progress_callback)
-    
     # Advanced master management methods
     def createAdvancedMaster(self, session_id, cal_type, min_files=2, progress_callback=None):
         """Create master frame using advanced Siril integration."""
@@ -271,10 +254,12 @@ class fitsProcessing:
                             raise Exception("Master creation failed")
                     
                     elif operation == 'calibrate':
+                        from .light_calibration import get_calibration_statistics
+                        frames_before = get_calibration_statistics()['calibrated_frames']
                         success = calibrate_light_frames(config, progress_callback=operation_progress)
                         if success:
-                            # Rough estimate of calibrated sessions
-                            results['light_frames_calibrated'] = 10  # Placeholder
+                            frames_after = get_calibration_statistics()['calibrated_frames']
+                            results['light_frames_calibrated'] = frames_after - frames_before
                         else:
                             raise Exception("Light frame calibration failed")
                     
@@ -346,8 +331,7 @@ class fitsProcessing:
 # Export the main class for backwards compatibility
 __all__ = [
     'fitsProcessing',
-    'FileProcessor', 
-    'CalibrationProcessor',
+    'FileProcessor',
     'EnhancedQualityAnalyzer',
     'RepositoryManager',
     'MasterFrameManager',

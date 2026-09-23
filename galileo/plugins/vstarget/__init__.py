@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""galileo.vstarget package — variable star planning and analysis (VST, VST-AN).
+"""galileo.plugins.vstarget package — variable star planning and analysis (VST, VST-AN).
 
 Delivered as first-party pre-loaded plugins (PLUG-060).
 """
@@ -9,12 +9,12 @@ Delivered as first-party pre-loaded plugins (PLUG-060).
 from __future__ import annotations
 
 from galileo.plugins import PluginBase
-from galileo.vstarget.analysis import VariableStarAnalysis
-from galileo.vstarget.analysis.exposure import ExposureTimeCalculator
-from galileo.vstarget.analysis.finder_chart import FinderChartRenderer
-from galileo.vstarget.analysis.photometry import PhotometryResult, StandardFieldObservation
-from galileo.vstarget.planning import VariableStarPlanner
-from galileo.vstarget.planning.models import (
+from galileo.plugins.vstarget.analysis import VariableStarAnalysis
+from galileo.plugins.vstarget.analysis.exposure import ExposureTimeCalculator
+from galileo.plugins.vstarget.analysis.finder_chart import FinderChartRenderer
+from galileo.plugins.vstarget.analysis.photometry import PhotometryResult, StandardFieldObservation
+from galileo.plugins.vstarget.planning import VariableStarPlanner
+from galileo.plugins.vstarget.planning.models import (
     AavsoTarget,
     ObservationPlan,
     TransformationCoefficients,

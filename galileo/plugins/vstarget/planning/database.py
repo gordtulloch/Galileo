@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from galileo.vstarget.planning.models import ObservationPlan
+    from galileo.plugins.vstarget.planning.models import ObservationPlan
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class PlanDatabase:
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def load(self) -> "list[ObservationPlan]":
-        from galileo.vstarget.planning.models import ObservationPlan, FilterConfig
+        from galileo.plugins.vstarget.planning.models import ObservationPlan, FilterConfig
         if not self._path.exists():
             return []
         try:

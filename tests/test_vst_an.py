@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 @pytest.fixture
 def vst_analysis():
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     return an_mod.VariableStarAnalysis()
 
 
@@ -21,7 +21,7 @@ def vst_analysis():
 @pytest.mark.priority("MVP")
 async def test_tc_vst_an_010_retrieve_fits_via_ftp_sftp(vst_analysis):
     """VST-AN-010: Retrieve calibrated FITS images from remote-telescope server via FTP/FTPS/SFTP."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     retriever = an_mod.SftpImageRetriever.__new__(an_mod.SftpImageRetriever)
     retriever.download = AsyncMock(return_value=["/local/cache/m42_001.fits"])
 
@@ -79,7 +79,7 @@ async def test_tc_vst_an_030_stack_same_target_filter(vst_analysis, sample_fits_
 @pytest.mark.priority("MVP")
 async def test_tc_vst_an_040_aperture_photometry_differential(vst_analysis, sample_fits_file):
     """VST-AN-040: Perform aperture photometry against AAVSO VSP comparison stars using ensemble linear regression."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
 
     comparison_stars = [
         {"label": "127", "ra": 154.0, "dec": 11.5, "mag_v": 12.7},
@@ -105,7 +105,7 @@ async def test_tc_vst_an_040_aperture_photometry_differential(vst_analysis, samp
 @pytest.mark.priority("MVP")
 def test_tc_vst_an_050_generate_aavso_webobs_report(vst_analysis, tmp_path):
     """VST-AN-050: Generate an AAVSO WebObs Extended-format measurement report from photometry results."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     measurements = [
         an_mod.PhotometryResult(
             target="R Leo",
@@ -134,7 +134,7 @@ def test_tc_vst_an_050_generate_aavso_webobs_report(vst_analysis, tmp_path):
 @pytest.mark.priority("P2")
 async def test_tc_vst_an_060_transformation_coefficients_from_standard_field(vst_analysis):
     """VST-AN-060: Compute per-telescope per-filter transformation coefficients from standard-field observations."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     standard_obs = [
         an_mod.StandardFieldObservation(star="HD12345", b_mag=10.1, v_mag=9.8, r_mag=9.5, b_inst=-0.12, v_inst=-0.10, r_inst=-0.08),
         an_mod.StandardFieldObservation(star="HD23456", b_mag=11.5, v_mag=11.0, r_mag=10.7, b_inst=-0.14, v_inst=-0.11, r_inst=-0.09),
@@ -152,18 +152,35 @@ async def test_tc_vst_an_060_transformation_coefficients_from_standard_field(vst
 @pytest.mark.priority("P2")
 async def test_tc_vst_an_070_apply_transformation_to_multifilter(vst_analysis, sample_fits_file):
     """VST-AN-070: Apply stored transformation coefficients to multi-filter observations before report generation."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     vst_analysis._transformation_coefficients = an_mod.TransformationCoefficients(
-        Tbv=0.05, Tvr=-0.03, Tr=0.02
+        Tbv=0.05, Tv=0.02, Tvr=-0.03, Tr=0.04
     )
 
-    raw_result = an_mod.PhotometryResult(
+    b_result = an_mod.PhotometryResult(
+        target="R Leo", jd=2461100.5, magnitude=7.60, uncertainty=0.05, filter_band="B",
+        comp_star="127", check_star="134"
+    )
+    v_result = an_mod.PhotometryResult(
         target="R Leo", jd=2461100.5, magnitude=6.75, uncertainty=0.04, filter_band="V",
         comp_star="127", check_star="134"
     )
-    corrected = vst_analysis.apply_transformation(raw_result)
-    assert corrected is not None
-    assert corrected.magnitude != raw_result.magnitude or corrected.is_transformed
+
+    corrected = vst_analysis.apply_transformation([b_result, v_result])
+    corrected_b, corrected_v = corrected[0], corrected[1]
+
+    # (B-V)_std = Tbv * (b - v); V' = v + Tv * (B-V)_std; B' = V' + (B-V)_std.
+    bv_std = 0.05 * (b_result.magnitude - v_result.magnitude)
+    expected_v = v_result.magnitude + 0.02 * bv_std
+    expected_b = expected_v + bv_std
+
+    assert corrected_v.is_transformed and corrected_v.magnitude == pytest.approx(expected_v)
+    assert corrected_b.is_transformed and corrected_b.magnitude == pytest.approx(expected_b)
+
+    # A lone V with no B or R alongside it carries no colour information, so it passes through
+    # unchanged rather than claiming a correction that was never computed.
+    lone_v = vst_analysis.apply_transformation([v_result])[0]
+    assert lone_v.magnitude == v_result.magnitude and not lone_v.is_transformed
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +191,7 @@ async def test_tc_vst_an_070_apply_transformation_to_multifilter(vst_analysis, s
 @pytest.mark.priority("P2")
 def test_tc_vst_an_080_exposure_time_calculator(vst_analysis):
     """VST-AN-080: Exposure-time calculator calibrated to configured telescope/filter throughput."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     etc = an_mod.ExposureTimeCalculator(
         telescope_aperture_mm=200,
         focal_length_mm=1000,
@@ -194,7 +211,7 @@ def test_tc_vst_an_080_exposure_time_calculator(vst_analysis):
 @pytest.mark.priority("P2")
 async def test_tc_vst_an_090_generate_finder_chart(vst_analysis, tmp_path):
     """VST-AN-090: Generate an AAVSO-style finder chart image for a variable-star field."""
-    an_mod = pytest.importorskip("galileo.vstarget.analysis")
+    an_mod = pytest.importorskip("galileo.plugins.vstarget.analysis")
     chart_renderer = an_mod.FinderChartRenderer.__new__(an_mod.FinderChartRenderer)
     chart_renderer.render = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
 

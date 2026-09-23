@@ -72,3 +72,10 @@ def get_cache_dir() -> Path:
 def get_db_path(filename: str = "galileo.db") -> Path:
     """Return the path to the application SQLite database file."""
     return get_data_dir() / filename
+
+
+def get_reports_dir() -> Path:
+    """Return the directory generated reports (e.g. Library quality reports) are written to, creating it if needed."""
+    d = get_data_dir() / "reports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d

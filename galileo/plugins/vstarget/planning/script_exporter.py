@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from galileo.vstarget.planning.models import ObservationPlan
+    from galileo.plugins.vstarget.planning.models import ObservationPlan
 
 
 def export_acp_script(plans: "list[ObservationPlan]", output_path: "Path | str") -> None:

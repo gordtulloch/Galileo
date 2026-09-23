@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from galileo.vstarget.planning.database import PlanDatabase
+    from galileo.plugins.vstarget.planning.database import PlanDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,8 @@ class VariableStarPlanner:
     """Manages AAVSO target download, observation plans, and ACP script export (VST-010 … VST-090)."""
 
     def __init__(self) -> None:
-        from galileo.vstarget.planning.aavso_client import AavsoTargetToolClient
-        from galileo.vstarget.planning.simbad_client import SimbadClient
+        from galileo.plugins.vstarget.planning.aavso_client import AavsoTargetToolClient
+        from galileo.plugins.vstarget.planning.simbad_client import SimbadClient
         self._aavso_client = AavsoTargetToolClient()
         self._simbad = SimbadClient()
         self._targets: list = []
@@ -34,7 +34,7 @@ class VariableStarPlanner:
 
     async def sync_from_aavso(self, section: str = "") -> None:
         """Download targets from the AAVSO Target Tool API (VST-010)."""
-        from galileo.vstarget.planning.models import AavsoTarget
+        from galileo.plugins.vstarget.planning.models import AavsoTarget
         raw = await self._aavso_client.fetch_targets(section=section)
         targets = []
         for d in raw:
@@ -70,7 +70,7 @@ class VariableStarPlanner:
     def import_from_file(self, path: "Path | str") -> None:
         """Load targets from a delimited text file (VST-040)."""
         import csv
-        from galileo.vstarget.planning.models import AavsoTarget
+        from galileo.plugins.vstarget.planning.models import AavsoTarget
         with open(path, newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             for row in reader:
@@ -96,13 +96,13 @@ class VariableStarPlanner:
         return list(self._plans)
 
     def set_persistence(self, path: "Path | str") -> None:
-        from galileo.vstarget.planning.database import PlanDatabase
+        from galileo.plugins.vstarget.planning.database import PlanDatabase
         self._db = PlanDatabase(path)
 
     # --- Script export (VST-060) -----------------------------------------
 
     def export_acp_script(self, plans: list, output_path: "Path | str") -> None:
-        from galileo.vstarget.planning.script_exporter import export_acp_script
+        from galileo.plugins.vstarget.planning.script_exporter import export_acp_script
         export_acp_script(plans, output_path)
 
     # --- Simbad fallback (VST-080) ----------------------------------------

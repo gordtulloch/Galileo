@@ -455,7 +455,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `NFR-SEC-010` | MVP | SDD Sec 7: A cross-cutting constraint on every adapter that talks to an external service (`galileo.adapters.*`, `galileo.vstarget.*`, `galileo.library`'s cloud-sync adapter, Open-Meteo clients) — enforced by code review/security review, not one module | Test | `TC-NFR-SEC-010` |
+| `NFR-SEC-010` | MVP | SDD Sec 7: A cross-cutting constraint on every adapter that talks to an external service (`galileo.adapters.*`, `galileo.plugins.vstarget.*`, `galileo.library`'s cloud-sync adapter, Open-Meteo clients) — enforced by code review/security review, not one module | Test | `TC-NFR-SEC-010` |
 | `NFR-SEC-020` | P2 | SDD Sec 7: A documentation deliverable (user-facing docs), not a code module — tracked here so it isn't lost, not because it traces to a component | Inspection | `TC-NFR-SEC-020` |
 
 ### `NFR-OFFLINE` — Offline Operation

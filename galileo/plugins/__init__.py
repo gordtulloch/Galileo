@@ -202,6 +202,6 @@ class PluginManager:
 
     def initialize_preloaded(self) -> None:
         """Load the first-party bundled plugins."""
-        from galileo.vstarget import VSTPlugin, VSTAnalysisPlugin
+        from galileo.plugins.vstarget import VSTPlugin, VSTAnalysisPlugin
         self.load(VSTPlugin)
         self.load(VSTAnalysisPlugin)

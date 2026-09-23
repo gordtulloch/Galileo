@@ -183,6 +183,47 @@ async def test_tc_safe_080_tier2_software_monitor_equally_trusted(event_bus):
     mock_mount.park.assert_called()
 
 
+@pytest.mark.requirement("TC-SAFE-080")
+@pytest.mark.priority("MVP")
+async def test_tc_safe_080_in_process_plugin_backend_equally_trusted(event_bus):
+    """SAFE-080: A Tier-2 monitor may be an in-process device backend a plugin registers through PLUG-010 implementing the identical port interface, rather than only an external INDI/Alpaca driver — trusted equally for automated abort decisions regardless of which."""
+    safe_mod = pytest.importorskip("galileo.safety")
+    devices = pytest.importorskip("galileo.core.devices")
+    plugins = pytest.importorskip("galileo.plugins")
+
+    class InProcessCloudClassifier(devices.DeviceBackend):
+        backend = "in_process_cloud_classifier"
+        device_type = "SafetyMonitor"
+        tier = 2
+
+        async def connect(self): pass
+        async def disconnect(self): pass
+        @property
+        def is_connected(self): return True
+        def get_capabilities(self): return devices.DeviceCapabilities()
+        def get_properties(self): return {"is_safe": False, "explanation": "Clouds detected by classifier"}
+
+    plugin_manager = plugins.PluginManager()
+    ctx = plugin_manager.create_context()
+    ctx.register_device_backend(devices.DeviceCategory.SAFETY_MONITOR, InProcessCloudClassifier)
+
+    registered = devices.DeviceBackend.registered_backends.get(devices.DeviceCategory.SAFETY_MONITOR, [])
+    assert InProcessCloudClassifier in registered, \
+        "a plugin-registered in-process backend must use the same registration path as any other device category"
+
+    in_process_monitor = InProcessCloudClassifier()
+    in_process_monitor.is_safe = False
+    in_process_monitor.poll = AsyncMock()
+
+    svc = safe_mod.SafetyMonitorService(monitor=in_process_monitor, event_bus=event_bus)
+    mock_mount = MagicMock(park=AsyncMock())
+    svc.register_mount(mock_mount)
+
+    await svc.poll_and_react()
+    # In-process backend's unsafe state must drive abort, same as an external driver's.
+    mock_mount.park.assert_called()
+
+
 # ---------------------------------------------------------------------------
 # TC-SAFE-090
 # ---------------------------------------------------------------------------

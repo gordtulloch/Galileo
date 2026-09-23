@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""SKY — Sky Atlas (TC-SKY-010 … TC-SKY-100)."""
+"""SKY — Sky Atlas / Targets (TC-SKY-010 … TC-SKY-120)."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -207,33 +207,42 @@ async def test_tc_sky_090_geocode_location_name(observing_location):
 
 @pytest.mark.requirement("TC-SKY-100")
 @pytest.mark.priority("MVP")
-async def test_tc_sky_100_simbad_first_search_with_local_fallback(sky_atlas):
-    """SKY-100: Object search resolves via a live Simbad lookup first
-    (ported from Obsy's target_query, ADR-005), falling back to the
-    offline catalog only when Simbad is unreachable, times out, or finds
-    nothing — the offline catalog is the fallback, not the primary source."""
+async def test_tc_sky_100_catalog_first_search_with_simbad_fallback(sky_atlas):
+    """SKY-100: Object search resolves primarily via the offline catalog
+    (SKY-010), falling back to a live Simbad lookup (traces to EXT-110) only
+    when the offline catalog has no match for the searched name and internet
+    is available — this reverses the previous Simbad-first/catalog-fallback
+    design so that ordinary object search, not only catalog browse/filter/
+    chart, satisfies NFR-OFFLINE-010's no-internet guarantee."""
     sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
 
+    # The offline catalog has a match -> used directly; Simbad is never consulted.
+    with patch.object(sky_mod, "_search_simbad_sync") as mock_search:
+        results = await sky_atlas.search_online("M42")
+        assert any("M42" in obj.designations for obj in results)
+        mock_search.assert_not_called()
+
     simbad_hit = sky_mod.DeepSkyObject(
-        primary_name="M42", designations=["M42"], ra_deg=83.8221, dec_deg=-5.3911,
-        object_type=sky_mod.ObjectType.NEBULA, magnitude=4.0,
+        primary_name="Not In Catalog", designations=["Not In Catalog"], ra_deg=10.0, dec_deg=20.0,
+        object_type=sky_mod.ObjectType.NEBULA, magnitude=12.0,
     )
 
-    # Simbad hit -> used directly; the local catalog is never consulted.
+    # Offline catalog has no match, internet available -> falls back to Simbad.
     with patch.object(sky_mod, "_search_simbad_sync", return_value=[simbad_hit]) as mock_search:
-        results = await sky_atlas.search_online("M42")
+        results = await sky_atlas.search_online("Not In Catalog")
         assert results == [simbad_hit]
-        mock_search.assert_called_once_with("M42")
+        mock_search.assert_called_once_with("Not In Catalog")
 
-    # Simbad unreachable (e.g. no internet) -> falls back to the local catalog.
+    # Offline catalog has no match, Simbad unreachable (no internet) -> no results,
+    # never an exception, and NFR-OFFLINE-010's no-internet guarantee still holds.
     with patch.object(sky_mod, "_search_simbad_sync", side_effect=OSError("no network")):
-        results = await sky_atlas.search_online("M31")
-        assert any("M31" in obj.designations for obj in results)
+        results = await sky_atlas.search_online("Not In Catalog")
+        assert results == []
 
-    # Simbad reachable but finds nothing -> also falls back to the local catalog.
+    # Offline catalog has no match, Simbad reachable but also finds nothing -> no results.
     with patch.object(sky_mod, "_search_simbad_sync", return_value=[]):
-        results = await sky_atlas.search_online("M31")
-        assert any("M31" in obj.designations for obj in results)
+        results = await sky_atlas.search_online("Not In Catalog")
+        assert results == []
 
     # Empty query never touches Simbad -> returns the full local catalog directly.
     with patch.object(sky_mod, "_search_simbad_sync") as mock_search:
@@ -285,3 +294,61 @@ def test_tc_sky_100_simbad_magnitude_lookup_returns_unknown_for_anything_unusabl
     monkeypatch.setattr(simbad_mod, "Simbad", FakeSimbad)
 
     assert sky_mod._simbad_magnitude_sync("M42") == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# TC-SKY-110
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SKY-110")
+@pytest.mark.priority("P2")
+async def test_tc_sky_110_telescopius_augmentation_requires_api_key_never_substitutes(sky_atlas):
+    """SKY-110: Optionally augment object search with the Telescopius API's target-search/suggestion data (traces to EXT-150) when the user has configured their own Telescopius API key, never as a substitute for the offline-first/Simbad-fallback path of SKY-010/SKY-100."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    # No API key configured -> Telescopius is never queried; offline-first/Simbad-fallback still runs.
+    sky_atlas.set_telescopius_api_key(None)
+    with patch.object(sky_mod, "_search_telescopius_sync") as mock_telescopius:
+        results = await sky_atlas.search_online("M42")
+        assert any("M42" in obj.designations for obj in results)
+        mock_telescopius.assert_not_called()
+
+    # API key configured -> Telescopius augments the results, on top of the offline-first path.
+    sky_atlas.set_telescopius_api_key("user-supplied-key")
+    telescopius_hit = sky_mod.DeepSkyObject(
+        primary_name="Telescopius Suggestion", designations=["Telescopius Suggestion"],
+        ra_deg=30.0, dec_deg=15.0, object_type=sky_mod.ObjectType.GALAXY, magnitude=11.0,
+    )
+    with patch.object(sky_mod, "_search_telescopius_sync", return_value=[telescopius_hit]) as mock_telescopius:
+        results = await sky_atlas.search_online("M42")
+        assert any("M42" in obj.designations for obj in results), "offline-first result still present"
+        assert telescopius_hit in results, "augmented, not substituted"
+        mock_telescopius.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TC-SKY-120
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SKY-120")
+@pytest.mark.priority("P2")
+async def test_tc_sky_120_import_telescopius_observing_list_requires_api_key(sky_atlas):
+    """SKY-120: Allow importing a user's existing Telescopius observing list into a Galileo session/target list (traces to EXT-150) when a Telescopius API key is configured."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    # No API key -> import is unavailable.
+    sky_atlas.set_telescopius_api_key(None)
+    with pytest.raises(sky_mod.TelescopiusNotConfiguredError):
+        await sky_atlas.import_telescopius_observing_list("My List")
+
+    # API key configured -> the observing list imports into the target list.
+    sky_atlas.set_telescopius_api_key("user-supplied-key")
+    fake_list = [
+        {"name": "M42", "ra_deg": 83.8221, "dec_deg": -5.3911},
+        {"name": "M31", "ra_deg": 10.6847, "dec_deg": 41.2687},
+    ]
+    with patch.object(sky_mod, "_fetch_telescopius_observing_list_sync", return_value=fake_list):
+        imported = await sky_atlas.import_telescopius_observing_list("My List")
+
+    assert len(imported) == 2
+    assert {t["name"] for t in imported} == {"M42", "M31"}
