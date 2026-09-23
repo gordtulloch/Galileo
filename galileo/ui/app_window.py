@@ -252,6 +252,9 @@ class AppWindow:
         self._current_pier = None
         self._log_panes: list = []
         self._device_pages: dict[str, dict] = {}
+        # One ObservatoryScheduler per Pier, shared by Planning > Sessions (Schedule/Deschedule)
+        # and Planning > Scheduler (the job-queue view) — both must see the same jobs.
+        self._schedulers: dict[str, object] = {}
         self._camera_backends: dict[str, object] = {}
         self._imaging_capture_thread = None
         self._imaging_filter_thread = None
@@ -830,7 +833,8 @@ class AppWindow:
             "star_atlas": self._build_star_atlas_page,
             "planning": lambda: self._build_submenu_page(
                 PLANNING_ITEMS, {"targets": self._build_sky_atlas_page,
-                                  "sessions": self._build_sessions_page}),
+                                  "sessions": self._build_sessions_page,
+                                  "scheduler": self._build_scheduler_page}),
             "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
             "library": self._build_library_page,
             "framing": self._build_framing_page,
@@ -4062,6 +4066,15 @@ class AppWindow:
         from galileo.ui.focus import FocusPage
         return FocusPage(self)
 
+    def _scheduler_for_pier(self, pier_name: "str | None") -> "ObservatoryScheduler":
+        """The one ``ObservatoryScheduler`` for *pier_name* — shared by Planning >
+        Sessions and Planning > Scheduler, created lazily, one per Pier."""
+        from galileo.scheduler import ObservatoryScheduler
+        key = pier_name or ""
+        if key not in self._schedulers:
+            self._schedulers[key] = ObservatoryScheduler()
+        return self._schedulers[key]
+
     def _build_sessions_page(self) -> "QWidget":
         """Planning > Sessions (SES-100 … SES-230): per-Pier, block-based session
         authoring — see ``galileo.ui.sessions``."""
@@ -4071,6 +4084,14 @@ class AppWindow:
             "reload": page.reload,
             "create_session_for_target": page.create_session_for_target,
         }
+        return page
+
+    def _build_scheduler_page(self) -> "QWidget":
+        """Planning > Scheduler (SCHED-010 … SCHED-100): the per-Pier job queue —
+        see ``galileo.ui.scheduler``."""
+        from galileo.ui.scheduler import SchedulerPageWidget
+        page = SchedulerPageWidget(self)
+        self._device_pages["scheduler"] = {"reload": page.reload}
         return page
 
     def _build_solve_page(self) -> "QWidget":

@@ -538,6 +538,32 @@ def test_tc_ses_210_scheduling_locks_region_and_swaps_control():
     assert region.boundary_style != "red"
 
 
+@pytest.mark.requirement("TC-SES-210")
+@pytest.mark.priority("MVP")
+async def test_tc_ses_210_completed_job_deletes_the_session_not_deschedules_it(sessions_screen):
+    """SES-210: a job completing successfully deletes its session outright — unlike
+    Deschedule (withdrawn manually), a completed session has nothing left to author,
+    so it isn't handed back as an editable draft."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    sched_mod = pytest.importorskip("galileo.scheduler")
+
+    scheduler = sched_mod.ObservatoryScheduler()
+    sessions_screen.set_active_pier("Pier-1")
+    region = sessions_screen.add_session(
+        ui_mod.SessionRegion(name="M42 Session", scheduler=scheduler), pier_name="Pier-1")
+    region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+
+    region.schedule()
+    assert region in sessions_screen.visible_sessions
+
+    job = region._job
+    job.total_required = 5
+    await scheduler.record_frames_captured(job, count=5)
+    scheduler.reap_completed_jobs()
+
+    assert region not in sessions_screen.visible_sessions   # deleted, not desecheduled-and-kept
+
+
 # ---------------------------------------------------------------------------
 # TC-SES-220
 # ---------------------------------------------------------------------------

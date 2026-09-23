@@ -611,7 +611,7 @@ class SessionsPageWidget(QWidget):
         self.setObjectName("SessionsPage")
         self._window = window
         self.screen = SessionsScreen()
-        self._schedulers: dict[str, Any] = {}
+        self._local_schedulers: "dict[str, Any]" = {}  # fallback when window lacks _scheduler_for_pier
         self._build()
         self.reload()
 
@@ -647,12 +647,18 @@ class SessionsPageWidget(QWidget):
         self._palette = _build_palette(self)
         body.addWidget(self._palette)
 
-    def _scheduler_for(self, pier_name: str | None):
+    def _scheduler_for(self, pier_name: "str | None"):
+        """The Pier's shared ``ObservatoryScheduler`` (owned by ``AppWindow`` so
+        Planning > Scheduler sees the same jobs), or a local fallback instance when
+        used standalone (e.g. outside a real ``AppWindow``, in a smoke test)."""
+        get_scheduler = getattr(self._window, "_scheduler_for_pier", None)
+        if get_scheduler is not None:
+            return get_scheduler(pier_name)
         from galileo.scheduler import ObservatoryScheduler
         key = pier_name or ""
-        if key not in self._schedulers:
-            self._schedulers[key] = ObservatoryScheduler()
-        return self._schedulers[key]
+        if key not in self._local_schedulers:
+            self._local_schedulers[key] = ObservatoryScheduler()
+        return self._local_schedulers[key]
 
     def _active_pier_name(self) -> str | None:
         pier = getattr(self._window, "_current_pier", None)
@@ -670,8 +676,12 @@ class SessionsPageWidget(QWidget):
         self._rebuild_regions()
 
     def reload(self) -> None:
-        """Show the active Pier's own sessions (SES-100)."""
-        self.screen.set_active_pier(self._active_pier_name())
+        """Show the active Pier's own sessions (SES-100) — reaping any that finished
+        (their scheduled job completed) before rebuilding, so a completed session
+        disappears here too, not only from Planning > Scheduler."""
+        pier_name = self._active_pier_name()
+        self._scheduler_for(pier_name).reap_completed_jobs()
+        self.screen.set_active_pier(pier_name)
         self._rebuild_regions()
 
     def _rebuild_regions(self, status: str | None = None) -> None:

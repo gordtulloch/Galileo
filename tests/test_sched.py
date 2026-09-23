@@ -133,6 +133,53 @@ def test_tc_sched_050_per_job_completion_conditions(scheduler, sample_job):
     assert isinstance(sample_job.completion_condition, sched_mod.RepeatIndefinitely)
 
 
+@pytest.mark.requirement("TC-SCHED-050")
+@pytest.mark.priority("P2")
+async def test_tc_sched_050_completed_job_is_reaped_and_its_session_deleted(scheduler):
+    """SCHED-050: a job that completes (RunOnce, all required frames captured) is removed
+    from the queue, and the session it came from is deleted, not just desecheduled — it has
+    nothing left to do."""
+    ses_mod = pytest.importorskip("galileo.ui.sessions")
+
+    ses_screen = ses_mod.SessionsScreen()
+    region = ses_screen.add_session(ses_mod.SessionRegion(name="M42 Session", scheduler=scheduler),
+                                     pier_name="Pier-1")
+    ses_screen.set_active_pier("Pier-1")
+    region.insert_block(ses_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+
+    region.schedule()
+    job = region._job
+    job.total_required = 10
+    assert scheduler.jobs == [job]
+    assert region in ses_screen.visible_sessions
+
+    await scheduler.record_frames_captured(job, count=10)
+    assert job.is_complete is True
+
+    reaped = scheduler.reap_completed_jobs()
+    assert reaped == [job]
+    assert scheduler.jobs == []
+    assert region not in ses_screen.visible_sessions   # deleted, not just desecheduled
+
+
+@pytest.mark.requirement("TC-SCHED-050")
+@pytest.mark.priority("P2")
+async def test_tc_sched_050_incomplete_or_repeating_jobs_are_not_reaped(scheduler, sample_job):
+    """SCHED-050: a job still short of its required frames, or one that repeats, stays queued."""
+    sched_mod = pytest.importorskip("galileo.scheduler")
+
+    sample_job.total_required = 10
+    scheduler.add_job(sample_job)
+    await scheduler.record_frames_captured(sample_job, count=5)
+    assert scheduler.reap_completed_jobs() == []
+
+    sample_job.completion_condition = sched_mod.RepeatIndefinitely()
+    await scheduler.record_frames_captured(sample_job, count=5)  # now "complete" by frame count
+    assert sample_job.is_complete is False   # but RepeatIndefinitely never auto-completes
+    assert scheduler.reap_completed_jobs() == []
+    assert scheduler.jobs == [sample_job]
+
+
 # ---------------------------------------------------------------------------
 # TC-SCHED-060
 # ---------------------------------------------------------------------------
@@ -232,3 +279,104 @@ def test_tc_sched_100_persist_queue_across_restarts(scheduler, sample_job, tmp_p
 
     assert len(scheduler2.jobs) == 1
     assert scheduler2.jobs[0].name == "M42"
+
+
+# ---------------------------------------------------------------------------
+# Planning > Scheduler screen (galileo.ui.scheduler)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def window(tmp_path):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "scheduler_page.db")
+    from galileo.ui.app_window import AppWindow
+    win = AppWindow()
+    yield win
+    win._window.close()
+    db.close()
+
+
+def _sessions_and_scheduler_pages(window):
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.scheduler import SchedulerPageWidget
+    from galileo.ui.sessions import SessionsPageWidget
+
+    obs = create_observatory("Home", 40.0, 0.0)
+    window._select_observatory(obs)
+    pier = create_pier(obs, "Pier-1")
+    window._current_pier = pier
+    window._on_pier_changed()
+    window._primary_nav.select("planning")
+    sessions = window._window.findChildren(SessionsPageWidget)[0]
+    scheduler_page = window._window.findChildren(SchedulerPageWidget)[0]
+    return sessions, scheduler_page
+
+
+@pytest.mark.requirement("TC-SCHED-010")
+@pytest.mark.priority("MVP")
+def test_scheduler_page_shows_jobs_scheduled_from_sessions(window):
+    """SCHED-010: a job only enters the queue via a session's Schedule control, and
+    Planning > Scheduler shows it — sharing the same per-Pier ObservatoryScheduler
+    Planning > Sessions submits to, not a separate queue."""
+    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
+
+    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region._scheduler = sessions._scheduler_for(region._pier_name)
+    assert sessions._scheduler_for("Pier-1") is scheduler_page._scheduler()
+
+    region.schedule()
+    scheduler_page.reload()
+    assert scheduler_page._table.rowCount() == 1
+    assert scheduler_page._table.item(0, 1).text() == "M31 Session"
+
+
+@pytest.mark.requirement("TC-SCHED-020")
+@pytest.mark.priority("MVP")
+def test_scheduler_page_move_and_edit_job(window):
+    """SCHED-020: jobs can be reordered and modified (priority, frames required) from the screen."""
+    from galileo.ui.scheduler import _EditJobDialog
+    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
+
+    for name, ra, dec in (("M31", 10.68, 41.27), ("M42", 83.8, -5.4)):
+        region = sessions.screen.create_session_for_target(name, ra, dec)
+        region._scheduler = sessions._scheduler_for(region._pier_name)
+        region.schedule()
+    scheduler_page.reload()
+
+    scheduler_page._table.selectRow(0)
+    scheduler_page._move_selected(1)
+    assert [j.name for j in scheduler_page._scheduler().jobs] == ["M42 Session", "M31 Session"]
+
+    job = scheduler_page._scheduler().jobs[0]
+    dialog = _EditJobDialog(job, scheduler_page)
+    dialog.priority_spin.setValue(1)
+    dialog.total_spin.setValue(20)
+    dialog.apply()
+    assert job.priority == 1 and job.total_required == 20
+
+
+@pytest.mark.requirement("TC-SCHED-020")
+@pytest.mark.priority("MVP")
+def test_scheduler_page_remove_deschedules_session_rather_than_deleting_it(window, monkeypatch):
+    """SCHED-020: removing a job from the queue returns its session to editable draft
+    state (deschedule) — only a job that actually completes deletes its session."""
+    from PySide6.QtWidgets import QMessageBox
+    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+
+    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region._scheduler = sessions._scheduler_for(region._pier_name)
+    region.schedule()
+    scheduler_page.reload()
+
+    scheduler_page._table.selectRow(0)
+    scheduler_page._remove_selected()
+
+    assert scheduler_page._table.rowCount() == 0
+    sessions.reload()
+    assert region in sessions.screen.visible_sessions   # still there
+    assert region.is_editable is True and region.is_scheduled is False   # just unlocked

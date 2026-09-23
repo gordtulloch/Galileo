@@ -106,6 +106,18 @@ class SchedulerJob:
     def frames_captured(self) -> int:
         return self._frames_captured
 
+    @property
+    def is_complete(self) -> bool:
+        """Whether this job has satisfied its completion condition (SCHED-050) and
+        should be reaped from the queue. Only ``RunOnce`` is evaluated against real
+        progress today — ``RepeatNTimes``/``RepeatIndefinitely`` need a per-run
+        counter that has no real driver yet, since nothing feeds actual capture
+        progress into ``record_frames_captured`` until session-block execution
+        (out of scope here — see TODO.md) exists."""
+        if isinstance(self.completion_condition, RunOnce):
+            return self.total_required > 0 and self._frames_captured >= self.total_required
+        return False
+
     def __str__(self) -> str:
         return self.name
 
@@ -149,6 +161,20 @@ class ObservatoryScheduler:
 
     def get_ordered_jobs(self) -> list[SchedulerJob]:
         return list(sorted(self.jobs, key=lambda j: j.priority))
+
+    def reap_completed_jobs(self) -> list[SchedulerJob]:
+        """Remove every job that has completed successfully (SCHED-050) and delete
+        the session it came from, rather than leaving it desecheduled-but-present —
+        a completed session has nothing left to do. Returns the jobs removed."""
+        done = [j for j in self.jobs if j.is_complete]
+        for job in done:
+            self.jobs.remove(job)
+            if self.active_job is job:
+                self.active_job = None
+            region = job.sequence
+            if region is not None and hasattr(region, "delete"):
+                region.delete()
+        return done
 
     def next_job(self) -> SchedulerJob | None:
         for job in self.get_ordered_jobs():
