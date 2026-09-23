@@ -18,7 +18,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 270 requirements (256 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7).
+**Coverage:** 272 requirements (258 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+
+**`SEQ`/`SEQ-ADV` → `SES`:** this revision replaces the former `SEQ`/`SEQ-ADV` domains with the unified `SES` ("Sessions") domain end to end (SRS Sections 4.5/4.5a/4.6). Every row below uses `SES-*` IDs; there is no `SEQ`/`SEQ-ADV` row remaining in this matrix.
 
 ---
 
@@ -37,11 +39,11 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EXT-070` | P3 | SDD 4.19 `galileo.notify` | Test | `TC-EXT-070` |
 | `EXT-080` | MVP | SDD 4.23 `galileo.library` | Test | `TC-EXT-080` |
 | `EXT-090` | P2 | SDD 4.23 `galileo.library` | Test | `TC-EXT-090` |
-| `EXT-100` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-EXT-100` |
-| `EXT-110` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-EXT-110` |
-| `EXT-120` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-EXT-120` |
+| `EXT-110` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-EXT-110` |
+| `EXT-120` | MVP | SDD 4.23 `galileo.library` | Test | `TC-EXT-120` |
 | `EXT-130` | P2 | SDD 4.8 `galileo.planning.sky_atlas`; SDD 4.16 `galileo.safety` | Test | `TC-EXT-130` |
 | `EXT-140` | P2 | SDD 4.23 `galileo.library` | Test | `TC-EXT-140` |
+| `EXT-150` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-EXT-150` |
 
 ### `ARCH` — Protocol & Device Abstraction Layer
 
@@ -118,6 +120,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `OBS-060` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-060` |
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
 | `OBS-080` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-080` |
+| `OBS-090` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-090` |
 
 ### `IMG` — Imaging Tab
 
@@ -140,37 +143,44 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-150` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-150` |
 | `IMG-160` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.livestack` | Test | `TC-IMG-160` |
 | `IMG-170` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.metadata` | Test | `TC-IMG-170` |
+| `IMG-180` | MVP | SDD 4.5 `galileo.ui.imaging` / SDD 4.9 `galileo.planning.framing` | Test | `TC-IMG-180` |
 
-### `SEQ` — Sequencer (Basic)
-
-| SRS ID | Priority | SDD Component | Verification | Test Case |
-|---|---|---|---|---|
-| `SEQ-010` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-010` |
-| `SEQ-020` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-020` |
-| `SEQ-030` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-030` |
-| `SEQ-040` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-040` |
-| `SEQ-050` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-050` |
-| `SEQ-060` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-060` |
-| `SEQ-070` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-070` |
-| `SEQ-080` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-080` |
-| `SEQ-090` | P3 | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SEQ-090` |
-
-### `SEQ-ADV` — Sequencer (Advanced)
+### `SES` — Sessions (formerly `SEQ`/`SEQ-ADV`; SRS Sections 4.5/4.5a/4.6)
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `SEQ-ADV-010` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-010` |
-| `SEQ-ADV-020` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-020` |
-| `SEQ-ADV-030` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-030` |
-| `SEQ-ADV-040` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-040` |
-| `SEQ-ADV-050` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-050` |
-| `SEQ-ADV-060` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-060` |
-| `SEQ-ADV-070` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-070` |
-| `SEQ-ADV-080` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-080` |
-| `SEQ-ADV-090` | P3 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-090` |
-| `SEQ-ADV-100` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SEQ-ADV-100` |
+| `SES-010` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-010` |
+| `SES-020` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-020` |
+| `SES-030` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-030` |
+| `SES-040` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-040` |
+| `SES-050` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-050` |
+| `SES-060` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-060` |
+| `SES-070` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-070` |
+| `SES-080` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-080` |
+| `SES-090` | P3 | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-090` |
+| `SES-100` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-100` |
+| `SES-110` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-110` |
+| `SES-120` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-120` |
+| `SES-130` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-130` |
+| `SES-140` | P2 | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-140` |
+| `SES-150` | P3 | SDD 4.6a `galileo.ui.sessions`; SDD 4.19 `galileo.notify` | Test | `TC-SES-150` |
+| `SES-160` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-160` |
+| `SES-170` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-170` |
+| `SES-180` | P2 | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-180` |
+| `SES-190` | P2 | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-190` |
+| `SES-200` | MVP | SDD 4.6a `galileo.ui.sessions`; SDD 4.9b `galileo.scheduler` | Test | `TC-SES-200` |
+| `SES-210` | MVP | SDD 4.6a `galileo.ui.sessions`; SDD 4.9b `galileo.scheduler` | Test | `TC-SES-210` |
+| `SES-220` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-220` |
+| `SES-230` | P2 | SDD 4.6a `galileo.ui.sessions` / SDD 4.9 `galileo.planning.framing` | Test | `TC-SES-230` |
+| `SES-300` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-300` |
+| `SES-310` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-310` |
+| `SES-320` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-320` |
+| `SES-330` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-330` |
+| `SES-340` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-340` |
+| `SES-350` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-350` |
+| `SES-360` | P3 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-360` |
 
-### `SKY` — Sky Atlas
+### `SKY` — Sky Atlas / Targets
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
@@ -181,20 +191,25 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKY-050` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-050` |
 | `SKY-060` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-060` |
 | `SKY-070` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-070` |
-| `SKY-080` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-080` |
+| `SKY-080` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-080` |
 | `SKY-090` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-090` |
 | `SKY-100` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-100` |
+| `SKY-110` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-110` |
+| `SKY-120` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-120` |
 
 ### `FRAME` — Framing Assistant
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `FRAME-010` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-010` |
-| `FRAME-020` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-020` |
-| `FRAME-030` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-030` |
-| `FRAME-040` | P3 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-040` |
+| `FRAME-010` | MVP | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-010` |
+| `FRAME-020` | MVP | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-020` |
+| `FRAME-030` | MVP | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-030` |
+| `FRAME-040` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-040` |
 | `FRAME-050` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-050` |
 | `FRAME-060` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-060` |
+| `FRAME-070` | MVP | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-070` |
+| `FRAME-080` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-080` |
+| `FRAME-090` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-090` |
 
 ### `SKYMAP` — Interactive Star Map / Planetarium (KStars/EKOS-informed)
 
@@ -334,6 +349,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NOTIF-010` | P2 | SDD 4.19 `galileo.notify` | Test | `TC-NOTIF-010` |
 | `NOTIF-020` | P3 | SDD 4.19 `galileo.notify` | Test | `TC-NOTIF-020` |
 | `NOTIF-030` | P3 | SDD 4.19 `galileo.notify` | Test | `TC-NOTIF-030` |
+| `NOTIF-040` | P3 | SDD 4.19 `galileo.notify`; SDD 4.4a `galileo.observatory` | Test | `TC-NOTIF-040` |
 
 ### `PLUG` — Plugin Framework
 
@@ -388,33 +404,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-150` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-150` |
 | `LIB-160` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-160` |
 
-### `VST` — Variable Star Target Planning (merged from VSTarget)
+### `VST` / `VST-AN` — Moved
 
-| SRS ID | Priority | SDD Component | Verification | Test Case |
-|---|---|---|---|---|
-| `VST-010` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-010` |
-| `VST-020` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-020` |
-| `VST-030` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-030` |
-| `VST-040` | P2 | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-040` |
-| `VST-050` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-050` |
-| `VST-060` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-060` |
-| `VST-070` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-070` |
-| `VST-080` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-080` |
-| `VST-090` | MVP | SDD 4.24 `galileo.vstarget.planning` | Test | `TC-VST-090` |
-
-### `VST-AN` — Variable Star Analysis & Photometry (merged from VSTarget)
-
-| SRS ID | Priority | SDD Component | Verification | Test Case |
-|---|---|---|---|---|
-| `VST-AN-010` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-010` |
-| `VST-AN-020` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-020` |
-| `VST-AN-030` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-030` |
-| `VST-AN-040` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-040` |
-| `VST-AN-050` | MVP | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-050` |
-| `VST-AN-060` | P2 | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-060` |
-| `VST-AN-070` | P2 | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-070` |
-| `VST-AN-080` | P2 | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-080` |
-| `VST-AN-090` | P2 | SDD 4.25 `galileo.vstarget.analysis` | Test | `TC-VST-AN-090` |
+Variable Star Target Planning and Variable Star Analysis & Photometry are the VSTarget plugin's own requirements and are traced in its own RTM: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
 
 ### `NFR-PERF` — Performance
 
@@ -487,16 +479,15 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 | Domain | Requirements | MVP | P2 | P3 |
 |---|---|---|---|---|
-| `EXT` | 14 | 10 | 3 | 1 |
+| `EXT` | 14 | 9 | 4 | 1 |
 | `ARCH` | 8 | 6 | 2 | 0 |
 | `EQP` | 27 | 19 | 8 | 0 |
 | `PROF` | 12 | 11 | 1 | 0 |
-| `OBS` | 8 | 0 | 8 | 0 |
-| `IMG` | 17 | 8 | 9 | 0 |
-| `SEQ` | 9 | 8 | 0 | 1 |
-| `SEQ-ADV` | 10 | 0 | 9 | 1 |
-| `SKY` | 9 | 6 | 3 | 0 |
-| `FRAME` | 6 | 0 | 5 | 1 |
+| `OBS` | 9 | 0 | 9 | 0 |
+| `IMG` | 18 | 9 | 9 | 0 |
+| `SES` (formerly `SEQ`/`SEQ-ADV`) | 30 | 17 | 10 | 3 |
+| `SKY` | 12 | 8 | 4 | 0 |
+| `FRAME` | 9 | 4 | 5 | 0 |
 | `SKYMAP` | 9 | 3 | 6 | 0 |
 | `SCHED` | 10 | 8 | 2 | 0 |
 | `CAL` | 6 | 5 | 1 | 0 |
@@ -508,13 +499,11 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SAFE` | 10 | 2 | 5 | 3 |
 | `HIST` | 4 | 0 | 3 | 1 |
 | `META` | 5 | 3 | 1 | 1 |
-| `NOTIF` | 3 | 0 | 1 | 2 |
+| `NOTIF` | 4 | 0 | 1 | 3 |
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
 | `LIB` | 16 | 11 | 4 | 1 |
-| `VST` | 9 | 8 | 1 | 0 |
-| `VST-AN` | 9 | 5 | 4 | 0 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
@@ -524,4 +513,4 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NFR-SEC` | 2 | 1 | 1 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **270** | **159** | **98** | **13** |
+| **Total** | **272** | **161** | **97** | **14** |
