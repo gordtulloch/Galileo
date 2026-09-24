@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from galileo.library.models.device_config import DeviceConfigRecord
     from galileo.library.models.observatory import ObservatoryRecord, PierRecord
     from galileo.library.models.optical_tube import OpticalTubeRecord
+    from galileo.autofocus import AutofocusParams
+    from galileo.platesolve import SolverParams
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +265,72 @@ def delete_device_config(pier: "PierRecord", category: str, slot: str = "primary
         & (DeviceConfigRecord.category == category)
         & (DeviceConfigRecord.slot == slot)
     ).execute()
+
+
+def get_autofocus_params(pier: "PierRecord | None") -> "AutofocusParams":
+    """Return *pier*'s saved autofocus defaults (Options > Focus, FOC-070), or
+    ``AutofocusParams()`` if none have been saved yet or no Pier is selected."""
+    from galileo.autofocus import AutofocusParams
+    if pier is None:
+        return AutofocusParams()
+    from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
+    record = AutofocusSettingsRecord.get_or_none(AutofocusSettingsRecord.pier == pier)
+    if record is None:
+        return AutofocusParams()
+    return AutofocusParams(
+        step_size=record.step_size, num_points=record.num_points,
+        exposure_s=record.exposure_s, backlash_compensation=record.backlash_compensation,
+    )
+
+
+def save_autofocus_params(pier: "PierRecord", params: "AutofocusParams") -> None:
+    """Create or update *pier*'s saved autofocus defaults (Options > Focus)."""
+    from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
+    fields = dict(
+        step_size=params.step_size, num_points=params.num_points,
+        exposure_s=params.exposure_s, backlash_compensation=params.backlash_compensation,
+    )
+    record = AutofocusSettingsRecord.get_or_none(AutofocusSettingsRecord.pier == pier)
+    if record is None:
+        AutofocusSettingsRecord.create(pier=pier, **fields)
+        return
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+
+
+def get_solver_settings(pier: "PierRecord | None") -> "tuple[str, SolverParams]":
+    """Return *pier*'s saved ``(executable, SolverParams)`` (Options > Solve,
+    PLT-060), or the Solve screen's long-standing defaults (auto-detected
+    executable, no downsampling) if none have been saved yet or no Pier is
+    selected."""
+    from galileo.platesolve import SolverParams
+    if pier is None:
+        return "", SolverParams(downsample=0)
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    if record is None:
+        return "", SolverParams(downsample=0)
+    return record.executable or "", SolverParams(
+        fov_hint_deg=record.fov_hint_deg, search_radius_deg=record.search_radius_deg,
+        downsample=record.downsample,
+    )
+
+
+def save_solver_settings(pier: "PierRecord", executable: str, params: "SolverParams") -> None:
+    """Create or update *pier*'s saved solver defaults (Options > Solve)."""
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    fields = dict(
+        executable=executable or None, fov_hint_deg=params.fov_hint_deg,
+        search_radius_deg=params.search_radius_deg, downsample=params.downsample,
+    )
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    if record is None:
+        SolverSettingsRecord.create(pier=pier, **fields)
+        return
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
 
 
 def _slot_sort_key(slot: str) -> tuple:

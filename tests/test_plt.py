@@ -138,6 +138,40 @@ def test_tc_plt_060_search_params_per_profile():
     assert solver.params.downsample == 2
 
 
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_search_params_persisted_per_pier(tmp_path):
+    """PLT-060: solver search parameters and the ASTAP executable path are saved per Pier
+    (Options > Solve) and survive being re-read, not just held on an in-memory dataclass."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import create_observatory, create_pier, get_solver_settings, save_solver_settings
+    from galileo.platesolve import SolverParams
+
+    init_db(tmp_path / "plt060.db")
+    try:
+        pier = create_pier(create_observatory("Obs PLT-060"), "Pier PLT-060")
+
+        # Unconfigured: falls back to the Solve screen's long-standing defaults (auto-detect,
+        # no downsampling) rather than SolverParams' own general-purpose dataclass default.
+        executable, params = get_solver_settings(pier)
+        assert executable == "" and params.downsample == 0
+
+        save_solver_settings(pier, "/opt/astap/astap", SolverParams(
+            fov_hint_deg=2.5, search_radius_deg=10.0, downsample=2))
+        executable, params = get_solver_settings(pier)
+        assert executable == "/opt/astap/astap"
+        assert (params.fov_hint_deg, params.search_radius_deg, params.downsample) == (2.5, 10.0, 2)
+
+        # A Pier with no saved settings at all is unaffected by another Pier's.
+        other_pier = create_pier(create_observatory("Obs PLT-060 Other"), "Pier PLT-060 Other")
+        executable, params = get_solver_settings(other_pier)
+        assert executable == "" and params.fov_hint_deg == 0.0
+
+        assert get_solver_settings(None) == ("", SolverParams(downsample=0))
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # ASTAP integration details (PLT-010, PLT-050, PLT-060) — against a stand-in for the ASTAP process
 # ---------------------------------------------------------------------------

@@ -63,7 +63,6 @@ from galileo.current_object import get_current_objects
 from galileo.platesolve import (
     PlateSolver,
     SolveAction,
-    SolverParams,
     SolveSettings,
     SolveWorkflow,
     angular_offset_arcsec,
@@ -856,7 +855,9 @@ class SolvePage(QWidget):
     # --- Running ----------------------------------------------------------
 
     def _default_solver(self) -> PlateSolver | None:
-        solver = PlateSolver(backend="astap", params=SolverParams(downsample=0))
+        from galileo.observatory import get_solver_settings
+        executable, params = get_solver_settings(self._window._current_pier)
+        solver = PlateSolver(backend="astap", executable=executable, params=params)
         if not solver.executable:
             QMessageBox.information(
                 self._window._window, "ASTAP not found",

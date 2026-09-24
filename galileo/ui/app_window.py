@@ -924,6 +924,8 @@ class AppWindow:
         option_builders["star_atlas"] = self._build_star_atlas_settings_page
         option_builders["planning"] = self._build_planning_settings_page
         option_builders["imaging"] = self._build_imaging_settings_page
+        option_builders["focus"] = self._build_focus_settings_page
+        option_builders["solve"] = self._build_solve_settings_page
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
@@ -4166,7 +4168,9 @@ class AppWindow:
         can start one — see ``galileo.ui.focus``. It only redraws while a run
         is in progress."""
         from galileo.ui.focus import FocusPage
-        return FocusPage(self)
+        page = FocusPage(self)
+        self._device_pages["focus"] = {"reload": page.reload}
+        return page
 
     def _scheduler_for_pier(self, pier_name: "str | None") -> "ObservatoryScheduler":
         """The one ``ObservatoryScheduler`` for *pier_name* — shared by Planning >
@@ -4465,6 +4469,10 @@ class AppWindow:
         if refresh_star_atlas_site is not None:
             refresh_star_atlas_site()
         self._apply_horizon()
+        for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
+            refresh = getattr(self, refresh_name, None)
+            if refresh is not None:
+                refresh()
 
     def _apply_horizon(self) -> None:
         """Load the current Observatory's horizon obstruction table and hand it to
@@ -6299,6 +6307,212 @@ class AppWindow:
                 service.bitpix = settings["bitpix"]
 
         bitpix_combo.currentIndexChanged.connect(changed)
+        return page
+
+    # --- Options > Focus -------------------------------------------------------
+
+    def _build_focus_settings_page(self) -> "QWidget":
+        """Options > Focus: the current Pier's saved autofocus defaults
+        (step size, points, exposure, backlash — FOC-070), which seed the
+        Focus screen's own controls. Scoped per Pier, like the Equipment
+        pages' saved device configuration."""
+        from PySide6.QtWidgets import (
+            QDoubleSpinBox, QFormLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+        )
+        from galileo.autofocus import AutofocusParams
+        from galileo.observatory import get_autofocus_params, save_autofocus_params
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Focus settings")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        status = QLabel("")
+        status.setObjectName("StatusHint")
+        layout.addWidget(status)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        layout.addLayout(form)
+
+        step_spin = QSpinBox()
+        step_spin.setRange(1, 100000)
+        step_spin.setSuffix(" steps")
+        step_spin.setToolTip("Focuser steps between successive exposures during a sweep.")
+        form.addRow("Step size", step_spin)
+
+        points_spin = QSpinBox()
+        points_spin.setRange(3, 41)
+        points_spin.setToolTip("Number of exposures across the sweep, centred on the current position.")
+        form.addRow("Number of points", points_spin)
+
+        exposure_spin = QDoubleSpinBox()
+        exposure_spin.setRange(0.01, 600.0)
+        exposure_spin.setDecimals(2)
+        exposure_spin.setSuffix(" s")
+        exposure_spin.setToolTip("Exposure time of each frame measured during a sweep.")
+        form.addRow("Exposure time", exposure_spin)
+
+        backlash_spin = QSpinBox()
+        backlash_spin.setRange(0, 100000)
+        backlash_spin.setSuffix(" steps")
+        backlash_spin.setToolTip(
+            "Overshoot then return by this many steps before every focuser move during a run "
+            "(0 disables compensation).")
+        form.addRow("Backlash compensation", backlash_spin)
+
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        layout.addWidget(save_btn)
+
+        hint = QLabel("Applies to the next autofocus run started from the Focus screen, whether "
+                      "started there or by a sequencer trigger. Saved per Pier.")
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        def refresh() -> None:
+            pier = self._current_pier
+            params = get_autofocus_params(pier)
+            step_spin.setValue(params.step_size)
+            points_spin.setValue(params.num_points)
+            exposure_spin.setValue(params.exposure_s)
+            backlash_spin.setValue(params.backlash_compensation)
+            status.setText(f"Editing defaults for Pier {pier.name!r}." if pier is not None
+                           else "Select a Pier first — these settings are saved per Pier.")
+            save_btn.setEnabled(pier is not None)
+            for widget in (step_spin, points_spin, exposure_spin, backlash_spin):
+                widget.setEnabled(pier is not None)
+
+        def save() -> None:
+            if self._current_pier is None:
+                return
+            params = AutofocusParams(
+                step_size=step_spin.value(), num_points=points_spin.value(),
+                exposure_s=exposure_spin.value(), backlash_compensation=backlash_spin.value(),
+            )
+            save_autofocus_params(self._current_pier, params)
+            focus_state = self._device_pages.get("focus")
+            if focus_state is not None:
+                focus_state["reload"]()
+            self._window.statusBar().showMessage(f"Saved Focus settings for Pier {self._current_pier.name!r}.", 4000)
+
+        save_btn.clicked.connect(save)
+        self._focus_settings_refresh = refresh
+        refresh()
+        return page
+
+    # --- Options > Solve --------------------------------------------------------
+
+    def _build_solve_settings_page(self) -> "QWidget":
+        """Options > Solve: the current Pier's saved solver defaults —
+        an ASTAP executable-path override, field-of-view hint, search radius
+        and downsample factor (PLT-060). Scoped per Pier, like Options > Focus."""
+        from PySide6.QtWidgets import (
+            QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+            QPushButton, QSpinBox, QVBoxLayout, QWidget,
+        )
+        from galileo.observatory import get_solver_settings, save_solver_settings
+        from galileo.platesolve import SolverParams
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Solve settings")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        status = QLabel("")
+        status.setObjectName("StatusHint")
+        layout.addWidget(status)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        layout.addLayout(form)
+
+        exe_row = QHBoxLayout()
+        exe_edit = QLineEdit()
+        exe_edit.setPlaceholderText("Auto-detected if left blank")
+        exe_edit.setToolTip("Path to the ASTAP executable. Leave blank to auto-detect it on PATH "
+                            "or in its usual install location.")
+        browse_btn = QPushButton("Browse…")
+        exe_row.addWidget(exe_edit, 1)
+        exe_row.addWidget(browse_btn)
+        form.addRow("ASTAP executable", exe_row)
+
+        fov_spin = QDoubleSpinBox()
+        fov_spin.setRange(0.0, 60.0)
+        fov_spin.setDecimals(2)
+        fov_spin.setSuffix(" °")
+        fov_spin.setSpecialValueText("Auto (from optical train)")
+        fov_spin.setToolTip("Field-of-view hint given to the solver. 0 derives it from the active "
+                            "optical train's focal length and pixel size instead of a fixed value.")
+        form.addRow("Field-of-view hint", fov_spin)
+
+        radius_spin = QDoubleSpinBox()
+        radius_spin.setRange(0.5, 180.0)
+        radius_spin.setDecimals(1)
+        radius_spin.setSuffix(" °")
+        radius_spin.setToolTip("The solver searches only within this radius of the hinted position.")
+        form.addRow("Search radius", radius_spin)
+
+        downsample_spin = QSpinBox()
+        downsample_spin.setRange(0, 8)
+        downsample_spin.setSpecialValueText("Off")
+        downsample_spin.setToolTip("Downsample the frame by this factor before solving, for a faster "
+                                   "but less precise solve (0 solves at full resolution).")
+        form.addRow("Downsample", downsample_spin)
+
+        def browse() -> None:
+            path, _ = QFileDialog.getOpenFileName(self._window, "ASTAP executable")
+            if path:
+                exe_edit.setText(path)
+
+        browse_btn.clicked.connect(browse)
+
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        layout.addWidget(save_btn)
+
+        hint = QLabel("Applies to solves started from the Solve screen. Saved per Pier.")
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        def refresh() -> None:
+            pier = self._current_pier
+            executable, params = get_solver_settings(pier)
+            exe_edit.setText(executable)
+            fov_spin.setValue(params.fov_hint_deg)
+            radius_spin.setValue(params.search_radius_deg)
+            downsample_spin.setValue(params.downsample)
+            status.setText(f"Editing defaults for Pier {pier.name!r}." if pier is not None
+                           else "Select a Pier first — these settings are saved per Pier.")
+            save_btn.setEnabled(pier is not None)
+            for widget in (exe_edit, browse_btn, fov_spin, radius_spin, downsample_spin):
+                widget.setEnabled(pier is not None)
+
+        def save() -> None:
+            if self._current_pier is None:
+                return
+            params = SolverParams(
+                fov_hint_deg=fov_spin.value(), search_radius_deg=radius_spin.value(),
+                downsample=downsample_spin.value(),
+            )
+            save_solver_settings(self._current_pier, exe_edit.text().strip(), params)
+            self._window.statusBar().showMessage(f"Saved Solve settings for Pier {self._current_pier.name!r}.", 4000)
+
+        save_btn.clicked.connect(save)
+        self._solve_settings_refresh = refresh
+        refresh()
         return page
 
     # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---

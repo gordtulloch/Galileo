@@ -184,6 +184,42 @@ def test_tc_plt_070_solve_is_a_top_level_section(window):
     assert set(window._device_pages["solve"]) == {"reload", "refresh_target"}      # and no auto-connect
 
 
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_options_solve_page_saves_and_reloads_per_pier(window):
+    """PLT-060: Options > Solve's Save button persists the current Pier's solver defaults, and
+    switching Pier reloads the page's own fields from the newly selected one."""
+    from galileo.observatory import create_observatory, create_pier, get_solver_settings
+
+    from PySide6.QtWidgets import QDoubleSpinBox, QLineEdit, QPushButton, QSpinBox
+
+    window._on_pier_changed()   # the window fixture sets _current_pier before this page's own refresh runs
+
+    exe_edit = next(w for w in window._options_page.findChildren(QLineEdit)
+                    if w.toolTip().startswith("Path to the ASTAP executable"))
+    page = exe_edit.parentWidget()
+    fov_spin = next(w for w in page.findChildren(QDoubleSpinBox) if w.toolTip().startswith("Field-of-view hint"))
+    radius_spin = next(w for w in page.findChildren(QDoubleSpinBox) if w.toolTip().startswith("The solver searches"))
+    downsample_spin = next(w for w in page.findChildren(QSpinBox) if w.toolTip().startswith("Downsample the frame"))
+    save_btn = next(b for b in page.findChildren(QPushButton) if b.text() == "Save")
+
+    exe_edit.setText("/usr/local/bin/astap")
+    fov_spin.setValue(3.0)
+    radius_spin.setValue(20.0)
+    downsample_spin.setValue(2)
+    save_btn.click()
+
+    executable, params = get_solver_settings(window.pier)
+    assert executable == "/usr/local/bin/astap"
+    assert (params.fov_hint_deg, params.search_radius_deg, params.downsample) == (3.0, 20.0, 2)
+
+    other_pier = create_pier(create_observatory("Obs PLT-060 UI"), "Pier PLT-060 UI")
+    window._current_pier = other_pier
+    window._on_pier_changed()
+    assert exe_edit.text() == ""
+    assert fov_spin.value() == 0.0
+
+
 def test_tc_plt_070_screen_has_the_reference_elements(page):
     """PLT-070: The screen carries the elements of the reference layout (assets/samples/solve.png)."""
     QW = QtWidgets
@@ -404,6 +440,25 @@ def test_tc_plt_070_solving_without_astap_says_where_to_get_it(window, page, mon
     page.make_solver = page._default_solver
     page.capture_btn.click()
     assert window.boxes == ["ASTAP not found"] and not page._running
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_default_solver_uses_the_current_piers_saved_settings(window, page, monkeypatch):
+    """PLT-060: Options > Solve's saved executable path and search parameters, for the
+    currently selected Pier, are what a real Capture & Solve/Load & Slew run actually builds
+    its PlateSolver from — not always the auto-detected executable and hardcoded defaults."""
+    from galileo.observatory import save_solver_settings
+    from galileo.platesolve import SolverParams
+
+    monkeypatch.setattr(PlateSolver, "_find_executable", staticmethod(lambda backend: ""))
+    save_solver_settings(window.pier, "/opt/astap/astap",
+                         SolverParams(fov_hint_deg=1.5, search_radius_deg=12.0, downsample=3))
+
+    solver = page._default_solver()
+    assert solver is not None
+    assert solver.executable == "/opt/astap/astap"
+    assert (solver.params.fov_hint_deg, solver.params.search_radius_deg, solver.params.downsample) == (1.5, 12.0, 3)
 
 
 def test_tc_plt_070_load_and_slew_solves_the_chosen_file(window, page, tmp_path, monkeypatch):

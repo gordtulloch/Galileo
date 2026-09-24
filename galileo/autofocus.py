@@ -78,12 +78,14 @@ class AutofocusService:
         output_dir: "Path | str" = ".",
         event_bus=None,
         exposure_s: float = AutofocusParams.exposure_s,
+        backlash_compensation: int = AutofocusParams.backlash_compensation,
     ) -> None:
         self._camera = camera
         self._focuser = focuser
         self._output_dir = Path(output_dir)
         self._event_bus = event_bus
         self.exposure_s = exposure_s
+        self.backlash_compensation = backlash_compensation
         self._filter_offsets: dict[str, int] = {}
         self._current_position: int = 5000
         self._last_best_position: int | None = None
@@ -220,8 +222,13 @@ class AutofocusService:
 
     async def _move_to(self, position: int) -> None:
         self._current_position = position
-        if self._focuser is not None:
-            await self._focuser.move_to(position)
+        if self._focuser is None:
+            return
+        if self.backlash_compensation > 0:
+            # Always approach from the same direction: overshoot past the target, then come back
+            # to it, so mechanical backlash is taken up the same way on every move (FOC-070).
+            await self._focuser.move_to(max(0, position - self.backlash_compensation))
+        await self._focuser.move_to(position)
 
     async def _measure_hfr(self, confirm: bool = False) -> float:
         """Take a short exposure and return the mean HFR of detected stars.

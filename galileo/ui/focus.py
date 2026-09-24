@@ -223,6 +223,7 @@ class FocusPage(QWidget):
         self._service = None             # the AutofocusService this page started, if any
         self._build()
         self._sync_buttons()
+        self.reload()   # seed from the already-selected Pier's saved defaults, if any
 
         self._started.connect(self._on_started)
         self._frame.connect(self._on_frame)
@@ -295,14 +296,24 @@ class FocusPage(QWidget):
         self.points_spin.setValue(AutofocusParams.num_points)
         self.points_spin.setToolTip("Number of exposures across the sweep, centred on the current position.")
         grid.addWidget(self.points_spin, 1, 3)
+        grid.addWidget(QLabel("Backlash:"), 2, 0)
+        self.backlash_spin = QSpinBox()
+        self.backlash_spin.setRange(0, 100000)
+        self.backlash_spin.setValue(AutofocusParams.backlash_compensation)
+        self.backlash_spin.setSuffix(" steps")
+        self.backlash_spin.setToolTip(
+            "Overshoot then return by this many steps before every focuser move during a run, so "
+            "mechanical backlash is taken up the same way each time (0 disables compensation)."
+        )
+        grid.addWidget(self.backlash_spin, 2, 1)
         self.autofocus_btn = QPushButton("Auto Focus")
         self.autofocus_btn.setObjectName("AccentButton")
         self.autofocus_btn.clicked.connect(self.start_autofocus)
-        grid.addWidget(self.autofocus_btn, 2, 0, 1, 2)
+        grid.addWidget(self.autofocus_btn, 3, 0, 1, 2)
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setToolTip("Stop the run started here: the focuser goes back to where it began.")
         self.stop_btn.clicked.connect(self.stop_autofocus)
-        grid.addWidget(self.stop_btn, 2, 2, 1, 2)
+        grid.addWidget(self.stop_btn, 3, 2, 1, 2)
         box.addWidget(focuser)
 
         camera = QGroupBox("Camera")
@@ -443,7 +454,10 @@ class FocusPage(QWidget):
             )
             return
         from galileo.autofocus import AutofocusService
-        service = self._service = AutofocusService(camera=camera, focuser=focuser, exposure_s=self.exposure_spin.value())
+        service = self._service = AutofocusService(
+            camera=camera, focuser=focuser, exposure_s=self.exposure_spin.value(),
+            backlash_compensation=self.backlash_spin.value(),
+        )
         self._sync_buttons()
         threading.Thread(
             target=self._run_worker, args=(service, self.step_spin.value(), self.points_spin.value()),
@@ -490,3 +504,17 @@ class FocusPage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._refresh_devices()
+
+    # --- Per-Pier settings (Options > Focus, FOC-070) -------------------------
+
+    def reload(self) -> None:
+        """Re-seed the run controls from the newly selected Pier's saved autofocus
+        defaults (Options > Focus). Left alone while a run is in progress."""
+        if self._active:
+            return
+        from galileo.observatory import get_autofocus_params
+        params = get_autofocus_params(self._window._current_pier)
+        self.step_spin.setValue(params.step_size)
+        self.points_spin.setValue(params.num_points)
+        self.exposure_spin.setValue(params.exposure_s)
+        self.backlash_spin.setValue(params.backlash_compensation)

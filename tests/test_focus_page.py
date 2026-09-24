@@ -304,3 +304,51 @@ def test_tc_foc_090_a_deleted_page_stops_listening(window):
     extra.deleteLater()
     QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
     assert {t: len(bus._handlers[t]) for t in before} == before
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_options_focus_page_persists_per_pier(window, page):
+    """FOC-070: Options > Focus saves autofocus defaults per Pier, and both the Options
+    page and the live Focus screen reload from them on a Pier switch."""
+    from galileo.observatory import create_observatory, create_pier, get_autofocus_params
+
+    pier = create_pier(create_observatory("Obs FOC-070"), "Pier FOC-070")
+    window._current_pier = pier
+    options_page = window._options_page
+
+    from galileo.autofocus import AutofocusParams
+    from galileo.observatory import save_autofocus_params
+    save_autofocus_params(
+        pier, AutofocusParams(step_size=321, num_points=11, exposure_s=4.5, backlash_compensation=77))
+
+    window._on_pier_changed()
+
+    assert page.step_spin.value() == 321
+    assert page.points_spin.value() == 11
+    assert page.exposure_spin.value() == 4.5
+    assert page.backlash_spin.value() == 77
+    assert options_page is window._options_page   # built once, reused rather than rebuilt
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_options_focus_save_button_persists_and_reloads_the_live_screen(window, page):
+    """FOC-070: editing Options > Focus's fields and pressing Save updates the DB and
+    immediately re-seeds the live Focus screen's controls, without waiting for a Pier switch."""
+    from galileo.observatory import create_observatory, create_pier, get_autofocus_params
+
+    pier = create_pier(create_observatory("Obs FOC-070 Save"), "Pier FOC-070 Save")
+    window._current_pier = pier
+    window._focus_settings_refresh()
+
+    from PySide6.QtWidgets import QPushButton, QSpinBox
+    step_spin = next(w for w in window._options_page.findChildren(QSpinBox)
+                     if w.toolTip().startswith("Focuser steps between"))
+    settings_page = step_spin.parentWidget()
+    step_spin.setValue(555)
+    save_btn = next(b for b in settings_page.findChildren(QPushButton) if b.text() == "Save")
+    save_btn.click()
+
+    assert get_autofocus_params(pier).step_size == 555
+    assert page.step_spin.value() == 555

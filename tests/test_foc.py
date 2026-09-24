@@ -169,6 +169,27 @@ def test_tc_foc_070_autofocus_params_per_profile(minimal_profile):
     assert params.backlash_compensation == 50
 
 
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_070_backlash_compensation_overshoots_before_every_move(mock_indi_camera, mock_focuser, tmp_path):
+    """FOC-070: a configured backlash compensation actually overshoots-then-returns on every
+    focuser move during a run, not just a dataclass field nothing reads."""
+    foc_mod = pytest.importorskip("galileo.autofocus")
+    svc = foc_mod.AutofocusService(
+        camera=mock_indi_camera, focuser=mock_focuser, output_dir=tmp_path, backlash_compensation=50,
+    )
+    await svc._move_to(5000)
+    assert mock_focuser.move_to.await_args_list == [((4950,),), ((5000,),)]
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_070_zero_backlash_moves_directly(mock_indi_camera, mock_focuser, foc_service):
+    """FOC-070: the default (no backlash configured) moves straight to the target, unchanged."""
+    await foc_service._move_to(5000)
+    mock_focuser.move_to.assert_awaited_once_with(5000)
+
+
 # ---------------------------------------------------------------------------
 # TC-FOC-080
 # ---------------------------------------------------------------------------
