@@ -12,6 +12,7 @@ Sessions -> Scheduler submission path the SRS specifies.
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any, ClassVar
 
@@ -59,7 +60,9 @@ def _completion_summary(condition: Any) -> str:
 class _AltitudeChart(QWidget):
     """A small, self-painted altitude-over-time line (SCHED-080) — one line, one
     axis pair; deliberately simpler than the Guiding page's drift graph since
-    there's only one series to show."""
+    there's only one series to show. Also reused, at a smaller fixed size, by
+    the Sky Atlas page's per-result cards (SKY-030) — the same widget, not a
+    second copy of this paint code."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -107,6 +110,23 @@ class _AltitudeChart(QWidget):
         painter.setPen(QPen(QColor("#4da6ff"), 2))
         for a, b in zip(points, points[1:]):
             painter.drawLine(a, b)
+
+        # Time-axis ticks — a handful of "HH:MM" labels (UTC, matching this
+        # app's convention everywhere else times are shown) evenly spaced
+        # along the bottom, in the margin already reserved below the plot.
+        if self.times and n > 1:
+            num_ticks = min(4, n)
+            tick_indices = sorted({round(i * (n - 1) / (num_ticks - 1)) for i in range(num_ticks)})
+            painter.setPen(fg)
+            for idx in tick_indices:
+                x = plot.left() + idx / (n - 1) * plot.width()
+                try:
+                    label = datetime.datetime.fromisoformat(self.times[idx]).strftime("%H:%M")
+                except (ValueError, IndexError):
+                    continue
+                painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 3))
+                painter.drawText(QRectF(x - 22, plot.bottom() + 4, 44, 14), Qt.AlignCenter, label)
+
         painter.end()
 
 
@@ -333,6 +353,7 @@ class SchedulerPageWidget(QWidget):
         dialog = _EditJobDialog(job, self)
         if dialog.exec() == QDialog.Accepted:
             dialog.apply()
+            self._scheduler().save()
         self.reload()
 
     def _show_trajectory(self) -> None:

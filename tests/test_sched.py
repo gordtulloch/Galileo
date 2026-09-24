@@ -248,9 +248,8 @@ def test_tc_sched_080_altitude_trajectory_chart(scheduler, sample_job):
 
 @pytest.mark.requirement("TC-SCHED-090")
 @pytest.mark.priority("MVP")
-async def test_tc_sched_090_track_capture_progress_across_nights(scheduler, sample_job, tmp_path):
+async def test_tc_sched_090_track_capture_progress_across_nights(scheduler, sample_job):
     """SCHED-090: Track per-job capture progress across multiple nights; avoid recapturing already-obtained frames."""
-    scheduler.set_progress_store(tmp_path / "progress.db")
     scheduler.add_job(sample_job)
 
     sample_job.total_required = 100
@@ -269,16 +268,21 @@ async def test_tc_sched_090_track_capture_progress_across_nights(scheduler, samp
 def test_tc_sched_100_persist_queue_across_restarts(scheduler, sample_job, tmp_path):
     """SCHED-100: Persist job queue and per-job progress across application restarts."""
     sched_mod = pytest.importorskip("galileo.scheduler")
-    scheduler.set_persistence(tmp_path / "scheduler.db")
-    scheduler.add_job(sample_job)
-    scheduler.save()
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "scheduler.db")
+    try:
+        scheduler.set_persistence("Pier-1")
+        scheduler.add_job(sample_job)
+        scheduler.save()
 
-    scheduler2 = sched_mod.ObservatoryScheduler()
-    scheduler2.set_persistence(tmp_path / "scheduler.db")
-    scheduler2.load()
+        scheduler2 = sched_mod.ObservatoryScheduler()
+        scheduler2.set_persistence("Pier-1")
+        scheduler2.load()
 
-    assert len(scheduler2.jobs) == 1
-    assert scheduler2.jobs[0].name == "M42"
+        assert len(scheduler2.jobs) == 1
+        assert scheduler2.jobs[0].name == "M42"
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

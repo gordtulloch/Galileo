@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import asdict, dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -41,6 +40,22 @@ class StartAtTime:
     time_utc: str
 
 
+def _startup_to_dict(condition: Any) -> dict:
+    d = {"_type": type(condition).__name__}
+    if isinstance(condition, StartAtTime):
+        d["time_utc"] = condition.time_utc
+    return d
+
+
+def _startup_from_dict(d: dict) -> Any:
+    name = d.get("_type", "StartImmediate")
+    if name == "StartAtTime":
+        return StartAtTime(time_utc=d.get("time_utc", ""))
+    if name == "StartAtCulmination":
+        return StartAtCulmination()
+    return StartImmediate()
+
+
 # ---------------------------------------------------------------------------
 # Completion conditions (SCHED-050)
 # ---------------------------------------------------------------------------
@@ -59,6 +74,22 @@ class RepeatNTimes:
 class RepeatIndefinitely:
     """Repeat the job until manually stopped."""
     pass
+
+
+def _completion_to_dict(condition: Any) -> dict:
+    d = {"_type": type(condition).__name__}
+    if isinstance(condition, RepeatNTimes):
+        d["n"] = condition.n
+    return d
+
+
+def _completion_from_dict(d: dict) -> Any:
+    name = d.get("_type", "RunOnce")
+    if name == "RepeatNTimes":
+        return RepeatNTimes(n=d.get("n", 1))
+    if name == "RepeatIndefinitely":
+        return RepeatIndefinitely()
+    return RunOnce()
 
 
 # ---------------------------------------------------------------------------
@@ -136,25 +167,28 @@ class ObservatoryScheduler:
         self.active_job: SchedulerJob | None = None
         self._safety_monitor = None
         self._location = None
-        self._persistence_path: Path | None = None
-        self._progress_store: Path | None = None
+        self._persist_key: str | None = None
 
     # --- Queue management (SCHED-020) ------------------------------------
 
     def add_job(self, job: SchedulerJob) -> None:
         self.jobs.append(job)
         self._sort_jobs()
+        self.save()
 
     def remove_job(self, job: SchedulerJob) -> None:
         self.jobs.remove(job)
+        self.save()
 
     def move_job(self, job: SchedulerJob, new_position: int) -> None:
         self.jobs.remove(job)
         self.jobs.insert(new_position, job)
+        self.save()
 
     def update_job(self, job: SchedulerJob, updates: dict) -> None:
         for key, value in updates.items():
             setattr(job, key, value)
+        self.save()
 
     def _sort_jobs(self) -> None:
         self.jobs.sort(key=lambda j: j.priority)
@@ -174,6 +208,8 @@ class ObservatoryScheduler:
             region = job.sequence
             if region is not None and hasattr(region, "delete"):
                 region.delete()
+        if done:
+            self.save()
         return done
 
     def next_job(self) -> SchedulerJob | None:
@@ -206,25 +242,12 @@ class ObservatoryScheduler:
 
     # --- Progress tracking (SCHED-090) -----------------------------------
 
-    def set_progress_store(self, path: "Path | str") -> None:
-        self._progress_store = Path(path)
-        self._progress_store.parent.mkdir(parents=True, exist_ok=True)
-
     async def record_frames_captured(self, job: SchedulerJob, count: int) -> None:
         job._frames_captured += count
-        self._flush_progress()
+        self.save()
 
     def get_remaining_frames(self, job: SchedulerJob) -> int:
         return max(0, job.total_required - job.frames_captured)
-
-    def _flush_progress(self) -> None:
-        if self._progress_store is None:
-            return
-        data = [
-            {"name": j.name, "captured": j._frames_captured, "total": j.total_required}
-            for j in self.jobs
-        ]
-        self._progress_store.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     # --- Altitude chart (SCHED-080) --------------------------------------
 
@@ -236,42 +259,57 @@ class ObservatoryScheduler:
         chart["run_window"] = None
         return chart
 
-    # --- Persistence (SCHED-100) -----------------------------------------
+    # --- Persistence (SCHED-100) -------------------------------------------
+    #
+    # Job queue and per-job progress live in the same shared database as
+    # galileo.library/galileo.history (ADR-002; SDD Section 5's Data Design
+    # table) rather than a separate file — set_persistence() scopes this
+    # instance to one Pier's rows in the shared ``scheduler_jobs`` table,
+    # since one queue exists per Pier (SDD Section 4.9b). Persistence is
+    # opt-in (disabled by default, matching every existing test that never
+    # calls set_persistence): every mutator above calls save(), which is a
+    # no-op until a persist key is set.
 
-    def set_persistence(self, path: "Path | str") -> None:
-        self._persistence_path = Path(path)
-        self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
+    def set_persistence(self, pier_name: str) -> None:
+        self._persist_key = pier_name
 
     def save(self) -> None:
-        if self._persistence_path is None:
+        if self._persist_key is None:
             return
-        data = [
-            {
-                "name": j.name,
-                "pier_name": j.pier_name,
-                "target_ra": j.target_ra,
-                "target_dec": j.target_dec,
-                "priority": j.priority,
-                "frames_captured": j._frames_captured,
-                "total_required": j.total_required,
-            }
-            for j in self.jobs
-        ]
-        self._persistence_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        from galileo.library.models.scheduler import SchedulerJobRecord
+        with SchedulerJobRecord._meta.database.atomic():
+            SchedulerJobRecord.delete().where(SchedulerJobRecord.pier_name == self._persist_key).execute()
+            for j in self.jobs:
+                SchedulerJobRecord.create(
+                    pier_name=self._persist_key,
+                    name=j.name,
+                    target_ra=j.target_ra,
+                    target_dec=j.target_dec,
+                    priority=j.priority,
+                    frames_captured=j._frames_captured,
+                    total_required=j.total_required,
+                    constraints_json=json.dumps(asdict(j.constraints)),
+                    startup_json=json.dumps(_startup_to_dict(j.startup_condition)),
+                    completion_json=json.dumps(_completion_to_dict(j.completion_condition)),
+                )
 
     def load(self) -> None:
-        if self._persistence_path is None or not self._persistence_path.exists():
+        if self._persist_key is None:
             return
-        data = json.loads(self._persistence_path.read_text("utf-8"))
+        from galileo.library.models.scheduler import SchedulerJobRecord
         self.jobs = []
-        for d in data:
+        for rec in SchedulerJobRecord.select().where(SchedulerJobRecord.pier_name == self._persist_key):
             job = SchedulerJob(
-                name=d["name"],
-                pier_name=d.get("pier_name", ""),
-                target_ra=d.get("target_ra", 0.0),
-                target_dec=d.get("target_dec", 0.0),
-                priority=d.get("priority", 5),
+                name=rec.name,
+                pier_name=rec.pier_name,
+                target_ra=rec.target_ra,
+                target_dec=rec.target_dec,
+                priority=rec.priority,
             )
-            job._frames_captured = d.get("frames_captured", 0)
-            job.total_required = d.get("total_required", 0)
+            job._frames_captured = rec.frames_captured
+            job.total_required = rec.total_required
+            job.constraints = JobConstraints(**json.loads(rec.constraints_json))
+            job.startup_condition = _startup_from_dict(json.loads(rec.startup_json))
+            job.completion_condition = _completion_from_dict(json.loads(rec.completion_json))
             self.jobs.append(job)
+        self._sort_jobs()

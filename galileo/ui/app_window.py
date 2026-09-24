@@ -30,13 +30,19 @@ _SLEWING_POLL_MS = 1000
 _PARKED_MESSAGE = "The mount is parked — unpark it first."
 _OBSTRUCTED_MESSAGE = "Unable to slew to that area, it is obstructed"
 
+# The Targets page's click-to-enlarge full-image overlay (SKY-080): fetched
+# at this pixel size — over the same field of view the small result-tile
+# thumbnail uses, just far more pixels of it — rather than upscaling the
+# already-small 150px thumbnail, which would just look blurry this large.
+_FULL_IMAGE_SIZE_PX = 640
+
 # Derived from this repository's own git remote — the docs/ folder doubles as
 # the online manual until a dedicated documentation site exists.
 _MANUAL_URL = "https://github.com/gordtulloch/Galileo/tree/main/docs"
 
 try:
     from PySide6.QtCore import QThread, Signal
-    from PySide6.QtWidgets import QMainWindow, QPlainTextEdit, QWidget
+    from PySide6.QtWidgets import QLabel, QMainWindow, QPlainTextEdit, QWidget
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False
@@ -59,7 +65,6 @@ PRIMARY_SECTIONS = [
     ("equipment", "Equipment", "equipment"),
     ("star_atlas", "Star Atlas", "star_atlas"),
     ("planning", "Planning", "sky_atlas"),
-    ("framing", "Framing", "framing"),
     ("imaging", "Imaging", "imaging"),
     ("guiding", "Guiding", "guider"),
     ("focus", "Focus", "focus"),
@@ -96,8 +101,10 @@ LIBRARY_ITEMS = [
 ]
 
 # Primary sections that work with one of the Pier's optical tubes, and so show
-# the top bar's Optics selector.
-_OPTICS_SECTIONS = ("framing", "imaging", "solve")
+# the top bar's Optics selector. Framing is a contextual dialog opened from
+# Imaging (FRAME-070), not its own section, so it isn't listed here — the
+# Optics selector it needs is already visible while Imaging itself is open.
+_OPTICS_SECTIONS = ("imaging", "solve")
 
 # Primary sections that take frames from one of the Pier's cameras, and so show
 # the top bar's Camera selector (when the Pier has more than one).
@@ -258,6 +265,9 @@ class AppWindow:
         self._camera_backends: dict[str, object] = {}
         self._imaging_capture_thread = None
         self._imaging_filter_thread = None
+        self._thumbnail_cache_worker = None
+        # A single persistent SkyAtlas instance, lazily created — see _shared_sky_atlas().
+        self._sky_atlas = None
         # Where each Pier's telescope is pointing, for the Star Atlas reticles (SKYMAP-090):
         # {pier key: {"ra_deg", "dec_deg", "slewing"}}, refreshed by polling the connected mount.
         self._pier_pointing: dict = {}
@@ -340,7 +350,7 @@ class AppWindow:
 
         # Which of the selected Pier's optical tubes (defined on the Equipment >
         # Optics page) this screen is working with. Only shown on the screens
-        # that depend on the optics — Framing, Imaging and Solve — see _OPTICS_SECTIONS.
+        # that depend on the optics — Imaging and Solve — see _OPTICS_SECTIONS.
         self._optics_label = QLabel("Optics:")
         self._optics_label.setVisible(False)
         layout.addWidget(self._optics_label)
@@ -386,18 +396,109 @@ class AppWindow:
         return get_current_objects().get(self._current_pier)
 
     def _set_current_object(self, atlas_obj: dict) -> None:
-        """A Star Atlas item was selected: it becomes the selected Pier's current object,
-        and auto-creates a session pre-populated with a Target block for it (SES-160,
-        traces to SKY-050) if the Sessions page has been built."""
+        """A Star Atlas item was selected (any click — left, double, or right):
+        it becomes the selected Pier's current object (IMG-140). Does *not*
+        create a session — clicking a star only identifies/selects it
+        (SKYMAP-010); a session is a deliberate, separate action the user
+        takes via "Add to Session" (the Star Atlas's right-click context
+        menu, or the Targets page's own button), both going through
+        :meth:`_add_to_session`. This used to also auto-create a session on
+        every click, which was surprising — reported as "incorrect" since a
+        plain click looked identical to actually building a session."""
         from galileo.current_object import CurrentObject, get_current_objects
         if self._current_pier is None:
             self._window.statusBar().showMessage("Create a Pier to keep a current object.", 4000)
             return
         get_current_objects().set(self._current_pier, CurrentObject.from_atlas(atlas_obj))
         self._refresh_current_object()
-        create_session = self._device_pages.get("sessions", {}).get("create_session_for_target")
-        if create_session is not None:
-            create_session(str(atlas_obj["name"]), float(atlas_obj["ra_deg"]), float(atlas_obj["dec_deg"]))
+
+    def _add_to_session(self, name: str, ra_deg: float, dec_deg: float) -> None:
+        """Create a new session pre-populated with a Target block for
+        (*name*, *ra_deg*, *dec_deg*) (SES-160) — the one shared entry point
+        for every explicit "Add to Session" action (the Star Atlas's
+        right-click context menu, the Targets page's own button), so the two
+        never drift apart. Needs the Sessions screen (Planning > Sessions) to
+        have been opened at least once this run; shows a status-bar message
+        rather than silently doing nothing otherwise."""
+        create_session = (self._device_pages.get("sessions") or {}).get("create_session_for_target")
+        if create_session is None:
+            self._window.statusBar().showMessage("Add to Session needs Planning > Sessions opened first.", 6000)
+            return
+        create_session(str(name), float(ra_deg), float(dec_deg))
+        self._window.statusBar().showMessage(f"New session created for {name}.", 4000)
+
+    def _shared_sky_atlas(self) -> "SkyAtlas":
+        """A single persistent ``SkyAtlas`` instance, reused across calls that
+        need its *state* to actually persist — `add_to_target_list`'s own
+        target-list accumulation (SKY-080) needs this, unlike the throwaway
+        per-call instances the Targets-page search/filter code elsewhere in
+        this file constructs, which are fine since the catalog itself is
+        read-only and nothing those calls do needs to be remembered between
+        one another."""
+        if self._sky_atlas is None:
+            from galileo.planning.sky_atlas import SkyAtlas
+            self._sky_atlas = SkyAtlas()
+        return self._sky_atlas
+
+    def _select_result(self, obj: "DeepSkyObject") -> None:
+        """"Select" (a Targets-page result tile's own action button, SKY-050):
+        makes *obj* the Pier's current target (IMG-140) and also adds it to
+        `SkyAtlas`'s own target list (SKY-080) — reconciling two mechanisms
+        this codebase previously carried in parallel with neither calling the
+        other (`TODO.md`'s former "Planning (SKY-080)" gap note). A thumbnail-
+        caching failure here is never fatal to Select itself, matching every
+        other place in this app where a thumbnail fetch can fail silently."""
+        self._set_current_object(obj.as_sequence_target())
+        import asyncio
+        try:
+            asyncio.run(self._shared_sky_atlas().add_to_target_list(obj))
+        except Exception:
+            logger.debug("Could not add %s to the target list", obj.primary_name, exc_info=True)
+
+    def _show_full_image(self, obj: "DeepSkyObject") -> None:
+        """Clicking a Targets-page result tile's thumbnail (SKY-080) opens a
+        larger view of the same survey-image field — fetched at
+        `_FULL_IMAGE_SIZE_PX`, a separate cache entry from the small 150px
+        tile thumbnail (`SkyAtlas._fetch_thumbnail`'s `size_px`), not an
+        upscaled copy of it, which would just look blurry this large. Shows
+        the dialog immediately with a "Loading…" placeholder — the fetch
+        itself is a blocking call, same as every other single-object
+        thumbnail fetch in this app, but a dialog with nothing in it while
+        that runs would look broken rather than just slow."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
+        from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel, QVBoxLayout
+
+        dialog = QDialog(self._window)
+        dialog.setWindowTitle(obj.primary_name)
+        layout = QVBoxLayout(dialog)
+        image_label = QLabel("Loading…")
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setMinimumSize(_FULL_IMAGE_SIZE_PX, _FULL_IMAGE_SIZE_PX)
+        layout.addWidget(image_label)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.show()
+        QApplication.processEvents()
+
+        import asyncio
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            data = asyncio.run(self._shared_sky_atlas()._fetch_thumbnail(obj, size_px=_FULL_IMAGE_SIZE_PX))
+        except Exception:
+            logger.exception("Could not fetch full-size image for %s", obj.primary_name)
+            data = b""
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        pixmap = QPixmap()
+        if data and pixmap.loadFromData(data) and not pixmap.isNull():
+            image_label.setPixmap(pixmap)
+            image_label.setText("")
+        else:
+            image_label.setText("No image available.")
+        dialog.exec()
 
     def _refresh_current_object(self) -> None:
         """Show the current object at the top right, and tell the Solve page what it now targets."""
@@ -455,22 +556,10 @@ class AppWindow:
             return name or None
         return None
 
-    def _geocode_observatory_address(self, place_name: str) -> "dict | None":
-        """Resolve *place_name* to latitude/longitude/timezone (SKY-090), or ``None`` if it
-        couldn't be resolved (blank input, no network, or nothing matched)."""
-        place_name = place_name.strip()
-        if not place_name:
-            return None
-        import asyncio
-        from galileo.planning.sky_atlas import geocode_location
-        result = asyncio.run(geocode_location(place_name))
-        return result or None
-
     def _prompt_new_observatory(self) -> "dict | None":
         """Modal Name/Lat/Long/Timezone/Physical Address/Owner dialog for New Observatory."""
         from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox,
-            QPushButton, QDialogButtonBox, QMessageBox,
+            QDialog, QVBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
         )
 
         dialog = QDialog(self._window)
@@ -496,29 +585,8 @@ class AppWindow:
         tz_edit.setPlaceholderText("e.g. America/Toronto")
         form.addRow("Timezone", tz_edit)
 
-        address_row = QHBoxLayout()
         address_edit = QLineEdit()
-        address_row.addWidget(address_edit)
-        lookup_button = QPushButton("Look up")
-        lookup_button.setToolTip(
-            "Fill in Latitude, Longitude and Timezone from this address (SKY-090). "
-            "Requires internet access."
-        )
-
-        def _do_lookup() -> None:
-            resolved = self._geocode_observatory_address(address_edit.text())
-            if resolved is None:
-                QMessageBox.warning(dialog, "Location Not Found",
-                                     "Could not resolve that address to a location. "
-                                     "Check your internet connection or enter the coordinates manually.")
-                return
-            lat_edit.setValue(resolved["latitude"])
-            long_edit.setValue(resolved["longitude"])
-            tz_edit.setText(resolved["timezone"])
-
-        lookup_button.clicked.connect(_do_lookup)
-        address_row.addWidget(lookup_button)
-        form.addRow("Physical Address", address_row)
+        form.addRow("Physical Address", address_edit)
 
         owner_edit = QLineEdit()
         form.addRow("Owner", owner_edit)
@@ -632,7 +700,7 @@ class AppWindow:
         idx = combo.findText(self._current_pier.name)
         return idx if idx >= 0 else combo.count() - 1
 
-    # --- Top bar: Optics selection (Framing and Imaging screens) ------------
+    # --- Top bar: Optics selection (Imaging and Solve screens) ------------
 
     def _refresh_optics_combo(self) -> None:
         """Repopulate the top-bar Optics selector from the current Pier's
@@ -837,7 +905,6 @@ class AppWindow:
                                   "scheduler": self._build_scheduler_page}),
             "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
             "library": self._build_library_page,
-            "framing": self._build_framing_page,
             "imaging": self._build_imaging_page,
             "guiding": self._build_guider_page,
             "focus": self._build_focus_page,
@@ -1184,6 +1251,8 @@ class AppWindow:
             title_label.setObjectName("CriteriaHeading")
             header.addWidget(title_label)
             header.addStretch(1)
+            connect_btn = QPushButton("Connect")
+            header.addWidget(connect_btn)
             remove_btn = None
             if removable:
                 remove_btn = QPushButton("Remove")
@@ -1242,6 +1311,7 @@ class AppWindow:
 
             return {
                 "frame": frame, "title_label": title_label, "remove_btn": remove_btn,
+                "connect_btn": connect_btn,
                 "device": device_combo, "apply_driver_info": apply_driver_info,
                 "pixel_size": pixel_size,
                 "sensor_w": sensor_w, "sensor_h": sensor_h, "sensor_name": sensor_name,
@@ -1287,6 +1357,7 @@ class AppWindow:
             _populate_device_combo(panel["device"], last_scanned_devices)
             if panel["remove_btn"] is not None:
                 panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
+            panel["connect_btn"].clicked.connect(lambda: _connect_clicked(panel))
             panel["download"].clicked.connect(lambda: _download_info(panel))
             panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             return panel
@@ -1356,6 +1427,24 @@ class AppWindow:
                 panel["apply_driver_info"](asyncio.run(adapter.get_driver_info()))
             except Exception:
                 logger.exception("Could not read driver info from connected %s", slot_label)
+
+        def _connect_clicked(panel: dict) -> None:
+            """Manually connect one camera panel — previously the Camera page
+            had no way to do this at all: a device only ever got connected by
+            ``autoconnect_page()`` at page build or Pier switch, so a camera
+            just configured and saved stayed "not connected" (Imaging tab
+            included) until one of those happened to run again."""
+            device_name = panel["device"].currentText().strip()
+            if not device_name:
+                QMessageBox.information(self._window, "No device selected", "Select a camera device first.")
+                return
+            index = panels.index(panel)
+            slot_label = "primary camera" if index == 0 else f"camera {index + 1}"
+            self._connect_camera_device(
+                slot_label, driver_combo.currentText(), server_edit.text().strip() or "localhost",
+                port_spin.value(), device_name,
+            )
+            _show_connected_driver_info(panel, slot_label)
 
         def _download_info(panel: dict) -> None:
             device_name = panel["device"].currentText().strip()
@@ -1465,6 +1554,13 @@ class AppWindow:
             self._window.statusBar().showMessage(
                 f"Saved camera settings for Pier {self._current_pier.name!r}.", 4000
             )
+            # A newly configured camera previously stayed "not connected"
+            # (Imaging tab included) until the next Pier switch or page
+            # rebuild, since nothing but those two ever called autoconnect —
+            # Save is exactly when a device becomes connectable, so attempt
+            # it now too. autoconnect_page() skips slots already connected,
+            # so this doesn't disrupt an unrelated panel's live connection.
+            autoconnect_page()
 
         save_btn.clicked.connect(save_camera_config)
 
@@ -1544,6 +1640,12 @@ class AppWindow:
                 if not device_name:
                     continue
                 slot_label = "primary camera" if i == 0 else f"camera {i + 1}"
+                if slot_label in self._camera_backends:
+                    # Already connected — called from more than just page-build/
+                    # Pier-switch now (also after Save), so this must be safe to
+                    # call again without disrupting an unrelated panel's live
+                    # connection (or this one's, mid-exposure).
+                    continue
                 self._connect_camera_device(
                     slot_label, driver_combo.currentText(), server_edit.text().strip(),
                     port_spin.value(), device_name,
@@ -4068,11 +4170,16 @@ class AppWindow:
 
     def _scheduler_for_pier(self, pier_name: "str | None") -> "ObservatoryScheduler":
         """The one ``ObservatoryScheduler`` for *pier_name* — shared by Planning >
-        Sessions and Planning > Scheduler, created lazily, one per Pier."""
+        Sessions and Planning > Scheduler, created lazily, one per Pier. Persists to
+        (and, on first use, loads from) the shared database (SCHED-100) so a Pier's
+        job queue survives an application restart."""
         from galileo.scheduler import ObservatoryScheduler
         key = pier_name or ""
         if key not in self._schedulers:
-            self._schedulers[key] = ObservatoryScheduler()
+            scheduler = ObservatoryScheduler()
+            scheduler.set_persistence(key)
+            scheduler.load()
+            self._schedulers[key] = scheduler
         return self._schedulers[key]
 
     def _build_sessions_page(self) -> "QWidget":
@@ -4808,18 +4915,33 @@ class AppWindow:
 
         settings_layout.addWidget(capture_group)
 
+        mosaic_indicator = QLabel("")
+        mosaic_indicator.setObjectName("StatusHint")
+        mosaic_indicator.setWordWrap(True)
+        mosaic_indicator.setVisible(False)
+        settings_layout.addWidget(mosaic_indicator)
+
         capture_row = QHBoxLayout()
         capture_btn = QPushButton("Capture")
         capture_btn.setObjectName("AccentButton")
-        capture_btn.setToolTip(
-            "Take Quantity frames one after another with these settings, independent of any running "
-            "sequence (IMG-070, IMG-150).")
         capture_row.addWidget(capture_btn, 1)
         stop_capture_btn = QPushButton("Stop")
         stop_capture_btn.setToolTip("Abandon the exposure in progress and take no more frames.")
         stop_capture_btn.setEnabled(False)
         capture_row.addWidget(stop_capture_btn)
         settings_layout.addLayout(capture_row)
+
+        framing_row = QHBoxLayout()
+        framing_btn = QPushButton("Framing…")
+        framing_btn.setToolTip("Open the Framing Assistant against the selected optical train: compute the "
+                               "field of view, or define and run a mosaic grid directly from this tab "
+                               "(IMG-180, FRAME-070).")
+        framing_row.addWidget(framing_btn, 1)
+        clear_mosaic_btn = QPushButton("Clear Mosaic")
+        clear_mosaic_btn.setToolTip("Discard the active mosaic (IMG-180) and go back to capturing a single frame.")
+        clear_mosaic_btn.setVisible(False)
+        framing_row.addWidget(clear_mosaic_btn)
+        settings_layout.addLayout(framing_row)
 
         save_frame_btn = QPushButton("Save Frame…")
         save_frame_btn.setToolTip("Save the currently displayed frame to disk as a FITS file, with all the "
@@ -5224,6 +5346,11 @@ class AppWindow:
             prefix = f"Frame {frame} of {total} — " if total > 1 else ""
             status_label.setText(f"{prefix}Exposing… {remaining:0.1f}s left" if remaining > 0 else f"{prefix}Downloading…")
 
+        def on_slew_started(index: int, total: int) -> None:
+            # Mosaic capture only (IMG-180): the re-slew to each pane can take as long as an
+            # exposure, so it gets its own status text rather than looking like a stall.
+            status_label.setText(f"Slewing to pane {index} of {total}…")
+
         def on_frame_started(frame: int, total: int) -> None:
             import time
             countdown["start"], countdown["frame"], countdown["total"] = time.monotonic(), frame, total
@@ -5289,6 +5416,42 @@ class AppWindow:
                 _refresh_library_images()
             self._window.statusBar().showMessage("Capture failed — see log.", 6000)
 
+        def _refresh_mosaic_indicator() -> None:
+            # IMG-180: makes it visible, before Capture is pressed, that a mosaic is active and
+            # Capture will run the whole thing rather than a single frame (reported as missing —
+            # a plain "Capture" button gave no hint a mosaic was about to be shot pane by pane).
+            mosaic = service.active_mosaic
+            active = mosaic is not None
+            mosaic_indicator.setVisible(active)
+            clear_mosaic_btn.setVisible(active)
+            if active:
+                mosaic_indicator.setText(
+                    f"Mosaic active — {mosaic.cols}×{mosaic.rows} panels ({mosaic.total_panels} total). "
+                    "Capture will slew to and expose every pane in turn, Quantity exposures each."
+                )
+                capture_btn.setText("Capture Mosaic")
+                capture_btn.setToolTip(
+                    "Slew to and expose every pane of the active mosaic in turn, Quantity exposures "
+                    "at each, in pane-major order (IMG-180, FRAME-090). Clear Mosaic returns to a "
+                    "single frame.")
+                quantity_spin.setToolTip(
+                    "How many exposures Capture takes at each pane before re-slewing to the next (IMG-180).")
+            else:
+                capture_btn.setText("Capture")
+                capture_btn.setToolTip(
+                    "Take Quantity frames one after another with these settings, independent of any "
+                    "running sequence (IMG-070, IMG-150).")
+                quantity_spin.setToolTip(
+                    "How many frames Capture takes, one after another, with these settings (IMG-150).")
+
+        def _clear_mosaic() -> None:
+            service.active_mosaic = None
+            _refresh_mosaic_indicator()
+            self._window.statusBar().showMessage("Mosaic cleared — Capture will take a single frame.", 4000)
+
+        clear_mosaic_btn.clicked.connect(_clear_mosaic)
+        _refresh_mosaic_indicator()
+
         def do_capture() -> None:
             service._camera = _selected_camera_backend()
             if service._camera is None:
@@ -5299,6 +5462,17 @@ class AppWindow:
             if self._imaging_filter_thread is not None:
                 self._window.statusBar().showMessage("Wait for the filter wheel to finish moving.", 4000)
                 return
+
+            mosaic_mode = service.active_mosaic is not None
+            if mosaic_mode:
+                service._mount = _nudge_mount_adapter()
+                if service._mount is None:
+                    QMessageBox.information(
+                        self._window, "No mount connected",
+                        "Capturing a mosaic needs a connected mount to move between panes — connect "
+                        "one on Equipment > Mount, or use Clear Mosaic to take a single frame instead.",
+                    )
+                    return
 
             current = self.current_object()
             service.object_name = current.name if current is not None else ""
@@ -5325,7 +5499,11 @@ class AppWindow:
             timer.start(100)
             countdown["timer"] = timer
 
-            thread = _CaptureThread(service, quantity, duration, filter_name, frame_type, page)
+            if mosaic_mode:
+                thread = _MosaicCaptureThread(service, quantity, duration, filter_name, frame_type, page)
+                thread.slew_started.connect(on_slew_started)
+            else:
+                thread = _CaptureThread(service, quantity, duration, filter_name, frame_type, page)
             thread.frame_started.connect(on_frame_started)
             thread.frame_done.connect(on_frame_done)
             thread.finished_ok.connect(on_capture_finished)
@@ -5347,6 +5525,12 @@ class AppWindow:
                     logger.exception("Could not abort the exposure")
 
         stop_capture_btn.clicked.connect(stop_capture)
+
+        def _open_framing() -> None:
+            self._open_framing_dialog(service)
+            _refresh_mosaic_indicator()
+
+        framing_btn.clicked.connect(_open_framing)
 
         def save_frame() -> None:
             if service.current_frame is None:
@@ -5712,10 +5896,20 @@ class AppWindow:
             goto.setToolTip("Slew the current Pier's mount to this object")
             sync = menu.addAction("Sync")
             sync.setToolTip("Tell the current Pier's mount it is pointing at this object")
+            menu.addSeparator()
+            add_to_session = menu.addAction("Add to Session")
+            add_to_session.setToolTip(
+                "Create a new session pre-populated with a Target block for this object (SES-160). "
+                "A plain click only selects it — this is the explicit way to build a session from it."
+            )
             goto.setEnabled(obj is not None)
             sync.setEnabled(obj is not None)
+            add_to_session.setEnabled(obj is not None)
             goto.triggered.connect(lambda: self._mount_to_object("goto", obj))
             sync.triggered.connect(lambda: self._mount_to_object("sync", obj))
+            add_to_session.triggered.connect(
+                lambda: self._add_to_session(obj["name"], obj["ra_deg"], obj["dec_deg"])
+            )
             menu.exec(global_pos)
 
         view.contextMenuRequested.connect(show_context_menu)
@@ -5918,8 +6112,10 @@ class AppWindow:
         return page
 
     def _build_planning_settings_page(self) -> "QWidget":
-        """Options > Planning: whether slews into the Star Atlas horizon obstructions are refused."""
-        from PySide6.QtWidgets import QCheckBox, QLabel, QVBoxLayout, QWidget
+        """Options > Planning: whether slews into the Star Atlas horizon
+        obstructions are refused, and bulk-caching every catalog object's
+        survey-image thumbnail ahead of time (SKY-080)."""
+        from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
         from galileo.planning.settings import load_planning_settings, save_planning_settings
 
         page = QWidget()
@@ -5944,7 +6140,6 @@ class AppWindow:
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        layout.addStretch(1)
 
         def changed(checked: bool) -> None:
             settings["block_obstructed_slews"] = checked
@@ -5952,7 +6147,91 @@ class AppWindow:
             self._apply_horizon()
 
         block.toggled.connect(changed)
+
+        cache_heading = QLabel("Sky-survey thumbnails")
+        cache_heading.setObjectName("PageSubtitle")
+        layout.addWidget(cache_heading)
+
+        cache_btn = QPushButton("Cache All Catalog Thumbnails…")
+        cache_btn.setToolTip(
+            "Pre-fetches every catalog object's survey-image thumbnail (SKY-080), so a later Planning "
+            "> Targets search shows its result-tile images immediately instead of fetching them then."
+        )
+        layout.addWidget(cache_btn)
+
+        cache_hint = QLabel(
+            "Fetches a thumbnail for every object in the offline catalog not already cached — tens of "
+            "thousands of objects, one network request each, so this can take hours. Already-cached "
+            "objects (from an earlier run, or from having shown up in a search) are skipped instantly, "
+            "so it's safe to cancel and resume later, or run again after the catalog updates."
+        )
+        cache_hint.setObjectName("StatusHint")
+        cache_hint.setWordWrap(True)
+        layout.addWidget(cache_hint)
+        layout.addStretch(1)
+
+        cache_btn.clicked.connect(lambda: self._cache_all_catalog_thumbnails(page))
         return page
+
+    def _cache_all_catalog_thumbnails(self, parent: "QWidget") -> None:
+        """Options > Planning's "Cache All Catalog Thumbnails…" button
+        (SKY-080): confirms the scale of the operation (this is a real,
+        potentially hours-long bulk network fetch, not a quick local task),
+        then runs `_ThumbnailCacheThread` behind a cancellable progress
+        dialog — the same worker-thread/`QProgressDialog` pattern
+        `galileo.ui.library.download_dialog`'s telescope download already
+        uses, not a new one."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox, QProgressDialog
+
+        try:
+            from galileo.planning.sky_atlas import SkyAtlas
+            total = len(SkyAtlas()._catalog)
+        except Exception:
+            logger.exception("Could not load the catalog to size the thumbnail-caching confirmation")
+            total = 0
+
+        confirmed = QMessageBox.question(
+            parent, "Cache All Catalog Thumbnails",
+            f"This fetches a survey-image thumbnail for every object in the catalog not already "
+            f"cached ({total:,} objects total) — one network request each, so it can take hours. "
+            f"You can cancel at any time; progress made so far stays cached. Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if confirmed != QMessageBox.Yes:
+            return
+
+        progress_dialog = QProgressDialog("Starting…", "Cancel", 0, max(total, 1), parent)
+        progress_dialog.setWindowTitle("Caching Thumbnails")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setValue(0)
+        progress_dialog.show()
+
+        worker = _ThumbnailCacheThread(parent)
+        self._thumbnail_cache_worker = worker  # keep a live reference so it isn't GC'd mid-run
+
+        def on_progress(done: int, of_total: int) -> None:
+            progress_dialog.setMaximum(max(of_total, 1))
+            progress_dialog.setValue(done)
+            progress_dialog.setLabelText(f"Caching thumbnails: {done:,} / {of_total:,}")
+
+        def on_finished(cached: int, failed: int) -> None:
+            progress_dialog.close()
+            self._window.statusBar().showMessage(
+                f"Thumbnail caching complete: {cached:,} cached/already-cached, {failed:,} failed.", 8000)
+            self._thumbnail_cache_worker = None
+
+        def on_failed(message: str) -> None:
+            progress_dialog.close()
+            QMessageBox.critical(parent, "Thumbnail Caching Failed", message)
+            self._thumbnail_cache_worker = None
+
+        worker.progress.connect(on_progress)
+        worker.finished_ok.connect(on_finished)
+        worker.failed.connect(on_failed)
+        progress_dialog.canceled.connect(worker.stop)
+        worker.start()
 
     # --- Options > Imaging ---------------------------------------------------
 
@@ -6025,21 +6304,170 @@ class AppWindow:
     # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---
 
     def _build_sky_atlas_page(self) -> "QWidget":
-        """Planning page — the catalog lookup formerly labelled Sky Atlas (SKY-010 … SKY-100): search criteria on the left, a
-        results list plus a per-result details panel on the right — Type,
-        Magnitude, Constellation, RA/Dec and a downloaded DSS sky-survey
-        thumbnail image, matching what Obsy's target search was set up to
-        show for a Simbad hit (its ``target_query`` view plus
-        ``Target.save()``'s DSS-cutout fetch, ADR-005). Selecting a result
-        fetches its thumbnail on demand rather than up front for every
-        match, since that's a real network request per object."""
+        """Planning page — the catalog lookup formerly labelled Sky Atlas
+        (SKY-010 … SKY-120): search criteria on the left, one result tile
+        per row filling the rest of the page — no separate details panel,
+        and no grid (each row's item widget always spans the full list
+        width in Qt's default list mode, so the visible, white-bordered tile
+        is narrowed to ``_TILE_WIDTH_FRACTION`` of that width and
+        left-aligned within its row via ``_tile_row``, rather than switching
+        the list itself to a wrapping icon/grid view). Each tile carries
+        everything the removed details panel used to show — name/type,
+        magnitude/size/constellation/RA/Dec, rise/transit/set, and a mini
+        altitude-over-the-night chart with a labelled time axis — plus a
+        thumbnail for the first few (``_MAX_AUTO_THUMBNAILS`` below) and,
+        rightmost, per-tile action buttons (Select/Slew To/Add to Session —
+        see ``_build_result_card``), matching what Obsy's target search was
+        set up to show for a Simbad hit (its ``target_query`` view plus
+        ``Target.save()``'s DSS-cutout fetch, ADR-005), extended past what
+        Obsy had per SKY-020/030's own requirement text.
+
+        The altitude chart/rise-transit-set for every tile is computed in one
+        batch (``SkyAtlas.altitude_charts_batch``, a single vectorized astropy
+        transform) rather than per tile — computing it individually for up to
+        200 results measured at ~10s, genuinely UI-blocking; batched, the same
+        200 results measure at ~1s. Thumbnails stay individually fetched and
+        capped, unlike the chart/rise-set data — each is a real network
+        request (hips2fits), not a local computation, so the same batching
+        approach doesn't apply and the existing bound still holds."""
         from PySide6.QtWidgets import (
             QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QComboBox,
-            QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
-            QFrame, QApplication,
+            QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem,
+            QApplication, QCheckBox,
         )
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QPixmap
+        from galileo.ui.scheduler import _AltitudeChart
+
+        # Auto-fetched result-card thumbnails (below) are capped at this many —
+        # each one is a real network request (hips2fits), and a filtered search
+        # can return up to 200 matches; fetching all of them up front would
+        # freeze the UI for a long time and hammer the survey-image service for
+        # results the user may never scroll to. The rest of a large result set
+        # still gets a card with every other detail, just without an image.
+        # The altitude chart/rise-transit-set data, unlike thumbnails, is a
+        # local computation (batched — see the method docstring) cheap enough
+        # to compute for every card, not just the first few.
+        _MAX_AUTO_THUMBNAILS = 12
+        _CARD_THUMB_PX = 44
+        _CARD_CHART_SIZE = (130, 74)
+        # Each result tile is sized to this fraction of the results list's own
+        # width, with a floor so thumbnail+text+chart+buttons still fit at a
+        # narrow window size — computed per search (`_tile_width()` below),
+        # not once, since the list's width isn't final until the page is
+        # actually shown. Raised from 340 alongside the action buttons
+        # becoming content-sized (below) rather than a too-narrow fixed
+        # width, which was clipping "Add to Session".
+        _TILE_WIDTH_FRACTION = 0.50
+        _TILE_MIN_WIDTH_PX = 420
+
+        def _fmt_rise_set_time(iso: "str | None") -> str:
+            if iso is None:
+                return "—"
+            import datetime as _dt
+            return _dt.datetime.fromisoformat(iso).strftime("%H:%M")
+
+        def _build_result_card(obj, rise_set_text: str, chart: "dict | None") -> "tuple[QWidget, QLabel]":
+            """One result's card: thumbnail slot, name/type/magnitude/size/
+            constellation/RA/Dec/rise-transit-set, and (rightmost) a mini
+            altitude chart — everything the removed details panel used to
+            show, now per card. *rise_set_text* and *chart* (this object's
+            pre-batched altitude data, or ``None`` with no Observatory
+            location configured) are computed once by the caller, across all
+            results together, not per card. The thumbnail starts blank; the
+            caller fills it in later for the first ``_MAX_AUTO_THUMBNAILS``
+            cards only."""
+            card = QWidget()
+            card.setObjectName("ResultTile")
+            card.setStyleSheet("QWidget#ResultTile { border: 1px solid white; border-radius: 4px; }")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(6, 4, 6, 4)
+            row.setSpacing(8)
+
+            # Left: thumbnail beside name/type on one line, then the rest of
+            # the details full-width below — makes better use of a narrow
+            # tile's width than a single thumb-then-text row would.
+            left_col = QVBoxLayout()
+            left_col.setSpacing(2)
+
+            top_row = QHBoxLayout()
+            top_row.setSpacing(6)
+            thumb_label = _ClickableThumbnail()
+            thumb_label.setFixedSize(_CARD_THUMB_PX, _CARD_THUMB_PX)
+            thumb_label.setAlignment(Qt.AlignCenter)
+            thumb_label.setObjectName("DeviceSlotPanel")
+            thumb_label.setCursor(Qt.PointingHandCursor)
+            thumb_label.setToolTip("Click for a full-size view.")
+            thumb_label.clicked.connect(lambda o=obj: self._show_full_image(o))
+            top_row.addWidget(thumb_label)
+            name_label = QLabel(f"{obj.primary_name} · {obj.object_type.value}")
+            name_label.setObjectName("PageSubtitle")
+            name_label.setWordWrap(True)
+            top_row.addWidget(name_label, 1)
+            left_col.addLayout(top_row)
+
+            try:
+                from galileo.planning.sky_atlas import constellation_for
+                constellation = constellation_for(obj.ra_deg, obj.dec_deg)
+            except Exception:
+                logger.debug("Could not compute constellation for %s", obj.primary_name, exc_info=True)
+                constellation = "—"
+            mag_text = f"mag {obj.magnitude:.1f}" if obj.magnitude < 90.0 else "mag unknown"
+            size_text = f"  ·  {obj.size_arcmin:.1f}′" if obj.size_arcmin > 0 else ""
+            subtitle_label = QLabel(
+                f"{mag_text}{size_text}  ·  {constellation}  ·  RA {obj.ra_deg:.3f}°  Dec {obj.dec_deg:.3f}°"
+            )
+            subtitle_label.setObjectName("StatusHint")
+            subtitle_label.setWordWrap(True)
+            left_col.addWidget(subtitle_label)
+
+            rise_set_label = QLabel(rise_set_text)
+            rise_set_label.setObjectName("StatusHint")
+            rise_set_label.setWordWrap(True)
+            left_col.addWidget(rise_set_label)
+            left_col.addStretch(1)
+            row.addLayout(left_col, 1)
+
+            chart_widget = _AltitudeChart()
+            chart_widget.setFixedSize(*_CARD_CHART_SIZE)
+            if chart is not None and chart.get("altitudes"):
+                chart_widget.set_data(chart["times"], chart["altitudes"])
+            row.addWidget(chart_widget)
+
+            # Rightmost: this result's own action buttons — select it as the
+            # Pier's current target, slew the mount straight to it, or spin
+            # up a brand-new session pre-populated with a Target block for it.
+            button_col = QVBoxLayout()
+            button_col.setSpacing(4)
+            select_btn = QPushButton("Select")
+            select_btn.setToolTip("Make this the Pier's current object (IMG-140) — captured frames "
+                                  "are named after it, and Solve's Slew to Target slews to it — and "
+                                  "add it to the target list (SKY-080).")
+            select_btn.clicked.connect(lambda _=None, o=obj: self._select_result(o))
+            button_col.addWidget(select_btn)
+
+            slew_btn = QPushButton("Slew To")
+            slew_btn.setToolTip("Immediately slew the connected mount to this object.")
+            slew_btn.clicked.connect(lambda _=None, o=obj: _slew_to_result(o))
+            button_col.addWidget(slew_btn)
+
+            session_btn = QPushButton("Add to Session")
+            session_btn.setToolTip("Create a new session pre-populated with a Target block for this "
+                                   "object (SES-160).")
+            session_btn.clicked.connect(lambda _=None, o=obj: _add_result_to_new_session(o))
+            button_col.addWidget(session_btn)
+            button_col.addStretch(1)
+
+            # Size every button to fit its own text (a hardcoded fixed width previously clipped
+            # "Add to Session", the longest label) — all three made uniform to the widest one's
+            # actual sizeHint, not a guessed constant, so this stays correct across fonts/platforms.
+            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, session_btn))
+            for b in (select_btn, slew_btn, session_btn):
+                b.setFixedWidth(button_width)
+
+            row.addLayout(button_col)
+
+            return card, thumb_label
 
         page = QWidget()
         layout = QHBoxLayout(page)
@@ -6062,6 +6490,25 @@ class AppWindow:
             pass
         form.addRow("Object type", type_combo)
 
+        catalog_checks: dict = {}
+        catalog_row = QHBoxLayout()
+        try:
+            from galileo.planning.sky_atlas import DSO_CATALOGS
+            for cat in DSO_CATALOGS:
+                cb = QCheckBox(cat)
+                catalog_checks[cat] = cb
+                catalog_row.addWidget(cb)
+        except ImportError:
+            pass
+        catalog_row_widget = QWidget()
+        catalog_row_widget.setLayout(catalog_row)
+        catalog_row_widget.setToolTip(
+            "None checked = every catalog. Any checked = only objects belonging to at least one "
+            "of them — the same Messier/Caldwell/NGC membership the Star Atlas's own catalog "
+            "overlay toggles use."
+        )
+        form.addRow("Catalog", catalog_row_widget)
+
         max_mag = QDoubleSpinBox()
         max_mag.setRange(-5.0, 30.0)
         max_mag.setValue(99.0)
@@ -6071,6 +6518,46 @@ class AppWindow:
         min_size.setRange(0.0, 500.0)
         min_size.setSuffix(" arcmin")
         form.addRow("Min size", min_size)
+
+        max_size = QDoubleSpinBox()
+        max_size.setRange(0.0, 500.0)
+        max_size.setSuffix(" arcmin")
+        max_size.setSpecialValueText("No max")
+        form.addRow("Max size", max_size)
+
+        visible_tonight_check = QCheckBox("Visible tonight")
+        visible_tonight_check.setToolTip(
+            "Needs the current Observatory's latitude/longitude set (top bar); ignored otherwise."
+        )
+        form.addRow(visible_tonight_check)
+
+        min_altitude = QDoubleSpinBox()
+        min_altitude.setRange(0.0, 90.0)
+        min_altitude.setValue(20.0)
+        min_altitude.setSuffix(" °")
+        min_altitude.setToolTip("Only used when Visible tonight is checked (SKY-020).")
+        form.addRow("Reach an altitude of", min_altitude)
+
+        min_duration = QDoubleSpinBox()
+        min_duration.setRange(0.0, 12.0)
+        min_duration.setSuffix(" hr")
+        min_duration.setSpecialValueText("Any moment")
+        min_duration.setToolTip(
+            "How long it must stay at/above that altitude, continuously — \"Any moment\" (0) just "
+            "needs one moment tonight, matching the original Visible tonight check. Only used when "
+            "Visible tonight is checked (SKY-020)."
+        )
+        form.addRow("...for at least", min_duration)
+
+        min_moon_sep = QDoubleSpinBox()
+        min_moon_sep.setRange(0.0, 180.0)
+        min_moon_sep.setSuffix(" °")
+        min_moon_sep.setSpecialValueText("No minimum")
+        min_moon_sep.setToolTip(
+            "Excludes anything closer to the Moon than this, at local midnight tonight (SKY-020) — "
+            "needs the current Observatory's latitude/longitude set (top bar); ignored otherwise."
+        )
+        form.addRow("Min. Moon separation", min_moon_sep)
 
         search_btn = QPushButton("Search")
         search_btn.setObjectName("AccentButton")
@@ -6084,114 +6571,107 @@ class AppWindow:
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
-        results_row = QHBoxLayout()
-        results_row.setSpacing(24)
-
         results = QListWidget()
-        results_row.addWidget(results, 1)
+        results.setSpacing(4)
+        results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content_layout.addWidget(results, 1)
 
-        details_frame = QFrame()
-        details_frame.setObjectName("DeviceSlotPanel")
-        details_layout = QVBoxLayout(details_frame)
+        def _tile_row(card: "QWidget") -> "tuple[QWidget, object]":
+            """Wrap *card* in a full-row container so results stay one
+            per row (a plain vertical list, not a grid), while the visible
+            tile itself is narrowed to ``_TILE_WIDTH_FRACTION`` of the
+            results list's own width (floored at ``_TILE_MIN_WIDTH_PX`` so
+            thumbnail/text/chart still fit at a narrow window) and left-
+            aligned — a ``QListWidget`` row's item widget otherwise always
+            stretches to the full viewport width regardless of the card's
+            own size, so narrowing the card alone (without this wrapper)
+            has no visible effect."""
+            from PySide6.QtCore import QSize
+            width = max(_TILE_MIN_WIDTH_PX, int(results.viewport().width() * _TILE_WIDTH_FRACTION))
+            card.setFixedWidth(width)
+            row_container = QWidget()
+            row_layout = QHBoxLayout(row_container)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(card)
+            row_layout.addStretch(1)
+            return row_container, QSize(results.viewport().width(), card.sizeHint().height())
 
-        thumbnail_label = QLabel("Select a result to view details.")
-        thumbnail_label.setWordWrap(True)
-        thumbnail_label.setAlignment(Qt.AlignCenter)
-        thumbnail_label.setFixedSize(220, 220)
-        details_layout.addWidget(thumbnail_label, 0, Qt.AlignHCenter)
+        def _current_location():
+            """The active Observatory's location (top-bar selector), for
+            visibility filtering and each card's altitude chart/rise-
+            transit-set (SKY-020/SKY-030) — ``None`` when no Observatory is
+            selected or it has no latitude/longitude configured yet."""
+            obs = getattr(self, "_current_observatory", None)
+            if obs is None or getattr(obs, "latitude", None) is None or getattr(obs, "longitude", None) is None:
+                return None
+            from galileo.planning.visibility import ObservingLocation
+            return ObservingLocation(
+                name=getattr(obs, "name", ""), latitude=obs.latitude, longitude=obs.longitude,
+                timezone=getattr(obs, "timezone", None) or "UTC",
+            )
 
-        details_form = QFormLayout()
-        detail_name_value = QLabel("—")
-        detail_type_value = QLabel("—")
-        detail_mag_value = QLabel("—")
-        detail_const_value = QLabel("—")
-        detail_ra_value = QLabel("—")
-        detail_dec_value = QLabel("—")
-        details_form.addRow("Name", detail_name_value)
-        details_form.addRow("Type", detail_type_value)
-        details_form.addRow("Magnitude", detail_mag_value)
-        details_form.addRow("Constellation", detail_const_value)
-        details_form.addRow("Right Ascension", detail_ra_value)
-        details_form.addRow("Declination", detail_dec_value)
-        details_layout.addLayout(details_form)
-        details_layout.addStretch(1)
-
-        results_row.addWidget(details_frame, 1)
-        content_layout.addLayout(results_row, 1)
-
-        def _clear_details() -> None:
-            thumbnail_label.setPixmap(QPixmap())
-            thumbnail_label.setText("Select a result to view details.")
-            for value_label in (
-                detail_name_value, detail_type_value, detail_mag_value,
-                detail_const_value, detail_ra_value, detail_dec_value,
-            ):
-                value_label.setText("—")
-
-        def _show_details(obj) -> None:
-            from galileo.planning.sky_atlas import constellation_for, SkyAtlas
-
-            detail_name_value.setText(obj.primary_name)
-            detail_type_value.setText(obj.object_type.value)
-            detail_mag_value.setText(f"{obj.magnitude:.1f}" if obj.magnitude < 90.0 else "Unknown")
-            try:
-                detail_const_value.setText(constellation_for(obj.ra_deg, obj.dec_deg))
-            except Exception:
-                logger.exception("Could not compute constellation for %s", obj.primary_name)
-                detail_const_value.setText("—")
-            detail_ra_value.setText(f"{obj.ra_deg:.4f}°")
-            detail_dec_value.setText(f"{obj.dec_deg:.4f}°")
-
-            thumbnail_label.setPixmap(QPixmap())
-            thumbnail_label.setText("Loading image…")
-            self._window.statusBar().showMessage(f"Fetching sky-survey image for {obj.primary_name}…")
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                import asyncio
-                data = asyncio.run(SkyAtlas()._fetch_thumbnail(obj))
-            except Exception:
-                logger.exception("Could not fetch thumbnail for %s", obj.primary_name)
-                data = b""
-            finally:
-                QApplication.restoreOverrideCursor()
-            pixmap = QPixmap()
-            if data and pixmap.loadFromData(data) and not pixmap.isNull():
-                thumbnail_label.setText("")
-                thumbnail_label.setPixmap(pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                self._window.statusBar().showMessage(f"Loaded image for {obj.primary_name}.", 4000)
-            else:
-                thumbnail_label.setText("No image available.")
-                self._window.statusBar().showMessage(f"No sky-survey image available for {obj.primary_name}.", 4000)
-
-        def _result_selected(item: "QListWidgetItem") -> None:
-            obj = item.data(Qt.UserRole)
-            if obj is None:
-                _clear_details()
+        def _slew_to_result(obj) -> None:
+            """"Slew To" (a result tile's own action button): immediately
+            command the connected mount to this object, via the same
+            ``_mount_to_object`` the Star Atlas/skymap's own slew-to-clicked-
+            location uses (SKYMAP-060) — needs the current altitude (its
+            below-horizon guard) computed fresh for *now*, the same
+            precess-then-horizontal-transform technique
+            ``galileo.ui.star_atlas``'s live renderer already uses."""
+            location = _current_location()
+            if location is None:
+                self._window.statusBar().showMessage(
+                    "Slew To needs the Observatory's latitude/longitude set (top bar).", 5000)
                 return
-            _show_details(obj)
+            import datetime as _dt
+            from galileo.planning import star_atlas as sa
+            jd = sa.julian_date(_dt.datetime.now(_dt.timezone.utc))
+            lst = sa.local_sidereal_deg(jd, location.longitude)
+            ra_of_date, dec_of_date = sa.precess_from_j2000(obj.ra_deg, obj.dec_deg, jd)
+            alt, _az = sa.equatorial_to_horizontal(ra_of_date, dec_of_date, lst, location.latitude)
+            target = obj.as_sequence_target()
+            target["alt"] = float(alt)
+            self._mount_to_object("goto", target)
 
-        results.itemClicked.connect(_result_selected)
+        def _add_result_to_new_session(obj) -> None:
+            """"Add to Session" (a result tile's own action button, SES-160) —
+            goes through the shared :meth:`AppWindow._add_to_session`, the same
+            entry point the Star Atlas's right-click context menu action uses,
+            so the two never drift apart."""
+            self._add_to_session(obj.primary_name, obj.ra_deg, obj.dec_deg)
 
         def run_search() -> None:
+            import asyncio
             results.clear()
-            _clear_details()
             self._window.statusBar().showMessage("Searching…")
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            location = _current_location()
             try:
                 from galileo.planning.sky_atlas import SkyAtlas, ObjectType
                 atlas = SkyAtlas()
                 name = name_edit.text().strip()
                 if name:
-                    import asyncio
                     matches = asyncio.run(atlas.search_online(name))
                 else:
                     object_types = None
                     if type_combo.currentText() != "Any":
                         object_types = [ObjectType(type_combo.currentText())]
+                    if (visible_tonight_check.isChecked() or min_moon_sep.value() > 0) and location is None:
+                        self._window.statusBar().showMessage(
+                            "Visible tonight/Moon separation need the Observatory's latitude/longitude "
+                            "set (top bar) — showing all matches instead.", 6000)
+                    selected_catalogs = {cat for cat, cb in catalog_checks.items() if cb.isChecked()} or None
                     matches = atlas.filter(
                         object_types=object_types,
                         max_magnitude=max_mag.value(),
                         min_size_arcmin=min_size.value(),
+                        max_size_arcmin=max_size.value(),
+                        location=location,
+                        visible_tonight=visible_tonight_check.isChecked() and location is not None,
+                        min_altitude_deg=min_altitude.value(),
+                        min_duration_hours=min_duration.value(),
+                        min_moon_separation_deg=min_moon_sep.value(),
+                        catalogs=selected_catalogs,
                     )
             except Exception:
                 logger.exception("Sky Atlas search failed")
@@ -6204,13 +6684,71 @@ class AppWindow:
                 results.addItem("No matching objects.")
                 self._window.statusBar().showMessage("No matching objects.", 4000)
                 return
-            for obj in matches[:200]:
-                item = QListWidgetItem(
-                    f"{obj.primary_name}   RA {obj.ra_deg:.3f}°  Dec {obj.dec_deg:.3f}°  mag {obj.magnitude:.1f}"
-                )
+
+            shown = matches[:200]
+
+            # One batched astropy transform for every card's altitude chart,
+            # not one per card (~1s for 200 vs. ~10s individually — see the
+            # method docstring). rise/transit/set for each is then read off
+            # its own already-computed chart, not recalculated.
+            charts: list = [None] * len(shown)
+            rise_set_texts = ["Set an Observatory location (top bar) for rise/transit/set."] * len(shown)
+            if location is not None:
+                self._window.statusBar().showMessage(f"Found {len(matches)} object(s) — computing altitude charts…")
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    charts = atlas.altitude_charts_batch(shown, location)
+                    for i, (obj, chart) in enumerate(zip(shown, charts)):
+                        if not chart.get("altitudes"):
+                            rise_set_texts[i] = "Rise/transit/set unavailable."
+                            continue
+                        try:
+                            rts = atlas.rise_transit_set(obj, location, chart=chart)
+                            rise_set_texts[i] = (
+                                f"Rise {_fmt_rise_set_time(rts['rise'])}  "
+                                f"Transit {_fmt_rise_set_time(rts['transit'])}  "
+                                f"Set {_fmt_rise_set_time(rts['set'])} UTC"
+                            )
+                        except Exception:
+                            logger.debug("Could not compute rise/transit/set for %s", obj.primary_name, exc_info=True)
+                            rise_set_texts[i] = "Rise/transit/set unavailable."
+                except Exception:
+                    logger.exception("Could not batch-compute altitude charts")
+                    charts = [None] * len(shown)
+                finally:
+                    QApplication.restoreOverrideCursor()
+
+            thumb_labels = []
+            for obj, rise_set_text, chart in zip(shown, rise_set_texts, charts):
+                item = QListWidgetItem()
                 item.setData(Qt.UserRole, obj)
+                card, thumb_label = _build_result_card(obj, rise_set_text, chart)
+                row_container, size_hint = _tile_row(card)
+                item.setSizeHint(size_hint)
                 results.addItem(item)
+                results.setItemWidget(item, row_container)
+                thumb_labels.append(thumb_label)
             self._window.statusBar().showMessage(f"Found {len(matches)} object(s).", 4000)
+
+            # Fill in the first few cards' thumbnails now (bounded — see
+            # _MAX_AUTO_THUMBNAILS above, a real network request each); the
+            # rest still show every other detail, just without an image.
+            if thumb_labels:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    for obj, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels):
+                        try:
+                            data = asyncio.run(atlas._fetch_thumbnail(obj))
+                        except Exception:
+                            logger.debug("Could not fetch card thumbnail for %s", obj.primary_name, exc_info=True)
+                            continue
+                        pixmap = QPixmap()
+                        if data and pixmap.loadFromData(data) and not pixmap.isNull():
+                            thumb_label.setPixmap(pixmap.scaled(
+                                _CARD_THUMB_PX, _CARD_THUMB_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                            ))
+                finally:
+                    QApplication.restoreOverrideCursor()
 
         search_btn.clicked.connect(run_search)
         name_edit.returnPressed.connect(run_search)
@@ -6219,102 +6757,292 @@ class AppWindow:
         layout.addWidget(content, 1)
         return page
 
-    # --- Framing page (secondary panel = target/mosaic input criteria) ------
+    # --- Framing Assistant (IMG-180, FRAME-070) ------------------------------
+    #
+    # Contextual only, per FRAME-070 — no primary-navigation section of its own.
+    # This is the Imaging tab's own entry point; galileo.ui.sessions' Image
+    # block gets its own, independent one (its own Framing… control is not yet
+    # built — see TODO.md).
 
-    def _build_framing_page(self) -> "QWidget":
+    def _imaging_optical_profile(self) -> dict:
+        """Profile-shaped dict for ``FramingAssistant.from_profile()`` (FRAME-010,
+        FRAME-030), built from the Imaging tab's own active optical train, camera,
+        and rotator configuration — falls back to reference defaults wherever a
+        piece of it isn't configured yet."""
+        tube = self.active_optical_tube()
+        pier = self._current_pier
+        camera_cfg = rotator_cfg = None
+        if pier is not None:
+            from galileo.observatory import get_device_config
+            try:
+                camera_cfg = get_device_config(pier, "camera", slot=self._active_camera_slot)
+            except Exception:
+                logger.exception("Could not load the camera's configuration for Framing")
+            try:
+                rotator_cfg = get_device_config(pier, "rotator")
+            except Exception:
+                logger.exception("Could not load the rotator's configuration for Framing")
+        camera = {}
+        if camera_cfg is not None:
+            camera = {key: value for key, value in {
+                "sensor_width_px": camera_cfg.sensor_width_px,
+                "sensor_height_px": camera_cfg.sensor_height_px,
+                "pixel_size_um": camera_cfg.pixel_size_um,
+            }.items() if value is not None}
+        return {
+            "piers": [{
+                "optical_trains": [{
+                    "focal_length_mm": getattr(tube, "focal_length_mm", None) or 1000,
+                    "camera": camera,
+                    "rotator": {"configured": True} if rotator_cfg is not None else {},
+                }]
+            }]
+        }
+
+    def _framing_dialog_initial_target(self) -> "tuple[str, float, float] | None":
+        """The Imaging tab's current object (IMG-140), if any — used to pre-fill the
+        Framing Assistant dialog's Name/RA/Dec fields, so a target already picked
+        on the Star Atlas doesn't need retyping into Framing's own fields too."""
+        current = self.current_object()
+        if current is None:
+            return None
+        return current.name, current.ra_deg, current.dec_deg
+
+    def _open_framing_dialog(self, service) -> None:
+        """Open the Framing Assistant against the Imaging tab's own optical train
+        (IMG-180's Framing… control): compute the FOV, or define and run a mosaic
+        grid directly from this tab (traces to FRAME-090). Shows the survey image
+        for the target with the FOV/mosaic rectangle overlaid (FRAME-020/FRAME-040),
+        redrawn immediately as rotation or the mosaic grid is adjusted.
+
+        Rotation (FRAME-030) is always editable, regardless of whether a rotator
+        is connected: with one connected, accepting the dialog moves it to the
+        requested angle; with none connected, the requested tilt can't be achieved
+        by the camera directly, so it's instead covered by an auto-sized mosaic of
+        (un-rotated) panels — an explicit mosaic grid the user set themselves takes
+        priority over that fallback.
+
+        A "Show mosaic overlay" checkbox controls only what the canvas *draws* —
+        the mosaic panel grid, or a single (possibly tilted) frame rectangle when
+        unchecked — never what's actually captured on accept: an explicit or
+        rotation-fallback mosaic is still used whenever one is needed, whether or
+        not its panels are shown here."""
+        import asyncio
         from PySide6.QtWidgets import (
-            QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit,
-            QDoubleSpinBox, QSpinBox, QPushButton,
+            QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel,
+            QLineEdit, QPushButton, QSpinBox, QVBoxLayout,
         )
+        from galileo.planning.framing import MosaicSettings
 
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        assistant = service.open_framing_assistant(profile=self._imaging_optical_profile())
+        rotator_state = self._device_pages.get("rotator") or {}
+        rotator_adapter = rotator_state.get("adapter")
+        rotator_connected = rotator_adapter is not None
 
-        criteria, form = self._build_criteria_panel("Target")
+        dialog = QDialog(self._window)
+        dialog.setWindowTitle("Framing Assistant")
+        outer = QHBoxLayout(dialog)
+
+        left = QVBoxLayout()
+        outer.addLayout(left)
+        form = QFormLayout()
+        left.addLayout(form)
 
         name_edit = QLineEdit()
         name_edit.setPlaceholderText("Target name")
         form.addRow("Name", name_edit)
 
-        ra_edit = QLineEdit()
-        ra_edit.setPlaceholderText("HH:MM:SS")
-        form.addRow("RA", ra_edit)
+        ra_spin = QDoubleSpinBox()
+        ra_spin.setRange(0.0, 360.0)
+        ra_spin.setDecimals(4)
+        ra_spin.setSuffix(" °")
+        form.addRow("RA", ra_spin)
 
-        dec_edit = QLineEdit()
-        dec_edit.setPlaceholderText("+DD:MM:SS")
-        form.addRow("Dec", dec_edit)
+        dec_spin = QDoubleSpinBox()
+        dec_spin.setRange(-90.0, 90.0)
+        dec_spin.setDecimals(4)
+        dec_spin.setSuffix(" °")
+        form.addRow("Dec", dec_spin)
 
-        rotation = QDoubleSpinBox()
-        rotation.setRange(0.0, 359.9)
-        rotation.setSuffix(" °")
-        form.addRow("Rotation", rotation)
+        initial_target = self._framing_dialog_initial_target()
+        if initial_target is not None:
+            name_edit.setText(initial_target[0])
+            ra_spin.setValue(initial_target[1])
+            dec_spin.setValue(initial_target[2])
 
-        cols = QSpinBox()
-        cols.setRange(1, 20)
-        cols.setValue(1)
-        form.addRow("Mosaic cols", cols)
+        rotation_spin = QDoubleSpinBox()
+        rotation_spin.setRange(0.0, 359.9)
+        rotation_spin.setSuffix(" °")
+        form.addRow("Rotation", rotation_spin)
 
-        rows = QSpinBox()
-        rows.setRange(1, 20)
-        rows.setValue(1)
-        form.addRow("Mosaic rows", rows)
+        rotator_status = QLabel(
+            "Rotator detected — OK will move it to this angle." if rotator_connected else
+            "No rotator detected — rotation will be captured as a mosaic covering the tilted field."
+        )
+        rotator_status.setObjectName("StatusHint")
+        rotator_status.setWordWrap(True)
+        form.addRow(rotator_status)
 
-        overlap = QDoubleSpinBox()
-        overlap.setRange(0.0, 90.0)
-        overlap.setValue(10.0)
-        overlap.setSuffix(" %")
-        form.addRow("Overlap", overlap)
+        cols_spin = QSpinBox()
+        cols_spin.setRange(1, 20)
+        cols_spin.setValue(1)
+        form.addRow("Mosaic cols", cols_spin)
 
-        set_target_btn = QPushButton("Set Target")
-        set_target_btn.setObjectName("AccentButton")
-        form.addRow(set_target_btn)
+        rows_spin = QSpinBox()
+        rows_spin.setRange(1, 20)
+        rows_spin.setValue(1)
+        form.addRow("Mosaic rows", rows_spin)
 
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 20, 24, 20)
-        content_layout.setSpacing(6)
+        overlap_spin = QDoubleSpinBox()
+        overlap_spin.setRange(0.0, 90.0)
+        overlap_spin.setValue(MosaicSettings.instance().pane_overlap_pct)
+        overlap_spin.setSuffix(" %")
+        overlap_spin.setToolTip("Shared with the Session Image block's own Framing… control (FRAME-040).")
+        form.addRow("Overlap", overlap_spin)
 
-        heading = QLabel("Framing")
-        heading.setObjectName("PageTitle")
-        content_layout.addWidget(heading)
+        show_mosaic_check = QCheckBox("Show mosaic overlay")
+        show_mosaic_check.setChecked(True)
+        show_mosaic_check.setToolTip(
+            "Preview only — hides the mosaic panel grid on the image below, showing just a single "
+            "(possibly tilted) frame rectangle instead. Doesn't change what's actually captured: a "
+            "covering mosaic is still used whenever one is needed (an explicit grid, or rotating with "
+            "no rotator connected) whether or not it's drawn here."
+        )
+        form.addRow(show_mosaic_check)
 
-        fov_label = QLabel("Set a target to compute the field of view.")
-        fov_label.setObjectName("PageSubtitle")
-        content_layout.addWidget(fov_label)
-        content_layout.addStretch(1)
+        load_image_btn = QPushButton("Load Sky Image")
+        load_image_btn.setToolTip("Fetch a survey image for this RA/Dec (FRAME-020) — not refetched "
+                                  "automatically as RA/Dec change, to avoid a network call per keystroke.")
+        form.addRow(load_image_btn)
 
-        def apply_target() -> None:
-            try:
-                from galileo.planning.framing import FramingAssistant
-                assistant = FramingAssistant.from_profile({})
-                assistant.set_rotation_angle(rotation.value())
-                fov = assistant.compute_fov()
-                if cols.value() > 1 or rows.value() > 1:
-                    mosaic = assistant.create_mosaic(
-                        center_ra=0.0, center_dec=0.0,
-                        cols=cols.value(), rows=rows.value(), overlap_pct=overlap.value(),
-                    )
-                    fov_label.setText(
-                        f"FOV {fov.width_deg:.3f}° × {fov.height_deg:.3f}°  —  "
-                        f"mosaic {mosaic.total_panels} panels ({cols.value()}×{rows.value()}, {overlap.value():.0f}% overlap)"
-                    )
+        fov_label = QLabel("")
+        fov_label.setObjectName("StatusHint")
+        fov_label.setWordWrap(True)
+        left.addWidget(fov_label)
+
+        canvas = _FramingCanvas()
+        outer.addWidget(canvas, 1)
+
+        def mosaic_grid() -> "tuple | None":
+            """The grid the user explicitly set, if any."""
+            return ((cols_spin.value(), rows_spin.value(), overlap_spin.value())
+                    if cols_spin.value() > 1 or rows_spin.value() > 1 else None)
+
+        def effective_grid() -> "tuple | None":
+            """The grid actually in effect: the user's own explicit choice, else —
+            with no rotator connected and a nonzero rotation — one auto-sized to
+            cover the tilted frame's bounding box (FRAME-030's fallback), else
+            ``None`` for a plain single frame."""
+            explicit = mosaic_grid()
+            if explicit is not None:
+                return explicit
+            if not rotator_connected and rotation_spin.value() != 0:
+                bbox = assistant.rotated_frame_bounding_box_deg(rotation_spin.value())
+                cols, rows = assistant.mosaic_grid_to_cover_deg(*bbox, overlap_spin.value())
+                return cols, rows, overlap_spin.value()
+            return None
+
+        def refresh_overlay() -> None:
+            fov = assistant.compute_fov()
+            grid = effective_grid()
+            auto_mosaic = grid is not None and mosaic_grid() is None
+            if grid is not None:
+                footprint = assistant.mosaic_footprint_deg(*grid)
+                if auto_mosaic:
+                    extra = (f"  —  no rotator: {grid[0]}×{grid[1]} mosaic covering the "
+                             f"{rotation_spin.value():.0f}° tilted field")
                 else:
-                    fov_label.setText(f"FOV {fov.width_deg:.3f}° × {fov.height_deg:.3f}° at rotation {rotation.value():.1f}°")
+                    extra = f"  —  mosaic footprint {footprint[0]:.3f}° × {footprint[1]:.3f}° ({grid[0]}×{grid[1]})"
+                    if rotation_spin.value() != 0:
+                        extra += "  (rotation ignored while a mosaic grid is set)"
+            else:
+                footprint = (fov.width_deg, fov.height_deg)
+                extra = ""
+            show_mosaic = show_mosaic_check.isChecked()
+            if grid is not None and not show_mosaic:
+                extra += "  (mosaic preview hidden — still captured)"
+            display_grid = grid if show_mosaic else None
+            pane_rotation = 0.0 if display_grid is not None else rotation_spin.value()
+            reference_rotation = rotation_spin.value() if (auto_mosaic and show_mosaic) else None
+            suffix = f" at rotation {rotation_spin.value():.1f}°" if pane_rotation or reference_rotation else ""
+            fov_label.setText(f"Field of view: {fov.width_deg:.3f}° × {fov.height_deg:.3f}°{suffix}{extra}")
+            canvas.set_overlay(fov.width_deg, fov.height_deg, pane_rotation, display_grid,
+                               footprint_deg=footprint, reference_rotation_deg=reference_rotation)
+
+        def load_sky_image() -> None:
+            grid = effective_grid()
+            footprint = assistant.mosaic_footprint_deg(*grid) if grid is not None else None
+            extent = assistant.survey_cutout_extent_deg(*footprint) if footprint else assistant.survey_cutout_extent_deg()
+            width_deg, height_deg = footprint or (None, None)
+            try:
+                data = assistant.fetch_survey_image_sync(ra_spin.value(), dec_spin.value(), width_deg, height_deg)
             except Exception:
-                logger.exception("Framing FOV computation failed")
-                fov_label.setText("Could not compute FOV — see log for details.")
+                logger.exception("Framing Assistant survey-image fetch failed")
+                data = b""
+            canvas.set_image(data, extent)
 
-        set_target_btn.clicked.connect(apply_target)
+        rotation_spin.valueChanged.connect(lambda _: refresh_overlay())
+        cols_spin.valueChanged.connect(lambda _: refresh_overlay())
+        rows_spin.valueChanged.connect(lambda _: refresh_overlay())
+        overlap_spin.valueChanged.connect(lambda _: refresh_overlay())
+        show_mosaic_check.toggled.connect(lambda _: refresh_overlay())
+        load_image_btn.clicked.connect(load_sky_image)
+        refresh_overlay()
+        if initial_target is not None:
+            load_sky_image()
 
-        layout.addWidget(criteria)
-        layout.addWidget(content, 1)
-        return page
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        left.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            assistant.close()
+            return
+
+        MosaicSettings.instance().set_pane_overlap_pct(overlap_spin.value())
+        assistant.set_target(ra=ra_spin.value(), dec=dec_spin.value(), name=name_edit.text())
+
+        grid = effective_grid()
+        auto_mosaic = grid is not None and mosaic_grid() is None
+        if grid is None:
+            # A previously active mosaic (from an earlier visit to this dialog) no longer applies
+            # once the user dials the grid back down to a single frame — Capture must not keep
+            # shooting the old mosaic silently.
+            service.active_mosaic = None
+        if grid is not None:
+            cols, rows, overlap_pct = grid
+            mosaic = assistant.create_mosaic(
+                center_ra=ra_spin.value(), center_dec=dec_spin.value(),
+                cols=cols, rows=rows, overlap_pct=overlap_pct,
+            )
+            assistant.set_mosaic(mosaic)
+            service.run_mosaic_from_framing(assistant)
+            if auto_mosaic:
+                self._window.statusBar().showMessage(
+                    f"No rotator: capturing a {cols}×{rows} mosaic to cover the "
+                    f"{rotation_spin.value():.0f}° tilted field.", 6000)
+            else:
+                self._window.statusBar().showMessage(
+                    f"Mosaic defined: {mosaic.total_panels} panels ({cols}×{rows}).", 5000)
+        elif rotator_connected and rotation_spin.value() != 0:
+            try:
+                asyncio.run(rotator_adapter.move_to_angle(rotation_spin.value()))
+                self._window.statusBar().showMessage(
+                    f"Framing target set: {name_edit.text() or 'unnamed'}; rotator moved to "
+                    f"{rotation_spin.value():.1f}°.", 5000)
+            except Exception:
+                logger.exception("Framing Assistant could not move the rotator")
+                self._window.statusBar().showMessage(
+                    "Framing target set, but the rotator move failed — see log.", 6000)
+        else:
+            self._window.statusBar().showMessage(
+                f"Framing target set: {name_edit.text() or 'unnamed'}.", 4000)
+        assistant.close()
 
     def _build_criteria_panel(self, heading: str):
         """A fixed-width form panel holding search/input criteria, used
-        instead of a secondary icon column (Planning, Framing)."""
+        instead of a secondary icon column (Planning, Star Atlas)."""
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel
 
         panel = QWidget()
@@ -6383,6 +7111,42 @@ class _CaptureThread(QThread if _HAS_QT else object):
         try:
             asyncio.run(self._service.capture_series(
                 self._quantity, self._duration, self._filter_name, self._frame_type,
+                on_frame_start=self.frame_started.emit, on_frame_done=self.frame_done.emit,
+            ))
+        except Exception as exc:
+            if not self._service.stop_requested:
+                self.failed.emit(str(exc))
+                return
+        self.finished_ok.emit()
+
+
+class _MosaicCaptureThread(QThread if _HAS_QT else object):
+    """Runs one mosaic capture (IMG-180, FRAME-090) off the Qt UI thread — mirrors
+    ``_CaptureThread``, but drives ``ImagingService.capture_mosaic`` instead of
+    ``capture_series``, since a mosaic's per-pane re-slews can each take as long as
+    the exposures themselves and must not freeze the window either."""
+
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+    slew_started = Signal(int, int) if _HAS_QT else None      # (step number, steps in the mosaic)
+    frame_started = Signal(int, int) if _HAS_QT else None
+    frame_done = Signal(int, int) if _HAS_QT else None
+
+    def __init__(self, service, exposures_per_pane: int, duration: float, filter_name: str, frame_type: str,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._exposures_per_pane = exposures_per_pane
+        self._duration = duration
+        self._filter_name = filter_name
+        self._frame_type = frame_type
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            asyncio.run(self._service.capture_mosaic(
+                self._exposures_per_pane, self._duration, self._filter_name, self._frame_type,
+                on_slew_start=self.slew_started.emit,
                 on_frame_start=self.frame_started.emit, on_frame_done=self.frame_done.emit,
             ))
         except Exception as exc:
@@ -6483,6 +7247,215 @@ class _NudgeThread(QThread if _HAS_QT else object):
             self.failed.emit(str(exc))
             return
         self.finished_ok.emit()
+
+
+class _ThumbnailCacheThread(QThread if _HAS_QT else object):
+    """Bulk-caches every catalog object's survey-image thumbnail off the Qt UI
+    thread (Options > Planning's "Cache all thumbnails" button, SKY-080), so a
+    later search's result-tile thumbnails load from disk instead of each
+    needing its own hips2fits round trip. Reuses ``SkyAtlas._fetch_thumbnail``'s
+    own ra/dec/field-size-keyed disk cache unchanged — an object already cached
+    (from a prior run, from having shown up in a search's result tiles, or from
+    being added to a target list) returns instantly with no network call, so
+    resuming after Cancel, or re-running later, only fetches what's still
+    missing. Runs one object at a time, sequentially, matching every other
+    thumbnail fetch already in this codebase — no added concurrency, so this
+    doesn't hit the free hips2fits service any harder than normal use already
+    does; for the full catalog (tens of thousands of objects) that means this
+    can genuinely take hours, which is why it's cancellable and why the
+    confirmation dialog before starting says so."""
+
+    progress = Signal(int, int) if _HAS_QT else None        # (done, total)
+    finished_ok = Signal(int, int) if _HAS_QT else None      # (cached, failed)
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        self._stop_requested = True
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            from galileo.planning.sky_atlas import SkyAtlas
+            atlas = SkyAtlas()
+            catalog = atlas._catalog
+            total = len(catalog)
+            cached_count = 0
+            failed_count = 0
+            for i, obj in enumerate(catalog):
+                if self._stop_requested:
+                    break
+                try:
+                    data = asyncio.run(atlas._fetch_thumbnail(obj))
+                except Exception:
+                    data = b""
+                if data:
+                    cached_count += 1
+                else:
+                    failed_count += 1
+                if i % 5 == 0 or i == total - 1:
+                    self.progress.emit(i + 1, total)
+        except Exception as exc:
+            logger.exception("Bulk thumbnail caching failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(cached_count, failed_count)
+
+
+class _FramingCanvas(QWidget if _HAS_QT else object):
+    """Survey image with the FOV rectangle — and, where a mosaic grid is defined,
+    every pane's rectangle — overlaid (FRAME-020/030/040), redrawn live as the
+    Framing Assistant dialog's fields change. The image itself only needs
+    refetching for a new sky position (``set_image``); rotation/mosaic changes
+    just move the overlay (``set_overlay``), no new fetch needed. RA offsets are
+    drawn increasing to the left (conventional sky orientation) and rotation's
+    on-screen sense hasn't been validated against a real rotator, matching this
+    codebase's existing caveat for ``galileo.derotation``.
+
+    A survey cutout is capped at a sanity ceiling
+    (``galileo.planning.framing._MAX_HIPS_FOV_DEG``), which can be smaller
+    than the FOV or mosaic footprint it's meant to frame (a wide-field optical
+    train, or a large mosaic grid). Rather than clip the overlay to the image or
+    stretch the image to the overlay, the canvas fits *whichever is larger* —
+    image extent or overlay footprint — into the visible area, so the FOV/mosaic
+    rectangle's true size always stays fully visible, with the actual survey
+    pixels shown at their real relative size and a dashed border marking where
+    they end."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(360, 360)
+        self._pixmap = None
+        self._image_extent_deg: tuple = (0.0, 0.0)
+        self._fov_deg: tuple = (0.0, 0.0)
+        self._footprint_deg: tuple = (0.0, 0.0)  # overlay's own overall extent (>= _fov_deg for a mosaic)
+        self._rotation_deg: float = 0.0
+        self._mosaic_grid: "tuple | None" = None  # (cols, rows, overlap_pct)
+        self._reference_rotation_deg: "float | None" = None
+        self._message = "Set a target and click Load Sky Image."
+
+    def set_image(self, data: bytes, extent_deg: tuple) -> None:
+        from PySide6.QtGui import QPixmap
+        pixmap = QPixmap()
+        if data and pixmap.loadFromData(data):
+            self._pixmap = pixmap
+            self._image_extent_deg = extent_deg
+        else:
+            self._pixmap = None
+            self._message = "No sky image available (offline, or the fetch failed)."
+        self.update()
+
+    def set_overlay(self, fov_width_deg: float, fov_height_deg: float, rotation_deg: float,
+                    mosaic_grid: "tuple | None" = None, footprint_deg: "tuple | None" = None,
+                    reference_rotation_deg: "float | None" = None) -> None:
+        """*rotation_deg* is what the drawn pane(s) are actually rotated by (0 for
+        an auto-mosaic covering a tilt no rotator can achieve); *reference_rotation_deg*,
+        when given, additionally draws the originally-requested tilted single-frame
+        rectangle as a thin dashed outline for context, without affecting the panes."""
+        self._fov_deg = (fov_width_deg, fov_height_deg)
+        self._rotation_deg = rotation_deg
+        self._mosaic_grid = mosaic_grid
+        self._footprint_deg = footprint_deg or (fov_width_deg, fov_height_deg)
+        self._reference_rotation_deg = reference_rotation_deg
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        from PySide6.QtCore import QRectF, Qt as _Qt
+        from PySide6.QtGui import QColor, QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+
+        if self._pixmap is None:
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(self.rect(), _Qt.AlignCenter | _Qt.TextWordWrap, self._message)
+            painter.end()
+            return
+
+        ext_w_deg, ext_h_deg = self._image_extent_deg
+        fov_w_deg, fov_h_deg = self._fov_deg
+        fp_w_deg, fp_h_deg = self._footprint_deg
+        if ext_w_deg <= 0 or ext_h_deg <= 0 or fov_w_deg <= 0 or fov_h_deg <= 0:
+            painter.end()
+            return
+
+        # Fit whichever is larger per axis — the fetched image, or the overlay's
+        # own footprint — with a little margin so the border/rectangle isn't
+        # flush against the widget's edge (FRAME-020/040: the field must stay
+        # fully visible even when the survey source couldn't cover all of it).
+        target = self.rect().adjusted(4, 4, -4, -4)
+        world_w_deg = max(ext_w_deg, fp_w_deg) * 1.1
+        world_h_deg = max(ext_h_deg, fp_h_deg) * 1.1
+        px_per_deg_x = target.width() / world_w_deg
+        px_per_deg_y = target.height() / world_h_deg
+
+        img_w_px = max(1, round(ext_w_deg * px_per_deg_x))
+        img_h_px = max(1, round(ext_h_deg * px_per_deg_y))
+        scaled = self._pixmap.scaled(img_w_px, img_h_px, _Qt.IgnoreAspectRatio, _Qt.SmoothTransformation)
+        origin_x = target.x() + (target.width() - scaled.width()) / 2
+        origin_y = target.y() + (target.height() - scaled.height()) / 2
+        painter.drawPixmap(int(origin_x), int(origin_y), scaled)
+
+        if scaled.width() < target.width() - 1 or scaled.height() < target.height() - 1:
+            # The field extends beyond what the survey cutout covers — mark
+            # where the actual image data ends, so that's not mistaken for the
+            # edge of the field itself.
+            border_pen = QPen(QColor("#666666"), 1, _Qt.DashLine)
+            painter.setPen(border_pen)
+            painter.drawRect(QRectF(origin_x, origin_y, scaled.width(), scaled.height()))
+
+        cx = origin_x + scaled.width() / 2
+        cy = origin_y + scaled.height() / 2
+
+        painter.setPen(QPen(QColor("#4da6ff"), 2))
+
+        def draw_rect(offset_ra_deg: float, offset_dec_deg: float, rotation_deg: float) -> None:
+            painter.save()
+            painter.translate(cx - offset_ra_deg * px_per_deg_x, cy - offset_dec_deg * px_per_deg_y)
+            painter.rotate(rotation_deg)
+            painter.drawRect(QRectF(
+                -fov_w_deg * px_per_deg_x / 2, -fov_h_deg * px_per_deg_y / 2,
+                fov_w_deg * px_per_deg_x, fov_h_deg * px_per_deg_y,
+            ))
+            painter.restore()
+
+        if self._mosaic_grid is not None:
+            cols, rows, overlap_pct = self._mosaic_grid
+            step_ra = fov_w_deg * (1.0 - overlap_pct / 100.0)
+            step_dec = fov_h_deg * (1.0 - overlap_pct / 100.0)
+            for row in range(rows):
+                for col in range(cols):
+                    draw_rect((col - (cols - 1) / 2.0) * step_ra, (row - (rows - 1) / 2.0) * step_dec,
+                             self._rotation_deg)
+        else:
+            draw_rect(0.0, 0.0, self._rotation_deg)
+
+        if self._reference_rotation_deg is not None:
+            # The originally-requested tilted frame no rotator can achieve directly
+            # — shown for context against the covering mosaic drawn above, not
+            # itself a pane that will be captured.
+            painter.setPen(QPen(QColor("#ffa64d"), 1, _Qt.DashLine))
+            draw_rect(0.0, 0.0, self._reference_rotation_deg)
+        painter.end()
+
+
+class _ClickableThumbnail(QLabel if _HAS_QT else object):
+    """A ``QLabel`` that emits ``clicked`` on a left-button press — used for
+    the Targets page's result-tile thumbnails (SKY-080), so clicking one opens
+    a full-size view (`AppWindow._show_full_image`) rather than the small
+    result-tile crop being the only size ever shown."""
+
+    clicked = Signal() if _HAS_QT else None
+
+    def mousePressEvent(self, event) -> None:
+        from PySide6.QtCore import Qt as _Qt
+        if event.button() == _Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class _HistogramWidget(QWidget if _HAS_QT else object):

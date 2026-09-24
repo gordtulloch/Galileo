@@ -19,6 +19,7 @@ execution behavior this domain's own requirements (``SES-150``) actually specify
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, replace
@@ -26,24 +27,26 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 logger = logging.getLogger(__name__)
 
-_TEMPLATE_SUFFIX = ".gstpl"
 _SESSION_SUFFIX = ".gses"
 
 
@@ -69,6 +72,13 @@ class SessionBlock:
     the palette's display text for that block type (a class attribute, not a field)."""
     label: ClassVar[str] = "Block"
 
+    @property
+    def display_text(self) -> str:
+        """Text shown for one block *instance* in a region's block list — defaults
+        to the type's palette ``label``, but a block can override this to surface
+        its own identifying data (e.g. a Target block's chosen target name)."""
+        return self.label
+
 
 @dataclass
 class TargetBlock(SessionBlock):
@@ -77,6 +87,10 @@ class TargetBlock(SessionBlock):
     ra_deg: float = 0.0
     dec_deg: float = 0.0
     is_placeholder_target: bool = False
+
+    @property
+    def display_text(self) -> str:
+        return f"{self.label}: {self.name}" if self.name else self.label
 
 
 @dataclass
@@ -246,15 +260,26 @@ def _block_from_dict(d: dict) -> SessionBlock:
 
 class SessionTemplate:
     """A saved, reusable session procedure (SES-180) — its Target block, if any, is
-    a generic placeholder rather than a specific target."""
+    a generic placeholder rather than a specific target. Persisted as a named row
+    in the shared database (``galileo.library.models.session_template``), not a
+    file — see ``SessionRegion.save_as_template``."""
 
     def __init__(self, blocks: list[SessionBlock]) -> None:
         self.blocks = blocks
 
     @classmethod
-    def load(cls, path: Path | str) -> SessionTemplate:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls(blocks=[_block_from_dict(bd) for bd in data.get("blocks", [])])
+    def load(cls, name: str) -> SessionTemplate:
+        from galileo.library.models.session_template import SessionTemplateRecord
+        record = SessionTemplateRecord.get_or_none(SessionTemplateRecord.name == name)
+        if record is None:
+            raise KeyError(f"No session template named {name!r}.")
+        return cls(blocks=[_block_from_dict(bd) for bd in json.loads(record.blocks_json)])
+
+    @classmethod
+    def list_names(cls) -> list[str]:
+        """Every saved template's name, for the Load from Template picker."""
+        from galileo.library.models.session_template import SessionTemplateRecord
+        return [r.name for r in SessionTemplateRecord.select().order_by(SessionTemplateRecord.name)]
 
 
 # ---------------------------------------------------------------------------
@@ -321,16 +346,20 @@ class SessionRegion:
         data = {"name": self.name, "blocks": [_block_to_dict(b) for b in self.blocks]}
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def save_as_template(self, path: Path | str) -> None:
-        """Save this region's blocks as a reusable template (SES-180): its Target
-        block, if it's the first block, is stored as a generic placeholder."""
+    def save_as_template(self, name: str) -> None:
+        """Save this region's blocks as a reusable template (SES-180), under *name*
+        in the shared database (overwriting any existing template of that name):
+        its Target block, if it's the first block, is stored as a generic
+        placeholder."""
+        from galileo.library.models.session_template import SessionTemplateRecord
         blocks_out = []
         for i, block in enumerate(self.blocks):
             if i == 0 and isinstance(block, TargetBlock):
                 block = replace(block, is_placeholder_target=True)
             blocks_out.append(_block_to_dict(block))
-        data = {"name": self.name, "blocks": blocks_out}
-        Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+        blocks_json = json.dumps(blocks_out)
+        SessionTemplateRecord.delete().where(SessionTemplateRecord.name == name).execute()
+        SessionTemplateRecord.create(name=name, blocks_json=blocks_json)
 
     def can_load_from_template(self) -> bool:
         """Load from Template needs an existing concrete Target block to substitute
@@ -341,10 +370,10 @@ class SessionRegion:
             and not self.blocks[0].is_placeholder_target
         )
 
-    def load_from_template(self, path: Path | str) -> None:
+    def load_from_template(self, name: str) -> None:
         if not self.can_load_from_template():
             raise BlockOrderError("Load from Template requires an existing concrete Target block.")
-        template = SessionTemplate.load(path)
+        template = SessionTemplate.load(name)
         remaining = (
             template.blocks[1:]
             if template.blocks and isinstance(template.blocks[0], TargetBlock)
@@ -450,6 +479,36 @@ _PALETTE_BLOCK_TYPES: tuple[type[SessionBlock], ...] = (
 _BLOCK_ROLE = Qt.UserRole
 
 
+def _block_color(kind_name: str) -> QColor:
+    """A stable, visually distinct colour per block *type* (hashed from its class
+    name), so every kind of block reads at a glance and new — including
+    plugin-registered (SES-340) — block types get one for free without a
+    hand-maintained colour table."""
+    digest = hashlib.md5(kind_name.encode("utf-8")).hexdigest()
+    hue = int(digest[:8], 16) % 360
+    return QColor.fromHsv(hue, 150, 210)
+
+
+def _block_item_widget(label_text: str, kind_name: str) -> QLabel:
+    """A colour-coded, white-bordered, padded tile for one block — used as the
+    item widget for both the palette and a region's block list so a block's
+    colour is consistent wherever it appears."""
+    color = _block_color(kind_name)
+    luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+    text_color = "#000000" if luminance > 140 else "#ffffff"
+    widget = QLabel(label_text)
+    widget.setStyleSheet(
+        f"QLabel {{"
+        f" background-color: {color.name()};"
+        f" color: {text_color};"
+        f" border: 2px solid white;"
+        f" border-radius: 4px;"
+        f" padding: 6px 10px;"
+        f" }}"
+    )
+    return widget
+
+
 def _build_palette(parent=None) -> QListWidget:
     palette = QListWidget(parent)
     palette.setObjectName("SessionPalette")
@@ -462,13 +521,23 @@ def _build_palette(parent=None) -> QListWidget:
         item = QListWidgetItem(cls.label)
         item.setData(_BLOCK_ROLE, cls)
         palette.addItem(item)
+        widget = _block_item_widget(cls.label, cls.__name__)
+        item.setSizeHint(widget.sizeHint())
+        palette.setItemWidget(item, widget)
     return palette
 
 
 class BlockListWidget(QListWidget):
     """One session region's ordered block list: accepts a drop from the palette
     (inserts a new block) or from itself (reorders), calling back into the
-    region model — this widget never mutates ``region.blocks`` directly."""
+    region model — this widget never mutates ``region.blocks`` directly.
+
+    Sized to fit every block with no scrollbar of its own — a ``QListWidget``'s
+    default ``sizeHint`` is a fixed constant regardless of content, which would
+    otherwise clip a region to a few visible rows and force scrolling *inside*
+    each session box. Instead this box grows to hold all its blocks, and the
+    page-level ``QScrollArea`` (``SessionsPageWidget._regions_area``) is what
+    scrolls once several session boxes together no longer fit on screen."""
 
     def __init__(self, region: SessionRegion, palette: QListWidget, on_changed, parent=None) -> None:
         super().__init__(parent)
@@ -479,14 +548,29 @@ class BlockListWidget(QListWidget):
         self.setDefaultDropAction(Qt.MoveAction)
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.refresh()
 
     def refresh(self) -> None:
         self.clear()
         for block in self._region.blocks:
-            item = QListWidgetItem(block.label)
+            item = QListWidgetItem(block.display_text)
             item.setData(_BLOCK_ROLE, block)
             self.addItem(item)
+            widget = _block_item_widget(block.display_text, type(block).__name__)
+            item.setSizeHint(widget.sizeHint())
+            self.setItemWidget(item, widget)
+        self._fit_height_to_contents()
+
+    def _fit_height_to_contents(self) -> None:
+        height = 2 * self.frameWidth()
+        for row in range(self.count()):
+            height += self.sizeHintForRow(row)
+        height = max(height, 32)
+        self.setMinimumHeight(height)
+        self.setMaximumHeight(height)
 
     def dropEvent(self, event) -> None:
         source = event.source()
@@ -570,19 +654,24 @@ class _RegionWidget(QFrame):
         self._region.save()
 
     def _save_as_template(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save as Template", f"{self._region.name}{_TEMPLATE_SUFFIX}",
-            f"Session templates (*{_TEMPLATE_SUFFIX})")
-        if path:
-            self._region.save_as_template(path)
+        name, ok = QInputDialog.getText(
+            self, "Save as Template", "Template name:",
+            QLineEdit.Normal, self._region.name)
+        name = name.strip()
+        if ok and name:
+            self._region.save_as_template(name)
 
     def _load_from_template(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Load from Template", "", f"Session templates (*{_TEMPLATE_SUFFIX})")
-        if not path:
+        names = SessionTemplate.list_names()
+        if not names:
+            QMessageBox.information(self, "Load from Template", "No saved templates yet.")
+            return
+        name, ok = QInputDialog.getItem(
+            self, "Load from Template", "Template:", names, editable=False)
+        if not ok:
             return
         try:
-            self._region.load_from_template(path)
+            self._region.load_from_template(name)
         except BlockOrderError as exc:
             QMessageBox.warning(self, "Load from Template", str(exc))
             return

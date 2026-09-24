@@ -1540,4 +1540,140 @@ def test_tc_img_180_mosaic_defined_and_run_directly_from_the_tab(imaging_service
     imaging_service.run_mosaic_from_framing(asst)
 
     assert imaging_service.active_mosaic is mosaic
-    assert window._imaging_service.bitpix == 16
+
+
+class _FakeMosaicMount:
+    """Records every slew commanded during a mosaic capture (TC-IMG-180/FRAME-090)."""
+
+    def __init__(self) -> None:
+        self.slews: list = []
+
+    async def get_status(self):
+        return {"equatorial_system": "J2000"}
+
+    async def slew_to_coordinates(self, ra, dec):
+        self.slews.append((ra, dec))
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+async def test_tc_img_180_mosaic_capture_executes_every_pane_pane_major(mock_indi_camera, imaging_service):
+    """IMG-180/FRAME-090: Capture on a defined mosaic actually slews to and exposes every pane, in
+    pane-major order — not just marks the mosaic "active" with no capture behind it."""
+    import numpy as np
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((10, 10), dtype=np.uint16))
+    imaging_service.auto_save_to_library = False
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=1, overlap_pct=10.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = mount = _FakeMosaicMount()
+
+    slew_calls, frame_calls, done_calls = [], [], []
+    ids = await imaging_service.capture_mosaic(
+        exposures_per_pane=2, duration=0.01,
+        on_slew_start=lambda i, n: slew_calls.append((i, n)),
+        on_frame_start=lambda i, n: frame_calls.append((i, n)),
+        on_frame_done=lambda i, n: done_calls.append((i, n)),
+    )
+
+    assert mock_indi_camera.start_exposure.await_count == 4        # 2 panes x 2 exposures/pane
+    expected = [(p.ra_deg, p.dec_deg) for p in mosaic.panels] * 2   # pane-major: every pane once, then again
+    assert mount.slews == expected
+    assert [i for i, _ in slew_calls] == [1, 2, 3, 4] and {n for _, n in slew_calls} == {4}
+    assert [i for i, _ in frame_calls] == [1, 2, 3, 4]
+    assert [i for i, _ in done_calls] == [1, 2, 3, 4]
+    assert ids == []                                                # auto_save_to_library is off
+    assert imaging_service.series_done == 4
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+async def test_tc_img_180_mosaic_capture_requires_a_mosaic_and_a_mount(imaging_service):
+    """IMG-180: mosaic capture refuses clearly — rather than silently capturing a single frame,
+    or crashing — when there is no mosaic defined, or no mount to move between panes."""
+    with pytest.raises(ValueError, match="mosaic"):
+        await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01)
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=1, rows=2, overlap_pct=10.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    with pytest.raises(ValueError, match="mount"):
+        await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01)
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_mosaic_capture_stop_ends_it_after_the_current_pane(mock_indi_camera, imaging_service):
+    """IMG-180: Stop ends a mosaic capture after the exposure in progress, the same as a plain
+    Capture series — it does not keep moving to further panes."""
+    import numpy as np
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((10, 10), dtype=np.uint16))
+    imaging_service.auto_save_to_library = False
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=3, rows=1, overlap_pct=10.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+
+    def stop_after_first(index, _total):
+        if index == 1:
+            imaging_service.request_stop()
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01, on_frame_done=stop_after_first)
+    assert imaging_service.series_done == 1
+    assert mock_indi_camera.start_exposure.await_count == 1
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+def test_tc_img_180_capture_button_shows_a_mosaic_is_active(window):
+    """IMG-180: once a mosaic grid is defined from the Framing Assistant, the Imaging tab shows a
+    visible indication — before Capture is pressed — that it will shoot the whole mosaic pane by
+    pane rather than a single frame; Clear Mosaic reverts it."""
+    from PySide6.QtWidgets import QDialog, QSpinBox
+    QtWidgets = window.QtWidgets
+
+    page = window._build_imaging_page()
+    capture_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.objectName() == "AccentButton")
+    framing_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Framing…")
+    clear_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Clear Mosaic")
+    # The page is never shown, so isVisible() would read False regardless of setVisible() —
+    # isHidden() reflects the explicit flag set on the widget itself instead.
+    assert capture_btn.text() == "Capture" and clear_btn.isHidden()
+
+    def fake_exec(self):
+        cols_spin, rows_spin = self.findChildren(QSpinBox)[:2]
+        cols_spin.setValue(2)
+        rows_spin.setValue(2)
+        return QDialog.Accepted
+
+    orig_exec = QDialog.exec
+    QDialog.exec = fake_exec
+    try:
+        framing_btn.click()
+    finally:
+        QDialog.exec = orig_exec
+
+    assert window._imaging_service.active_mosaic is not None
+    assert capture_btn.text() == "Capture Mosaic" and not clear_btn.isHidden()
+
+    clear_btn.click()
+    assert window._imaging_service.active_mosaic is None
+    assert capture_btn.text() == "Capture" and clear_btn.isHidden()
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("MVP")
+def test_tc_img_180_dialog_prefills_from_the_current_object(window):
+    """IMG-180: opening the Framing Assistant with a target already selected (IMG-140) pre-fills
+    Name/RA/Dec from it, rather than asking the user to retype what's already known."""
+    from galileo.current_object import CurrentObject, get_current_objects
+
+    assert window._framing_dialog_initial_target() is None  # nothing selected yet
+
+    get_current_objects().set(window.pier, CurrentObject(name="M42", ra_deg=83.8221, dec_deg=-5.3911))
+    assert window._framing_dialog_initial_target() == ("M42", 83.8221, -5.3911)

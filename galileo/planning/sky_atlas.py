@@ -329,6 +329,48 @@ def _search_simbad_sync(query: str) -> list[DeepSkyObject]:
     return objects
 
 
+class TelescopiusNotConfiguredError(Exception):
+    """A Telescopius operation (SKY-120) was requested with no user-supplied
+    API key configured (:meth:`SkyAtlas.set_telescopius_api_key`) — Telescopius
+    access is Patron/Sponsor-gated with no bundled/shared credential (Project
+    Scope Document §6.9), so there's nothing to authenticate the request with."""
+
+
+def _search_telescopius_sync(query: str, api_key: str) -> list[DeepSkyObject]:
+    """Blocking Telescopius object-search/target-suggestion query (SKY-110,
+    EXT-150), run off the UI thread via ``asyncio.to_thread`` by
+    :meth:`SkyAtlas.search_online`.
+
+    Not yet implemented against a real endpoint: per Project Scope Document
+    §6.9, Telescopius's public API launched in 2023 with only a "quote of the
+    day" endpoint, and its own staff describe target-search/suggestion
+    endpoints as roadmap items rather than a documented, stable surface —
+    committing to a specific endpoint path/params here would be a guess, not
+    an integration (re-review when the API matures, per that section's own
+    note). Raising here is deliberate, not an oversight: it lets the caller's
+    existing broad-exception handling (the same "advisory-only, degrade
+    silently" pattern `SAFE-050`'s weather lookup already uses) treat
+    "not yet available" exactly like "unreachable" — augmentation is skipped,
+    never blocking the offline-first/Simbad-fallback path (`SKY-010`/`SKY-100`)
+    this layers on top of."""
+    raise NotImplementedError(
+        "Telescopius's target-search/suggestion endpoint isn't documented/stable yet "
+        "— see docs/PSD.md §6.9"
+    )
+
+
+def _fetch_telescopius_observing_list_sync(list_name: str, api_key: str) -> list[dict]:
+    """Blocking Telescopius observing-list fetch (SKY-120, EXT-150) — same
+    not-yet-documented-endpoint caveat as :func:`_search_telescopius_sync`;
+    raises so :meth:`SkyAtlas.import_telescopius_observing_list` surfaces a
+    clear failure rather than silently returning nothing for what the user
+    asked to be an explicit import action."""
+    raise NotImplementedError(
+        "Telescopius's observing-list endpoint isn't documented/stable yet "
+        "— see docs/PSD.md §6.9"
+    )
+
+
 def constellation_for(ra_deg: float, dec_deg: float) -> str:
     """Return the IAU constellation name containing (*ra_deg*, *dec_deg*)
     (ported from Obsy's ``get_constellation`` usage in ``target_query``,
@@ -341,51 +383,127 @@ def constellation_for(ra_deg: float, dec_deg: float) -> str:
     return get_constellation(coord)
 
 
-_DSS_CUTOUT_URL = "https://archive.stsci.edu/cgi-bin/dss_search"
+_HIPS2FITS_URL = "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
+
+# DSS2's color composite (its red and blue plates combined), preferred over a
+# single-band plate wherever it's available.
+_DSS_HIPS_SURVEY = "CDS/P/DSS2/color"
+
+# Size-aware thumbnail field of view (SKY-080): padded around the object's own
+# angular size rather than a fixed window, so a point-source star and a
+# multi-degree nebula both crop sensibly — clamped so a tiny/unknown size
+# doesn't zoom in past what a 150x150 px thumbnail can usefully show, and a
+# huge one doesn't shrink the object to a speck.
+_THUMBNAIL_MIN_FOV_ARCMIN = 5.0
+_THUMBNAIL_MAX_FOV_ARCMIN = 120.0
+_THUMBNAIL_SIZE_PAD = 2.0
+# Fallback field when the catalog/Simbad result carries no size at all
+# (``size_arcmin`` 0 or unset) — the previous fixed window.
+_THUMBNAIL_DEFAULT_FOV_ARCMIN = 15.0
 
 
-def _fetch_dss_thumbnail_sync(
+def _thumbnail_field_arcmin(size_arcmin: float) -> float:
+    """The thumbnail field of view (arcmin) for an object of *size_arcmin*
+    angular size — padded so the object doesn't fill the frame edge-to-edge,
+    clamped to sane bounds, falling back to a fixed default when the size is
+    unknown (``<= 0``, e.g. a star with no catalog major-axis value)."""
+    if size_arcmin <= 0:
+        return _THUMBNAIL_DEFAULT_FOV_ARCMIN
+    return min(max(size_arcmin * _THUMBNAIL_SIZE_PAD, _THUMBNAIL_MIN_FOV_ARCMIN), _THUMBNAIL_MAX_FOV_ARCMIN)
+
+
+# Disk cache for thumbnails, keyed by field (ra/dec/size) — same technique as
+# galileo.planning.framing's survey-image cache (_survey_cache_path/
+# _cache_survey_image/_cached_survey_image): a repeat fetch for the same
+# object (re-selecting a result, or the same object showing up again in a
+# later search's result cards) is a disk read instead of another hips2fits
+# request. Separate from add_to_target_list's own named
+# "<object name>_thumbnail.jpg" file (SKY-080) — that one is keyed by name
+# for a different purpose (an explicit, permanent per-target-list copy) and
+# is unaffected by this general-purpose cache existing alongside it.
+
+def _thumbnail_cache_path(
+    ra_deg: float, dec_deg: float, width_arcmin: float, height_arcmin: float, size_px: int = 150,
+) -> "Path":
+    from galileo.platform import get_cache_dir
+    # No suffix for the default 150px thumbnail size, so this doesn't change
+    # the filename (and so invalidate) every thumbnail already cached before
+    # size_px existed as a parameter; a non-default size (the Targets page's
+    # click-to-enlarge full view, SKY-080) gets its own distinct cache entry
+    # rather than colliding with — or being satisfied by — the small one.
+    suffix = "" if size_px == 150 else f"_{size_px}px"
+    name = f"skythumb_{ra_deg:.4f}_{dec_deg:.4f}_{width_arcmin:.2f}x{height_arcmin:.2f}{suffix}.jpg"
+    return get_cache_dir() / name
+
+
+def _cache_thumbnail(
+    ra_deg: float, dec_deg: float, width_arcmin: float, height_arcmin: float, data: bytes, size_px: int = 150,
+) -> None:
+    try:
+        _thumbnail_cache_path(ra_deg, dec_deg, width_arcmin, height_arcmin, size_px).write_bytes(data)
+    except Exception:
+        logger.debug("Could not cache sky atlas thumbnail", exc_info=True)
+
+
+def _cached_thumbnail(
+    ra_deg: float, dec_deg: float, width_arcmin: float, height_arcmin: float, size_px: int = 150,
+) -> bytes:
+    path = _thumbnail_cache_path(ra_deg, dec_deg, width_arcmin, height_arcmin, size_px)
+    try:
+        return path.read_bytes() if path.exists() else b""
+    except Exception:
+        return b""
+
+
+def _fetch_hips_thumbnail_sync(
     ra_deg: float,
     dec_deg: float,
     width_arcmin: float = 15.0,
     height_arcmin: float = 15.0,
     size_px: int = 150,
 ) -> bytes:
-    """Blocking DSS cutout fetch + FITS-to-JPEG conversion (ported from
-    Obsy's ``Target.save()``, ``targets/models.py``, ADR-005): request a
-    FITS cutout centered on (*ra_deg*, *dec_deg*) from STScI's DSS search
-    service, min/max-normalize the pixel data to 0..255, and resize to a
-    *size_px* square JPEG. Run off the UI/event-loop thread via
-    ``asyncio.to_thread`` by :meth:`SkyAtlas._fetch_thumbnail`. Returns
-    ``b""`` on any failure rather than raising, since a missing thumbnail
-    is never fatal to the caller."""
+    """Blocking HiPS cutout fetch (ported from Obsy's ``Target.save()``,
+    ``targets/models.py``, ADR-005; migrated from STScI's dss_search CGI,
+    which caps cutout size, to the CDS hips2fits service, which doesn't):
+    request a pre-rendered JPEG cutout centered on (*ra_deg*, *dec_deg*) from
+    the ``CDS/P/DSS2/color`` HiPS survey (no local FITS decoding/normalization
+    needed, since the color survey is already an 8-bit-per-channel rendering),
+    sized to a *size_px* square. Run off the UI/event-loop thread via
+    ``asyncio.to_thread`` by :meth:`SkyAtlas._fetch_thumbnail`. Returns ``b""``
+    on any failure rather than raising, since a missing thumbnail is never
+    fatal to the caller."""
     import io
 
     try:
-        import numpy as np
         import requests
-        from astropy.io import fits
         from PIL import Image
 
-        url = (
-            f"{_DSS_CUTOUT_URL}?r={ra_deg}&d={dec_deg}"
-            f"&w={width_arcmin}&h={height_arcmin}&e=J2000"
+        fov_deg = max(width_arcmin, height_arcmin) / 60.0
+        resp = requests.get(
+            _HIPS2FITS_URL,
+            params={
+                "hips": _DSS_HIPS_SURVEY,
+                "width": size_px,
+                "height": size_px,
+                "fov": fov_deg,
+                "projection": "TAN",
+                "coordsys": "icrs",
+                "ra": ra_deg,
+                "dec": dec_deg,
+                "format": "jpg",
+            },
+            timeout=15,
         )
-        resp = requests.get(url, timeout=15)
         resp.raise_for_status()
-        with fits.open(io.BytesIO(resp.content)) as hdul:
-            image_data = hdul[0].data.astype(np.float64)
-        image_data = image_data - np.min(image_data)
-        max_value = np.max(image_data)
-        if max_value > 0:
-            image_data = image_data / max_value * 255.0
-        image = Image.fromarray(image_data.astype(np.uint8)).resize((size_px, size_px))
+        # Round-trip through PIL to confirm the response is actually a decodable
+        # image (a service error can still come back with a 200 status).
+        image = Image.open(io.BytesIO(resp.content)).convert("RGB")
         buf = io.BytesIO()
         image.save(buf, format="JPEG")
         return buf.getvalue()
     except Exception:
         logger.debug(
-            "Could not fetch DSS thumbnail for RA=%s Dec=%s", ra_deg, dec_deg, exc_info=True
+            "Could not fetch HiPS thumbnail for RA=%s Dec=%s", ra_deg, dec_deg, exc_info=True
         )
         return b""
 
@@ -434,7 +552,7 @@ def _obj_from_dict(d: dict) -> DeepSkyObject:
 # ---------------------------------------------------------------------------
 
 class SkyAtlas:
-    """Searchable, filterable deep-sky object atlas (SKY-010 … SKY-090)."""
+    """Searchable, filterable deep-sky object atlas (SKY-010 … SKY-120)."""
 
     def __init__(self, catalog: list[DeepSkyObject] | None = None) -> None:
         if catalog is not None:
@@ -443,6 +561,7 @@ class SkyAtlas:
             self._catalog = _load_catalog()
         self._cache_dir: Path | None = None
         self._target_list: list[DeepSkyObject] = []
+        self._telescopius_api_key: str | None = None
 
     # --- Catalog access ---------------------------------------------------
 
@@ -458,26 +577,79 @@ class SkyAtlas:
         ]
 
     async def search_online(self, query: str) -> list[DeepSkyObject]:
-        """Search for *query* via Simbad first — a live, comprehensive
-        name/alias resolution beyond what the bundled/cached catalog holds,
-        ported from Obsy's ``target_query`` (ADR-005) — falling back to the
-        offline catalog (:meth:`search`) when Simbad is unreachable, times
-        out, or finds nothing for *query*. This is the entry point the Sky
-        Atlas page's search box calls; :meth:`search` itself stays local-only
-        so core search still works with no internet (SKY-070/NFR-OFFLINE-010)."""
+        """Search for *query* primarily via the offline catalog (:meth:`search`,
+        SKY-010), falling back to a live Simbad lookup (ported from Obsy's
+        ``target_query``, ADR-005) only when the catalog has no match — SKY-100:
+        catalog-first, Simbad-fallback, so ordinary object-name search satisfies
+        NFR-OFFLINE-010's no-internet guarantee the same way catalog browse/
+        filter/chart already did, not just as a side effect of Simbad happening
+        to be unreachable. This is the entry point the Sky Atlas page's search
+        box calls; :meth:`search` itself stays local-only so core search still
+        works with no internet (SKY-070/NFR-OFFLINE-010).
+
+        When a Telescopius API key is configured (:meth:`set_telescopius_api_key`,
+        SKY-110), Telescopius's own target-search/suggestion data is layered on
+        top of whatever the offline-first/Simbad-fallback path above already
+        found — additive, never a substitute for it, and unavailable/failed
+        Telescopius augmentation never affects that path's own result."""
         q = query.strip()
         if not q:
             return list(self._catalog)
-        try:
-            online_results = await asyncio.to_thread(_search_simbad_sync, q)
-        except Exception:
-            logger.info("Simbad search for %r failed; falling back to local catalog", q, exc_info=True)
-            online_results = []
-        if online_results:
-            logger.info("Simbad search for %r found %d object(s)", q, len(online_results))
-            return online_results
-        logger.info("Simbad search for %r found no results; falling back to local catalog", q)
-        return self.search(q)
+        offline_results = self.search(q)
+        if offline_results:
+            results = list(offline_results)
+        else:
+            logger.info("No offline catalog match for %r; falling back to Simbad", q)
+            try:
+                results = await asyncio.to_thread(_search_simbad_sync, q)
+            except Exception:
+                logger.info("Simbad search for %r failed; no results", q, exc_info=True)
+                results = []
+            if results:
+                logger.info("Simbad search for %r found %d object(s)", q, len(results))
+            else:
+                logger.info("Simbad search for %r found no results", q)
+
+        if self._telescopius_api_key:
+            try:
+                telescopius_results = await asyncio.to_thread(
+                    _search_telescopius_sync, q, self._telescopius_api_key,
+                )
+            except Exception:
+                logger.info("Telescopius search for %r unavailable; continuing without it", q, exc_info=True)
+                telescopius_results = []
+            for obj in telescopius_results:
+                if obj not in results:
+                    results.append(obj)
+
+        return results
+
+    def set_telescopius_api_key(self, api_key: str | None) -> None:
+        """Configure (or clear, with ``None``) the user-supplied Telescopius API
+        key (SKY-110/SKY-120, EXT-150) — bring-your-own-key only, entered in
+        Options; Galileo neither bundles nor proxies a shared credential
+        (Project Scope Document §6.9)."""
+        self._telescopius_api_key = api_key or None
+
+    @property
+    def telescopius_api_key(self) -> str | None:
+        return self._telescopius_api_key
+
+    async def import_telescopius_observing_list(self, list_name: str) -> list[dict]:
+        """Import the named observing list from the user's own Telescopius
+        account (SKY-120, EXT-150) as target dicts (``name``/``ra_deg``/
+        ``dec_deg``) ready to feed into a session/target list. Raises
+        :class:`TelescopiusNotConfiguredError` with no API key configured —
+        unlike search augmentation (SKY-110), this is an explicit user-triggered
+        action with no offline fallback to degrade to, so a clear failure is
+        more useful than silently importing nothing."""
+        if not self._telescopius_api_key:
+            raise TelescopiusNotConfiguredError(
+                "No Telescopius API key configured — set one in Options to import an observing list."
+            )
+        return await asyncio.to_thread(
+            _fetch_telescopius_observing_list_sync, list_name, self._telescopius_api_key,
+        )
 
     def get_by_designation(self, designation: str) -> DeepSkyObject:
         """Return the object matching *designation* exactly, or raise KeyError."""
@@ -491,12 +663,40 @@ class SkyAtlas:
         object_types: list[ObjectType] | None = None,
         max_magnitude: float = 99.0,
         min_size_arcmin: float = 0.0,
+        max_size_arcmin: float = 0.0,
         location: "ObservingLocation | None" = None,
         visible_tonight: bool = False,
+        min_altitude_deg: float = 20.0,
+        min_duration_hours: float = 0.0,
+        min_moon_separation_deg: float = 0.0,
+        catalogs: "set[str] | None" = None,
         date_str: str | None = None,
     ) -> list[DeepSkyObject]:
-        """Filter the catalog by type, magnitude, size, and visibility."""
-        from galileo.planning.visibility import is_observable_tonight
+        """Filter the catalog by type, magnitude, size (a min/max range — a
+        catalog object with no recorded size, ``size_arcmin`` 0, always passes
+        *max_size_arcmin*, the same way it already always failed a nonzero
+        *min_size_arcmin*, so an unmeasured size is only ever a filter-out
+        via the min bound, never the max one), visibility (SKY-020) — when
+        *visible_tonight* is set with a *location*, reaches at least
+        *min_altitude_deg* (default 20°) for at least *min_duration_hours*
+        (default 0 — any single sample at/above the threshold counts, matching
+        the original SKY-020 check) tonight, matching the reference
+        Telescopius layout's "reach an altitude of X for at least Y hours"
+        filter (`assets/samples/target.png`) — Moon distance: with a
+        *location* and *min_moon_separation_deg* > 0, excludes anything closer
+        to the Moon (at local midnight, a single reference time, not tracked
+        across the night) than that, matching that same layout's "Distance
+        from the Moon" filter. The Moon's own position is computed once for
+        the whole call, not per object, so this stays cheap even against the
+        full catalog — and *catalogs*: a subset of :data:`DSO_CATALOGS`
+        (Messier/Caldwell/NGC) an object must belong to at least one of
+        (:func:`catalogs_of`), matching that same layout's "Catalog" filter —
+        the same catalog-membership logic the Star Atlas/skymap's own overlay
+        toggles already use (`galileo.ui.star_atlas`), reused here rather than
+        duplicated for a second purpose."""
+        from galileo.planning.visibility import is_observable_tonight, moon_position_deg, moon_separation_deg
+
+        moon_pos = moon_position_deg(location, date_str) if min_moon_separation_deg > 0 and location else None
 
         results = []
         for o in self._catalog:
@@ -506,8 +706,17 @@ class SkyAtlas:
                 continue
             if o.size_arcmin < min_size_arcmin:
                 continue
+            if max_size_arcmin > 0 and o.size_arcmin > max_size_arcmin:
+                continue
+            if catalogs and not (catalogs_of(o) & catalogs):
+                continue
             if visible_tonight and location:
-                if not is_observable_tonight(o.ra_deg, o.dec_deg, location, date_str):
+                if not is_observable_tonight(
+                    o.ra_deg, o.dec_deg, location, date_str, min_altitude_deg, min_duration_hours,
+                ):
+                    continue
+            if moon_pos is not None:
+                if moon_separation_deg(o.ra_deg, o.dec_deg, *moon_pos) < min_moon_separation_deg:
                     continue
             results.append(o)
         return results
@@ -523,6 +732,33 @@ class SkyAtlas:
         horizon = getattr(location, "_horizon", None)
         return altitude_chart(obj.ra_deg, obj.dec_deg, location, date, horizon)
 
+    def altitude_charts_batch(
+        self,
+        objs: list[DeepSkyObject],
+        location: "ObservingLocation",
+        date: str | None = None,
+    ) -> list[dict]:
+        """:meth:`altitude_chart` for many *objs* at once, ~16x faster than
+        calling it per object (one vectorized astropy transform instead of
+        many) — see :func:`galileo.planning.visibility.altitude_charts_batch`.
+        No horizon-obstruction support, unlike :meth:`altitude_chart` itself."""
+        from galileo.planning.visibility import altitude_charts_batch
+        return altitude_charts_batch([(o.ra_deg, o.dec_deg) for o in objs], location, date)
+
+    def rise_transit_set(
+        self,
+        obj: DeepSkyObject,
+        location: "ObservingLocation",
+        date: str | None = None,
+        chart: "dict | None" = None,
+    ) -> dict:
+        """Return *obj*'s rise/transit/set times from *location* tonight
+        (SKY-030). Pass an already-computed *chart* (:meth:`altitude_chart`/
+        one element of :meth:`altitude_charts_batch`) to skip recomputing it."""
+        from galileo.planning.visibility import rise_transit_set
+        horizon = getattr(location, "_horizon", None)
+        return rise_transit_set(obj.ra_deg, obj.dec_deg, location, date, horizon, chart=chart)
+
     # --- Target list (for sky-survey thumbnail caching, SKY-080) ----------
 
     async def add_to_target_list(self, obj: DeepSkyObject) -> None:
@@ -536,14 +772,33 @@ class SkyAtlas:
             safe_name = obj.primary_name.replace(" ", "_")
             (cache_dir / f"{safe_name}_thumbnail.jpg").write_bytes(data)
 
-    async def _fetch_thumbnail(self, obj: DeepSkyObject) -> bytes:
-        """Fetch a DSS sky-survey cutout thumbnail for *obj* from STScI
-        (SKY-080), ported from Obsy's ``Target.save()`` (``targets/models.py``,
-        ADR-005): a 15x15 arcmin FITS cutout, normalized and resized to a
-        150x150 JPEG. Returns ``b""`` on any failure (no internet, malformed
-        FITS, ...) so a missing thumbnail never blocks add-to-target-list or
-        the Sky Atlas page's result-detail display."""
-        return await asyncio.to_thread(_fetch_dss_thumbnail_sync, obj.ra_deg, obj.dec_deg)
+    async def _fetch_thumbnail(self, obj: DeepSkyObject, size_px: int = 150) -> bytes:
+        """Fetch a DSS2 color sky-survey cutout thumbnail for *obj* via the CDS
+        hips2fits service (SKY-080), ported from Obsy's ``Target.save()``
+        (``targets/models.py``, ADR-005): a field sized around *obj*'s own
+        angular size (:func:`_thumbnail_field_arcmin`) rather than a fixed
+        window, cropped as a *size_px* square JPEG (default 150, the small
+        result-tile thumbnail size; a caller wanting a bigger click-to-enlarge
+        view — the Targets page's full-image overlay — passes a larger
+        *size_px*, over the *same* field of view, just more pixels of it).
+        Checks the on-disk cache (:func:`_cached_thumbnail`, keyed by
+        ra/dec/field/size_px) first and writes a successful fetch back to it
+        (:func:`_cache_thumbnail`), so re-fetching the same object at the same
+        size — a later search's result tile, or reopening the full-image
+        overlay — is a disk read rather than another network request. Returns
+        ``b""`` on any failure (no internet, an unreadable response, ...) so a
+        missing thumbnail never blocks add-to-target-list or the Sky Atlas
+        page's result display."""
+        field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
+        cached = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin, size_px)
+        if cached:
+            return cached
+        data = await asyncio.to_thread(
+            _fetch_hips_thumbnail_sync, obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin, size_px,
+        )
+        if data:
+            _cache_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin, data, size_px)
+        return data
 
     # --- Geocoding (SKY-090) ----------------------------------------------
 

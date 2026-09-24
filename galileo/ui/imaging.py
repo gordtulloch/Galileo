@@ -123,6 +123,24 @@ class ImagingService:
         # changed setting takes effect on the next screen build rather than needing a restart.
         from galileo.imaging_settings import load_imaging_settings
         self.bitpix: "int | str" = load_imaging_settings()["bitpix"]
+        # Framing Assistant (IMG-180): a mosaic defined and run directly from this tab.
+        self.active_mosaic = None
+        self._mount = None      # set by the page (Equipment > Mount's adapter) before a mosaic capture
+
+    # --- Framing Assistant (IMG-180, FRAME-070) ---------------------------
+
+    def open_framing_assistant(self, profile=None):
+        """Open a Framing Assistant against this tab's own optical train
+        (FRAME-070's Imaging-tab entry point) — *profile* is the active Pier's
+        optical-train data, when known, else reference defaults are used."""
+        from galileo.planning.framing import open_from_imaging_tab
+        return open_from_imaging_tab(self, profile=profile)
+
+    def run_mosaic_from_framing(self, assistant) -> None:
+        """Adopt *assistant*'s defined mosaic as this tab's active capture
+        target (IMG-180, traces to FRAME-090) — a mosaic attaches as one unit,
+        per FRAME-050."""
+        self.active_mosaic = assistant.mosaic
 
     # --- Naming (IMG-140) ------------------------------------------------
 
@@ -236,6 +254,73 @@ class ImagingService:
                 self._auto_save_to_library(index)
             if stacking:
                 self._stack_current_frame()
+            if on_frame_done is not None:
+                on_frame_done(index, count)
+        return list(self.library_ids)
+
+    # --- Mosaic capture (IMG-180, FRAME-090) ------------------------------
+
+    async def capture_mosaic(
+        self,
+        exposures_per_pane: int,
+        duration: float,
+        filter_name: str = "",
+        frame_type: str = "Light",
+        on_slew_start=None,
+        on_frame_start=None,
+        on_frame_done=None,
+    ) -> list:
+        """Capture ``active_mosaic`` (set by :meth:`run_mosaic_from_framing`): one exposure per
+        pane per pass, in the pane-major order ``galileo.planning.framing.mosaic_capture_order``
+        returns, re-slewing the mount to each pane's centre before its exposure — the re-slew
+        *is* the dither between passes, so no separate guider-dither command is sent. Needs a
+        mount (set on ``_mount``, mirroring how the page refreshes ``_camera``) and a defined
+        ``active_mosaic``; raises ``ValueError`` without either. *on_slew_start* is called with
+        ``(index, count)`` before each re-slew, mirroring *on_frame_start*/*on_frame_done*
+        around each exposure. Returns the catalog ids of the frames added, across every pane —
+        stopping (``request_stop``) ends the series after the exposure in progress, same as
+        ``capture_series``."""
+        if self.active_mosaic is None:
+            raise ValueError("No mosaic is defined — define one from the Framing Assistant first.")
+        if self._mount is None:
+            raise ValueError("No mount is connected — a mosaic capture needs one to move between panes.")
+
+        from galileo.planning.framing import mosaic_capture_order
+        from galileo.planning.star_atlas import julian_date, precess_from_j2000
+        from galileo.tracking import wait_for_slew
+        import datetime as _dt
+
+        panels = {p.pane_index: p for p in self.active_mosaic.panels}
+        steps = mosaic_capture_order(self.active_mosaic, max(1, int(exposures_per_pane)))
+        count = len(steps)
+        self.stop_requested = False
+        self.series_total, self.series_done = count, 0
+        self.library_ids, self.library_note = [], ""
+
+        for index, step in enumerate(steps, start=1):
+            if self.stop_requested:
+                break
+            if step.requires_reslew:
+                if on_slew_start is not None:
+                    on_slew_start(index, count)
+                pane = panels[step.pane_index]
+                ra_deg, dec_deg = pane.ra_deg, pane.dec_deg
+                if (await self._mount.get_status() or {}).get("equatorial_system") != "J2000":
+                    jd = julian_date(_dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None))
+                    ra_deg, dec_deg = (float(v) for v in precess_from_j2000(ra_deg, dec_deg, jd))
+                await self._mount.slew_to_coordinates(ra_deg, dec_deg)
+                await wait_for_slew(self._mount)
+            if on_frame_start is not None:
+                on_frame_start(index, count)
+            try:
+                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None)
+            except Exception:
+                if self.stop_requested:
+                    break
+                raise
+            self.series_done = index
+            if self.auto_save_to_library:
+                self._auto_save_to_library(index)
             if on_frame_done is not None:
                 on_frame_done(index, count)
         return list(self.library_ids)

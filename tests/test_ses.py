@@ -432,18 +432,21 @@ def test_tc_ses_170_block_ordering_integrity_enforced():
 def test_tc_ses_180_save_as_template_generalizes_target(tmp_path):
     """SES-180: Allow a session's blocks to be saved to a reusable template, storing its Target block as a generic placeholder rather than a specific target."""
     ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "ses180.db")
+    try:
+        region = ui_mod.SessionRegion(name="M42 Session")
+        region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+        region.insert_block(ui_mod.ImageBlock(exposure=300.0, count=10, filter="Ha"))
 
-    region = ui_mod.SessionRegion(name="M42 Session")
-    region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
-    region.insert_block(ui_mod.ImageBlock(exposure=300.0, count=10, filter="Ha"))
+        region.save_as_template("HaSession")
+        assert "HaSession" in ui_mod.SessionTemplate.list_names()
 
-    tpl_file = tmp_path / "HaSession.gstpl"
-    region.save_as_template(tpl_file)
-    assert tpl_file.exists()
-
-    template = ui_mod.SessionTemplate.load(tpl_file)
-    assert template.blocks[0].is_placeholder_target
-    assert len(template.blocks) == 2
+        template = ui_mod.SessionTemplate.load("HaSession")
+        assert template.blocks[0].is_placeholder_target
+        assert len(template.blocks) == 2
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -455,28 +458,31 @@ def test_tc_ses_180_save_as_template_generalizes_target(tmp_path):
 def test_tc_ses_190_load_from_template_substitutes_target(tmp_path):
     """SES-190: When Load from Template is used on a region that already has a concrete Target block, substitute the template's placeholder with that Target block and append the template's remaining blocks. Unavailable with no Target block yet."""
     ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "ses190.db")
+    try:
+        template_region = ui_mod.SessionRegion(name="Template Source")
+        template_region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+        template_region.insert_block(ui_mod.ImageBlock(exposure=300.0, count=10, filter="Ha"))
+        template_region.save_as_template("HaSession")
 
-    template_region = ui_mod.SessionRegion(name="Template Source")
-    template_region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
-    template_region.insert_block(ui_mod.ImageBlock(exposure=300.0, count=10, filter="Ha"))
-    tpl_file = tmp_path / "HaSession.gstpl"
-    template_region.save_as_template(tpl_file)
+        # No Target block yet -> unavailable.
+        empty_region = ui_mod.SessionRegion(name="Empty")
+        assert empty_region.can_load_from_template() is False
+        with pytest.raises(ui_mod.BlockOrderError):
+            empty_region.load_from_template("HaSession")
 
-    # No Target block yet -> unavailable.
-    empty_region = ui_mod.SessionRegion(name="Empty")
-    assert empty_region.can_load_from_template() is False
-    with pytest.raises(ui_mod.BlockOrderError):
-        empty_region.load_from_template(tpl_file)
+        # Concrete Target block present -> substitutes the placeholder, appends the rest.
+        m31_region = ui_mod.SessionRegion(name="M31")
+        m31_region.insert_block(ui_mod.TargetBlock(name="M31", ra_deg=10.68, dec_deg=41.27))
+        assert m31_region.can_load_from_template() is True
+        m31_region.load_from_template("HaSession")
 
-    # Concrete Target block present -> substitutes the placeholder, appends the rest.
-    m31_region = ui_mod.SessionRegion(name="M31")
-    m31_region.insert_block(ui_mod.TargetBlock(name="M31", ra_deg=10.68, dec_deg=41.27))
-    assert m31_region.can_load_from_template() is True
-    m31_region.load_from_template(tpl_file)
-
-    assert len(m31_region.blocks) == 2
-    assert m31_region.blocks[0].name == "M31"  # existing target preserved, not overwritten
-    assert isinstance(m31_region.blocks[1], ui_mod.ImageBlock)
+        assert len(m31_region.blocks) == 2
+        assert m31_region.blocks[0].name == "M31"  # existing target preserved, not overwritten
+        assert isinstance(m31_region.blocks[1], ui_mod.ImageBlock)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

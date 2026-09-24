@@ -207,14 +207,16 @@ def _optics_selector_shown(window):
 
 @pytest.mark.requirement("TC-PROF-110")
 @pytest.mark.priority("MVP")
-def test_tc_prof_110_optics_selector_only_on_framing_and_imaging(window):
-    """PROF-110: the top-bar Optics selector is shown on Framing and Imaging, and nowhere else."""
+def test_tc_prof_110_optics_selector_only_on_imaging_and_solve(window):
+    """PROF-110: the top-bar Optics selector is shown on Imaging and Solve, and nowhere else. Framing
+    is a contextual dialog opened from Imaging (FRAME-070), not a section of its own, so it isn't
+    part of this list."""
     shown = {}
-    for section in ("equipment", "planning", "framing", "imaging", "science"):
+    for section in ("equipment", "planning", "imaging", "solve", "science"):
         _open_section(window, section)
         shown[section] = _optics_selector_shown(window)
     assert shown == {
-        "equipment": False, "planning": False, "framing": True, "imaging": True, "science": False,
+        "equipment": False, "planning": False, "imaging": True, "solve": True, "science": False,
     }
 
 
@@ -235,7 +237,7 @@ def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window
     combo.setCurrentIndex(1)
     combo.activated.emit(1)
     assert window.active_optical_tube().focal_length_mm == 400
-    _open_section(window, "framing")  # the choice survives a tab switch
+    _open_section(window, "solve")  # the choice survives a tab switch
     assert combo.currentIndex() == 1
 
 
@@ -243,7 +245,7 @@ def test_tc_prof_110_selector_lists_the_piers_tubes_and_tracks_the_choice(window
 @pytest.mark.priority("MVP")
 def test_tc_prof_110_selector_is_disabled_when_no_tubes_are_defined(window):
     """PROF-110: with no tubes, the selector stays visible but disabled and there is no active tube."""
-    _open_section(window, "framing")
+    _open_section(window, "imaging")
     assert _optics_selector_shown(window)
     assert not window._optics_combo.isEnabled()
     assert window.active_optical_tube() is None
@@ -315,7 +317,7 @@ def test_imaging_filters_offer_an_unassigned_wheel_and_tolerate_none(window):
     assert _filters_shown(window) == [""]
 
     window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["L", "R"], position=0)
-    _open_section(window, "framing")
+    _open_section(window, "planning")
     _open_section(window, "imaging")
     assert _filters_shown(window) == ["", "L", "R"]
 
@@ -327,7 +329,7 @@ def test_imaging_filter_choice_survives_a_refresh(window):
     window._device_pages["filter_wheel"]["adapter"] = _FakeWheel(["L", "R", "G"], position=0)
     _open_section(window, "imaging")
     window._imaging_filter_combo.setCurrentText("G")
-    _open_section(window, "framing")
+    _open_section(window, "planning")
     _open_section(window, "imaging")
     assert window._imaging_filter_combo.currentText() == "G"
 
@@ -427,10 +429,10 @@ def _cameras_shown(window):
 def test_tc_prof_120_camera_selector_appears_wherever_the_optics_selector_does(window):
     """PROF-120: the Camera selector is shown on exactly the screens that choose the optics — an optical train is the tube and its camera."""
     save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, device_name="ASI2600")
-    for section in ("equipment", "planning", "framing", "imaging", "solve", "science"):
+    for section in ("equipment", "planning", "imaging", "solve", "science"):
         _open_section(window, section)
         assert _camera_selector_shown(window) == _optics_selector_shown(window), section
-    for section in ("framing", "imaging", "solve"):
+    for section in ("imaging", "solve"):
         _open_section(window, section)
         assert _camera_selector_shown(window), f"{section} chooses the optics, so it chooses the camera"
 

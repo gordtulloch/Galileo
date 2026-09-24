@@ -404,7 +404,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     Library holds AstroFiler's screens. None of those is a top-level section any more."""
     from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
-    assert ids == ["equipment", "star_atlas", "planning", "framing", "imaging", "guiding", "focus", "solve", "library", "science"]
+    assert ids == ["equipment", "star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science"]
     assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sessions", "Sessions"), ("scheduler", "Scheduler")]
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
     assert [i[:2] for i in LIBRARY_ITEMS] == [
@@ -654,6 +654,68 @@ def test_star_atlas_goto_and_sync_command_the_connected_mount(window):
     assert window._mount_to_object("goto", vega)
     _, ra, dec = mount.calls[0]
     assert 0.0 < abs(ra - 279.2347) < 1.0 and 0.0 < abs(dec - 38.7837) < 0.5           # precessed to the epoch of date
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_plain_click_selects_but_does_not_create_a_session(window):
+    """SKYMAP-010/SES-160: selecting an object (any click) only sets it as the current object —
+    it must never also create a session, since that made a plain click indistinguishable from
+    deliberately building a session."""
+    from unittest.mock import MagicMock
+    from galileo.observatory import create_observatory, create_pier
+    window._current_pier = create_pier(create_observatory("Obs"), "Pier A")
+    window._device_pages["sessions"] = {"create_session_for_target": MagicMock()}
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    window._set_current_object(vega)
+    window._device_pages["sessions"]["create_session_for_target"].assert_not_called()
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
+    """SKYMAP-020/SES-160: the Star Atlas right-click menu has an explicit "Add to Session" action,
+    separate from Goto/Sync, that creates a session for the clicked object via the shared
+    AppWindow._add_to_session entry point (the same one the Targets tile button uses)."""
+    from unittest.mock import MagicMock
+    from PySide6 import QtCore, QtWidgets
+    from galileo.ui.star_atlas import StarAtlasView
+
+    mock_create = MagicMock()
+    window._device_pages["sessions"] = {"create_session_for_target": mock_create}
+
+    # QMenu.exec() opens a real (blocking) nested event loop that a plain attribute
+    # monkeypatch on the class does not intercept in PySide6 — a subclass override does,
+    # since it's a genuine virtual-method override, not a Python-level attribute lookup.
+    # The page must be (re)built after this patch, since ``show_context_menu`` closes over
+    # whatever ``QMenu`` its own local import resolved to at build time.
+    captured = {}
+
+    class _NoExecMenu(QtWidgets.QMenu):
+        def exec(self, pos=None):
+            captured["menu"] = self
+            return None
+
+    monkeypatch.setattr(QtWidgets, "QMenu", _NoExecMenu)
+    page = window._build_star_atlas_page()
+    view = page.findChildren(StarAtlasView)[0]
+
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    view.contextMenuRequested.emit(vega, QtCore.QPoint(10, 10))
+
+    menu = captured["menu"]
+    actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
+    assert list(actions) == ["Goto", "Sync", "Add to Session"]
+    assert actions["Add to Session"].isEnabled()
+
+    actions["Add to Session"].trigger()
+    mock_create.assert_called_once_with("Vega", 279.2347, 38.7837)
+
+    mock_create.reset_mock()
+    view.contextMenuRequested.emit(None, QtCore.QPoint(10, 10))
+    menu = captured["menu"]
+    add_to_session = next(a for a in menu.actions() if a.text() == "Add to Session")
+    assert not add_to_session.isEnabled()
 
 
 @pytest.mark.requirement("TC-SKYMAP-020")

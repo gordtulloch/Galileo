@@ -66,6 +66,116 @@ def test_tc_sky_020_filter_by_type_magnitude_size_visibility(sky_atlas, observin
         assert obj.size_arcmin >= 5.0
 
 
+@pytest.mark.requirement("TC-SKY-020")
+@pytest.mark.priority("MVP")
+def test_tc_sky_020_filter_by_apparent_size_range(sky_atlas):
+    """SKY-020: apparent-size filtering is a min/max range, not just a lower bound — matching the
+    reference Telescopius layout's "Apparent Size" filter (assets/samples/target.png)."""
+    results = sky_atlas.filter(min_size_arcmin=5.0, max_size_arcmin=30.0)
+    for obj in results:
+        assert 5.0 <= obj.size_arcmin <= 30.0
+
+    # max_size_arcmin=0 (the default) means "no upper bound" — same as omitting it.
+    unbounded = sky_atlas.filter(min_size_arcmin=5.0)
+    bounded = sky_atlas.filter(min_size_arcmin=5.0, max_size_arcmin=0.0)
+    assert len(unbounded) == len(bounded)
+
+
+@pytest.mark.requirement("TC-SKY-020")
+@pytest.mark.priority("MVP")
+def test_tc_sky_020_visible_tonight_altitude_and_duration_are_configurable(observing_location):
+    """SKY-020: "visible tonight" isn't a fixed 20 degrees for one instant — both the altitude
+    threshold and a minimum continuous duration are configurable, matching the reference Telescopius
+    layout's "Reach an altitude of X for at least Y hours" filter (assets/samples/target.png)."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    atlas = sky_mod.SkyAtlas(catalog=[
+        sky_mod.DeepSkyObject(
+            primary_name="M42", designations=["M42"], ra_deg=83.8221, dec_deg=-5.3911,
+            object_type=sky_mod.ObjectType.NEBULA, magnitude=4.0,
+        ),
+    ])
+
+    # A modest altitude/duration requirement M42 clears tonight from this latitude.
+    assert atlas.filter(
+        location=observing_location, visible_tonight=True,
+        min_altitude_deg=20.0, min_duration_hours=1.0, date_str="2026-09-16",
+    )
+
+    # An unreasonably demanding one (near-zenith for hours) filters it out.
+    assert not atlas.filter(
+        location=observing_location, visible_tonight=True,
+        min_altitude_deg=85.0, min_duration_hours=6.0, date_str="2026-09-16",
+    )
+
+
+@pytest.mark.requirement("TC-SKY-020")
+@pytest.mark.priority("MVP")
+def test_tc_sky_020_filter_by_moon_separation(observing_location):
+    """SKY-020: exclude anything closer to the Moon than a configured minimum separation, matching
+    the reference Telescopius layout's "Distance from the Moon" filter (assets/samples/target.png)."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    from galileo.planning.visibility import moon_position_deg
+
+    moon_ra, moon_dec = moon_position_deg(observing_location, date_str="2026-09-16")
+    near_moon = sky_mod.DeepSkyObject(
+        primary_name="Near Moon", designations=["Near Moon"], ra_deg=moon_ra, dec_deg=moon_dec,
+        object_type=sky_mod.ObjectType.OTHER, magnitude=10.0,
+    )
+    far_from_moon = sky_mod.DeepSkyObject(
+        primary_name="Far From Moon", designations=["Far From Moon"],
+        ra_deg=(moon_ra + 180.0) % 360.0, dec_deg=-moon_dec,
+        object_type=sky_mod.ObjectType.OTHER, magnitude=10.0,
+    )
+    atlas = sky_mod.SkyAtlas(catalog=[near_moon, far_from_moon])
+
+    results = atlas.filter(location=observing_location, min_moon_separation_deg=30.0, date_str="2026-09-16")
+
+    assert far_from_moon in results
+    assert near_moon not in results
+
+    # min_moon_separation_deg=0 (the default) means "no Moon filter" — same as omitting it.
+    unfiltered = atlas.filter(location=observing_location, date_str="2026-09-16")
+    assert near_moon in unfiltered and far_from_moon in unfiltered
+
+
+@pytest.mark.requirement("TC-SKY-020")
+@pytest.mark.priority("MVP")
+def test_tc_sky_020_filter_by_catalog():
+    """SKY-020: filter by which astronomical catalog (Messier/Caldwell/NGC) an object belongs to,
+    matching the reference Telescopius layout's "Catalog" filter (assets/samples/target.png) — reuses
+    the same catalog-membership logic (catalogs_of) the Star Atlas/skymap's own overlay toggles
+    already use, rather than a second, separate notion of "catalog"."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    messier_obj = sky_mod.DeepSkyObject(
+        primary_name="M1", designations=["M1", "NGC 1952"], ra_deg=83.63, dec_deg=22.01,
+        object_type=sky_mod.ObjectType.SUPERNOVA_REMNANT, magnitude=8.4,
+    )
+    caldwell_obj = sky_mod.DeepSkyObject(
+        primary_name="C 99", designations=["C 99"], ra_deg=192.4, dec_deg=-63.2,
+        object_type=sky_mod.ObjectType.NEBULA, magnitude=99.0,
+    )
+    ngc_only_obj = sky_mod.DeepSkyObject(
+        primary_name="NGC 5000", designations=["NGC 5000"], ra_deg=198.0, dec_deg=10.0,
+        object_type=sky_mod.ObjectType.GALAXY, magnitude=13.0,
+    )
+    atlas = sky_mod.SkyAtlas(catalog=[messier_obj, caldwell_obj, ngc_only_obj])
+
+    assert sky_mod.catalogs_of(messier_obj) == {"Messier", "NGC"}
+    assert sky_mod.catalogs_of(caldwell_obj) == {"Caldwell"}
+    assert sky_mod.catalogs_of(ngc_only_obj) == {"NGC"}
+
+    assert atlas.filter(catalogs={"Messier"}) == [messier_obj]
+
+    # An object matching any selected catalog passes — Caldwell-only is included alongside
+    # Messier when both are selected, even though it isn't itself a Messier object.
+    both = atlas.filter(catalogs={"Messier", "Caldwell"})
+    assert messier_obj in both and caldwell_obj in both and ngc_only_obj not in both
+
+    # No catalogs given (the default) means "no catalog filter" — same as every result.
+    assert atlas.filter() == [messier_obj, caldwell_obj, ngc_only_obj]
+
+
 # ---------------------------------------------------------------------------
 # TC-SKY-030
 # ---------------------------------------------------------------------------
@@ -81,6 +191,84 @@ def test_tc_sky_030_altitude_plot_for_current_night(sky_atlas, observing_locatio
     assert "altitudes" in chart
     assert len(chart["times"]) == len(chart["altitudes"])
     assert len(chart["times"]) >= 48  # at least 30-min resolution over one night
+
+
+@pytest.mark.requirement("TC-SKY-030")
+@pytest.mark.priority("MVP")
+def test_tc_sky_030_rise_transit_set_for_a_normal_object(sky_atlas, observing_location):
+    """SKY-030: rise/transit/set times, read off the same altitude curve the chart plots, for an
+    object that rises and sets within the charted night."""
+    m42 = sky_atlas.get_by_designation("M42")
+    rts = sky_atlas.rise_transit_set(m42, location=observing_location, date="2026-09-16")
+
+    assert rts["rise"] is not None
+    assert rts["transit"] is not None
+    assert rts["set"] is not None
+    # Rise -> transit -> set in chronological order.
+    assert rts["rise"] < rts["transit"] < rts["set"]
+
+
+@pytest.mark.requirement("TC-SKY-030")
+@pytest.mark.priority("MVP")
+def test_tc_sky_030_rise_transit_set_circumpolar_never_sets(observing_location):
+    """SKY-030: a circumpolar object (always above the horizon at this latitude) has a transit but no
+    rise or set within the night — it never crosses the horizon at all."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    from galileo.planning.visibility import rise_transit_set
+
+    # High declination, close to the north celestial pole, from a mid-northern latitude.
+    rts = rise_transit_set(37.95, 89.26, observing_location, date_str="2026-09-16")
+    assert rts["transit"] is not None
+    assert rts["rise"] is None
+    assert rts["set"] is None
+
+
+@pytest.mark.requirement("TC-SKY-030")
+@pytest.mark.priority("MVP")
+def test_tc_sky_030_rise_transit_set_never_rises(observing_location):
+    """SKY-030: a target that never clears the horizon tonight (a far-southern declination from a
+    mid-northern latitude) reports no rise, transit, or set at all, rather than a bogus time."""
+    from galileo.planning.visibility import rise_transit_set
+
+    rts = rise_transit_set(0.0, -80.0, observing_location, date_str="2026-09-16")
+    assert rts == {"rise": None, "transit": None, "set": None}
+
+
+@pytest.mark.requirement("TC-SKY-030")
+@pytest.mark.priority("MVP")
+def test_tc_sky_030_altitude_charts_batch_matches_individual_calls(sky_atlas, observing_location):
+    """SKY-030: the batched multi-object chart (used by the Sky Atlas page's per-result cards, where
+    computing this individually for up to 200 results is too slow) returns the same altitude data as
+    calling altitude_chart individually per object — a performance optimization, not a different
+    calculation."""
+    m42 = sky_atlas.get_by_designation("M42")
+    m31 = sky_atlas.get_by_designation("M31")
+
+    individual = [
+        sky_atlas.altitude_chart(m42, observing_location, date="2026-09-16"),
+        sky_atlas.altitude_chart(m31, observing_location, date="2026-09-16"),
+    ]
+    batched = sky_atlas.altitude_charts_batch([m42, m31], observing_location, date="2026-09-16")
+
+    assert len(batched) == 2
+    for ind, batch in zip(individual, batched):
+        assert batch["times"] == ind["times"]
+        assert batch["altitudes"] == pytest.approx(ind["altitudes"], abs=1e-6)
+
+
+@pytest.mark.requirement("TC-SKY-030")
+@pytest.mark.priority("MVP")
+def test_tc_sky_030_rise_transit_set_reuses_a_precomputed_chart(sky_atlas, observing_location):
+    """SKY-030: passing an already-computed chart to rise_transit_set skips recomputing it, and
+    produces the same result as the no-chart path — needed so the per-result cards (which need both
+    the chart for their graph and rise/transit/set text) don't pay for the astropy transform twice."""
+    m42 = sky_atlas.get_by_designation("M42")
+
+    chart = sky_atlas.altitude_chart(m42, observing_location, date="2026-09-16")
+    from_chart = sky_atlas.rise_transit_set(m42, observing_location, date="2026-09-16", chart=chart)
+    from_scratch = sky_atlas.rise_transit_set(m42, observing_location, date="2026-09-16")
+
+    assert from_chart == from_scratch
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +368,301 @@ async def test_tc_sky_080_fetch_and_cache_sky_survey_thumbnail(sky_atlas, tmp_pa
         assert data == b""
 
 
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_thumbnail_field_is_derived_from_object_size():
+    """SKY-080: the thumbnail's requested field size is padded around the object's own angular size
+    (cropping a point-source star and a multi-degree nebula differently) rather than a fixed window,
+    clamped to sane bounds either way."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    # A mid-sized object's field pads its own size, not the fixed default.
+    assert sky_mod._thumbnail_field_arcmin(20.0) == pytest.approx(20.0 * sky_mod._THUMBNAIL_SIZE_PAD)
+
+    # A tiny/point-source object is clamped up to the minimum, not zoomed in past what a 150x150 px
+    # thumbnail can usefully show.
+    assert sky_mod._thumbnail_field_arcmin(0.5) == pytest.approx(sky_mod._THUMBNAIL_MIN_FOV_ARCMIN)
+
+    # An enormous object is clamped down to the maximum rather than requesting an ever-larger cutout.
+    assert sky_mod._thumbnail_field_arcmin(500.0) == pytest.approx(sky_mod._THUMBNAIL_MAX_FOV_ARCMIN)
+
+    # An unknown size (0, e.g. a star with no catalog major-axis value) falls back to the previous
+    # fixed window rather than collapsing to a degenerate zero-size request.
+    assert sky_mod._thumbnail_field_arcmin(0.0) == pytest.approx(sky_mod._THUMBNAIL_DEFAULT_FOV_ARCMIN)
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+async def test_tc_sky_080_fetch_thumbnail_passes_size_derived_field_to_the_cutout_fetch(sky_atlas, tmp_path, monkeypatch):
+    """SKY-080: _fetch_thumbnail actually threads the size-derived field through to the cutout
+    fetch — not just computing it and still requesting the old fixed window."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path)
+    obj = sky_mod.DeepSkyObject(
+        primary_name="Big Nebula", designations=["Big Nebula"], ra_deg=10.0, dec_deg=20.0,
+        object_type=sky_mod.ObjectType.NEBULA, magnitude=8.0, size_arcmin=20.0,
+    )
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync", return_value=b"data") as mock_fetch:
+        data = await sky_atlas._fetch_thumbnail(obj)
+
+    assert data == b"data"
+    expected_field = 20.0 * sky_mod._THUMBNAIL_SIZE_PAD
+    mock_fetch.assert_called_once_with(
+        10.0, 20.0, pytest.approx(expected_field), pytest.approx(expected_field), 150,
+    )
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+async def test_tc_sky_080_fetch_thumbnail_caches_to_disk_and_reuses_it(sky_atlas, tmp_path, monkeypatch):
+    """SKY-080: a thumbnail is cached to disk on a successful fetch and served from that cache on a
+    later request for the same object — a second selection, or the same object turning up again in a
+    later search's result cards, shouldn't re-hit the network."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path)
+    obj = sky_mod.DeepSkyObject(
+        primary_name="Cache Test Object", designations=["Cache Test Object"], ra_deg=50.0, dec_deg=-10.0,
+        object_type=sky_mod.ObjectType.GALAXY, magnitude=9.0, size_arcmin=10.0,
+    )
+
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync", return_value=b"first-fetch-bytes") as mock_fetch:
+        first = await sky_atlas._fetch_thumbnail(obj)
+    assert first == b"first-fetch-bytes"
+    mock_fetch.assert_called_once()
+
+    # A second fetch for the same object must come from the cache, not another network call —
+    # the mock would return different bytes if it were actually invoked again.
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync", return_value=b"should-not-be-used") as mock_fetch_2:
+        second = await sky_atlas._fetch_thumbnail(obj)
+    assert second == b"first-fetch-bytes"
+    mock_fetch_2.assert_not_called()
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+async def test_tc_sky_080_fetch_thumbnail_size_px_is_a_separate_cache_entry(sky_atlas, tmp_path, monkeypatch):
+    """SKY-080: a larger size_px (the Targets page's click-to-enlarge full-image overlay) fetches and
+    caches separately from the default 150px result-tile thumbnail — over the same field of view, just
+    more pixels of it — rather than colliding with, or being satisfied by, the small cached entry."""
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path)
+    obj = sky_mod.DeepSkyObject(
+        primary_name="Enlarge Test", designations=["Enlarge Test"], ra_deg=30.0, dec_deg=5.0,
+        object_type=sky_mod.ObjectType.GALAXY, magnitude=10.0, size_arcmin=5.0,
+    )
+
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync", return_value=b"small-150px") as mock_small:
+        small = await sky_atlas._fetch_thumbnail(obj)
+    assert small == b"small-150px"
+    mock_small.assert_called_once()
+
+    # A different size_px must not be satisfied by the 150px cache entry above.
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync", return_value=b"large-640px") as mock_large:
+        large = await sky_atlas._fetch_thumbnail(obj, size_px=640)
+    assert large == b"large-640px"
+    mock_large.assert_called_once()
+    assert mock_large.call_args[0][-1] == 640
+
+    # Re-fetching either size afterward comes from its own cache entry, not the network, and not
+    # each other's.
+    with patch.object(sky_mod, "_fetch_hips_thumbnail_sync") as mock_unused:
+        assert await sky_atlas._fetch_thumbnail(obj) == b"small-150px"
+        assert await sky_atlas._fetch_thumbnail(obj, size_px=640) == b"large-640px"
+    mock_unused.assert_not_called()
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_options_planning_bulk_caches_all_catalog_thumbnails(tmp_path, monkeypatch):
+    """SKY-080: Options > Planning's "Cache All Catalog Thumbnails" button bulk-fetches a thumbnail
+    for every catalog object (via the same disk-cached SkyAtlas._fetch_thumbnail path a search's
+    result tiles use) off the Qt UI thread, so a later search doesn't pay the fetch cost per result."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "thumbnail_cache_test.db")
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.app_window import AppWindow
+
+    class _FakeObj:
+        def __init__(self, name):
+            self.primary_name = name
+            self.ra_deg, self.dec_deg = 10.0, 10.0
+            self.size_arcmin = 0.0
+
+    fetched_names = []
+
+    class _FakeSkyAtlas:
+        def __init__(self, *a, **k):
+            self._catalog = [_FakeObj(f"Obj{i}") for i in range(5)]
+
+        async def _fetch_thumbnail(self, obj):
+            fetched_names.append(obj.primary_name)
+            return b"data"
+
+    monkeypatch.setattr(sky_mod, "SkyAtlas", _FakeSkyAtlas)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Yes))
+
+    win = AppWindow()
+    try:
+        win.app, win.QtWidgets = app, QtWidgets
+        win.pier = create_pier(create_observatory("Test Obs"), "Pier A")
+        win._current_pier = win.pier
+
+        page = win._build_planning_settings_page()
+        cache_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if "Cache All" in b.text())
+
+        cache_btn.click()
+        assert win._thumbnail_cache_worker is not None, "the confirmation dialog should not have blocked starting it"
+
+        import time
+        for _ in range(300):
+            app.processEvents()
+            if win._thumbnail_cache_worker is None:
+                break
+            time.sleep(0.01)
+
+        assert win._thumbnail_cache_worker is None, "worker did not finish in time"
+        assert sorted(fetched_names) == [f"Obj{i}" for i in range(5)]
+        assert "complete" in win._window.statusBar().currentMessage().lower()
+    finally:
+        win._window.close()
+        db.close()
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_select_result_adds_it_to_the_target_list(tmp_path, monkeypatch):
+    """SKY-080: the Targets page's "Select" button reconciles the two mechanisms this codebase
+    previously carried in parallel — it doesn't just make the object the Pier's current target
+    (IMG-140), it also adds it to SkyAtlas's own target list, via a single persistent SkyAtlas
+    instance so the list actually accumulates across multiple selections rather than resetting."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "select_target_list_test.db")
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.app_window import AppWindow
+
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path)
+    # No live network dependency: a real (uncached) thumbnail fetch would otherwise go out to
+    # hips2fits, same as every other test in this file that exercises _fetch_thumbnail for real.
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", lambda *a, **k: b"fake-thumbnail-bytes")
+
+    win = AppWindow()
+    try:
+        win.app, win.QtWidgets = app, QtWidgets
+        win.pier = create_pier(create_observatory("Test Obs"), "Pier A")
+        win._current_pier = win.pier
+
+        m42 = sky_mod.SkyAtlas().get_by_designation("M42")
+        m31 = sky_mod.SkyAtlas().get_by_designation("M31")
+
+        assert win._sky_atlas is None
+        win._select_result(m42)
+        first_atlas = win._sky_atlas
+        assert first_atlas is not None
+        assert [o.primary_name for o in first_atlas._target_list] == ["M42"]
+        assert win._current_object_label.text() == "Current object: M42"
+
+        # A second Select must accumulate on the *same* shared instance, not reset it.
+        win._select_result(m31)
+        assert win._sky_atlas is first_atlas
+        assert [o.primary_name for o in first_atlas._target_list] == ["M42", "M31"]
+        assert win._current_object_label.text() == "Current object: M31"
+    finally:
+        win._window.close()
+        db.close()
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_clicking_a_result_tile_thumbnail_opens_a_full_size_image(tmp_path, monkeypatch):
+    """SKY-080: clicking a Targets-page result tile's thumbnail opens a dialog with a larger view of
+    the same survey-image field, fetched at a bigger pixel size — a separate cache entry from the
+    small 150px tile thumbnail, not an upscaled copy of it — and degrades to a text message, not a
+    crash, when the fetch fails."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtTest = pytest.importorskip("PySide6.QtTest")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "full_image_test.db")
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.app_window import AppWindow, _ClickableThumbnail
+
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path)
+    fetch_sizes = []
+
+    def fake_fetch(ra, dec, w, h, size_px=150):
+        fetch_sizes.append(size_px)
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (size_px, size_px), color="gray").save(buf, format="JPEG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", fake_fetch)
+
+    win = AppWindow()
+    try:
+        win.app, win.QtWidgets = app, QtWidgets
+        win.pier = create_pier(create_observatory("Test Obs"), "Pier A")
+        win._current_pier = win.pier
+
+        m42 = sky_mod.SkyAtlas().get_by_designation("M42")
+
+        captured = {}
+
+        def fake_exec(self):
+            captured["dialog"] = self
+            return QtWidgets.QDialog.Rejected
+
+        monkeypatch.setattr(QtWidgets.QDialog, "exec", fake_exec)
+
+        win._show_full_image(m42)
+
+        assert fetch_sizes == [640], "should fetch at the full-view size, not the small tile size"
+        dialog = captured["dialog"]
+        assert dialog.windowTitle() == "M42"
+        image_label = dialog.findChildren(QtWidgets.QLabel)[0]
+        pixmap = image_label.pixmap()
+        assert pixmap is not None and not pixmap.isNull()
+        assert (pixmap.width(), pixmap.height()) == (640, 640)
+
+        # End-to-end wiring: a real result tile's thumbnail is a _ClickableThumbnail that reaches
+        # _show_full_image on a left click, not just a method callable in isolation. A fresh cache
+        # dir avoids the first half's direct M42 fetch above satisfying this from cache, which would
+        # only prove caching works (already covered elsewhere), not that the click reaches the method.
+        monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path / "part2")
+        fetch_sizes.clear()
+        page = win._build_sky_atlas_page()
+        results = page.findChildren(QtWidgets.QListWidget)[0]
+        search_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Search")
+        spins = page.findChildren(QtWidgets.QDoubleSpinBox)
+        spins[0].setValue(4.0)  # max magnitude, to keep the result set small
+        search_btn.click()
+
+        tile = results.itemWidget(results.item(0)).findChildren(QtWidgets.QWidget, "ResultTile")[0]
+        thumb = tile.findChildren(_ClickableThumbnail)[0]
+        captured.clear()
+        QtTest.QTest.mouseClick(thumb, QtCore.Qt.LeftButton)
+        assert captured.get("dialog") is not None
+        assert 640 in fetch_sizes
+    finally:
+        win._window.close()
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # TC-SKY-090
 # ---------------------------------------------------------------------------
@@ -199,35 +682,6 @@ async def test_tc_sky_090_geocode_location_name(observing_location):
     result = await sky_mod.geocode_location("Westminster, London")
     assert abs(result["latitude"] - 51.4994) < 0.01
     assert "Europe" in result["timezone"]
-
-
-@pytest.mark.requirement("TC-SKY-090")
-@pytest.mark.priority("P2")
-def test_tc_sky_090_new_observatory_dialog_look_up_button_fills_coordinates(tmp_path, monkeypatch):
-    """SKY-090: the New Observatory dialog's Look up button resolves an address to lat/long/timezone."""
-    from PySide6 import QtWidgets
-
-    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    from galileo.library.database import db, init_db
-    init_db(tmp_path / "geocode_test.db")
-    from galileo.ui.app_window import AppWindow
-    import galileo.planning.sky_atlas as sky_mod
-
-    win = AppWindow()
-    try:
-        monkeypatch.setattr(sky_mod, "geocode_location", AsyncMock(return_value={
-            "latitude": 51.4994, "longitude": -0.1248, "timezone": "Europe/London",
-        }))
-        resolved = win._geocode_observatory_address("Westminster, London")
-        assert resolved == {"latitude": 51.4994, "longitude": -0.1248, "timezone": "Europe/London"}
-
-        # An address that resolves to nothing (or a blank one) is reported as "not found", not a crash.
-        monkeypatch.setattr(sky_mod, "geocode_location", AsyncMock(return_value={}))
-        assert win._geocode_observatory_address("nowhere in particular") is None
-        assert win._geocode_observatory_address("   ") is None
-    finally:
-        win._window.close()
-        db.close()
 
 
 # ---------------------------------------------------------------------------

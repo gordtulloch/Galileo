@@ -871,3 +871,87 @@ def test_tc_eqp_mnt_050_a_sync_does_not_start_tracking(window):
 
 async def _async_noop(*args, **kwargs):
     return None
+
+
+@pytest.mark.requirement("TC-EQP-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_010_camera_page_has_a_connect_button_per_panel(window):
+    """EQP-010: the Camera equipment panel provides connect, disconnect, and live connection-status —
+    it previously had none of the three at all: every other device category (Mount, Focuser, Rotator,
+    Filter Wheel, the generic scan-only categories) has its own Connect button, but the Camera panel's
+    header only ever had Remove, with no way to connect a device short of a Pier switch or app restart."""
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    page = window._build_camera_page()
+    frames = [f for f in page.findChildren(QtWidgets.QFrame) if f.objectName() == "DeviceSlotPanel"]
+    assert frames, "expected at least the Primary camera panel"
+    panel_buttons = {b.text() for b in frames[0].findChildren(QtWidgets.QPushButton)}
+    assert "Connect" in panel_buttons
+
+
+@pytest.mark.requirement("TC-EQP-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_010_camera_connect_button_connects_the_device(window, monkeypatch):
+    """EQP-010: clicking a camera panel's Connect button — for a device picked but not yet saved, so
+    the page's own build-time/Pier-switch autoconnect (unrelated to this button) has nothing to act on
+    — actually connects it. Isolated from the Save-button flow (a separate test below), which now also
+    auto-connects and would otherwise make this pass even with a broken/missing Connect button."""
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from unittest.mock import AsyncMock
+
+    fake_adapter = AsyncMock()
+    fake_adapter.get_driver_info = AsyncMock(return_value={"name": "CCD Simulator", "version": "1.0"})
+    monkeypatch.setattr(window, "_connect_device_adapter", lambda *a, **k: fake_adapter)
+
+    page = window._build_camera_page()
+    assert window._camera_backends.get("primary camera") is None, "nothing configured/saved yet"
+
+    frames = [f for f in page.findChildren(QtWidgets.QFrame) if f.objectName() == "DeviceSlotPanel"]
+    device_combo = frames[0].findChildren(QtWidgets.QComboBox)[0]
+    device_combo.setEditText("CCD Simulator")
+
+    connect_btn = next(b for b in frames[0].findChildren(QtWidgets.QPushButton) if b.text() == "Connect")
+    connect_btn.click()
+
+    assert window._camera_backends.get("primary camera") is fake_adapter
+
+
+@pytest.mark.requirement("TC-EQP-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_010_saving_camera_config_auto_connects_a_newly_configured_device(window, monkeypatch):
+    """EQP-010/SES: the real-world reported flow — Scan, pick a device, Save, with no manual Connect
+    click at all — now leaves the camera connected. Previously nothing but a page rebuild or Pier
+    switch ever attempted a connection, so a freshly saved camera stayed "not connected" indefinitely."""
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from unittest.mock import AsyncMock
+
+    fake_adapter = AsyncMock()
+    fake_adapter.get_driver_info = AsyncMock(return_value={"name": "CCD Simulator", "version": "1.0"})
+    connect_calls = []
+
+    def fake_connect(*args, **kwargs):
+        connect_calls.append(args)
+        return fake_adapter
+
+    monkeypatch.setattr(window, "_connect_device_adapter", fake_connect)
+
+    page = window._build_camera_page()
+    frames = [f for f in page.findChildren(QtWidgets.QFrame) if f.objectName() == "DeviceSlotPanel"]
+    device_combo = frames[0].findChildren(QtWidgets.QComboBox)[0]
+    device_combo.setEditText("CCD Simulator")
+
+    save_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Save")
+    save_btn.click()
+
+    assert len(connect_calls) == 1, "Save should auto-connect a newly configured device exactly once"
+    assert window._camera_backends.get("primary camera") is fake_adapter
+
+    # The Imaging tab's camera selector must reflect this without a Pier switch or app restart —
+    # the second half of the reported bug ("the camera is set to not connected in the imaging tab").
+    window._build_imaging_page()
+    items = [window._camera_combo.itemText(i) for i in range(window._camera_combo.count())]
+    assert any("not connected" not in item.lower() and "CCD Simulator" in item for item in items)
+
+    # Saving again (nothing changed) must not reconnect an already-connected device.
+    save_btn.click()
+    assert len(connect_calls) == 1

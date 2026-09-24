@@ -301,6 +301,7 @@ def minimal_profile():
                             "sensor_width_px": 4656,
                             "sensor_height_px": 3520,
                         },
+                        "rotator": {"name": "SimRotator", "backend": "indi"},
                     }
                 ],
             }
