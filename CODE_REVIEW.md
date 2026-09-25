@@ -1,0 +1,372 @@
+# Galileo Code Review
+
+**Date:** 2026-09-25
+**Commit reviewed:** `d96ede8` (main)
+**Tools:** ruff 0.16.8, mypy 2.3.1, bandit 1.9.4, pytest 9.1.1 + pytest-cov, pip-audit
+
+This review runs the full lint/type/security/test/dependency toolchain against the repository as
+it stands and reports what each tool actually found. It does not re-derive architecture from
+`docs/` — see `docs/SDD.md` for that — it only reports defects and gaps.
+
+## How to reproduce
+
+```bash
+pip install -e ".[test,dev]"      # currently fails — see Finding 2
+pip install bandit pytest-cov pip-audit
+ruff check .
+mypy . --ignore-missing-imports
+bandit -r galileo
+pytest -m "not soak and not hardware and not integration" --cov=galileo --cov-report=term-missing
+pip-audit
+```
+
+## Summary
+
+| Tool | Result |
+|---|---|
+| ruff | **2,127 findings** (1,126 auto-fixable) across the repo; no `[tool.ruff]` config exists, so this is ruff's out-of-the-box default rule set, not a project-tuned one |
+| mypy | **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76) |
+| bandit | **88 findings** (27 High, 10 Medium, 51 Low) over 42,975 scanned lines; includes 3 real shell-injection sites and 1 disabled SSH host-key check |
+| pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Finding 1 fixed since, now **701 passed, 9 failed, 1 skipped, 6 deselected** |
+| coverage | **57%** overall (`--cov=galileo`); domain-core modules (`sequencer`, `core.devices`, `safety`, `meridianflip`) mostly 70–100%, but several `galileo.library.services`/`galileo.ui.library` modules are under 20% |
+| pip-audit | **0 vulnerabilities** in the project's actual runtime dependencies; only the ambient `pip` tool itself is flagged (pre-existing venv tooling, not a project dependency) |
+
+---
+
+## Critical findings
+
+### 1. ~~A cross-migration `migrator.orm[...]` reference breaks upgrades from any database that already has migration 013 applied~~ — Fixed
+
+**Status: fixed.** `galileo/library/migrations/017_add_autofocus_and_solver_settings.py` now
+creates both tables via `migrator.sql(...)` (matching migration 015's established pattern for
+this exact problem) instead of `migrator.create_model` + `migrator.orm["piers"]`, so it no longer
+depends on migration 013 having run in the same batch. Verified: the generated schema is
+byte-for-byte identical to what `create_model` produced before (dumped via `sqlite_master`), the
+four previously-failing RTM tests now pass (`test_tc_lib_010_existing_database_upgrades_in_place[013]`,
+`test_tc_lib_010_galileo_tables_created_before_migrations_are_kept`,
+`test_tc_img_110_existing_device_configs_table_gains_the_bayer_column`,
+`test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column`), and the full fast test
+suite went from 697 passed/13 failed to 701 passed/9 failed (the remaining 9 are the separate,
+already-documented issues below — Findings 3 and 4, and the "unimplemented feature" gaps).
+
+Original finding, for reference:
+
+`galileo/library/migrations/017_add_autofocus_and_solver_settings.py:16,31` does:
+
+```python
+pier = pw.ForeignKeyField(column_name="pier_id", field="id", model=migrator.orm["piers"], ...)
+```
+
+`migrator.orm` (`peewee_migrate.migrator.ORM`) is an **in-memory registry populated only by
+`create_model` calls that actually execute during the current migration run** — it is not built
+from the live database schema. It starts empty for every `run_migrations()` call
+(`.venv/Lib/site-packages/peewee_migrate/migrator.py:34`,`64`). `"piers"` is registered by
+migration `013_create_galileo_tables.py`. As long as 013 and 017 run in the *same* batch — e.g. a
+brand-new database — this works. But once 013 has already been applied and recorded in
+`migratehistory` (the normal case for any existing installation being upgraded to a release that
+adds 017+), 013 is skipped on the next run, `migrator.orm["piers"]` is never populated, and 017
+raises `KeyError: 'piers'`, which `galileo/library/database.py:85` wraps and re-raises as
+`DatabaseError: Failed to run migrations: 'piers'` — **the database fails to open at all**.
+
+This is not a test artifact: four RTM tests reproduce it directly by upgrading a database with
+only some migrations applied, exactly the scenario CLAUDE.md's persistence-unification and
+"AstroFiler databases open unchanged" guarantees are meant to cover:
+
+- `tests/test_lib.py::test_tc_lib_010_existing_database_upgrades_in_place[013]`
+- `tests/test_lib.py::test_tc_lib_010_galileo_tables_created_before_migrations_are_kept`
+- `tests/test_img.py::test_tc_img_110_existing_device_configs_table_gains_the_bayer_column`
+- `tests/test_optics_page.py::test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column`
+
+A brand-new install is unaffected (verified directly — `init_db()` on an empty path succeeds,
+since 013 and 017 run together), which is why this hasn't shown up as an obvious smoke-test
+failure. But any user who already has a Galileo database from before migration 017 shipped, and
+any AstroFiler user whose database only ever reached migration 012, will hit this on upgrade.
+
+**Fix:** don't reference `migrator.orm["piers"]` for a table created by an earlier, independently-
+recorded migration. Either look the FK model up against the live `database` (peewee's normal
+`Model` classes, not the migrator's transient registry) or declare the FK as a plain
+`pw.IntegerField(column_name="pier_id")` plus an `add_index`, which is what migrations 013 itself
+does correctly for tables it creates *within its own function* (013's own `migrator.orm[...]`
+uses are safe because they reference models created earlier in the very same `migrate()` call, not
+across migration boundaries — 017 is the only migration in the tree that reaches back into a
+different migration's registration).
+
+### 2. Three shell-injection sites via unescaped filenames in `os.system(f'... "{path}"')`
+
+Confirmed real, not bandit noise — the same vulnerable pattern is duplicated in three places, all
+reachable from "open this file in the OS's default viewer":
+
+- `galileo/ui/library/images_widget.py:543,545`
+- `galileo/ui/library/sessions_widget.py:467,469`
+- `galileo/ui/library/sessions/checkout_files.py:132-137` (Windows `mklink` via `subprocess.run(f'mklink "{dest}" "{src}"', shell=True, ...)`)
+
+```python
+os.system(f'open "{filename}"')       # macOS
+os.system(f'xdg-open "{filename}"')   # Linux
+```
+
+`filename`/`dest_path`/`src_path` come from the FITS library catalog — paths that can originate
+from imported files, cloud sync, or smart-telescope SMB/FTP shares, i.e. not fully trusted input.
+A filename containing a double quote followed by shell metacharacters (`foo"; rm -rf ~ #.fits`,
+or backticks/`$()`) breaks out of the quoting and executes arbitrary shell commands the moment a
+user opens that file from the Images/Sessions screen. The Windows branch (`os.startfile`) is safe
+because it doesn't go through a shell; only the POSIX `os.system` calls and the Windows `mklink`
+`shell=True` call are affected.
+
+**Fix:** use `subprocess.run(["open", filename])` / `subprocess.run(["xdg-open", filename])`
+(list form, no `shell=True`) instead of `os.system(f'...')`. For `mklink`, either request Windows
+symlink privilege and call `os.symlink()` (works cross-platform since Python 3.8, including
+Windows with Developer Mode or elevation) or invoke `subprocess.run(["cmd", "/c", "mklink", dest, src])` without a shell.
+
+### 3. `galileo.current_object`'s process-wide singleton has no per-test/per-session reset, causing order-dependent failures — and a latent stale-state risk in the app itself
+
+`galileo/current_object.py:86-94` keeps the "current object per Pier" store in a module-level
+`_default_store` singleton keyed by `pier_key()` (the Pier's DB id, or its name when it has none).
+Nothing clears this between test runs, and `tests/test_solve_page.py::test_tc_plt_070_capture_and_solve_fills_the_screen`
+fails only when run as part of the full suite, not in isolation (verified: passes alone, fails in
+the full run) — a leftover "current object" from an earlier test with a colliding Pier id bleeds
+into this test's `SolveWorkflow.target`, producing a wildly wrong `d_ra_arcsec`
+(`275428.29` vs the expected `~33.8`).
+
+Beyond the test flakiness this exposes, the same mechanism is a real risk in the running app: Pier
+ids are SQLite autoincrement integers, and `pier_key()` falls back to the Pier's *name* when it has
+no id, so two different Piers can share a key (e.g. a deleted-and-recreated Pier reusing an id, or
+two same-named Piers across Observatories before either is saved). When that happens, Capture &
+Solve would silently slew or report error offsets against the wrong Pier's last-selected object.
+
+**Fix:** add an autouse test fixture that resets `galileo.current_object._default_store` between
+tests (mirroring how `tests/conftest.py` already resets the event bus and catalog cache), and
+consider whether `CurrentObjects` should be constructed per `Pier` foreign-key identity rather than
+falling back to name.
+
+### 4. `LOG-050`'s "reset each run" log requirement is not actually implemented
+
+`tests/test_log.py::test_tc_log_050_log_file_resets_each_run_rather_than_appending` fails:
+a second `DiagnosticsService` pointed at the same datestamped log file still contains the first
+run's messages. The log file is opened in append mode rather than truncated at start-up, so
+`LOG-050` (SRS) is not met — restarting the app does not give a clean per-run log as documented.
+
+---
+
+## High-severity findings
+
+### 5. `pip install -e ".[test,dev]"` fails outright — the documented install command in CLAUDE.md doesn't work
+
+```
+error: Multiple top-level packages discovered in a flat-layout: ['html', 'logs', 'assets', 'galileo', 'plugins']
+```
+
+setuptools' automatic package discovery sees `html/`, `logs/`, `assets/`, and `plugins/` sitting
+next to `galileo/` at the repo root and refuses to build, because none of them declares itself as
+a package and setuptools can't tell which of the five is "the" package. `pyproject.toml` has no
+`[tool.setuptools.packages.find]` (or equivalent `include`/`exclude`) to disambiguate. This means
+the exact command CLAUDE.md tells contributors to run does not work today; anyone following it hits
+a build error before writing a line of code. (This review worked around it by installing the
+dependency list directly and relying on `galileo/` being importable from the repo root — which is
+why `pytest` still runs fine — but `pip install -e .` itself is broken.)
+
+**Fix:**
+```toml
+[tool.setuptools.packages.find]
+include = ["galileo*"]
+```
+
+### 6. Paramiko SFTP client trusts any unknown host key (`AutoAddPolicy`)
+
+`galileo/library/adapters/sftp.py:40`:
+```python
+client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+```
+Any host key is accepted and silently cached on first connect — no warning on key rotation, no
+pinning, no verification against a known-hosts file. For a LAN-only "smart telescope" use case the
+practical MITM risk is low, but this is a genuine, easy-to-fix gap (`RejectPolicy` + an explicit
+known-hosts/trust-on-first-use flow, or at minimum `WarningPolicy` plus logging) rather than
+something to leave as `AutoAddPolicy` indefinitely.
+
+### 7. Weak hashes (MD5/SHA1) used without `usedforsecurity=False`
+
+13 MD5 + 2 SHA1 call sites (bandit B324), e.g. `galileo/ui/library/sessions_widget.py:768` and
+`galileo/ui/sessions.py:487`. In both sampled cases the hash is used for file-content
+deduplication or deterministic UI color assignment — not a security boundary — so this is mostly a
+false-positive-by-intent from bandit's perspective, but it's a one-line fix per site
+(`hashlib.md5(data, usedforsecurity=False)`) that removes the noise and documents intent for the
+next reader. Worth sweeping in one pass rather than leaving 15 instances for bandit to keep
+flagging.
+
+### 8. `galileo.core.devices` — the project's own "port interface" boundary — doesn't type-check against its declared members
+
+`galileo/core/devices.py` is SDD's device-category port-interface module (`ARCH-*`). mypy reports
+34 errors in it, nearly all of the same shape:
+
+```
+galileo\core\devices.py:245: error: "DeviceBackend" has no attribute "start_exposure"  [attr-defined]
+galileo\core\devices.py:291: error: "DeviceBackend" has no attribute "park"  [attr-defined]
+galileo\core\devices.py:523: error: "DeviceBackend" has no attribute "set_switch"  [attr-defined]
+... (34 total, one per category-specific backend method)
+```
+
+`DevicePool`/dispatch code is typed against the generic `DeviceBackend` base class but calls
+methods that only exist on the category-specific subclasses (camera, mount, focuser, dome, ...).
+Since this is exactly the module the architecture doc calls out as the port-interface boundary
+that plugins and adapters are supposed to satisfy structurally, having mypy unable to verify calls
+against it undercuts the one mechanical check that boundary could get for free. Either give
+`DeviceBackend` a `Protocol`/`overload`-based per-category interface, or type these call sites
+against the specific subclass rather than the base.
+
+---
+
+## Medium-severity findings
+
+### 9. `galileo/ui/app_window.py` is a 7,857-line god-file responsible for 238 of the 665 mypy errors
+
+No single behavioral bug is being claimed here, but the file's size is itself a maintainability
+risk independent of what mypy reports in it: it mixes window chrome, per-device-category dialog
+logic, Pier/Observatory CRUD, and multiple unrelated dialogs in one module. A large fraction of its
+mypy errors are real (`Name "SkyAtlas" is not defined`, `Argument 1 to "list_piers" has
+incompatible type "None"; expected "ObservatoryRecord"`, `Item "None" of "SignalInstance | None"
+has no attribute "connect"`) rather than PySide6 stub noise (see Finding 11) — but at this size,
+signal-to-noise for anyone reviewing new mypy output from this file is poor. Splitting device-
+category dialogs and Pier/Observatory management out of `app_window.py` into their own modules
+(mirroring how `galileo.ui.library`, `galileo.ui.sessions`, etc. already are separate) would both
+shrink the blast radius of the `Name not defined` / `Argument ... incompatible type "None"` bugs
+already in there and make mypy's signal usable again.
+
+### 10. `galileo.commands.auto_calibration` / `galileo.library.core.auto_calibration` log through the root logger, not a module logger
+
+232 `logging.<level>(...)` module-level (root-logger) calls (ruff `LOG015`), concentrated almost
+entirely in four files:
+
+| File | Count |
+|---|---|
+| `galileo/commands/auto_calibration.py` | 106 |
+| `galileo/library/core/auto_calibration.py` | 76 |
+| `galileo/commands/cloud_sync.py` | 25 |
+| `galileo/commands/register_existing.py` | 20 |
+
+Calling `logging.warning(...)`/`logging.info(...)` directly (rather than
+`logger = logging.getLogger(__name__)`) means these modules can't be filtered, leveled, or routed
+independently of the root logger, and their output won't carry the module name other loggers in
+the codebase get. Not urgent, but a mechanical fix (`logging.getLogger(__name__)` + a sed-style
+replace) that removes 232 of the 2,127 ruff findings in one pass.
+
+### 11. mypy noise from PySide6's enum re-scoping dwarfs real findings
+
+A large share of the "attr-defined" category (`Qt.AlignCenter`, `QDialogButtonBox.Ok`,
+`QDialog.Accepted`, etc. — well over 100 occurrences across `app_window.py`, `focus.py`, `solve.py`,
+`guider.py`, `star_atlas.py`) is PySide6 stub/runtime mismatch: newer PySide6 stubs only expose
+these under their nested enum class (`Qt.AlignmentFlag.AlignCenter`) even though the flat,
+un-nested form the code uses still works at runtime in current PySide6. This is not a bug in the
+code, but it means mypy's signal on `galileo.ui.*` is currently mostly noise, which is exactly what
+let real errors (Finding 9's `Name not defined`, `arg-type` mismatches) go unnoticed. Either add a
+`mypy` per-module override that silences `attr-defined` for known-safe Qt enum access, or bite the
+bullet and switch to the nested enum spellings project-wide — either way, something should be done
+so the real 30–40% of `galileo/ui/*`'s mypy output isn't buried under Qt stub noise.
+
+### 12. `try/except: pass` and bare `except:` (33 sites) silently swallow errors
+
+Ruff/bandit: 26 `try/except/pass` (bandit B110), 7 `try/except/continue` (B112), plus 20 bare
+`except:` (ruff E722) — e.g. `galileo/ui/theme.py:249` swallows any exception loading the saved
+theme with no log line at all. Several of these are deliberately defensive (best-effort catalog
+downloads, optional-feature probing) and are fine as-is, but a silent `except: pass` with zero
+logging makes a real failure indistinguishable from "feature not present" when someone's
+debugging a report. Worth an audit pass to add at least a `logger.debug(..., exc_info=True)` to
+the ones that currently log nothing.
+
+### 13. FTP (plaintext) used for smart-telescope sync
+
+`galileo/library/services/telescope.py:363,941` and `galileo/library/adapters/ftp.py` use
+`ftplib.FTP()` — unencrypted control and data channels. This is very likely dictated by the
+hardware (several consumer smart telescopes only expose plain FTP, not FTPS/SFTP, on their local
+AP), which the LAN-only device-discovery model (`zeroconf`, `.local` mDNS) in this project already
+assumes — so this may not be fixable without dropping support for those devices. Flagging for
+awareness rather than as a required fix: if any of the FTP targets are ever reachable over
+something other than a trusted LAN, credentials and file contents cross in the clear.
+
+### 14. No ruff configuration exists in the repository
+
+There is no `pyproject.toml [tool.ruff]` section, `ruff.toml`, or `.ruff.toml` anywhere in the
+tree, despite `ruff` being a declared dev dependency and `ruff check .` being the documented lint
+command. `ruff check .` is therefore running under whatever ruff 0.16's shipped defaults happen to
+be — which, in this version, select far more than the classic `E`/`F` set (`UP`, `DTZ`, `S`, `SIM`,
+`TRY`, `RUF`, `PIE`, `C4`, `PLR`, `FURB`, `ASYNC`, `G`, `TC` all fired). That's how the 2,127-finding
+count in this review arose; a different ruff version or a machine with a different ruff default
+could report a very different number for the same code, and CI (if any exists) has nothing pinning
+which rules actually gate a merge. Add an explicit `[tool.ruff]`/`[tool.ruff.lint]` `select`
+(or `extend-select`) list so the lint surface is a deliberate, versioned decision rather than
+whatever ruff ships next.
+
+---
+
+## Test suite detail
+
+Run: `pytest -m "not soak and not hardware and not integration" --cov=galileo` — **697 passed, 13
+failed, 1 skipped, 6 deselected** in 304.78s.
+
+### Failures already covered above
+- ~~`test_tc_lib_010_existing_database_upgrades_in_place[013]`, `test_tc_lib_010_galileo_tables_created_before_migrations_are_kept`, `test_tc_img_110_existing_device_configs_table_gains_the_bayer_column`, `test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column`~~ → Finding 1 (migration bug) — **fixed**, all four now pass
+- `test_tc_log_050_log_file_resets_each_run_rather_than_appending` → Finding 4
+- `test_tc_plt_070_capture_and_solve_fills_the_screen` → Finding 3 (test-order dependency)
+
+### Failures that are unimplemented features, not regressions
+These all fail with `AttributeError`/`hasattr()` on a class or method that simply doesn't exist
+yet, each backing an MVP/P2/P3-tagged RTM requirement. Listed here for visibility since CLAUDE.md
+asks that `README.md`'s Status section reflect what's actually implemented — these six suggest the
+Status section (or these tests' priority) may need reconciling with reality:
+
+| Test | Missing |
+|---|---|
+| `test_tc_ext_110_simbad_coordinate_lookup` | `galileo.planning.sky_atlas.SimbadClient` |
+| `test_tc_log_060_recent_log_pane_on_equipment_screens` | `galileo.diagnostics.RecentLogPane` |
+| `test_tc_notif_020_external_delivery_via_email_and_sms` | `galileo.notify.EmailChannel` |
+| `test_tc_notif_030_per_event_per_channel_enable_disable` | (same, `EmailChannel`) |
+| `test_tc_notif_040_reads_contact_details_from_owning_observatory` | `Observatory.set_contact_details` |
+| `test_tc_obs_090_observatory_carries_operator_contact_details` | `Observatory.contact_details` |
+| `test_tc_vst_ext_010_aavso_target_tool_and_vsp_apis` | `galileo.plugins.vstarget.planning.AavsoVspClient` |
+
+### Coverage gaps worth flagging
+
+Overall line coverage is 57%. Domain-core modules generally test well
+(`galileo.core.devices` 93%, `galileo.sequencer.basic` 92%, `galileo.safety` 83%,
+`galileo.meridianflip` 100%), consistent with the ports-and-adapters design making them easy to
+exercise with mocks. The weak spots cluster in two places:
+
+- **Cloud/network service adapters**: `galileo/library/services/telescope.py` 6%,
+  `galileo/library/services/cloud.py` 10%, `galileo/library/services/gcs.py` 10%,
+  `galileo/library/adapters/{ftp,sftp,smb}.py` 22–27%. These are exactly the modules Finding 13's
+  FTP usage and Finding 6's paramiko host-key issue live in — the parts of the codebase with the
+  least test coverage are also the parts touching external network protocols, which is the
+  opposite of where you'd want coverage concentrated.
+- **Several Library UI dialogs are at or near 0%**: `auto_calibration_dialog.py` (0%),
+  `checkout_files.py`/`checkout_workflow.py`/`masters_resolver.py` (0%), `download_dialog.py` (10%),
+  `cloud_sync_dialog.py` (14%), `merge_widget.py` (23%). `checkout_files.py` is where Finding 2's
+  `mklink shell=True` injection lives — again, an untested file turned out to have a real bug.
+
+---
+
+## Dependency audit (pip-audit)
+
+Clean: **0 known vulnerabilities** in any of the project's declared runtime dependencies (numpy,
+astropy, PySide6, peewee, requests, paramiko, keyring, scipy, matplotlib, reproject, lz4, pysmb,
+google-cloud-storage, qasync, zeroconf, sep, Pillow, astroalign, photutils, astroquery, pandas,
+peewee-migrate), installed fresh from the versions `pyproject.toml` currently pins. The only
+flagged package is `pip` itself (10 CVEs against pip 25.3, fixed in 26.0–26.2) — that's the ambient
+package manager in the virtualenv this review built, not a project dependency, and isn't something
+`pyproject.toml` controls.
+
+Note: because Finding 5 (`pip install -e .` failing) meant the project couldn't actually be
+installed, the first `pip-audit` run only saw the review's own dev tools and reported nothing
+useful. The dependency list was installed directly from `pyproject.toml`'s `dependencies` array to
+get a real audit — worth being aware of if this is ever re-run without fixing Finding 5 first, since
+a naive `pip-audit` in an environment where the install failed silently audits the wrong thing.
+
+---
+
+## Suggested priority order
+
+1. ~~Fix the migration-017 FK bug (Finding 1)~~ — **done.**
+2. Fix the three shell-injection sites (Finding 2) — concrete, exploitable, cheap to fix.
+3. Fix `pip install -e .` (Finding 5) — blocks the documented onboarding path entirely.
+4. Add the `current_object` test-isolation fixture (Finding 3) and reassess whether `pier_key()`'s
+   name-fallback is safe in production.
+5. Fix the log-reset bug (Finding 4).
+6. Everything else is cleanup/hardening (Findings 6–14) — worth doing, none of it urgent.
