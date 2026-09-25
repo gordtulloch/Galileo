@@ -10,7 +10,7 @@ Galileo is a cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class
 
 ## Changelog
 
-**Every change to this repository — code, tests, or docs — must add an entry to [`CHANGELOG.md`](CHANGELOG.md) in the same turn the change is made**, under the `## [Unreleased]` heading, in the appropriate `Added`/`Changed`/`Fixed`/`Removed` subsection ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). Write entries for someone who wasn't watching the session — state what changed and why it matters, not a diff summary. Don't batch this up for later; a change without a changelog entry is not done.
+**Every change to this repository — code, tests, or docs — must add an entry to [`CHANGELOG.md`](CHANGELOG.md) in the same turn the change is made**, under the `## [Unreleased]` heading, in the appropriate `Added`/`Changed`/`Fixed`/`Removed` subsection ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). Older entries are archived in `docs/changelog/YYYY-MM.md` — don't read those in full (they're large); grep them when you need history. When `CHANGELOG.md` passes ~40 KB, rotate its `[Unreleased]` entries into the current month's archive file, as its header describes. Write entries for someone who wasn't watching the session — state what changed and why it matters, not a diff summary. Don't batch this up for later; a change without a changelog entry is not done.
 
 ## Design documents (read these before making architectural changes)
 

@@ -25,7 +25,7 @@ pip-audit
 | Tool | Result |
 |---|---|
 | ruff | Originally **2,127 findings** under no config (ruff's out-of-the-box defaults). A project-tuned `[tool.ruff]` config was added (Finding 14) and `--fix` run against it: **4,007 of 5,422 auto-fixed**, **1,415 remained** needing manual judgment. Findings 10 (232 `LOG015`) and 12 (all `E722`/`S110`/`S112`) fixed by hand since: **1,114 remain** |
-| mypy | Originally **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76). Finding 8 fixed all 34 in `galileo/core/devices.py`: **623 remain** in 48 files |
+| mypy | Originally **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76). Finding 8 fixed all 34 in `galileo/core/devices.py` (**623 remained** in 48 files); Finding 9 split `app_window.py` into a package without adding to that count — **620 remain**, now in 69 files (net improvement; see Finding 9 for why the file count went up while the error count went down) |
 | bandit | Originally **88 findings** (27 High, 10 Medium, 51 Low); Findings 2, 6, and 7 fixed the 3 real shell-injection sites, the disabled SSH host-key check, and all 15 weak-hash findings: **80 remain** (7 High, 10 Medium, 63 Low — the Low increase is the argument-list `subprocess.run` calls that replaced the `shell=True`/`os.system` sites, themselves lower-severity "partial path"/no-`shell=True` notes, not new injection risk) |
 | pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Findings 1, 3, and 4 fixed since, now **706 passed, 7 failed, 1 skipped, 6 deselected** (the 7 remaining are the pre-existing "unimplemented feature" gaps listed below, not regressions) |
 | coverage | **57%** overall (`--cov=galileo`); domain-core modules (`sequencer`, `core.devices`, `safety`, `meridianflip`) mostly 70–100%, but several `galileo.library.services`/`galileo.ui.library` modules are under 20% |
@@ -306,7 +306,50 @@ against the specific subclass rather than the base.
 
 ## Medium-severity findings
 
-### 9. `galileo/ui/app_window.py` is a 7,857-line god-file responsible for 238 of the 665 mypy errors
+### 9. ~~`galileo/ui/app_window.py` is a 7,857-line god-file responsible for 238 of the 665 mypy errors~~ — Fixed
+
+**Status: fixed.** `galileo/ui/app_window.py` (single file, ~7,900 lines, one `AppWindow` class) is
+now the package `galileo/ui/app_window/` (22 files, largest is `_imaging_page.py` at ~820 lines),
+split along the module's own pre-existing section comments (Camera page, Mount page, Imaging page,
+Framing Assistant, etc.) — every method moved verbatim into a `AppWindowXMixin` class scoped to the
+one page/concern it builds, `_core.py` keeps `__init__`/window chrome/primary nav, `_common.py`
+holds the shared constants/helpers and the optional PySide6 imports, `_threads.py`/`_widgets.py`
+hold the standalone `QThread`/`QWidget` helper classes, and `__init__.py` composes all the mixins
+into the same public `AppWindow` class (plus re-exports `PRIMARY_SECTIONS` and the other names other
+modules/tests already imported off `galileo.ui.app_window`) — no import outside this package needed
+to change. No behavior changed; this is a pure move.
+
+Splitting a single class across files this way creates one real mypy wrinkle: each mixin, checked on
+its own, has no way to know it'll share `self` with every *other* mixin once `AppWindow` combines
+them, so calls like `self._refresh_imaging_filters()` from `_imaging_page.py` (that method lives in
+`_topbar_optics_camera.py`) would otherwise read as "attribute doesn't exist" — pure noise mypy never
+had a reason to report against the original single class. Fixed via `_state.py`, a `Protocol`
+declaring every `self.` attribute and method any mixin uses, generated from the mixins themselves
+and applied as an explicit `self: AppWindowState` type on each mixin method — mypy's own documented
+pattern for mixin classes (no runtime effect: every mixin's real base stays plain `object`, and
+`AppWindowState` is only ever imported under `TYPE_CHECKING`). Verified end to end: project-wide
+`mypy . --ignore-missing-imports` went from 623 errors (48 files) before the split to 620 (fresh
+cache both times) — i.e. the split is a net mypy improvement, not the regression a naive per-file
+split would have been (an intermediate version of this split, before `_state.py` existed, spiked to
+1,015 errors from exactly the cross-mixin blind spot above). The remaining ±dozen-line reshuffle
+between before/after is a handful of pre-existing Qt-enum-noise sites (Finding 11) landing on
+different line numbers, plus 5 new but narrow, well-understood, and documented (in `gen_state.py`'s
+own comments) mypy errors: attributes like `_sky_atlas`/`_thumbnail_cache_worker` are initialized to
+`None` in `_core.py.__init__` but lazily assigned their real type by a *different* mixin later
+(`AppWindowCurrentObjectMixin._shared_sky_atlas`, etc.) — mypy's multiple-inheritance check compares
+each base class's own inferred attribute type pairwise and flags these 5 as mutually incompatible,
+a check that doesn't apply to a single class's own multiple assignment sites the way the original
+file worked. Not a real bug (verified: `_state.py`'s Protocol declares the correct precise type for
+all 5, and `AppWindow` itself structurally satisfies it fine — confirmed via a standalone `x:
+AppWindowState = AppWindow()` check), just an accepted, disclosed cost of the split. Also verified:
+`ruff check galileo/ui/app_window/` reports exactly the same pre-existing findings as the original
+file (E702, F821, B905, SIM105, RUF046, B007 — all pre-dating this change, none touched), `python -c
+"import galileo.ui.app_window"` succeeds, and the full `tests/test_*.py` files that import
+`galileo.ui.app_window` (`test_driver_info.py`, `test_eqp.py`, `test_focus_page.py`,
+`test_guider_page.py`, `test_img.py`, `test_lib.py`, `test_optics_page.py`, `test_rotator_page.py`,
+`test_sched.py`, `test_sky.py`, `test_solve_page.py`, `test_star_atlas.py`) pass.
+
+Original finding, for reference:
 
 No single behavioral bug is being claimed here, but the file's size is itself a maintainability
 risk independent of what mypy reports in it: it mixes window chrome, per-device-category dialog
@@ -319,6 +362,11 @@ category dialogs and Pier/Observatory management out of `app_window.py` into the
 (mirroring how `galileo.ui.library`, `galileo.ui.sessions`, etc. already are separate) would both
 shrink the blast radius of the `Name not defined` / `Argument ... incompatible type "None"` bugs
 already in there and make mypy's signal usable again.
+
+(The three `Name "SkyAtlas"/"DeepSkyObject"/"ObservatoryScheduler" is not defined` real bugs cited
+above are still present post-split, now in `_current_object.py` and `_misc_device_pages.py` —
+carried over unchanged, not introduced or fixed by the split, and easier to find in their own
+~100-200 line file than they were in the original 7,900-line one.)
 
 ### 10. ~~`galileo.commands.auto_calibration` / `galileo.library.core.auto_calibration` log through the root logger, not a module logger~~ — Fixed
 
@@ -531,10 +579,12 @@ a naive `pip-audit` in an environment where the install failed silently audits t
 5. ~~Fix the log-reset bug (Finding 4)~~ — **done.**
 6. Everything else is cleanup/hardening. (~~Paramiko `AutoAddPolicy` (Finding 6)~~, ~~weak-hash
    `usedforsecurity=False` sweep (Finding 7)~~, ~~root-logger → module-logger sweep (Finding
-   10)~~, ~~silent `except`/bare-`except` sweep (Finding 12)~~, and ~~`DeviceBackend` Protocol
-   typing (Finding 8)~~ — **done**, out of order relative to the rest of this bucket since all
-   five were bounded and low-risk. ~~FTP plaintext (Finding 13)~~ — **reviewed, accepted as
-   unavoidable** given the DWARF 3 hardware constraint. **Findings 9** (splitting the
-   7,857-line `app_window.py`) **and 11** (PySide6 enum mypy noise across ~100+ sites) remain
-   open by deliberate choice — both are larger, riskier structural changes than the rest of this
-   list, and were left for a dedicated future session rather than folded into this pass.)
+   10)~~, ~~silent `except`/bare-`except` sweep (Finding 12)~~, ~~`DeviceBackend` Protocol
+   typing (Finding 8)~~, and ~~splitting `app_window.py` into a package (Finding 9)~~ — **done**,
+   out of order relative to the rest of this bucket since all six were bounded and (once Finding
+   9's mixin/mypy interaction was worked through) low-risk. ~~FTP plaintext (Finding 13)~~ —
+   **reviewed, accepted as unavoidable** given the DWARF 3 hardware constraint. **Finding 11**
+   (PySide6 enum mypy noise across ~100+ sites) remains open by deliberate choice — it's a
+   larger, lower-value structural change than the rest of this list (silencing/reformatting
+   existing mypy noise rather than fixing anything), left for a dedicated future session rather
+   than folded into this pass.)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,6 +24,22 @@ if TYPE_CHECKING:
     from galileo.platesolve import SolverParams
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Contact details (OBS-090)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ContactDetails:
+    """The operator's own external-notification contact details (OBS-090),
+    read by :mod:`galileo.notify` (NOTIF-040) — one per Observatory, since
+    being notified is scoped to the person running it, not to an individual
+    Pier within it."""
+
+    email: str | None = None
+    phone_number: str | None = None
+    channels: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ mypy .
 ## What a pull request should contain
 
 1. **Tests.** Tests are organised by SRS requirement domain, one file per domain (for example `tests/test_arch.py` covers `ARCH-*`). Add one `test_tc_<domain>_<nnn>_<description>` function per test case ID, tagged with `@pytest.mark.requirement("TC-...")` and `@pytest.mark.priority("MVP" | "P2" | "P3")`, with a docstring starting with the requirement ID. Reserved test case IDs are in [`docs/RTM.md`](docs/RTM.md). Device interaction is tested against the mocks in `tests/conftest.py`; only `hardware`-marked tests touch real devices.
-2. **A `CHANGELOG.md` entry** under `## [Unreleased]`, in the right `Added` / `Changed` / `Fixed` / `Removed` section. Write it for someone who wasn't watching: say what changed and why it matters, not a diff summary.
+2. **A `CHANGELOG.md` entry** under `## [Unreleased]`, in the right `Added` / `Changed` / `Fixed` / `Removed` section (older entries live in [`docs/changelog/`](docs/changelog/); add new ones only to the root file). Write it for someone who wasn't watching: say what changed and why it matters, not a diff summary.
 3. **A file header on every new Python file**, exactly:
    ```python
    # SPDX-License-Identifier: GPL-3.0-or-later
