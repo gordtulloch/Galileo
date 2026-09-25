@@ -126,3 +126,6 @@ dev = [
     "ruff",
     "mypy",
 ]
+
+[tool.setuptools.packages.find]
+include = ["galileo*"]

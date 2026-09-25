@@ -535,10 +535,11 @@ class ImagesWidget(QWidget):
             if os.name == 'nt':  # Windows
                 os.startfile(filename)
             elif os.name == 'posix':  # macOS and Linux
+                import subprocess
                 if os.uname().sysname == 'Darwin':  # macOS
-                    os.system(f'open "{filename}"')
+                    subprocess.run(["open", filename], check=False)
                 else:  # Linux
-                    os.system(f'xdg-open "{filename}"')
+                    subprocess.run(["xdg-open", filename], check=False)
             else:
                 QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
 

@@ -145,11 +145,17 @@ class DiagnosticsService:
 
         # mode="w" (not the logging default "a") so the datestamped file
         # resets on every run rather than accumulating across same-day runs.
+        # A prior handler for this same file (e.g. an earlier DiagnosticsService
+        # in this same process) must be replaced, not reused — reusing it would
+        # keep appending to the file it already truncated-and-opened on *its*
+        # construction, defeating the per-run reset LOG-050 requires.
         existing = [h for h in root_logger.handlers if isinstance(h, logging.FileHandler) and Path(h.baseFilename) == log_file]
-        if not existing:
-            file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
-            file_handler.setFormatter(_ConciseFormatter(_LOG_FORMAT))
-            root_logger.addHandler(file_handler)
+        for handler in existing:
+            root_logger.removeHandler(handler)
+            handler.close()
+        file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+        file_handler.setFormatter(_ConciseFormatter(_LOG_FORMAT))
+        root_logger.addHandler(file_handler)
 
         _ensure_tail_handler()
 

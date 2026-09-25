@@ -91,7 +91,19 @@ uses are safe because they reference models created earlier in the very same `mi
 across migration boundaries — 017 is the only migration in the tree that reaches back into a
 different migration's registration).
 
-### 2. Three shell-injection sites via unescaped filenames in `os.system(f'... "{path}"')`
+### 2. ~~Three shell-injection sites via unescaped filenames in `os.system(f'... "{path}"')`~~ — Fixed
+
+**Status: fixed.** All three sites now build the argument list explicitly and never pass through a
+shell: `images_widget.py` and `sessions_widget.py` use `subprocess.run(["open"|"xdg-open", path], check=False)`
+in place of `os.system(f'...')`, and `checkout_files.py`'s `mklink` call uses
+`subprocess.run(["cmd", "/c", "mklink", dest_path, src_path], ...)` (no `shell=True`) in place of
+the interpolated `mklink "{dest}" "{src}"` string. A quote or shell metacharacter in a filename can
+no longer break out of the command. Verified: `bandit` no longer reports `B602`/`B605`
+(shell-injection) on any of the three files — the only remaining bandit hits there are unrelated,
+already-tracked findings (Finding 7's MD5 hash, Finding 12's `try/except/continue`, and low-severity
+`B603`/`B607` "partial path" notes that are expected for invoking `open`/`xdg-open` by name).
+
+Original finding, for reference:
 
 Confirmed real, not bandit noise — the same vulnerable pattern is duplicated in three places, all
 reachable from "open this file in the OS's default viewer":
@@ -118,7 +130,22 @@ because it doesn't go through a shell; only the POSIX `os.system` calls and the 
 symlink privilege and call `os.symlink()` (works cross-platform since Python 3.8, including
 Windows with Developer Mode or elevation) or invoke `subprocess.run(["cmd", "/c", "mklink", dest, src])` without a shell.
 
-### 3. `galileo.current_object`'s process-wide singleton has no per-test/per-session reset, causing order-dependent failures — and a latent stale-state risk in the app itself
+### 3. ~~`galileo.current_object`'s process-wide singleton has no per-test/per-session reset, causing order-dependent failures~~ — Fixed
+
+**Status: fixed.** Added an autouse `_reset_current_object_store` fixture in `tests/conftest.py`
+that clears `galileo.current_object._default_store` before and after every test. Verified:
+`test_tc_plt_070_capture_and_solve_fills_the_screen` now passes as part of the full suite (was
+previously only passing in isolation).
+
+Production stale-state risk reassessed: every call site that reads/writes the store
+(`app_window.py:396,412,4529`, `solve.py:579`) passes `self._current_pier`, which is always a Pier
+loaded from the database via `_load_observatories()` before it can be selected in the UI — so in
+practice it always has a DB id by the time `current_object` code runs, and the name-fallback
+collision case (two same-named, still-unsaved Piers) isn't reachable through the app's own UI
+flow today. Leaving `pier_key()`'s name fallback as-is; flagging it here for awareness if a future
+code path ever calls into `current_object` with an unsaved Pier.
+
+Original finding, for reference:
 
 `galileo/current_object.py:86-94` keeps the "current object per Pier" store in a module-level
 `_default_store` singleton keyed by `pier_key()` (the Pier's DB id, or its name when it has none).
@@ -139,7 +166,19 @@ tests (mirroring how `tests/conftest.py` already resets the event bus and catalo
 consider whether `CurrentObjects` should be constructed per `Pier` foreign-key identity rather than
 falling back to name.
 
-### 4. `LOG-050`'s "reset each run" log requirement is not actually implemented
+### 4. ~~`LOG-050`'s "reset each run" log requirement is not actually implemented~~ — Fixed
+
+**Status: fixed.** `galileo/diagnostics.py`'s `DiagnosticsService.__init__` already opened the file
+with `mode="w"`, but only when *no* `FileHandler` for that day's file existed yet on the root
+logger — when one already did (a second `DiagnosticsService` pointed at the same datestamped file,
+e.g. simulating a restart within one process, as the RTM test does), it silently reused that
+existing handler instead, which meant no truncation happened and the first run's messages stayed.
+Fixed by always removing and closing any existing handler(s) for that file and opening a fresh
+`mode="w"` handler, so every `DiagnosticsService` construction truncates regardless of what ran
+before it in-process. Verified: `test_tc_log_050_log_file_resets_each_run_rather_than_appending`
+now passes.
+
+Original finding, for reference:
 
 `tests/test_log.py::test_tc_log_050_log_file_resets_each_run_rather_than_appending` fails:
 a second `DiagnosticsService` pointed at the same datestamped log file still contains the first
@@ -150,7 +189,16 @@ run's messages. The log file is opened in append mode rather than truncated at s
 
 ## High-severity findings
 
-### 5. `pip install -e ".[test,dev]"` fails outright — the documented install command in CLAUDE.md doesn't work
+### 5. ~~`pip install -e ".[test,dev]"` fails outright — the documented install command in CLAUDE.md doesn't work~~ — Fixed
+
+**Status: fixed.** Added `[tool.setuptools.packages.find]` with `include = ["galileo*"]` to
+`pyproject.toml`, so setuptools no longer tries to guess which of `html/`, `logs/`, `assets/`,
+`plugins/`, and `galileo/` is "the" package. Verified in a clean, disposable venv:
+`pip install --no-deps -e .` now succeeds and `import galileo` resolves to
+`galileo/__init__.py` in the repo, confirming the editable install actually wires up the real
+package rather than silently doing nothing.
+
+Original finding, for reference:
 
 ```
 error: Multiple top-level packages discovered in a flat-layout: ['html', 'logs', 'assets', 'galileo', 'plugins']
@@ -325,8 +373,8 @@ failed, 1 skipped, 6 deselected** in 304.78s.
 
 ### Failures already covered above
 - ~~`test_tc_lib_010_existing_database_upgrades_in_place[013]`, `test_tc_lib_010_galileo_tables_created_before_migrations_are_kept`, `test_tc_img_110_existing_device_configs_table_gains_the_bayer_column`, `test_tc_prof_100_existing_optical_tubes_table_gains_the_name_column`~~ → Finding 1 (migration bug) — **fixed**, all four now pass
-- `test_tc_log_050_log_file_resets_each_run_rather_than_appending` → Finding 4
-- `test_tc_plt_070_capture_and_solve_fills_the_screen` → Finding 3 (test-order dependency)
+- ~~`test_tc_log_050_log_file_resets_each_run_rather_than_appending`~~ → Finding 4 — **fixed**
+- ~~`test_tc_plt_070_capture_and_solve_fills_the_screen`~~ → Finding 3 (test-order dependency) — **fixed**
 
 ### Failures that are unimplemented features, not regressions
 These all fail with `AttributeError`/`hasattr()` on a class or method that simply doesn't exist
@@ -385,12 +433,10 @@ a naive `pip-audit` in an environment where the install failed silently audits t
 ## Suggested priority order
 
 1. ~~Fix the migration-017 FK bug (Finding 1)~~ — **done.**
-2. Fix the three shell-injection sites (Finding 2) — concrete, exploitable, cheap to fix.
+2. ~~Fix the three shell-injection sites (Finding 2)~~ — **done.**
    (~~Add a ruff config and run `--fix`, Finding 14~~ — **done** — separate from, and much lower
-   stakes than, the shell-injection fix; `S602`/`S605` still flag those 3 sites since they aren't
-   auto-fixable.)
-3. Fix `pip install -e .` (Finding 5) — blocks the documented onboarding path entirely.
-4. Add the `current_object` test-isolation fixture (Finding 3) and reassess whether `pier_key()`'s
-   name-fallback is safe in production.
-5. Fix the log-reset bug (Finding 4).
+   stakes than, the shell-injection fix.)
+3. ~~Fix `pip install -e .` (Finding 5)~~ — **done.**
+4. ~~Add the `current_object` test-isolation fixture (Finding 3)~~ — **done.**
+5. ~~Fix the log-reset bug (Finding 4)~~ — **done.**
 6. Everything else is cleanup/hardening (Findings 6–14) — worth doing, none of it urgent.

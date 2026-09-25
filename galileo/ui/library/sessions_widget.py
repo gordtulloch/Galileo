@@ -458,10 +458,11 @@ class SessionsWidget(QWidget):
             if os.name == 'nt':
                 os.startfile(file_path)
             elif os.name == 'posix':
+                import subprocess
                 if hasattr(os, 'uname') and os.uname().sysname == 'Darwin':
-                    os.system(f'open "{file_path}"')
+                    subprocess.run(["open", file_path], check=False)
                 else:
-                    os.system(f'xdg-open "{file_path}"')
+                    subprocess.run(["xdg-open", file_path], check=False)
             else:
                 QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
         except Exception as e:

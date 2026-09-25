@@ -374,6 +374,22 @@ def event_bus():
     return bus
 
 
+@pytest.fixture(autouse=True)
+def _reset_current_object_store():
+    """Reset ``galileo.current_object``'s process-wide singleton between tests.
+
+    It's keyed by ``pier_key()`` (a Pier's DB id, or its name when it has
+    none), and nothing else clears it — a leftover "current object" from an
+    earlier test can collide with a same-keyed Pier in a later one and bleed
+    its state in (e.g. a wildly wrong solved offset in test_solve_page.py).
+    """
+    import galileo.current_object as current_object_mod
+
+    current_object_mod._default_store = None
+    yield
+    current_object_mod._default_store = None
+
+
 # ---------------------------------------------------------------------------
 # Sky atlas catalog bootstrap (session-scoped, autouse)
 # ---------------------------------------------------------------------------

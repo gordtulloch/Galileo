@@ -128,8 +128,7 @@ def create_symlink(src_path: str, dest_path: str) -> bool:
             import subprocess
 
             result = subprocess.run(
-                f'mklink "{dest_path}" "{src_path}"',
-                shell=True,
+                ["cmd", "/c", "mklink", dest_path, src_path],
                 capture_output=True,
                 text=True,
             )
