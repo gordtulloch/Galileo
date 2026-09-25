@@ -31,18 +31,18 @@ from peewee_migrate import Migrator
 
 
 with suppress(ImportError):
-    import playhouse.postgres_ext as pw_pext
+    pass
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your migrations here."""
-    
+
     # Remove the is_default field from the mapping table
     migrator.remove_fields('mapping', 'is_default')
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your rollback migrations here."""
-    
+
     # Add back the is_default field
     migrator.add_fields('mapping', is_default=pw.BooleanField(default=False))

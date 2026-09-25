@@ -3,9 +3,7 @@
 
 """PROF — Equipment Profiles / Piers (TC-PROF-010 … TC-PROF-090)."""
 
-import json
 import pytest
-from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------

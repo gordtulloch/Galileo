@@ -724,7 +724,7 @@ class GuiderPage(QWidget):
         try:
             asyncio.run(service.connect())
             service.sync_state()
-        except Exception as exc:  # noqa: BLE001 — any failure is reported in the log pane, never raised into Qt
+        except Exception as exc:
             logger.warning("Could not connect to PHD2 at %s:%s: %s", service.host, service.port, exc)
             service.model.log(f"Could not connect to PHD2 at {service.host}:{service.port}: {exc}")
         finally:

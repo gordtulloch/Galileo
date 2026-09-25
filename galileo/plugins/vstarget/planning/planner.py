@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,7 +27,7 @@ class VariableStarPlanner:
         self._plans: list = []
         self._location = None
         self._scheduler = None
-        self._db: "PlanDatabase | None" = None
+        self._db: PlanDatabase | None = None
 
     # --- Target management -----------------------------------------------
 
@@ -67,7 +66,7 @@ class VariableStarPlanner:
             if is_observable_tonight(t.ra_deg, t.dec_deg, self._location, date)
         ]
 
-    def import_from_file(self, path: "Path | str") -> None:
+    def import_from_file(self, path: Path | str) -> None:
         """Load targets from a delimited text file (VST-040)."""
         import csv
         from galileo.plugins.vstarget.planning.models import AavsoTarget
@@ -95,13 +94,13 @@ class VariableStarPlanner:
             self._plans = self._db.load()
         return list(self._plans)
 
-    def set_persistence(self, path: "Path | str") -> None:
+    def set_persistence(self, path: Path | str) -> None:
         from galileo.plugins.vstarget.planning.database import PlanDatabase
         self._db = PlanDatabase(path)
 
     # --- Script export (VST-060) -----------------------------------------
 
-    def export_acp_script(self, plans: list, output_path: "Path | str") -> None:
+    def export_acp_script(self, plans: list, output_path: Path | str) -> None:
         from galileo.plugins.vstarget.planning.script_exporter import export_acp_script
         export_acp_script(plans, output_path)
 

@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import socket
-import struct
 from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
@@ -42,7 +41,7 @@ _ALPACA_DISCOVERY_MSG = b"alpacadiscovery1"
 # during discovery, and would 404 every actual mount command (slew/park/...)
 # had discovery not blocked it first. WeatherStation/FlatPanel have the same
 # mismatch against Alpaca's ObservingConditions/CoverCalibrator types.
-_ALPACA_WIRE_TYPE: dict["DeviceCategory", str] = {
+_ALPACA_WIRE_TYPE: dict[DeviceCategory, str] = {
     DeviceCategory.MOUNT: "telescope",
     DeviceCategory.WEATHER_STATION: "observingconditions",
     DeviceCategory.FLAT_PANEL: "covercalibrator",
@@ -98,7 +97,7 @@ class AlpacaDiscovery:
                         resp = json.loads(data.decode())
                         resp["_host"] = addr[0]
                         found.append(resp)
-                    except socket.timeout:
+                    except TimeoutError:
                         break
             except Exception as exc:
                 logger.debug("Alpaca discovery error: %s", exc)
@@ -214,7 +213,7 @@ class AlpacaAdapter(DeviceBackend):
 
     def __init__(
         self,
-        device_type: "DeviceCategory | str" = DeviceCategory.CAMERA,
+        device_type: DeviceCategory | str = DeviceCategory.CAMERA,
         host: str = "localhost",
         port: int = 11111,
         device_number: int = 0,
@@ -402,14 +401,14 @@ class AlpacaAdapter(DeviceBackend):
     async def set_property(self, name: str, value: object) -> None:
         self._properties[name] = value
 
-    async def get_driver_info(self) -> dict[str, "str | None"]:
+    async def get_driver_info(self) -> dict[str, str | None]:
         """The ASCOM ``Name``/``Description``/``DriverInfo``/``DriverVersion``
         common properties, which a driver must serve even while not
         connected. ``DriverInfo`` is read first and any failure there
         propagates (an unreachable server or wrong device number should be
         reported once, not timed out four times); the rest are optional
         and read defensively."""
-        info: dict[str, "str | None"] = {}
+        info: dict[str, str | None] = {}
         value = await self._get("driverinfo")
         info["driver_info"] = str(value) if value is not None else None
         for key, attribute in (
@@ -518,7 +517,7 @@ class AlpacaCameraAdapter(AlpacaAdapter):
         Alpaca-compliant camera exposes these, including a Seestar's second
         (wide-field) camera device, so no device-specific handling is needed
         here beyond already targeting the right device_number/base_url."""
-        info: dict[str, "float | int | str | None"] = {
+        info: dict[str, float | int | str | None] = {
             "pixel_size_um": None, "sensor_width_px": None,
             "sensor_height_px": None, "sensor_name": None,
         }
@@ -563,7 +562,7 @@ class AlpacaMountAdapter(AlpacaAdapter):
         self.pier_side = "East"
         self.is_tracking = False
         self.is_slewing = False
-        self._static_status: "dict[str, Any] | None" = None
+        self._static_status: dict[str, Any] | None = None
 
     async def _refuse_if_parked(self, command: str) -> None:
         """Movement commands must not reach a parked mount. Asks the mount
@@ -817,9 +816,9 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
         self.position = 0
         self.temperature = 15.0
         self.is_moving = False
-        self.max_step: "int | None" = None
-        self.max_increment: "int | None" = None
-        self.absolute: "bool | None" = None
+        self.max_step: int | None = None
+        self.max_increment: int | None = None
+        self.absolute: bool | None = None
 
     async def connect(self) -> None:
         await super().connect()
@@ -883,7 +882,7 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
         ``max_increment`` (used by ``FocuserController``'s clamp), so they
         stay current even if the initial ``connect()``-time fetch failed
         transiently."""
-        status: dict[str, "bool | int | float | None"] = {
+        status: dict[str, bool | int | float | None] = {
             "is_moving": None, "is_settling": False, "max_increment": None,
             "max_step": None, "position": None, "temp_comp": None, "temperature": None,
         }

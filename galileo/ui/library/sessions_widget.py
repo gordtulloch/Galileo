@@ -1,23 +1,19 @@
 import os
-import sys
 import glob
-import gzip
-import shutil
 import logging
 import datetime
 from datetime import datetime as dt
 from PySide6.QtCore import Qt
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QAbstractItemView,
                                QMenu, QProgressDialog, QApplication, QMessageBox,
-                               QFileDialog, QLabel, QProgressBar)
-from PySide6.QtGui import QFont, QDesktopServices, QIcon, QPixmap, QPainter, QColor, QBrush
-from PySide6.QtCore import QUrl
+                               QLabel)
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
 
 from galileo.library.core import fitsProcessing
 from galileo.library.models import fitsFile as FitsFileModel, fitsSession as FitsSessionModel, Masters
-from galileo.library.config import load_config as load_library_config, save_config as save_library_config
+from galileo.library.config import load_config as load_library_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +30,10 @@ class SessionsWidget(QWidget):
 
         # Load existing data on startup
         self.load_sessions_data()
-    
+
     def init_ui(self):
         layout = QVBoxLayout(self)
-        
+
         # Controls
         controls_layout = QHBoxLayout()
         self.regenerate_button = QPushButton("Regenerate")
@@ -46,15 +42,15 @@ class SessionsWidget(QWidget):
 
         controls_layout.addWidget(self.regenerate_button)
         controls_layout.addStretch()
-        
+
         # Sessions list
         self.sessions_tree = QTreeWidget()
         self.sessions_tree.setHeaderLabels(["Object Name", "Thumbnail", "Date", "Telescope", "Imager", "Filter", "Images", "Resources"])
         self.sessions_tree.setIconSize(QSize(150, 150))
-        
+
         # Enable multi-selection
         self.sessions_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        
+
         # Set column widths for better display
         self.sessions_tree.setColumnWidth(0, 200)  # Object Name
         self.sessions_tree.setColumnWidth(1, 160)  # Thumbnail
@@ -64,7 +60,7 @@ class SessionsWidget(QWidget):
         self.sessions_tree.setColumnWidth(5, 100)  # Filter
         self.sessions_tree.setColumnWidth(6, 80)   # Images
         self.sessions_tree.setColumnWidth(7, 140)  # Resources
-        
+
         # Enable context menu
         self.sessions_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.sessions_tree.customContextMenuRequested.connect(self.show_context_menu)
@@ -74,7 +70,7 @@ class SessionsWidget(QWidget):
 
         layout.addLayout(controls_layout)
         layout.addWidget(self.sessions_tree)
-        
+
         # Connect signals
         self.regenerate_button.clicked.connect(self.regenerate_sessions)
 
@@ -206,37 +202,37 @@ class SessionsWidget(QWidget):
 
         except Exception:
             return ''
-    
+
     def show_context_menu(self, position):
         """Show context menu for session items with master frame management"""
         item = self.sessions_tree.itemAt(position)
         if not item:
             return
-            
+
         # Get all selected items
         selected_items = self.sessions_tree.selectedItems()
         if not selected_items:
             return
-        
+
         # Analyze selected items to determine menu options
         light_sessions = []
         calibration_sessions = []
         parent_objects = []
-        
+
         for selected_item in selected_items:
             parent = selected_item.parent()
             if not parent:
                 # This is a parent item (object name)
                 parent_objects.append(selected_item)
                 continue
-                
+
             # This is a session item
             object_name = parent.text(0)
             if object_name in ['Bias', 'Dark', 'Flat']:
                 calibration_sessions.append(selected_item)
             else:
                 light_sessions.append(selected_item)
-        
+
         # Create context menu based on selection
         context_menu = QMenu(self)
 
@@ -249,7 +245,7 @@ class SessionsWidget(QWidget):
             copy_session_id_action.setToolTip("Copy the selected session ID(s) to the clipboard")
         else:
             copy_session_id_action = None
-        
+
         # === CHECKOUT OPTIONS ===
         if light_sessions:
             if len(light_sessions) == 1:
@@ -260,7 +256,7 @@ class SessionsWidget(QWidget):
                 checkout_action.setToolTip("Create symbolic links for selected light sessions")
         else:
             checkout_action = None
-        
+
         # === CALIBRATION OPTIONS ===
         if light_sessions and len(light_sessions) == 1:
             calibrate_action = context_menu.addAction("⚙️ Calibrate")
@@ -285,7 +281,7 @@ class SessionsWidget(QWidget):
             sample_stack_action = None
             photometric_stack_action = None
             regenerate_thumbnail_action = None
-        
+
         # === MASTER FRAME OPTIONS ===
         view_master_action = None
         if len(selected_items) == 1 and not parent_objects:
@@ -309,12 +305,12 @@ class SessionsWidget(QWidget):
         # Show the menu and handle selected action
         if context_menu.isEmpty():
             return
-            
+
         action = context_menu.exec(self.sessions_tree.viewport().mapToGlobal(position))
-        
+
         if not action:
             return
-            
+
         # === HANDLE ACTIONS ===
         # Checkout actions
         if action == checkout_action:
@@ -324,7 +320,7 @@ class SessionsWidget(QWidget):
             else:
                 logger.info(f"Checking out {len(light_sessions)} sessions")
                 self.checkout_multiple_sessions(light_sessions)
-        
+
         # Calibrate action
         elif action == calibrate_action:
             logger.info(f"Calibrating session: {light_sessions[0].parent().text(0)} on {light_sessions[0].text(2)}")
@@ -390,8 +386,8 @@ class SessionsWidget(QWidget):
 
             except Exception as e:
                 logger.error(f"Error regenerating thumbnail: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to regenerate thumbnail:\n{str(e)}")
-        
+                QMessageBox.critical(self, "Error", f"Failed to regenerate thumbnail:\n{e!s}")
+
         # View master action
         elif action == view_master_action:
             session_id = selected_items[0].data(0, Qt.UserRole)
@@ -408,7 +404,7 @@ class SessionsWidget(QWidget):
                 logger.info(f"Copied {len(ids)} session id(s) to clipboard")
             except Exception as e:
                 logger.error(f"Failed to copy session id(s) to clipboard: {e}")
-    
+
     def view_master_frame(self, session_id):
         """Open master frame in external FITS viewer"""
         try:
@@ -417,23 +413,23 @@ class SessionsWidget(QWidget):
                 Masters.source_session_id == session_id,
                 Masters.soft_delete == False
             ).first()
-            
+
             if not master:
                 QMessageBox.warning(self, "No Master", "No master frame found for this session.")
                 return
-            
+
             master_path = master.master_path
-            
+
             # Check if file exists
             if not os.path.exists(master_path):
                 QMessageBox.warning(self, "File Not Found", f"Master file not found:\n{master_path}")
                 return
-            
+
             self._open_path_in_external_viewer(master_path)
-                
+
         except Exception as e:
             logger.error(f"Error viewing master frame: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to open master frame:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to open master frame:\n{e!s}")
 
     def _open_path_in_external_viewer(self, file_path: str) -> None:
         """Open a file path in the configured external FITS viewer (or OS default)."""
@@ -444,7 +440,6 @@ class SessionsWidget(QWidget):
             return
 
         # Read configuration to get FITS viewer path
-        import configparser
         config = load_library_config()
         fits_viewer_path = config.get('DEFAULT', 'fits_viewer_path', fallback=None)
 
@@ -471,8 +466,8 @@ class SessionsWidget(QWidget):
                 QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
         except Exception as e:
             logger.error(f"Failed to open file in external viewer: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to open file:\n{str(e)}")
-    
+            QMessageBox.critical(self, "Error", f"Failed to open file:\n{e!s}")
+
     def checkout_session(self, item):
         """Create symbolic links for session files in a Siril-friendly format"""
         from .sessions.checkout_workflow import checkout_single_session
@@ -495,31 +490,30 @@ class SessionsWidget(QWidget):
             from astropy.io import fits
             import numpy as np
             from galileo.library.core.master_manager import get_master_manager
-            from galileo.library.models import Masters
             from galileo.library.core.utils import normalize_file_path
             import uuid
             import hashlib
-            
+
             # Get session ID from tree item
             session_id = item.data(0, Qt.UserRole)
             if not session_id:
                 if show_results:
                     QMessageBox.warning(self, "Error", "Session ID not found")
                 return {"error": "Session ID not found"}
-            
+
             # Get the session from database
             session = FitsSessionModel.get_by_id(session_id)
             if not session:
                 if show_results:
                     QMessageBox.warning(self, "Error", "Session not found in database")
                 return {"error": "Session not found in database"}
-            
+
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else session.fitsSessionObjectName
             session_date = session.fitsSessionDate
-            
+
             logger.info(f"Starting calibration for session: {object_name} on {session_date}")
-            
+
             # Check if this is a calibration session
             if object_name in ['Bias', 'Dark', 'Flat']:
                 if show_results:
@@ -529,7 +523,7 @@ class SessionsWidget(QWidget):
                         "Calibration is only applicable to light frame sessions.",
                     )
                 return {"error": "Calibration not applicable to calibration sessions"}
-            
+
             # Find matching master frames
             master_manager = get_master_manager()
             session_data = {
@@ -543,15 +537,15 @@ class SessionsWidget(QWidget):
                 'gain': session.fitsSessionGain,
                 'offset': session.fitsSessionOffset
             }
-            
+
             master_bias = master_manager.find_matching_master(session_data, 'bias')
             master_dark = master_manager.find_matching_master(session_data, 'dark')
             master_flat = master_manager.find_matching_master(session_data, 'flat')
-            
+
             has_bias = master_bias is not None and os.path.exists(master_bias.master_path)
             has_dark = master_dark is not None and os.path.exists(master_dark.master_path)
             has_flat = master_flat is not None and os.path.exists(master_flat.master_path)
-            
+
             if not (has_bias or has_dark or has_flat):
                 details = (
                     f"No matching master frames found for this session.\n\n"
@@ -564,7 +558,7 @@ class SessionsWidget(QWidget):
                 if show_results:
                     QMessageBox.warning(self, "No Master Frames", details)
                 return {"error": "No matching master frames found", "details": details}
-            
+
             # Show available masters
             available_masters = []
             if has_bias:
@@ -573,31 +567,31 @@ class SessionsWidget(QWidget):
                 available_masters.append(f"Dark: {os.path.basename(master_dark.master_path)}")
             if has_flat:
                 available_masters.append(f"Flat: {os.path.basename(master_flat.master_path)}")
-            
+
             if confirm:
                 # Confirm calibration
                 reply = QMessageBox.question(self, "Calibrate Session",
                     f"Calibrate light frames in session {object_name} ({session_date})?\n\n"
                     f"Available master frames:\n" + "\n".join(available_masters) + "\n\n"
-                    f"Calibrated frames will be saved with 'cal_' prefix.\n"
-                    f"Source uncalibrated frames will be soft-deleted.",
+                    "Calibrated frames will be saved with 'cal_' prefix.\n"
+                    "Source uncalibrated frames will be soft-deleted.",
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                
+
                 if reply != QMessageBox.Yes:
                     return {"cancelled": True}
-            
+
             # Get light frames from session
             light_files = list(FitsFileModel.select().where(
                 (FitsFileModel.fitsFileSession == session.fitsSessionId) &
                 (FitsFileModel.fitsFileSoftDelete == False) &
                 (FitsFileModel.fitsFileType.in_(['LIGHT', 'LIGHT FRAME']))
             ))
-            
+
             if not light_files:
                 if show_results:
                     QMessageBox.information(self, "No Files", "No light frames found in this session.")
                 return {"total": 0, "calibrated": 0, "skipped": 0, "errors": 0}
-            
+
             # Progress dialog
             progress = QProgressDialog("Calibrating light frames...", "Cancel", 0, len(light_files), self)
             progress.setWindowModality(Qt.WindowModal)
@@ -606,7 +600,7 @@ class SessionsWidget(QWidget):
             progress.setValue(0)
             progress.show()
             QApplication.processEvents()
-            
+
             # Load master frames
             master_bias_data = None
             master_dark_data = None
@@ -640,7 +634,7 @@ class SessionsWidget(QWidget):
                         raise ValueError("No 2D image data found in any HDU")
                     header = getattr(hdu, 'header', None)
                     return data, (header.copy() if header is not None else primary_header)
-            
+
             try:
                 if has_bias:
                     progress.setLabelText("Loading bias master...")
@@ -648,14 +642,14 @@ class SessionsWidget(QWidget):
                     bias_data, _bias_header = _read_fits_image(master_bias.master_path)
                     master_bias_data = bias_data.astype(np.float32, copy=False)
                     logger.info(f"Loaded bias master: {os.path.basename(master_bias.master_path)}")
-                
+
                 if has_dark:
                     progress.setLabelText("Loading dark master...")
                     QApplication.processEvents()
                     dark_data, _dark_header = _read_fits_image(master_dark.master_path)
                     master_dark_data = dark_data.astype(np.float32, copy=False)
                     logger.info(f"Loaded dark master: {os.path.basename(master_dark.master_path)}")
-                
+
                 if has_flat:
                     progress.setLabelText("Loading flat master...")
                     QApplication.processEvents()
@@ -669,46 +663,46 @@ class SessionsWidget(QWidget):
                         master_flat_data = None
                     if master_flat_data is not None:
                         logger.info(f"Loaded and normalized flat master: {os.path.basename(master_flat.master_path)}")
-                
+
             except Exception as e:
                 progress.close()
                 if show_results:
-                    QMessageBox.critical(self, "Error", f"Failed to load master frames: {str(e)}")
+                    QMessageBox.critical(self, "Error", f"Failed to load master frames: {e!s}")
                 logger.error(f"Error loading master frames: {e}")
-                return {"error": f"Failed to load master frames: {str(e)}"}
-            
+                return {"error": f"Failed to load master frames: {e!s}"}
+
             # Calibrate each light frame
             calibrated_count = 0
             skipped_count = 0
             error_count = 0
-            
+
             for i, light_file in enumerate(light_files):
                 if progress.wasCanceled():
                     break
-                
+
                 try:
                     progress.setLabelText(f"Calibrating {i+1}/{len(light_files)}: {os.path.basename(light_file.fitsFileName)}")
                     progress.setValue(i)
                     QApplication.processEvents()
-                    
+
                     # Check if already calibrated
                     if light_file.fitsFileCalibrated:
                         logger.debug(f"File already calibrated, skipping: {os.path.basename(light_file.fitsFileName)}")
                         skipped_count += 1
                         continue
-                    
+
                     if not os.path.exists(light_file.fitsFileName):
                         logger.warning(f"File not found: {light_file.fitsFileName}")
                         error_count += 1
                         continue
-                    
+
                     # Load light frame
                     light_data0, light_header = _read_fits_image(light_file.fitsFileName)
                     light_data = light_data0.astype(np.float32, copy=False)
-                    
+
                     # Apply calibration: (Light - Bias - Dark) / Flat
                     calibrated_data = light_data.copy()
-                    
+
                     bias_data = master_bias_data
                     if bias_data is not None and bias_data.shape != calibrated_data.shape:
                         logger.warning(
@@ -719,7 +713,7 @@ class SessionsWidget(QWidget):
                     if bias_data is not None:
                         calibrated_data -= bias_data
                         light_header['HISTORY'] = f'Bias corrected using {os.path.basename(master_bias.master_path)}'
-                    
+
                     dark_data = master_dark_data
                     if dark_data is not None and dark_data.shape != calibrated_data.shape:
                         logger.warning(
@@ -730,7 +724,7 @@ class SessionsWidget(QWidget):
                     if dark_data is not None:
                         calibrated_data -= dark_data
                         light_header['HISTORY'] = f'Dark corrected using {os.path.basename(master_dark.master_path)}'
-                    
+
                     flat_data = master_flat_data
                     if flat_data is not None and flat_data.shape != calibrated_data.shape:
                         logger.warning(
@@ -742,22 +736,22 @@ class SessionsWidget(QWidget):
                         mask = flat_data > 0
                         calibrated_data[mask] /= flat_data[mask]
                         light_header['HISTORY'] = f'Flat corrected using {os.path.basename(master_flat.master_path)}'
-                    
+
                     # Update header
                     light_header['CALIBRAT'] = True
                     # NOTE: this file imports `datetime` module at top-level; use `dt` alias for datetime.datetime
                     light_header['CALDATE'] = dt.now().isoformat()
                     light_header['HISTORY'] = 'Calibrated by Galileo'
-                    
+
                     # Save calibrated frame in same directory with cal_ prefix
                     source_dir = os.path.dirname(light_file.fitsFileName)
                     base_filename = os.path.basename(light_file.fitsFileName)
                     calibrated_filename = f"cal_{base_filename}"
                     calibrated_path = os.path.join(source_dir, calibrated_filename)
-                    
+
                     # Clip and convert
                     calibrated_data = np.clip(calibrated_data, 0, 65535).astype(np.uint16)
-                    
+
                     hdu = fits.PrimaryHDU(data=calibrated_data, header=light_header)
                     hdu.writeto(calibrated_path, overwrite=True)
 
@@ -794,36 +788,36 @@ class SessionsWidget(QWidget):
                         fitsFileOriginalFile=normalize_file_path(light_file.fitsFileName),
                         fitsFileOriginalCloudURL=light_file.fitsFileCloudURL
                     )
-                    
+
                     # Soft-delete the source record so the session shows calibrated outputs
                     light_file.fitsFileSoftDelete = True
                     light_file.save()
-                    
+
                     calibrated_count += 1
                     logger.info(f"Calibrated: {calibrated_filename}")
-                    
+
                 except Exception as e:
                     logger.error(f"Error calibrating {light_file.fitsFileName}: {e}")
                     error_count += 1
-            
+
             progress.setValue(len(light_files))
             progress.close()
-            
+
             # Show results
-            message = f"Calibration complete!\n\n"
+            message = "Calibration complete!\n\n"
             message += f"Processed: {len(light_files)} files\n"
             message += f"Calibrated: {calibrated_count}\n"
             message += f"Skipped: {skipped_count}\n"
             message += f"Errors: {error_count}\n\n"
-            message += f"Calibrated frames saved with 'cal_' prefix.\n"
-            message += f"Source frames marked as soft-deleted."
-            
+            message += "Calibrated frames saved with 'cal_' prefix.\n"
+            message += "Source frames marked as soft-deleted."
+
             if show_results:
                 if calibrated_count > 0:
                     QMessageBox.information(self, "Calibration Complete", message)
                 else:
                     QMessageBox.warning(self, "Calibration Complete", message)
-            
+
             logger.info(f"Session calibration complete: {calibrated_count} calibrated, {skipped_count} skipped, {error_count} errors")
 
             # Refresh sessions tree so new calibrated records appear
@@ -838,11 +832,11 @@ class SessionsWidget(QWidget):
                 "skipped": skipped_count,
                 "errors": error_count,
             }
-            
+
         except Exception as e:
             if show_results:
-                QMessageBox.critical(self, "Error", f"Failed to calibrate session: {str(e)}")
-            logger.error(f"Error in calibrate_session: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to calibrate session: {e!s}")
+            logger.error(f"Error in calibrate_session: {e!s}")
             return {"error": str(e)}
 
         # === SESSION MANAGEMENT METHODS ===
@@ -978,7 +972,7 @@ class SessionsWidget(QWidget):
             logger.info(f"Stack cancelled: {e}")
         except Exception as e:
             logger.error(f"Error creating stack: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to create stack:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to create stack:\n{e!s}")
 
     def photometric_stack_session(self, item):
         """Create a photometry-safe stack of light frames and open it in the external viewer."""
@@ -1122,50 +1116,50 @@ class SessionsWidget(QWidget):
             logger.info(f"Photometric stack cancelled: {e}")
         except Exception as e:
             logger.error(f"Error creating photometric stack: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to create photometric stack:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to create photometric stack:\n{e!s}")
 
     def show_session_properties(self, session_item):
         """Show detailed properties for a session"""
         try:
             from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QTabWidget, QWidget, QTableWidget, QTableWidgetItem, QHeaderView
-            
+
             parent = session_item.parent()
             if not parent:
                 QMessageBox.information(self, "Properties", "Properties view is only available for individual sessions.")
                 return
-            
+
             # Get session information
             object_name = parent.text(0)
             session_date = session_item.text(2)
-            
+
             # Find session in database
             session = FitsSessionModel.select().where(
-                (FitsSessionModel.fitsSessionObjectName == object_name) & 
+                (FitsSessionModel.fitsSessionObjectName == object_name) &
                 (FitsSessionModel.fitsSessionDate == session_date)
             ).first()
-            
+
             if not session:
                 QMessageBox.warning(self, "Error", "Session not found in database")
                 return
-            
+
             # Create properties dialog
             dialog = QDialog(self)
             dialog.setWindowTitle(f"Session Properties: {object_name} - {session_date}")
             dialog.setMinimumSize(700, 500)
             layout = QVBoxLayout(dialog)
-            
+
             # Create tab widget
             tabs = QTabWidget()
-            
+
             # === SESSION INFO TAB ===
             session_tab = QWidget()
             session_layout = QVBoxLayout(session_tab)
-            
+
             session_info = QTextEdit()
             session_info.setReadOnly(True)
-            
-            info_content = f"Session Properties\n"
-            info_content += f"=" * 50 + "\n\n"
+
+            info_content = "Session Properties\n"
+            info_content += "=" * 50 + "\n\n"
             info_content += f"Session ID: {session.fitsSessionId}\n"
             info_content += f"Object Name: {session.fitsSessionObjectName}\n"
             info_content += f"Date: {session.fitsSessionDate}\n"
@@ -1177,42 +1171,42 @@ class SessionsWidget(QWidget):
             info_content += f"Gain: {session.fitsSessionGain or 'Unknown'}\n"
             info_content += f"Offset: {session.fitsSessionOffset or 'Unknown'}\n"
             info_content += f"Filter: {session.fitsSessionFilter or 'Unknown'}\n\n"
-            
-            info_content += f"Calibration Links:\n"
+
+            info_content += "Calibration Links:\n"
             info_content += f"Bias Session: {session.fitsBiasSession or 'Not linked'}\n"
             info_content += f"Dark Session: {session.fitsDarkSession or 'Not linked'}\n"
             info_content += f"Flat Session: {session.fitsFlatSession or 'Not linked'}\n\n"
-            
-            info_content += f"Master Frames:\n"
+
+            info_content += "Master Frames:\n"
             info_content += f"Bias Master: {session.fitsBiasMaster or 'Not available'}\n"
             info_content += f"Dark Master: {session.fitsDarkMaster or 'Not available'}\n"
             info_content += f"Flat Master: {session.fitsFlatMaster or 'Not available'}\n"
-            
+
             session_info.setPlainText(info_content)
             session_layout.addWidget(session_info)
             tabs.addTab(session_tab, "Session Info")
-            
+
             # === FILES TAB ===
             files_tab = QWidget()
             files_layout = QVBoxLayout(files_tab)
-            
+
             files_table = QTableWidget()
             files_table.setColumnCount(6)
             files_table.setHorizontalHeaderLabels([
                 "Filename", "Type", "Date", "Calibrated", "Hash", "Size"
             ])
-            
+
             # Get session files
             session_files = FitsFileModel.select().where(FitsFileModel.fitsFileSession == session.fitsSessionId)
             files_table.setRowCount(session_files.count())
-            
+
             for i, file in enumerate(session_files):
                 files_table.setItem(i, 0, QTableWidgetItem(os.path.basename(file.fitsFileName or '')))
                 files_table.setItem(i, 1, QTableWidgetItem(file.fitsFileType or 'Unknown'))
                 files_table.setItem(i, 2, QTableWidgetItem(str(file.fitsFileDate or 'Unknown')))
                 files_table.setItem(i, 3, QTableWidgetItem('Yes' if file.fitsFileCalibrated else 'No'))
                 files_table.setItem(i, 4, QTableWidgetItem(file.fitsFileHash or 'Unknown'))
-                
+
                 # Get file size
                 if file.fitsFileName and os.path.exists(file.fitsFileName):
                     size = os.path.getsize(file.fitsFileName)
@@ -1220,26 +1214,26 @@ class SessionsWidget(QWidget):
                 else:
                     size_str = "File not found"
                 files_table.setItem(i, 5, QTableWidgetItem(size_str))
-            
+
             # Configure files table
             header = files_table.horizontalHeader()
             header.setSectionResizeMode(0, QHeaderView.Stretch)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             files_table.setAlternatingRowColors(True)
             files_table.setSelectionBehavior(QTableWidget.SelectRows)
-            
+
             files_layout.addWidget(files_table)
             tabs.addTab(files_tab, f"Files ({session_files.count()})")
-            
+
             layout.addWidget(tabs)
-            
+
             # Buttons
             buttons = QDialogButtonBox(QDialogButtonBox.Close)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
-            
+
             dialog.exec()
-            
+
         except Exception as e:
             logger.error(f"Error showing session properties: {e}")
             QMessageBox.critical(self, "Error", f"Failed to show session properties:\n\n{e}")
@@ -1248,7 +1242,7 @@ class SessionsWidget(QWidget):
         """Update light sessions by running createLightSessions method with progress dialog."""
         try:
             logger.info("Starting light sessions creation")
-            
+
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Creating Light Sessions")
@@ -1257,42 +1251,42 @@ class SessionsWidget(QWidget):
             progress_dialog.setValue(0)
             progress_dialog.show()
             QApplication.processEvents()
-            
+
             # Create the processor
             processor = fitsProcessing()
-            
+
             # Define progress callback
             def progress_callback(current, total, description):
                 if progress_dialog.wasCanceled():
                     return False
-                
+
                 if total > 0:
                     progress = int((current / total) * 100)
                     progress_dialog.setValue(progress)
                     progress_dialog.setLabelText(f"Creating sessions {current}/{total}: {description}")
                 else:
                     progress_dialog.setLabelText(f"Processing: {description}")
-                
+
                 QApplication.processEvents()
                 return not progress_dialog.wasCanceled()
-            
+
             # Run the light sessions creation
             created_sessions = processor.createLightSessions(progress_callback)
-            
+
             progress_dialog.close()
-            
+
             if progress_dialog.wasCanceled():
                 logger.info("Light sessions creation cancelled by user")
                 QMessageBox.information(self, "Cancelled", "Light sessions creation was cancelled.")
                 return
-            
+
             # Refresh the display
             self.load_sessions_data()
-            
+
             logger.info(f"Created {len(created_sessions)} light sessions")
-            QMessageBox.information(self, "Sessions Created", 
+            QMessageBox.information(self, "Sessions Created",
                                   f"Successfully created {len(created_sessions)} light sessions.")
-            
+
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
@@ -1303,7 +1297,7 @@ class SessionsWidget(QWidget):
         """Update calibration Sessions by running createCalibrationSessions method with progress dialog."""
         try:
             logger.info("Starting calibration sessions creation")
-            
+
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Creating Calibration Sessions")
@@ -1312,42 +1306,42 @@ class SessionsWidget(QWidget):
             progress_dialog.setValue(0)
             progress_dialog.show()
             QApplication.processEvents()
-            
+
             # Create the processor
             processor = fitsProcessing()
-            
+
             # Define progress callback
             def progress_callback(current, total, description):
                 if progress_dialog.wasCanceled():
                     return False
-                
+
                 if total > 0:
                     progress = int((current / total) * 100)
                     progress_dialog.setValue(progress)
                     progress_dialog.setLabelText(f"Creating calibration sessions {current}/{total}: {description}")
                 else:
                     progress_dialog.setLabelText(f"Processing: {description}")
-                
+
                 QApplication.processEvents()
                 return not progress_dialog.wasCanceled()
-            
+
             # Run the calibration sessions creation
             created_sessions = processor.createCalibrationSessions(progress_callback)
-            
+
             progress_dialog.close()
-            
+
             if progress_dialog.wasCanceled():
                 logger.info("Calibration sessions creation cancelled by user")
                 QMessageBox.information(self, "Cancelled", "Calibration sessions creation was cancelled.")
                 return
-            
+
             # Refresh the display
             self.load_sessions_data()
-            
+
             logger.info(f"Created {len(created_sessions)} calibration sessions")
-            QMessageBox.information(self, "Sessions Created", 
+            QMessageBox.information(self, "Sessions Created",
                                   f"Successfully created {len(created_sessions)} calibration sessions.")
-            
+
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
@@ -1402,7 +1396,7 @@ class SessionsWidget(QWidget):
                 self._master_types_by_source_session_id.setdefault(str(sid), set()).add(st)
 
             self._master_source_session_ids = set(self._master_types_by_source_session_id.keys())
-            
+
             # Group sessions by object name
             sessions_by_object = {}
             for session in sessions:
@@ -1410,27 +1404,27 @@ class SessionsWidget(QWidget):
                 if object_name not in sessions_by_object:
                     sessions_by_object[object_name] = []
                 sessions_by_object[object_name].append(session)
-            
+
             # Create hierarchical tree structure - sort objects alphabetically
             for object_name in sorted(sessions_by_object.keys()):
                 object_sessions = sessions_by_object[object_name]
-                
+
                 # Calculate total image count for this object across all sessions
                 total_images = 0
                 for session in object_sessions:
                     total_images += self._session_file_counts.get(session.fitsSessionId, 0)
-                
+
                 # Calculate overall calibration statistics for this object
                 calibrated_sessions = 0
                 total_light_sessions = 0
-                
+
                 for session in object_sessions:
                     if session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']:
                         total_light_sessions += 1
                         calibration_info = self._build_resources_status(session)
                         if calibration_info["percentage"] > 0:
                             calibrated_sessions += 1
-                
+
                 # Create parent item for each object
                 parent_item = QTreeWidgetItem()
                 parent_item.setText(0, object_name)
@@ -1440,7 +1434,7 @@ class SessionsWidget(QWidget):
                 parent_item.setText(4, "")  # No imager for parent
                 parent_item.setText(5, "")  # No filter for parent
                 parent_item.setText(6, str(total_images))  # Total images for this object
-                
+
                 # Show resource summary for parent
                 if total_light_sessions > 0:
                     cal_percentage = (calibrated_sessions / total_light_sessions) * 100
@@ -1449,28 +1443,28 @@ class SessionsWidget(QWidget):
                     parent_item.setToolTip(7, f"Resource Coverage: {calibrated_sessions} of {total_light_sessions} sessions have calibration resources")
                 else:
                     parent_item.setText(7, "")
-                
+
                 # Style parent item differently
                 font = parent_item.font(0)
                 font.setBold(True)
                 parent_item.setFont(0, font)
-                
+
                 # Sort sessions by date (newest first)
-                sorted_sessions = sorted(object_sessions, 
-                                       key=lambda x: x.fitsSessionDate if x.fitsSessionDate else datetime.date.min, 
+                sorted_sessions = sorted(object_sessions,
+                                       key=lambda x: x.fitsSessionDate or datetime.date.min,
                                        reverse=True)
-                
+
                 # Add child items for each session
                 for session in sorted_sessions:
                     # Get the image count for this specific session
                     session_image_count = self._session_file_counts.get(session.fitsSessionId, 0)
-                    
+
                     # Build enhanced resources status
                     calibration_info = self._build_resources_status(session)
-                    
+
                     # Check if this session has created a master frame
                     has_master = session.fitsSessionId in self._master_source_session_ids
-                    
+
                     child_item = QTreeWidgetItem()
                     # Show (master) for calibration sessions that have created masters
                     if has_master and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
@@ -1483,7 +1477,7 @@ class SessionsWidget(QWidget):
                     child_item.setText(4, session.fitsSessionImager or "Unknown")
                     child_item.setText(5, session.fitsSessionFilter or "Unknown")
                     child_item.setText(6, str(session_image_count))  # Image count for this session
-                    
+
                     # Store session ID in the item for later retrieval
                     child_item.setData(0, Qt.UserRole, session.fitsSessionId)
 
@@ -1496,14 +1490,14 @@ class SessionsWidget(QWidget):
                                 pix = pix.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                                 child_item.setIcon(1, QIcon(pix))
                                 child_item.setToolTip(1, f"Thumbnail: {thumb_path}")
-                    
+
                     # Set resources status as simple text only
                     if calibration_info["text"]:
                         child_item.setText(7, calibration_info["text"])
                         child_item.setToolTip(7, calibration_info["tooltip"])
                     else:
                         child_item.setText(7, "")
-                    
+
                     # Build quality metrics tooltip for all columns
                     quality_tooltip = self._build_quality_tooltip(session)
                     for col in range(8):  # Apply tooltip to all columns
@@ -1513,20 +1507,20 @@ class SessionsWidget(QWidget):
                             child_item.setToolTip(col, combined_tooltip)
                         else:
                             child_item.setToolTip(col, quality_tooltip)
-                    
+
                     parent_item.addChild(child_item)
-                
+
                 # Only add parent item if it has children
                 if parent_item.childCount() > 0:
                     self.sessions_tree.addTopLevelItem(parent_item)
                     parent_item.setExpanded(False)
-            
+
             count = len(sessions)
             if count > 0:
                 logger.debug(f"Loaded {count} sessions into hierarchical display")
             else:
                 logger.debug("No sessions found in database")
-            
+
         except Exception as e:
             logger.error(f"Error loading Sessions data: {e}")
             # Don't show error dialog on startup if database is just empty
@@ -1536,7 +1530,6 @@ class SessionsWidget(QWidget):
     def _get_thumbnail_path(self, session_id: str) -> str:
         """Return the expected thumbnail path for a session id."""
         try:
-            import configparser
             config = load_library_config()
             repo_path = config.get('DEFAULT', 'repo', fallback='')
         except Exception:
@@ -1545,7 +1538,7 @@ class SessionsWidget(QWidget):
         if not repo_path:
             return ''
         return os.path.join(repo_path, 'Thumbnails', f"{session_id}.png")
-    
+
     def _build_quality_tooltip(self, session):
         """
         Build a tooltip string with quality metrics for a session.
@@ -1558,37 +1551,37 @@ class SessionsWidget(QWidget):
         """
         parts = []
         parts.append("=== Quality Metrics ===")
-        
+
         if session.fitsSessionAvgFWHMArcsec is not None:
             parts.append(f"Average FWHM: {session.fitsSessionAvgFWHMArcsec:.2f} arcsec")
         else:
             parts.append("Average FWHM: N/A")
-        
+
         if session.fitsSessionAvgEccentricity is not None:
             parts.append(f"Average Eccentricity: {session.fitsSessionAvgEccentricity:.3f}")
         else:
             parts.append("Average Eccentricity: N/A")
-        
+
         if session.fitsSessionAvgHFRArcsec is not None:
             parts.append(f"Average HFR: {session.fitsSessionAvgHFRArcsec:.2f} arcsec")
         else:
             parts.append("Average HFR: N/A")
-        
+
         if session.fitsSessionImageSNR is not None:
             parts.append(f"Average SNR: {session.fitsSessionImageSNR:.1f}")
         else:
             parts.append("Average SNR: N/A")
-        
+
         if session.fitsSessionStarCount is not None:
             parts.append(f"Average Star Count: {session.fitsSessionStarCount}")
         else:
             parts.append("Average Star Count: N/A")
-        
+
         if session.fitsSessionImageScale is not None:
             parts.append(f"Image Scale: {session.fitsSessionImageScale:.2f} arcsec/pixel")
         else:
             parts.append("Image Scale: N/A")
-        
+
         return "\n".join(parts)
 
     def _create_status_icon(self, icon_type, available=True):
@@ -1596,10 +1589,10 @@ class SessionsWidget(QWidget):
         size = 12
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.transparent)
-        
+
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Define colors and shapes for different calibration types
         if icon_type == 'B':  # Bias
             color = QColor(0, 150, 255) if available else QColor(128, 128, 128)  # Blue or gray
@@ -1627,10 +1620,10 @@ class SessionsWidget(QWidget):
             painter.setBrush(QBrush(color))
             painter.setPen(color)
             painter.drawEllipse(3, 3, size-6, size-6)  # Small filled circle
-            
+
         painter.end()
         return QIcon(pixmap)
-    
+
     def _build_resources_status(self, session):
         """Build resources status showing frame counts or Master availability for light sessions."""
         def _masters_for_source_session(source_session_id) -> set:
@@ -1712,19 +1705,19 @@ class SessionsWidget(QWidget):
                 "has_flat": 'flat' in mtypes,
                 "has_masters": True,
             }
-        
+
         # Check if this is a precalibrated telescope/instrument (iTelescope or SeeStar)
         if session.fitsSessionTelescope or session.fitsSessionImager:
             telescope = session.fitsSessionTelescope or ""
             instrument = session.fitsSessionImager or ""
-            
+
             if 'itelescope' in telescope.lower() or 'seestar' in instrument.lower():
                 source_name = ""
                 if 'itelescope' in telescope.lower():
                     source_name = session.fitsSessionTelescope
                 else:
                     source_name = session.fitsSessionImager
-                
+
                 return {
                     "text": "Precalibrated",
                     "tooltip": f"Pre-calibrated images from {source_name}",
@@ -1734,7 +1727,7 @@ class SessionsWidget(QWidget):
                     "has_flat": True,
                     "has_masters": True
                 }
-        
+
         # Master availability can come either from explicit session fields or from the Masters table
         dark_source_session = getattr(session, 'fitsDarkSession', None)
         flat_source_session = getattr(session, 'fitsFlatSession', None)
@@ -1762,16 +1755,16 @@ class SessionsWidget(QWidget):
             ('bias' in bias_masters) or
             ('bias' in matched_masters)
         )
-        
+
         # Check calibration sessions availability
         has_bias_session = bool(session.fitsBiasSession)
         has_dark_session = bool(session.fitsDarkSession)
         has_flat_session = bool(session.fitsFlatSession)
-        
+
         # Build status parts
         status_parts = []
         tooltip_parts = []
-        
+
         # Dark
         if has_dark_master:
             status_parts.append(_master_label('dark'))
@@ -1787,7 +1780,7 @@ class SessionsWidget(QWidget):
         else:
             status_parts.append("Dark: None")
             tooltip_parts.append("✗ No dark frames available")
-            
+
         # Flat
         if has_flat_master:
             status_parts.append(_master_label('flat'))
@@ -1803,7 +1796,7 @@ class SessionsWidget(QWidget):
         else:
             status_parts.append("Flat: None")
             tooltip_parts.append("✗ No flat frames available")
-            
+
         # Bias
         if has_bias_master:
             status_parts.append(_master_label('bias'))
@@ -1819,7 +1812,7 @@ class SessionsWidget(QWidget):
         else:
             status_parts.append("Bias: None")
             tooltip_parts.append("✗ No bias frames available")
-        
+
         # Calculate readiness percentage (for color coding)
         available_count = sum([
             has_dark_master or has_dark_session,
@@ -1827,16 +1820,16 @@ class SessionsWidget(QWidget):
             has_bias_master or has_bias_session
         ])
         readiness_percentage = (available_count / 3.0) * 100
-        
+
         # Create comprehensive tooltip
         tooltip = f"Calibration Resources ({readiness_percentage:.0f}% ready):\n" + "\n".join(tooltip_parts)
-        
+
         # Build display text - combine all status parts with commas
         if status_parts:
             text = ", ".join(status_parts)
         else:
             text = "No resources"
-            
+
         return {
             "text": text,
             "tooltip": tooltip,
@@ -1850,19 +1843,19 @@ class SessionsWidget(QWidget):
     def _create_calibration_progress_widget(self, percentage, has_bias, has_dark, has_flat):
         """Create a compact progress widget showing calibration status."""
         widget = QLabel()
-        
+
         # Create a mini progress representation
         progress_text = "["
-        
+
         # Add indicators for each calibration type
         progress_text += "●" if has_bias else "○"  # Bias
-        progress_text += "●" if has_dark else "○"   # Dark  
+        progress_text += "●" if has_dark else "○"   # Dark
         progress_text += "●" if has_flat else "○"   # Flat
-        
+
         progress_text += f"] {percentage:.0f}%"
-        
+
         widget.setText(progress_text)
-        
+
         # Color code the text based on completion
         if percentage >= 100:
             widget.setStyleSheet("color: green; font-weight: bold;")
@@ -1872,18 +1865,18 @@ class SessionsWidget(QWidget):
             widget.setStyleSheet("color: #CC8800; font-weight: bold;")
         else:
             widget.setStyleSheet("color: red; font-weight: bold;")
-            
+
         return widget
-    
+
     def _get_calibration_status_icon(self, session):
         """Get an overall calibration status icon for the session."""
         calibration_info = self._build_resources_status(session)
-        
+
         if calibration_info["text"] == "":
             return None
-            
+
         percentage = calibration_info["percentage"]
-        
+
         if percentage >= 100:
             return self._create_status_icon('M', True)  # Master/complete indicator
         elif percentage >= 67:
@@ -1896,21 +1889,21 @@ class SessionsWidget(QWidget):
         """Clear all Session records from the database and refresh the display."""
         try:
             logger.info("Clearing all sessions from database")
-            
+
             # Clear session references in files first to avoid foreign key constraints
             FitsFileModel.update(fitsFileSession=None).execute()
-            
+
             # Delete all sessions
             deleted_count = FitsSessionModel.delete().execute()
-            
+
             logger.info(f"Cleared {deleted_count} sessions from database")
-            
+
             # Refresh the display
             self.load_sessions_data()
-            
-            QMessageBox.information(self, "Sessions Cleared", 
+
+            QMessageBox.information(self, "Sessions Cleared",
                                   f"Successfully cleared {deleted_count} sessions from the database.")
-            
+
         except Exception as e:
             logger.error(f"Error clearing sessions: {e}")
             QMessageBox.critical(self, "Error", f"Failed to clear sessions: {e}")
@@ -1919,7 +1912,7 @@ class SessionsWidget(QWidget):
         """Link calibration sessions to light sessions with progress dialog."""
         try:
             logger.info("Starting session linking")
-            
+
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Linking Sessions")
@@ -1928,42 +1921,42 @@ class SessionsWidget(QWidget):
             progress_dialog.setValue(0)
             progress_dialog.show()
             QApplication.processEvents()
-            
+
             # Create the processor
             processor = fitsProcessing()
-            
+
             # Define progress callback
             def progress_callback(current, total, description):
                 if progress_dialog.wasCanceled():
                     return False
-                
+
                 if total > 0:
                     progress = int((current / total) * 100)
                     progress_dialog.setValue(progress)
                     progress_dialog.setLabelText(f"Linking sessions {current}/{total}: {description}")
                 else:
                     progress_dialog.setLabelText(f"Processing: {description}")
-                
+
                 QApplication.processEvents()
                 return not progress_dialog.wasCanceled()
-            
+
             # Run the session linking
             updated_sessions = processor.linkSessions(progress_callback)
-            
+
             progress_dialog.close()
-            
+
             if progress_dialog.wasCanceled():
                 logger.info("Session linking cancelled by user")
                 QMessageBox.information(self, "Cancelled", "Session linking was cancelled.")
                 return
-            
+
             # Refresh the display
             self.load_sessions_data()
-            
+
             logger.info(f"Linked {len(updated_sessions)} sessions")
-            QMessageBox.information(self, "Sessions Linked", 
+            QMessageBox.information(self, "Sessions Linked",
                                   f"Successfully linked {len(updated_sessions)} light sessions with calibration sessions.")
-            
+
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
@@ -1975,15 +1968,15 @@ class SessionsWidget(QWidget):
         try:
             from .auto_calibration_dialog import AutoCalibrationDialog
             from PySide6.QtWidgets import QDialog
-            
+
             # Create and show the workflow selection dialog
             dialog = AutoCalibrationDialog(self)
             result = dialog.exec()
-            
+
             # Refresh the sessions display if workflow completed
             if result == QDialog.Accepted:
                 self.load_sessions_data()
-            
+
         except Exception as e:
             logger.error(f"Error running auto-calibration workflow: {e}")
             QMessageBox.critical(self, "Error", f"Failed to run auto-calibration workflow:\n\n{e}")
@@ -1999,63 +1992,63 @@ class SessionsWidget(QWidget):
                 "All Sessions: Clear all existing sessions and recreate them from all FITS files.\n\n"
                 "New Only: Only create sessions for FITS files that don't currently have a session assigned."
             )
-            
+
             all_button = msg_box.addButton("All Sessions", QMessageBox.AcceptRole)
             new_only_button = msg_box.addButton("New Only", QMessageBox.AcceptRole)
             cancel_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-            
+
             msg_box.setDefaultButton(new_only_button)
             msg_box.exec()
-            
+
             clicked_button = msg_box.clickedButton()
-            
+
             if clicked_button == cancel_button:
                 return
             elif clicked_button == all_button:
                 # Confirm the destructive operation
-                reply = QMessageBox.question(self, "Confirm Regenerate All", 
+                reply = QMessageBox.question(self, "Confirm Regenerate All",
                                            "This will clear ALL existing sessions and recreate them from FITS files.\n\n"
                                            "Are you sure you want to continue?",
                                            QMessageBox.Yes | QMessageBox.No,
                                            QMessageBox.No)
-                
+
                 if reply != QMessageBox.Yes:
                     return
-                
+
                 # Call the full regeneration method (existing behavior)
                 self._do_regenerate_sessions()
             elif clicked_button == new_only_button:
                 # Call the new-only regeneration method
                 self._do_regenerate_sessions_new_only(show_user_messages=True)
-            
+
         except Exception as e:
             logger.error(f"Error in regenerate_sessions: {e}")
             QMessageBox.critical(self, "Error", f"Session regeneration failed: {e}")
-    
+
     def _do_regenerate_sessions(self):
         """Internal method that performs the actual session regeneration without confirmation dialog"""
         try:
             logger.info("Starting complete session regeneration")
-            
+
             # Step 1: Clear all existing sessions
             logger.info("Step 1: Clearing existing sessions")
             try:
                 # Clear session references in files first to avoid foreign key constraints
                 FitsFileModel.update(fitsFileSession=None).execute()
-                
+
                 # Delete all sessions
                 deleted_count = FitsSessionModel.delete().execute()
                 logger.info(f"Cleared {deleted_count} existing sessions")
-                
+
                 # Refresh display immediately to show empty sessions
                 self.load_sessions_data()
                 QApplication.processEvents()
-                
+
             except Exception as e:
                 logger.error(f"Error clearing sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to clear existing sessions: {e}")
                 return
-            
+
             # Step 2: Create light sessions
             logger.info("Step 2: Creating light sessions")
             light_sessions = []
@@ -2067,12 +2060,12 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 processor = fitsProcessing()
-                
+
                 # Track if operation was cancelled
                 was_cancelled = False
-                
+
                 def light_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2088,24 +2081,24 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Light sessions {current}/{total}: {filename}")
                     QApplication.processEvents()
                     return True
-                
+
                 light_sessions = processor.createLightSessions(light_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("Session regeneration cancelled during light sessions creation")
                     QMessageBox.information(self, "Cancelled", "Session regeneration was cancelled.")
                     return
-                    
+
                 logger.info(f"Created {len(light_sessions)} light sessions")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
                 logger.error(f"Error creating light sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to create light sessions: {e}")
                 return
-            
+
             # Step 3: Create calibration sessions
             logger.info("Step 3: Creating calibration sessions")
             cal_sessions = []
@@ -2117,10 +2110,10 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 # Track if operation was cancelled
                 was_cancelled = False
-                
+
                 def cal_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2141,24 +2134,24 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Calibration sessions {current}/{total}: {display_text}")
                     QApplication.processEvents()
                     return True
-                
+
                 cal_sessions = processor.createCalibrationSessions(cal_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("Session regeneration cancelled during calibration sessions creation")
                     QMessageBox.information(self, "Cancelled", "Session regeneration was cancelled.")
                     return
-                    
+
                 logger.info(f"Created {len(cal_sessions)} calibration sessions")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
                 logger.error(f"Error creating calibration sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
                 return
-            
+
             # Step 4: Link sessions
             logger.info("Step 4: Linking Master sessions")
             linked_sessions = []
@@ -2170,10 +2163,10 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 # Track if operation was cancelled
                 was_cancelled = False
-                
+
                 def link_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2189,58 +2182,58 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Linking {current}/{total}: {display_text}")
                     QApplication.processEvents()
                     return True
-                
+
                 linked_sessions = processor.linkSessions(link_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("Session regeneration cancelled during linking")
                     QMessageBox.information(self, "Cancelled", "Session regeneration was cancelled.")
                     return
-                    
+
                 logger.info(f"Linked {len(linked_sessions)} sessions")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
                 logger.error(f"Error linking sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to link sessions: {e}")
                 return
-            
+
             # Final step: Refresh the display
             self.load_sessions_data()
-            
+
             # Show completion message
             total_light = len(light_sessions) if 'light_sessions' in locals() else 0
             total_cal = len(cal_sessions) if 'cal_sessions' in locals() else 0
             total_linked = len(linked_sessions) if 'linked_sessions' in locals() else 0
-            
+
             logger.info(f"Session regeneration complete: {total_light} light, {total_cal} calibration, {total_linked} linked")
-            
+
         except Exception as e:
             logger.error(f"Unexpected error during session regeneration: {e}")
             QMessageBox.critical(self, "Error", f"Unexpected error during session regeneration: {e}")
-    
+
     def _do_regenerate_sessions_new_only(self, show_user_messages: bool = True):
         """Regenerate sessions only for files without sessions assigned."""
         try:
             logger.info("Starting new-only session regeneration (files without sessions)")
-            
+
             # Count unassigned files first
             unassigned_light_count = FitsFileModel.select().where(
-                FitsFileModel.fitsFileSession.is_null(), 
+                FitsFileModel.fitsFileSession.is_null(),
                 FitsFileModel.fitsFileType == 'LIGHT FRAME',
                 FitsFileModel.fitsFileSoftDelete == False
             ).count()
-            
+
             unassigned_cal_count = FitsFileModel.select().where(
                 FitsFileModel.fitsFileSession.is_null(),
                 FitsFileModel.fitsFileType.in_(['BIAS FRAME', 'DARK FRAME', 'FLAT FIELD']),
                 FitsFileModel.fitsFileSoftDelete == False
             ).count()
-            
+
             total_unassigned = unassigned_light_count + unassigned_cal_count
-            
+
             if total_unassigned == 0:
                 if show_user_messages:
                     QMessageBox.information(
@@ -2250,9 +2243,9 @@ class SessionsWidget(QWidget):
                         "No new sessions need to be created.",
                     )
                 return
-            
+
             logger.info(f"Found {unassigned_light_count} unassigned light files and {unassigned_cal_count} unassigned calibration files")
-            
+
             # Step 1: Create light sessions for unassigned files
             logger.info("Step 1: Creating light sessions for unassigned files")
             light_sessions = []
@@ -2264,12 +2257,12 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 processor = fitsProcessing()
-                
+
                 # Track if operation was cancelled
                 was_cancelled = False
-                
+
                 def light_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2284,18 +2277,18 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Light sessions {current}/{total}: {filename}")
                     QApplication.processEvents()
                     return True
-                
+
                 light_sessions = processor.createLightSessions(light_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("New-only session regeneration cancelled during light sessions creation")
                     if show_user_messages:
                         QMessageBox.information(self, "Cancelled", "Session creation was cancelled.")
                     return
-                    
+
                 logger.info(f"Created {len(light_sessions)} light sessions for unassigned files")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
@@ -2303,7 +2296,7 @@ class SessionsWidget(QWidget):
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to create light sessions: {e}")
                 return
-            
+
             # Step 2: Create calibration sessions for unassigned files
             logger.info("Step 2: Creating calibration sessions for unassigned files")
             cal_sessions = []
@@ -2315,9 +2308,9 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 was_cancelled = False
-                
+
                 def cal_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2337,18 +2330,18 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Calibration sessions {current}/{total}: {display_text}")
                     QApplication.processEvents()
                     return True
-                
+
                 cal_sessions = processor.createCalibrationSessions(cal_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("New-only session regeneration cancelled during calibration sessions creation")
                     if show_user_messages:
                         QMessageBox.information(self, "Cancelled", "Session creation was cancelled.")
                     return
-                    
+
                 logger.info(f"Created {len(cal_sessions)} calibration sessions for unassigned files")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
@@ -2356,7 +2349,7 @@ class SessionsWidget(QWidget):
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
                 return
-            
+
             # Step 3: Link sessions
             logger.info("Step 3: Linking calibration sessions to light sessions")
             linked_sessions = []
@@ -2368,9 +2361,9 @@ class SessionsWidget(QWidget):
                 progress_dialog.setValue(0)
                 progress_dialog.show()
                 QApplication.processEvents()
-                
+
                 was_cancelled = False
-                
+
                 def link_progress_callback(current, total, description):
                     nonlocal was_cancelled
                     if was_cancelled:
@@ -2384,18 +2377,18 @@ class SessionsWidget(QWidget):
                         progress_dialog.setLabelText(f"Linking sessions {current}/{total}")
                     QApplication.processEvents()
                     return True
-                
+
                 linked_sessions = processor.linkSessions(link_progress_callback)
                 progress_dialog.close()
-                
+
                 if was_cancelled:
                     logger.info("New-only session regeneration cancelled during linking")
                     if show_user_messages:
                         QMessageBox.information(self, "Cancelled", "Session creation was cancelled.")
                     return
-                    
+
                 logger.info(f"Linked {len(linked_sessions)} sessions")
-                
+
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
@@ -2403,25 +2396,25 @@ class SessionsWidget(QWidget):
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to link sessions: {e}")
                 return
-            
+
             # Final step: Refresh the display
             self.load_sessions_data()
-            
+
             # Show completion message
             total_light = len(light_sessions) if 'light_sessions' in locals() else 0
             total_cal = len(cal_sessions) if 'cal_sessions' in locals() else 0
             total_linked = len(linked_sessions) if 'linked_sessions' in locals() else 0
-            
+
             completion_message = (f"Session creation completed successfully!\n\n"
                                 f"Created {total_light} new light sessions\n"
                                 f"Created {total_cal} new calibration sessions\n"
                                 f"Linked {total_linked} light sessions with calibrations\n\n"
                                 f"Only files without existing sessions were processed.")
-            
+
             if show_user_messages:
                 QMessageBox.information(self, "Session Creation Complete", completion_message)
             logger.info(f"New-only session creation complete: {total_light} light, {total_cal} calibration, {total_linked} linked")
-            
+
         except Exception as e:
             logger.error(f"Unexpected error during new-only session regeneration: {e}")
             if show_user_messages:
@@ -2431,7 +2424,7 @@ class SessionsWidget(QWidget):
         """Auto-regenerate sessions without user confirmation (for use after file imports)"""
         try:
             logger.info("Auto-regenerating sessions after file import")
-            
+
             # Create a progress dialog for auto-regeneration
             progress_dialog = QProgressDialog("Auto-regenerating sessions...", None, 0, 100, self)
             progress_dialog.setWindowTitle("Updating Sessions")
@@ -2440,15 +2433,15 @@ class SessionsWidget(QWidget):
             progress_dialog.setValue(0)
             progress_dialog.show()
             QApplication.processEvents()
-            
+
             # Only build sessions for newly imported (unassigned) files.
             self._do_regenerate_sessions_new_only(show_user_messages=False)
-            
+
             # Close the progress dialog
             progress_dialog.close()
-            
+
             logger.info("Auto-regeneration completed")
-            
+
         except Exception as e:
             logger.error(f"Error in auto_regenerate_sessions: {e}")
             if 'progress_dialog' in locals():

@@ -301,7 +301,6 @@ def test_tc_meta_010_bscale_bzero_land_right_after_naxis_not_after_custom_keywor
 def test_tc_meta_010_build_primary_hdu_round_trips_and_keeps_extra_cards():
     """META-010: build_primary_hdu's output is readable, its pixels survive, and extra_cards (session keywords, DATE) still land after the metadata cards."""
     import numpy as np
-    from astropy.io import fits
     from galileo.metadata import build_primary_hdu
 
     data = np.arange(100, dtype=np.uint16).reshape(10, 10)

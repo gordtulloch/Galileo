@@ -36,7 +36,7 @@ class SessionRecord:
 class SessionHistory:
     """Records per-frame quality metrics and persists them across restarts (HIST-030)."""
 
-    def __init__(self, db_path: "Path | str | None" = None) -> None:
+    def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
             from galileo.platform import get_data_dir
             db_path = get_data_dir() / "session_history.json"
@@ -107,7 +107,7 @@ class SessionHistory:
 
     # --- Export (HIST-040) -----------------------------------------------
 
-    def export_csv(self, session_name: str, dest: "Path | str") -> None:
+    def export_csv(self, session_name: str, dest: Path | str) -> None:
         frames = self.get_frames_for_session(session_name)
         if not frames:
             return

@@ -408,7 +408,7 @@ class GuidingService:
         def ask(method: str, params=None):
             try:
                 return client.call(method, params)
-            except Exception as exc:  # noqa: BLE001 — every query is optional; older PHD2s lack some
+            except Exception as exc:
                 logger.debug("PHD2 %s failed: %s", method, exc)
                 return None
 

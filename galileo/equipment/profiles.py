@@ -13,9 +13,9 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class EquipmentProfile:
     piers: list[PierConfig] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "EquipmentProfile":
+    def from_dict(cls, d: dict) -> EquipmentProfile:
         return _profile_from_dict(d)
 
 
@@ -93,7 +93,7 @@ class ProfileManager:
     data directory).
     """
 
-    def __init__(self, storage_dir: "Path | str | None" = None) -> None:
+    def __init__(self, storage_dir: Path | str | None = None) -> None:
         if storage_dir is None:
             from galileo.platform import get_data_dir
             self._dir = get_data_dir() / "profiles"
@@ -105,7 +105,7 @@ class ProfileManager:
 
     # --- CRUD -----------------------------------------------------------------
 
-    def save(self, profile_data: "dict | EquipmentProfile") -> None:
+    def save(self, profile_data: dict | EquipmentProfile) -> None:
         """Persist *profile_data* to disk and update the in-memory cache."""
         if isinstance(profile_data, EquipmentProfile):
             profile = profile_data
@@ -143,12 +143,12 @@ class ProfileManager:
         if path.exists():
             path.unlink()
 
-    def export(self, name: str, dest: "Path | str") -> None:
+    def export(self, name: str, dest: Path | str) -> None:
         """Export a profile to a portable .gpf file."""
         profile = self.get(name)
         Path(dest).write_text(json.dumps(_profile_to_dict(profile), indent=2), encoding="utf-8")
 
-    def import_profile(self, src: "Path | str") -> None:
+    def import_profile(self, src: Path | str) -> None:
         """Import a profile from a .gpf file."""
         data = json.loads(Path(src).read_text("utf-8"))
         self.save(data)
@@ -168,7 +168,7 @@ class ProfileManager:
     async def load(
         self,
         name: str,
-        connect_fn: "Callable[[dict], Awaitable[None]] | None" = None,
+        connect_fn: Callable[[dict], Awaitable[None]] | None = None,
     ) -> EquipmentProfile:
         """Load profile *name*, calling *connect_fn* for each device config."""
         profile = self.get(name)

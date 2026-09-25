@@ -19,8 +19,8 @@ from galileo.planning.visibility import (
 )
 
 __all__ = [
-    "DeepSkyObject",
     "FOV",
+    "DeepSkyObject",
     "FramingAssistant",
     "HorizonProfile",
     "LocationManager",

@@ -8,9 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
 
@@ -75,7 +74,7 @@ class AutofocusService:
         self,
         camera=None,
         focuser=None,
-        output_dir: "Path | str" = ".",
+        output_dir: Path | str = ".",
         event_bus=None,
         exposure_s: float = AutofocusParams.exposure_s,
         backlash_compensation: int = AutofocusParams.backlash_compensation,
@@ -205,9 +204,8 @@ class AutofocusService:
         new_position = self._current_position + (to_offset - from_offset)
         await self._move_to(new_position)
 
-    async def run_aberration_inspection(self) -> "AberrationResult | None":
+    async def run_aberration_inspection(self) -> AberrationResult | None:
         """Compute per-region HFR indicators across the frame (FOC-080)."""
-        import numpy as np
         frame = await self._camera.get_image_array()
         if frame is None:
             return None
@@ -280,7 +278,6 @@ class AberrationResult:
 
 def _compute_regional_hfr(frame) -> AberrationResult:
     """Split the frame into a 2×2 grid and compute HFR per quadrant."""
-    import numpy as np
     h, w = frame.shape[:2]
     quadrants = [
         ("top-left", frame[:h // 2, :w // 2]),

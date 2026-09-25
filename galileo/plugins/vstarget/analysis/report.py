@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 _REPORT_HEADER = "#TYPE=EXTENDED\n#OBSCODE=\n#SOFTWARE=Galileo\n#DELIM=,\n#DATE=JD\n#OBSTYPE=CCD\n"
 
 
-def generate_aavso_report(measurements: "list[PhotometryResult]") -> str:
+def generate_aavso_report(measurements: list[PhotometryResult]) -> str:
     """Return a WebObs Extended-format report string (VST-AN-050)."""
     lines = [_REPORT_HEADER]
     for m in measurements:
@@ -29,5 +29,5 @@ def generate_aavso_report(measurements: "list[PhotometryResult]") -> str:
     return "\n".join(lines)
 
 
-def save_aavso_report(measurements: "list[PhotometryResult]", output_path: "Path | str") -> None:
+def save_aavso_report(measurements: list[PhotometryResult], output_path: Path | str) -> None:
     Path(output_path).write_text(generate_aavso_report(measurements), encoding="utf-8")

@@ -4,7 +4,7 @@
 """PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-080)."""
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 
 @pytest.fixture

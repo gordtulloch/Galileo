@@ -51,7 +51,6 @@ import os
 import argparse
 import logging
 import configparser
-from pathlib import Path
 
 
 
@@ -77,34 +76,34 @@ def apply_mappings_to_fits(file_path):
         bool: True if any mappings were applied, False otherwise
     """
     logger = logging.getLogger(__name__)
-    
+
     try:
         # Get all mappings from database
         mappings = list(MappingModel.select())
-        
+
         if not mappings:
             logger.debug(f"No mappings defined, skipping header mapping for {os.path.basename(file_path)}")
             return False
-        
+
         # Open FITS file and apply mappings
         changes_made = False
         with astropy_fits.open(file_path, mode='update') as hdul:
             header = hdul[0].header
-            
+
             # Apply each mapping
             for mapping in mappings:
                 card = mapping.card
                 current = mapping.current
                 replace = mapping.replace
-                
+
                 # Skip if no replacement value
                 if not replace:
                     continue
-                
+
                 # Check if this card exists in the header
                 if card in header:
                     header_value = str(header[card]).strip()
-                    
+
                     # Check if the current value matches (or if current is None/empty for default mapping)
                     if current:
                         # Specific value mapping (including "Unknown" mappings)
@@ -132,12 +131,12 @@ def apply_mappings_to_fits(file_path):
                         header.comments[card] = 'Added via Galileo mapping'
                         logger.info(f"Added missing card (Unknown mapping) to {os.path.basename(file_path)}: {card} -> '{replace}'")
                         changes_made = True
-            
+
             if changes_made:
                 hdul.flush()
-        
+
         return changes_made
-        
+
     except Exception as e:
         logger.error(f"Error applying mappings to {file_path}: {e}")
         return False
@@ -145,7 +144,7 @@ def apply_mappings_to_fits(file_path):
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
     level = logging.DEBUG if verbose else logging.INFO
-    
+
     # Configure root logger - using central library.log
     logging.basicConfig(
         level=level,
@@ -155,7 +154,7 @@ def setup_logging(verbose=False):
             logging.StreamHandler(sys.stdout)
         ]
     )
-    
+
     # Reduce noise from some libraries
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('SMB').setLevel(logging.WARNING)
@@ -164,7 +163,7 @@ def get_destination_folder(config, override_path=None):
     """Get destination folder from config or override."""
     if override_path:
         return override_path
-    
+
     try:
         source_folder = config.get('DEFAULT', 'source')
         if not source_folder:
@@ -176,12 +175,12 @@ def get_destination_folder(config, override_path=None):
 def download_files(telescope_type, hostname, network, destination, username=None, password=None, delete_files=False, dry_run=False):
     """Download files from smart telescope."""
     logger = logging.getLogger(__name__)
-    
+
     # Initialize smart telescope manager
     manager = SmartTelescopeManager()
-    
+
     logger.info(f"Starting download from {telescope_type} telescope")
-    
+
     # Find telescope
     if hostname:
         logger.info(f"Using provided hostname: {hostname}")
@@ -189,17 +188,17 @@ def download_files(telescope_type, hostname, network, destination, username=None
     else:
         logger.info(f"Scanning network for {telescope_type} telescope...")
         ip, error = manager.find_telescope(telescope_type, network_range=network)
-    
+
     if error:
         logger.error(f"Failed to find telescope: {error}")
         return False
-    
+
     if not ip:
         logger.error(f"No {telescope_type} telescope found")
         return False
-    
+
     logger.info(f"Found {telescope_type} telescope at {ip}")
-    
+
     # Get credentials for iTelescope if not provided
     if telescope_type == "iTelescope":
         if not username or not password:
@@ -207,44 +206,44 @@ def download_files(telescope_type, hostname, network, destination, username=None
             cred_username, cred_password = manager.get_itelescope_credentials()
             username = username or cred_username
             password = password or cred_password
-            
+
             if not username or not password:
                 logger.error("iTelescope credentials required. Use -u and -p options or configure in the library settings (Options > Library)")
                 return False
-    
+
     # Get file list
     logger.info("Scanning for FITS files...")
     fits_files, error = manager.get_fits_files(telescope_type, ip, username, password)
-    
+
     if error:
         logger.error(f"Failed to get file list: {error}")
         return False
-    
+
     if not fits_files:
         logger.info("No FITS files found on telescope")
         return True
-    
+
     logger.info(f"Found {len(fits_files)} FITS files")
-    
+
     if dry_run:
         logger.info("DRY RUN - Files that would be downloaded:")
         for i, file_info in enumerate(fits_files, 1):
             size_mb = file_info.get('size', 0) / (1024 * 1024)
             logger.info(f"  {i:3d}. {file_info['name']} ({size_mb:.1f} MB)")
         return True
-    
+
     # Create destination directory if it doesn't exist
     os.makedirs(destination, exist_ok=True)
-    
+
     # Download files
     downloaded_count = 0
     failed_count = 0
     registered_count = 0
-    
+
     for i, file_info in enumerate(fits_files, 1):
         file_name = file_info['name']
         logger.info(f"Downloading {i}/{len(fits_files)}: {file_name}")
-        
+
         # Create local file path (directly in destination for iTelescope, preserve structure for others)
         if telescope_type == 'iTelescope':
             local_path = os.path.join(destination, file_name)
@@ -253,25 +252,25 @@ def download_files(telescope_type, hostname, network, destination, username=None
             local_dir = os.path.join(destination, folder_name)
             os.makedirs(local_dir, exist_ok=True)
             local_path = os.path.join(local_dir, file_name)
-        
+
         # Download file
         success, error = manager.download_file(telescope_type, ip, file_info, local_path, username, password)
-        
+
         if success:
             downloaded_count += 1
             logger.info(f"Downloaded: {file_name}")
-            
+
             # Unzip if necessary
             if file_name.lower().endswith('.zip'):
                 try:
                     import zipfile
                     zip_dir = os.path.dirname(local_path)
                     zip_to_delete = local_path
-                    
+
                     with zipfile.ZipFile(local_path, 'r') as zip_ref:
                         file_list = zip_ref.namelist()
                         zip_ref.extractall(zip_dir)
-                        
+
                         # Find extracted FITS files
                         for extracted_file in file_list:
                             if extracted_file.lower().endswith(('.fit', '.fits')):
@@ -286,31 +285,31 @@ def download_files(telescope_type, hostname, network, destination, username=None
                         os.remove(zip_to_delete)
                     except Exception as e:
                         logger.warning(f"Could not remove zip file {zip_to_delete}: {e}")
-                        
+
                 except Exception as e:
                     logger.warning(f"Error extracting {file_name}: {e}")
-            
+
             # Apply mappings to FITS header before registration
             if local_path.lower().endswith(('.fit', '.fits')):
                 try:
                     apply_mappings_to_fits(local_path)
                 except Exception as e:
                     logger.warning(f"Error applying mappings to {file_name}: {e}")
-            
+
             # Register in database
             try:
                 processor = fitsProcessing()
                 root_dir = os.path.dirname(local_path)
                 file_name_only = os.path.basename(local_path)
-                
+
                 registered_id = processor.registerFitsImage(root_dir, file_name_only, moveFiles=True)
                 if registered_id:
                     registered_count += 1
                     logger.info(f"Registered in database: {file_name_only}")
-                
+
             except Exception as e:
                 logger.warning(f"Failed to register {file_name_only}: {e}")
-            
+
             # Delete from telescope if requested
             if delete_files:
                 delete_success, delete_error = manager.delete_file(telescope_type, ip, file_info)
@@ -318,11 +317,11 @@ def download_files(telescope_type, hostname, network, destination, username=None
                     logger.info(f"Deleted from telescope: {file_name}")
                 else:
                     logger.warning(f"Failed to delete {file_name}: {delete_error}")
-        
+
         else:
             failed_count += 1
             logger.error(f"Failed to download {file_name}: {error}")
-    
+
     logger.info(f"Download completed: {downloaded_count} downloaded, {registered_count} registered, {failed_count} failed")
     return failed_count == 0
 
@@ -332,7 +331,7 @@ def main():
         description="Download files from smart telescopes",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose logging')
     parser.add_argument('-c', '--config', default=None,
@@ -354,22 +353,22 @@ def main():
                         help='Delete files from telescope after download')
     parser.add_argument('--dry-run', action='store_true',
                         help='Show what would be downloaded without downloading')
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
-    
+
     try:
         # Load configuration
         config = load_config(args.config)
         logger.info(f"Loaded configuration from {args.config or 'library.ini'}")
-        
+
         # Get destination folder
         destination = get_destination_folder(config, args.destination)
         logger.info(f"Destination folder: {destination}")
-        
+
         # Validate iTelescope requirements
         if args.telescope == 'iTelescope' and not args.dry_run:
             if not args.username and not args.password:
@@ -384,7 +383,7 @@ def main():
                 except Exception:
                     logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
                     return 1
-        
+
         # Download files
         success = download_files(
             telescope_type=args.telescope,
@@ -396,14 +395,14 @@ def main():
             delete_files=args.delete,
             dry_run=args.dry_run
         )
-        
+
         if success:
             logger.info("Download operation completed successfully")
             return 0
         else:
             logger.error("Download operation failed")
             return 1
-            
+
     except Exception as e:
         logger.error(f"Error: {e}")
         if args.verbose:

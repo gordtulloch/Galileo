@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from galileo.plugins.vstarget.planning.models import ObservationPlan
 
 
-def export_acp_script(plans: "list[ObservationPlan]", output_path: "Path | str") -> None:
+def export_acp_script(plans: list[ObservationPlan], output_path: Path | str) -> None:
     """Write an iTelescope ACP .txt plan from *plans*, sorted by RA (VST-060)."""
     sorted_plans = sorted(plans, key=lambda p: p.ra_deg)
     output_path = Path(output_path)

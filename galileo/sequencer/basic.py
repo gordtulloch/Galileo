@@ -17,7 +17,6 @@ import logging
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from galileo.sequencer.file_namer import FileNamer  # re-exported from this module
 
@@ -64,10 +63,10 @@ class SequenceDef:
         self.targets: list[SequenceTarget] = []
 
     def add_target(self, name: str, ra_deg: float, dec_deg: float,
-                   steps: "list[CaptureStep]") -> None:
+                   steps: list[CaptureStep]) -> None:
         self.targets.append(SequenceTarget(name=name, ra_deg=ra_deg, dec_deg=dec_deg, steps=steps))
 
-    def save(self, path: "Path | str") -> None:
+    def save(self, path: Path | str) -> None:
         """Persist this sequence to a .gseq JSON file (SEQ-060)."""
         data = {
             "name": self.name,
@@ -85,13 +84,13 @@ class SequenceDef:
         Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: "Path | str") -> "SequenceDef":
+    def load(cls, path: Path | str) -> SequenceDef:
         """Load a sequence from a .gseq file."""
         data = json.loads(Path(path).read_text("utf-8"))
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "SequenceDef":
+    def from_dict(cls, d: dict) -> SequenceDef:
         seq = cls(name=d.get("name", ""))
         for td in d.get("targets", []):
             steps = [CaptureStep(**sd) for sd in td.get("steps", [])]
@@ -118,7 +117,7 @@ class BasicSequencer:
         filter_wheel=None,
         guider=None,
         plate_solver=None,
-        output_dir: "Path | str" = ".",
+        output_dir: Path | str = ".",
         file_namer=None,
         event_bus=None,
         retry_policy: dict | None = None,
@@ -213,7 +212,7 @@ class BasicSequencer:
         self._state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     @staticmethod
-    def load_persisted_state(state_path: "Path | str") -> dict:
+    def load_persisted_state(state_path: Path | str) -> dict:
         p = Path(state_path)
         if not p.exists():
             return {"completed_frame_count": 0}
@@ -245,7 +244,7 @@ class BasicSequencer:
                 )
                 data = await self._camera.get_image_array()
                 break
-            except (ConnectionResetError, ConnectionError) as exc:
+            except (ConnectionResetError, ConnectionError):
                 # Retry transient connection errors (NFR-REL-010)
                 if attempt < max_retries - 1:
                     await asyncio.sleep(delay_s)

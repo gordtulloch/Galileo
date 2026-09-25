@@ -18,7 +18,6 @@ class SimbadClient:
         """Return ``{"ra_deg": …, "dec_deg": …, "magnitude_v": …}`` for *target_name*."""
         try:
             from astroquery.simbad import Simbad  # type: ignore[import]
-            import astropy.units as u
 
             custom_simbad = Simbad()
             custom_simbad.add_votable_fields("flux(V)")

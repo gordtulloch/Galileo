@@ -140,7 +140,6 @@ def test_tc_nfr_rel_040_crash_does_not_lose_completed_frames(tmp_path):
 @pytest.mark.priority("MVP")
 def test_tc_nfr_port_010_single_codebase_platform_adapters():
     """NFR-PORT-010: Builds and runs from one shared codebase; platform-specific code in platform-abstraction layer."""
-    import sys
     devices = pytest.importorskip("galileo.core.devices")
     platform_mod = pytest.importorskip("galileo.platform")
 

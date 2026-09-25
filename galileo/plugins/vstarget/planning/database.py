@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class PlanDatabase:
     """Persists observation plans to a JSON file (simple, no external ORM needed)."""
 
-    def __init__(self, path: "Path | str") -> None:
+    def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
-    def save(self, plans: "list[ObservationPlan]") -> None:
+    def save(self, plans: list[ObservationPlan]) -> None:
         data = [
             {
                 "target_name": p.target_name,
@@ -36,7 +36,7 @@ class PlanDatabase:
         ]
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def load(self) -> "list[ObservationPlan]":
+    def load(self) -> list[ObservationPlan]:
         from galileo.plugins.vstarget.planning.models import ObservationPlan, FilterConfig
         if not self._path.exists():
             return []

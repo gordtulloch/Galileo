@@ -31,14 +31,14 @@ from peewee_migrate import Migrator
 
 
 with suppress(ImportError):
-    import playhouse.postgres_ext as pw_pext
+    pass
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
     """Add master calibration fields to fitsSession table."""
-    
+
     # Add new master calibration fields to fitssession table
-    migrator.add_fields('fitssession', 
+    migrator.add_fields('fitssession',
                        fitsBiasMaster=pw.TextField(null=True),
                        fitsDarkMaster=pw.TextField(null=True),
                        fitsFlatMaster=pw.TextField(null=True))
@@ -46,7 +46,7 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
     """Remove master calibration fields from fitsSession table."""
-    
+
     # Remove the master calibration fields
     migrator.remove_fields('fitssession', 'fitsBiasMaster', 'fitsDarkMaster', 'fitsFlatMaster')
-    
+

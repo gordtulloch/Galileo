@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 
 def compute_transformation_coefficients(
-    observations: "list[StandardFieldObservation]",
-) -> "TransformationCoefficients":
+    observations: list[StandardFieldObservation],
+) -> TransformationCoefficients:
     """Least-squares fit AAVSO transformation coefficients from standard-field obs (VST-AN-060)."""
     from galileo.plugins.vstarget.planning.models import TransformationCoefficients
     try:

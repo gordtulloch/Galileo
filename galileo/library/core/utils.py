@@ -7,17 +7,15 @@ for path normalization, string sanitization, and FITS header processing.
 
 import os
 import logging
-import configparser
 from galileo.library.config import load_config as load_library_config
-from typing import Optional, Dict, Any, List, Union
-from pathlib import Path
+from typing import Any
 
-from ..types import FilePath, FitsHeaderDict
+from ..types import FilePath
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_file_path(file_path: Optional[FilePath]) -> Optional[str]:
+def normalize_file_path(file_path: FilePath | None) -> str | None:
     """
     Normalize file paths to use forward slashes consistently.
     
@@ -32,7 +30,7 @@ def normalize_file_path(file_path: Optional[FilePath]) -> Optional[str]:
     return None
 
 
-def sanitize_filesystem_name(name: Optional[Union[str, Any]]) -> str:
+def sanitize_filesystem_name(name: str | Any | None) -> str:
     """
     Sanitize a string for use in filesystem paths and filenames.
     
@@ -47,32 +45,32 @@ def sanitize_filesystem_name(name: Optional[Union[str, Any]]) -> str:
     """
     if not name:
         return "Unknown"
-    
+
     # Convert to string and strip whitespace
     sanitized = str(name).strip()
-    
+
     # Replace invalid filesystem characters with underscores
     # This matches the existing logic: .replace(" ", "_").replace("\\", "_")
     invalid_chars = [' ', '\\', '/', ':', '*', '?', '"', '<', '>', '|', '\t', '\n', '\r']
-    
+
     for char in invalid_chars:
         sanitized = sanitized.replace(char, '_')
-    
+
     # Remove multiple consecutive underscores
     while '__' in sanitized:
         sanitized = sanitized.replace('__', '_')
-    
+
     # Remove leading/trailing underscores
     sanitized = sanitized.strip('_')
-    
+
     # Ensure we don't return empty string
     if not sanitized:
         sanitized = "Unknown"
-    
+
     return sanitized
 
 
-def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
+def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
     """
     Fix FITS headers for DWARF telescope files based on folder structure and filenames.
     
@@ -88,21 +86,21 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
         # Read configuration to check if we should save modified headers
         config = load_library_config()
         save_modified = config.getboolean('DEFAULT', 'save_modified_headers', fallback=False)
-        
+
         # Check if this is a DWARF telescope file
         telescop_value = hdr.get("TELESCOP", "")
         if not telescop_value or telescop_value.upper() != "DWARF":
             logger.warning(f"dwarfFixHeader called for non-DWARF file: {file}")
             return False
-        
+
         # Skip failed images
         if file.startswith("failed_"):
             logger.info(f"Ignoring failed DWARF image: {file}")
             return False
-        
+
         # Get the directory structure
         path_parts = os.path.normpath(root).split(os.sep)
-        
+
         # Find the DWARF root directory by looking for required folders
         dwarf_root = None
         for i, part in enumerate(path_parts):
@@ -111,31 +109,31 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                 parent_path = os.sep.join(path_parts[:i])
                 required_folders = ["CALI_FRAME", "DWARF_DARK"]
                 dwarf_raw_folders = [d for d in os.listdir(parent_path) if d.startswith("DWARF_RAW")]
-                
-                if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and 
-                    os.path.exists(os.path.join(parent_path, "DWARF_DARK")) and 
+
+                if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
+                    os.path.exists(os.path.join(parent_path, "DWARF_DARK")) and
                     dwarf_raw_folders):
                     dwarf_root = parent_path
                     break
-        
+
         if not dwarf_root:
             # Check if we're in CALI_FRAME or DWARF_DARK structure
             for i, part in enumerate(path_parts):
                 if part in ["CALI_FRAME", "DWARF_DARK"]:
                     parent_path = os.sep.join(path_parts[:i])
-                    if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and 
+                    if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
                         os.path.exists(os.path.join(parent_path, "DWARF_DARK"))):
                         dwarf_root = parent_path
                         break
-        
+
         if not dwarf_root:
             logger.error(f"Dwarf folder structure not recognized for file: {file}")
             return False
-        
+
         # Determine file type based on path
         rel_path = os.path.relpath(root, dwarf_root)
         path_components = rel_path.split(os.sep)
-        
+
         # Handle DWARF_RAW light files
         if path_components[0].startswith("DWARF_RAW"):
             folder_name = path_components[0]
@@ -148,13 +146,13 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                     exptime = parts[5]  # EXPTIME (after EXP)
                     gain = parts[7]  # GAIN (after GAIN)
                     date_obs = "_".join(parts[8:])  # DATE-OBS (rest of string)
-                    
+
                     # Update header
                     hdr['INSTRUME'] = instrument
                     hdr['OBJECT'] = object_name
                     hdr['EXPTIME'] = float(exptime)
                     hdr['GAIN'] = float(gain)
-                    
+
                     # Add missing fields with defaults if not present
                     if 'XBINNING' not in hdr:
                         hdr['XBINNING'] = 1
@@ -162,37 +160,37 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                         hdr['YBINNING'] = 1
                     if 'CCD-TEMP' not in hdr:
                         hdr['CCD-TEMP'] = -10.0  # Default temperature
-                    
+
                     # Parse and format date if needed
                     if date_obs and 'DATE-OBS' not in hdr:
                         # Assume date format needs to be converted to ISO format
                         hdr['DATE-OBS'] = date_obs
-                    
+
                     # Set image type to LIGHT
                     hdr['IMAGETYP'] = 'LIGHT'
-                    
+
                     logger.info(f"Fixed DWARF_RAW header for {file}: OBJECT={object_name}, INSTRUME={instrument}")
-                    
+
                 except (ValueError, IndexError) as e:
                     logger.error(f"Error parsing DWARF_RAW folder name {folder_name}: {e}")
                     return False
-        
+
         # Handle CALI_FRAME master calibration files
         elif "CALI_FRAME" in path_components:
             cali_index = path_components.index("CALI_FRAME")
             if len(path_components) > cali_index + 2:
                 frame_type = path_components[cali_index + 1]  # bias, dark, or flat
                 cam_folder = path_components[cali_index + 2]   # cam_0 or cam_1
-                
+
                 # Set IMAGETYP and OBJECT
                 hdr['IMAGETYP'] = frame_type.upper()
                 hdr['OBJECT'] = f"MASTER{frame_type.upper()}"
-                
+
                 # Add DATE-OBS if missing (use current date as fallback)
                 if 'DATE-OBS' not in hdr:
                     from datetime import datetime
                     hdr['DATE-OBS'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-                
+
                 # Set INSTRUME based on camera folder
                 if cam_folder == "cam_0":
                     hdr['INSTRUME'] = 'TELE'
@@ -200,10 +198,10 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                     hdr['INSTRUME'] = 'WIDE'
                 else:
                     logger.warning(f"Unknown camera folder: {cam_folder}")
-                
+
                 # Parse filename for specific calibration parameters
                 filename_base = os.path.splitext(file)[0]
-                
+
                 if frame_type.lower() == "bias":
                     # bias_gain_(GAIN)_bin_(BINNINGX)_*.fits
                     if filename_base.startswith("bias_gain_"):
@@ -218,7 +216,7 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                                 hdr['EXPTIME'] = 0.0  # Bias frames have zero exposure
                             if 'CCD-TEMP' not in hdr:
                                 hdr['CCD-TEMP'] = -10.0  # Default temperature
-                
+
                 elif frame_type.lower() == "flat":
                     # flat_gain_(GAIN)_bin_(BINNINGX)_*.fits
                     if filename_base.startswith("flat_gain_"):
@@ -235,7 +233,7 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                                 hdr['CCD-TEMP'] = -10.0  # Default temperature
                             if 'FILTER' not in hdr:
                                 hdr['FILTER'] = 'UNKNOWN'  # Will be set based on folder structure
-                
+
                 elif frame_type.lower() == "dark":
                     # dark_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNINGX)_(CCD-TEMP)_*.fits
                     if filename_base.startswith("dark_exp_"):
@@ -250,9 +248,9 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                             hdr['XBINNING'] = int(binning)
                             hdr['YBINNING'] = int(binning)
                             hdr['CCD-TEMP'] = float(ccd_temp)
-                
+
                 logger.debug(f"Fixed CALI_FRAME header for {file}: IMAGETYP={frame_type.upper()}, INSTRUME={hdr.get('INSTRUME')}")
-        
+
         # Handle DWARF_DARK library files
         elif "DWARF_DARK" in path_components:
             # tele_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNINGX)_OBS-DATE).fits
@@ -264,7 +262,7 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                     gain = parts[4]
                     binning = parts[6]
                     obs_date = "_".join(parts[7:]) if len(parts) > 7 else ""
-                    
+
                     hdr['INSTRUME'] = 'TELE'
                     hdr['IMAGETYP'] = 'DARKMASTER'
                     hdr['OBJECT'] = 'DARKMASTER'
@@ -272,7 +270,7 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                     hdr['GAIN'] = float(gain)
                     hdr['XBINNING'] = int(binning)
                     hdr['YBINNING'] = int(binning)
-                    
+
                     # Add DATE-OBS if missing
                     if 'DATE-OBS' not in hdr:
                         if obs_date:
@@ -280,15 +278,15 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Union[Any, bool]:
                         else:
                             from datetime import datetime
                             hdr['DATE-OBS'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-                    
+
                     logger.info(f"Fixed DWARF_DARK header for {file}: EXPTIME={exptime}, GAIN={gain}")
-        
+
         else:
             logger.info(f"Ignoring DWARF file in unrecognized folder structure: {file}")
             return hdr  # Return unchanged header
-             
+
         return hdr
-        
+
     except Exception as e:
         logger.error(f"Error in dwarfFixHeader for {file}: {e}")
         return False
@@ -308,12 +306,12 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
     """
     try:
         from ..models import Mapping
-        
+
         # Static cache for mappings to avoid repeated database queries
         if not hasattr(mapFitsHeader, '_cached_mappings'):
             mapFitsHeader._cached_mappings = None
             mapFitsHeader._cache_loaded = False
-        
+
         # Load mappings from database if not cached
         if not mapFitsHeader._cache_loaded:
             try:
@@ -322,21 +320,21 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
                 for mapping in mappings:
                     key = (mapping.old_value.upper(), mapping.header_field.upper())
                     mapFitsHeader._cached_mappings[key] = mapping.new_value
-                
+
                 mapFitsHeader._cache_loaded = True
                 logger.debug(f"Loaded {len(mappings)} header mappings from database")
-            
+
             except Exception as e:
                 logger.error(f"Failed to load header mappings: {e}")
                 mapFitsHeader._cached_mappings = {}
                 mapFitsHeader._cache_loaded = True  # Set to avoid repeated failures
                 return False
-        
+
         if not mapFitsHeader._cached_mappings:
             return False
-        
+
         changes_made = False
-        
+
         # Apply mappings to header fields
         for header_field, value in list(hdr.items()):
             if isinstance(value, str):
@@ -346,9 +344,9 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
                     hdr[header_field] = new_value
                     logger.debug(f"Mapped {header_field} from '{value}' to '{new_value}' for {file_path}")
                     changes_made = True
-        
+
         return changes_made
-        
+
     except Exception as e:
         logger.error(f"Error in mapFitsHeader for {file_path}: {e}")
         return False
@@ -362,7 +360,7 @@ def clearMappingCache() -> None:
         logger.info("Header mapping cache cleared")
 
 
-def get_master_calibration_path() -> Optional[str]:
+def get_master_calibration_path() -> str | None:
     """
     Get the master calibration frames path from configuration.
     

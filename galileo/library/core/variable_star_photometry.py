@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -50,7 +50,7 @@ def get_aavso_comparison_stars(
     *,
     band: str = "V",
     field_of_view_arcmin: float = 18.5,
-) -> Tuple[List[dict], str]:
+) -> tuple[list[dict], str]:
     """Download comparison stars via AAVSO VSP API.
 
     Returns (stars, chart_id).
@@ -68,7 +68,7 @@ def get_aavso_comparison_stars(
     doc = _fetch_json(url)
 
     chart_id = str(doc.get("chartid", ""))
-    stars: List[dict] = []
+    stars: list[dict] = []
     for star in doc.get("photometry", []) or []:
         row: dict = {
             "auid": star.get("auid"),
@@ -95,7 +95,7 @@ def resolve_target_coordinates(star_name: str) -> SkyCoord:
     return SkyCoord.from_name(star_name)
 
 
-def _load_fits_image(path: str) -> Tuple[np.ndarray, fits.Header]:
+def _load_fits_image(path: str) -> tuple[np.ndarray, fits.Header]:
     with fits.open(path, memmap=False) as hdul:
         hdu = hdul[0]
         data = np.asarray(hdu.data, dtype=np.float32)
@@ -122,7 +122,7 @@ def match_catalog_to_sources(
     catalog: Sequence[dict],
     *,
     match_radius_arcsec: float = 4.0,
-) -> List[dict]:
+) -> list[dict]:
     """Match catalog stars to nearest SEP source within radius.
 
     Returns list of catalog dicts enriched with x,y,peak when matched.
@@ -137,7 +137,7 @@ def match_catalog_to_sources(
     if not np.isfinite(radius_pix) or radius_pix <= 0:
         radius_pix = 4.0  # fallback similar to the notebook
 
-    matched: List[dict] = []
+    matched: list[dict] = []
     for star in catalog:
         try:
             ra = float(star["ra"])
@@ -169,7 +169,7 @@ def match_catalog_to_sources(
 def ensemble_fit(
     instrumental_mags: np.ndarray,
     catalog_mags: np.ndarray,
-) -> Tuple[np.poly1d, np.ndarray]:
+) -> tuple[np.poly1d, np.ndarray]:
     fit, residuals, rank, singular_values, rcond = np.polyfit(
         instrumental_mags, catalog_mags, 1, full=True
     )
@@ -180,9 +180,9 @@ def run_variable_star_photometry(
     stacked_fits_path: str,
     *,
     star_name: str,
-    options: Optional[VariableStarPhotometryOptions] = None,
-    check_auid: Optional[str] = None,
-) -> Dict:
+    options: VariableStarPhotometryOptions | None = None,
+    check_auid: str | None = None,
+) -> dict:
     """Run the RWAUR-style workflow on a photometric stack.
 
     Output dict contains summary + per-star rows.
@@ -231,7 +231,7 @@ def run_variable_star_photometry(
         subtract_background=options.bkg_subtract,
     )
 
-    rows: List[dict] = []
+    rows: list[dict] = []
     for i, m in enumerate(matched):
         row = dict(m)
         row["aperture_sum"] = float(flux[i])

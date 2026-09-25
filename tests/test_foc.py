@@ -5,7 +5,7 @@
 
 import pytest
 import numpy as np
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 
 @pytest.fixture

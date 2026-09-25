@@ -65,7 +65,7 @@ class DeviceCapabilities:
     extra: dict = field(default_factory=dict)
 
     @classmethod
-    def from_backend(cls, backend: object) -> "DeviceCapabilities":
+    def from_backend(cls, backend: object) -> DeviceCapabilities:
         """Build a ``DeviceCapabilities`` from a device backend's attribute."""
         raw = getattr(backend, "capabilities", None)
         if raw is None:

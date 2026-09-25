@@ -39,7 +39,7 @@ class VariableStarAnalysis:
 
     # --- Plate solving (VST-AN-020) --------------------------------------
 
-    async def solve_image(self, fits_path: "Path | str"):
+    async def solve_image(self, fits_path: Path | str):
         from galileo.plugins.vstarget.analysis.platesolve import solve_fits
         if self._solver is not None:
             return await self._solver.solve(fits_path)
@@ -47,7 +47,7 @@ class VariableStarAnalysis:
 
     # --- Stacking (VST-AN-030) -------------------------------------------
 
-    async def stack(self, frames: "list[Path]", output_path: "Path | str") -> Path:
+    async def stack(self, frames: list[Path], output_path: Path | str) -> Path:
         from galileo.plugins.vstarget.analysis.stack import stack_frames
         return await stack_frames(frames, output_path)
 
@@ -55,7 +55,7 @@ class VariableStarAnalysis:
 
     async def run_photometry(
         self,
-        image_path: "Path | str",
+        image_path: Path | str,
         target: dict,
         filter_band: str = "V",
     ):
@@ -112,7 +112,7 @@ class VariableStarAnalysis:
 
     # --- AAVSO report (VST-AN-050) ---------------------------------------
 
-    def export_aavso_report(self, measurements: list, output_path: "Path | str") -> None:
+    def export_aavso_report(self, measurements: list, output_path: Path | str) -> None:
         from galileo.plugins.vstarget.analysis.report import save_aavso_report
         save_aavso_report(measurements, output_path)
 

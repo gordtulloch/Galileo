@@ -85,7 +85,7 @@ def load_display_prefs() -> dict[str, Any]:
     return prefs
 
 
-def save_display_prefs(view: "StarAtlasView") -> None:
+def save_display_prefs(view: StarAtlasView) -> None:
     """Remember the view's toggles and deep-sky catalogs."""
     data: dict[str, Any] = {k: bool(getattr(view, k)) for k in PERSISTED_TOGGLES}
     data["dso_catalogs"] = [c for c in DSO_CATALOGS if c in view.dso_catalogs]
@@ -131,7 +131,7 @@ class StarAtlasView(QWidget):
 
         self.latitude = 0.0
         self.longitude = 0.0
-        self.when = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+        self.when = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
 
         # Display options (toggled from the page).
         self.mag_limit = 5.5
@@ -147,7 +147,7 @@ class StarAtlasView(QWidget):
         self.show_ground = True
         self.daylight_sky = True
         self.show_horizon = False       # shade the horizon obstructions (Options > Star Atlas)
-        self._horizon: "HorizonProfile | None" = None
+        self._horizon: HorizonProfile | None = None
         # Telescope reticles, one per Pier (SKYMAP-090); the page refills these as the mounts move.
         self.show_pier_markers = True
         self.pier_markers: list[dict[str, Any]] = []
@@ -210,9 +210,9 @@ class StarAtlasView(QWidget):
                 pass  # widget was destroyed while loading
         threading.Thread(target=work, name="star-atlas-catalogs", daemon=True).start()
 
-    def set_catalogs(self, stars: "sa.StarCatalog", dsos: list,
-                     boundaries: "sa.ConstellationBoundaries | None" = None,
-                     lines: "sa.ConstellationLines | None" = None) -> None:
+    def set_catalogs(self, stars: sa.StarCatalog, dsos: list,
+                     boundaries: sa.ConstellationBoundaries | None = None,
+                     lines: sa.ConstellationLines | None = None) -> None:
         self._stars = stars
         self._bounds = boundaries if boundaries is not None else sa.ConstellationBoundaries.empty()
         self._lines = lines if lines is not None else sa.ConstellationLines.empty()
@@ -251,7 +251,7 @@ class StarAtlasView(QWidget):
 
     def set_time(self, when_utc: _dt.datetime) -> None:
         self.when = when_utc.replace(tzinfo=None) if when_utc.tzinfo is None else when_utc.astimezone(
-            _dt.timezone.utc).replace(tzinfo=None)
+            _dt.UTC).replace(tzinfo=None)
         self._recompute()
         self._after_change()
 
@@ -266,7 +266,7 @@ class StarAtlasView(QWidget):
         setattr(self, name, value)
         self.update()
 
-    def set_pier_markers(self, markers: "list[dict[str, Any]]") -> None:
+    def set_pier_markers(self, markers: list[dict[str, Any]]) -> None:
         """Show a reticle for each Pier (SKYMAP-090). Each marker is a dict with J2000
         ``ra_deg``/``dec_deg``, a ``label``, and optional ``slewing`` (drawn dashed and in a
         different colour) and ``target`` (the J2000 position it is slewing to, drawn as a fainter
@@ -274,7 +274,7 @@ class StarAtlasView(QWidget):
         self.pier_markers = list(markers)
         self.update()
 
-    def set_horizon(self, horizon: "HorizonProfile | None") -> None:
+    def set_horizon(self, horizon: HorizonProfile | None) -> None:
         """The obstruction horizon to shade when ``show_horizon`` is on (``None`` for none)."""
         self._horizon = horizon if horizon is not None and horizon.points else None
         self.update()
@@ -369,7 +369,7 @@ class StarAtlasView(QWidget):
         self.viewChanged.emit()
 
     def _tick_live(self) -> None:
-        self.set_time(_dt.datetime.now(_dt.timezone.utc))
+        self.set_time(_dt.datetime.now(_dt.UTC))
 
     def _on_catalogs(self, stars, dsos, bounds, lines) -> None:
         self.set_catalogs(stars, dsos, bounds, lines)
@@ -403,7 +403,7 @@ class StarAtlasView(QWidget):
 
     # -- projection of the visible sets --------------------------------------
 
-    def _viewport(self) -> "sa.Viewport":
+    def _viewport(self) -> sa.Viewport:
         self.view.width, self.view.height = max(1, self.width()), max(1, self.height())
         return self.view
 
@@ -433,7 +433,7 @@ class StarAtlasView(QWidget):
 
     # -- painting ------------------------------------------------------------
 
-    def paintEvent(self, _event) -> None:  # noqa: N802 — Qt override
+    def paintEvent(self, _event) -> None:
         vp = self._viewport()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -661,7 +661,7 @@ class StarAtlasView(QWidget):
         p.setPen(_CONSTELLATION_LABEL_COLOR)
         metrics = p.fontMetrics()
         for i, name in enumerate(self._bounds.names):
-            if not vis[i] or self._bnd_center_alt[i] < -0.5 and self.show_ground:
+            if not vis[i] or (self._bnd_center_alt[i] < -0.5 and self.show_ground):
                 continue
             if 0 <= x[i] <= vp.width and 0 <= y[i] <= vp.height:
                 text = self._bounds.codes[i] if self.abbreviate_constellations else name.upper()
@@ -707,7 +707,7 @@ class StarAtlasView(QWidget):
                 p.setPen(color)
                 p.drawText(QPointF(here[0] + 20, here[1] - 8), label)
 
-    def _marker_point(self, vp, marker) -> "tuple[float, float] | None":
+    def _marker_point(self, vp, marker) -> tuple[float, float] | None:
         """Screen position of a marker's J2000 coordinates, or ``None`` if it isn't in view."""
         if not marker:
             return None
@@ -719,7 +719,7 @@ class StarAtlasView(QWidget):
         return (float(x[0]), float(y[0])) if vis[0] else None
 
     @staticmethod
-    def _draw_reticle(p: QPainter, point: "tuple[float, float]", color: QColor,
+    def _draw_reticle(p: QPainter, point: tuple[float, float], color: QColor,
                       dashed: bool = False, radius: float = 13.0) -> None:
         """A circle with four ticks and a gap in the middle, so what it is on stays visible."""
         x, y = point
@@ -767,12 +767,12 @@ class StarAtlasView(QWidget):
                 best, best_d = makers[key](int(idx[j])), float(d[j])
         return best
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
+    def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self._press_pos = event.position()
             self._dragging = False
 
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+    def mouseMoveEvent(self, event) -> None:
         pos = event.position()
         self._cursor = (pos.x(), pos.y())
         if self._press_pos is not None and event.buttons() & Qt.LeftButton:
@@ -789,31 +789,31 @@ class StarAtlasView(QWidget):
                 self.viewChanged.emit()
         self.update()
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._press_pos is not None:
             if not self._dragging:
                 self.select(self.object_at(event.position().x(), event.position().y()))
             self._press_pos = None
             self._dragging = False
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+    def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             obj = self.object_at(event.position().x(), event.position().y())
             if obj is not None:
                 self.select(obj)
                 self.center_on(obj, track=True)
 
-    def contextMenuEvent(self, event) -> None:  # noqa: N802
+    def contextMenuEvent(self, event) -> None:
         obj = self.object_at(event.pos().x(), event.pos().y())
         if obj is not None:
             self.select(obj)
         self.contextMenuRequested.emit(obj, event.globalPos())
 
-    def leaveEvent(self, _event) -> None:  # noqa: N802
+    def leaveEvent(self, _event) -> None:
         self._cursor = None
         self.update()
 
-    def wheelEvent(self, event) -> None:  # noqa: N802
+    def wheelEvent(self, event) -> None:
         steps = event.angleDelta().y() / 120.0
         if steps:
             self.set_fov(self.view.fov_deg * (0.85 ** steps))

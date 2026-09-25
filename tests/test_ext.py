@@ -9,7 +9,7 @@ docs/plugins/vstarget/SRS.md, tested in tests/test_vst.py.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,6 @@ def test_tc_ext_010_pyside6_gui_entry_point():
     """EXT-010: The system shall provide a graphical desktop UI as the sole primary interactive interface."""
     app_module = pytest.importorskip("galileo.app")
     assert hasattr(app_module, "main"), "galileo.app must expose a main() entry point"
-    import inspect
     assert callable(app_module.main)
 
 

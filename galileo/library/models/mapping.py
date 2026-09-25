@@ -9,7 +9,7 @@ from galileo.library.models.base import BaseModel
 
 class Mapping(BaseModel):
     """Model for mapping FITS header values to standardized values."""
-    
+
     id = pw.AutoField()
     card = pw.CharField(max_length=20)  # TELESCOP, INSTRUME, OBSERVER, NOTES
     current = pw.CharField(max_length=255, null=True)  # Current value (can be blank)
@@ -17,7 +17,7 @@ class Mapping(BaseModel):
 
     class Meta:
         table_name = 'Mapping'
-    
+
     @classmethod
     def get_mapped_value(cls, card_name, current_value):
         """
@@ -32,16 +32,16 @@ class Mapping(BaseModel):
         """
         if not current_value:
             return current_value
-            
+
         try:
             mapping = cls.get(
-                (cls.card == card_name) & 
+                (cls.card == card_name) &
                 (cls.current == current_value)
             )
-            return mapping.replace if mapping.replace else current_value
+            return mapping.replace or current_value
         except cls.DoesNotExist:
             return current_value
-    
+
     @classmethod
     def add_mapping(cls, card_name, current_value, replace_value):
         """
@@ -60,13 +60,13 @@ class Mapping(BaseModel):
             current=current_value,
             defaults={'replace': replace_value}
         )
-        
+
         if not created and mapping.replace != replace_value:
             mapping.replace = replace_value
             mapping.save()
-            
+
         return mapping
-    
+
     @classmethod
     def remove_mapping(cls, card_name, current_value):
         """
@@ -81,14 +81,14 @@ class Mapping(BaseModel):
         """
         try:
             mapping = cls.get(
-                (cls.card == card_name) & 
+                (cls.card == card_name) &
                 (cls.current == current_value)
             )
             mapping.delete_instance()
             return True
         except cls.DoesNotExist:
             return False
-    
+
     @classmethod
     def get_mappings_for_card(cls, card_name):
         """
@@ -101,7 +101,7 @@ class Mapping(BaseModel):
             list: List of Mapping objects
         """
         return list(cls.select().where(cls.card == card_name).order_by(cls.current))
-    
+
     @classmethod
     def get_all_cards(cls):
         """
@@ -111,6 +111,6 @@ class Mapping(BaseModel):
             list: List of unique card names
         """
         return [row.card for row in cls.select(cls.card).distinct().order_by(cls.card)]
-    
+
     def __str__(self):
         return f"{self.card}: '{self.current}' -> '{self.replace}'"

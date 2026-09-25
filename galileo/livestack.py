@@ -34,7 +34,7 @@ def _luminance(frame: np.ndarray) -> np.ndarray:
     return frame.astype(np.float64) if frame.ndim == 2 else frame.astype(np.float64).mean(axis=2)
 
 
-def translation_offset(frame: np.ndarray, reference: np.ndarray) -> "tuple[int, int]":
+def translation_offset(frame: np.ndarray, reference: np.ndarray) -> tuple[int, int]:
     """``(dy, dx)``: the whole-pixel shift to apply to *frame* to line it up with *reference*.
 
     Phase correlation, which finds the offset of two images from the phase of their cross-power
@@ -54,7 +54,7 @@ def translation_offset(frame: np.ndarray, reference: np.ndarray) -> "tuple[int, 
     return int(dy), int(dx)
 
 
-def shift_frame(frame: np.ndarray, dy: int, dx: int) -> "tuple[np.ndarray, np.ndarray]":
+def shift_frame(frame: np.ndarray, dy: int, dx: int) -> tuple[np.ndarray, np.ndarray]:
     """``(shifted, valid)``: *frame* moved by ``(dy, dx)`` with no wrap-around, and a mask of the
     pixels that came from it. The pixels shifted in from outside are left at zero and marked
     invalid, so they can be kept out of the mean rather than darkening the stack's edges."""
@@ -79,7 +79,7 @@ def astroalign_available() -> bool:
     return True
 
 
-def _astroalign_register(frame: np.ndarray, reference: np.ndarray) -> "tuple[np.ndarray, np.ndarray] | None":
+def _astroalign_register(frame: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
     """``(registered, valid)`` from astroalign, or ``None`` if it isn't installed or found no
     transform (too few stars, or too little overlap with the reference)."""
     try:
@@ -96,7 +96,7 @@ def _astroalign_register(frame: np.ndarray, reference: np.ndarray) -> "tuple[np.
     return np.asarray(registered, dtype=np.float32), ~np.asarray(footprint, dtype=bool)
 
 
-def register(frame: np.ndarray, reference: np.ndarray) -> "tuple[np.ndarray, np.ndarray, str]":
+def register(frame: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray, str]:
     """``(registered, valid, method)``: *frame* aligned onto *reference*, the mask of pixels that
     really came from it, and which method did it."""
     aligned = _astroalign_register(frame, reference)
@@ -116,19 +116,19 @@ class LiveStacker:
     """
 
     def __init__(self) -> None:
-        self.reference: "np.ndarray | None" = None
+        self.reference: np.ndarray | None = None
         self.frames: int = 0                 # frames in the stack, the reference included
         self.rejected: int = 0               # frames that could not be added (wrong shape)
         self.total_exposure_s: float = 0.0   # integration time the stack represents
         self.method: str = ""                # how the last frame was registered
-        self._sum: "np.ndarray | None" = None
-        self._counts: "np.ndarray | None" = None
+        self._sum: np.ndarray | None = None
+        self._counts: np.ndarray | None = None
 
     def reset(self) -> None:
         """Forget the stack, so the next frame starts a new one."""
         self.__init__()
 
-    def add(self, frame: "np.ndarray | None", exposure_s: float = 0.0) -> bool:
+    def add(self, frame: np.ndarray | None, exposure_s: float = 0.0) -> bool:
         """Register *frame* onto the reference and add it to the stack. Returns whether it went in.
 
         A frame whose shape doesn't match the reference — the camera's binning or region of
@@ -156,7 +156,7 @@ class LiveStacker:
         return True
 
     @property
-    def result(self) -> "np.ndarray | None":
+    def result(self) -> np.ndarray | None:
         """The stack: the per-pixel mean of the frames covering each pixel, or ``None`` if empty."""
         if self._sum is None or self._counts is None:
             return None

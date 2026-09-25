@@ -4,7 +4,7 @@
 """CAL — Calibration / Flat Wizard (TC-CAL-010 … TC-CAL-060)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 
 @pytest.fixture

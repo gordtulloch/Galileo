@@ -27,25 +27,25 @@ logger = logging.getLogger(__name__)
 class InstructionRegistry:
     """Singleton registry of all available instruction types."""
 
-    _instance: "InstructionRegistry | None" = None
+    _instance: InstructionRegistry | None = None
 
     def __init__(self) -> None:
         self._instructions: list[type[BaseInstruction]] = []
 
     @classmethod
-    def instance(cls) -> "InstructionRegistry":
+    def instance(cls) -> InstructionRegistry:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
-    def register(self, cls: type["BaseInstruction"]) -> None:
+    def register(self, cls: type[BaseInstruction]) -> None:
         if cls not in self._instructions:
             self._instructions.append(cls)
 
-    def available_instructions(self) -> list[type["BaseInstruction"]]:
+    def available_instructions(self) -> list[type[BaseInstruction]]:
         return list(self._instructions)
 
-    def find(self, name: str) -> "type[BaseInstruction] | None":
+    def find(self, name: str) -> type[BaseInstruction] | None:
         """The registered instruction class called *name*, or None.
 
         The first registration wins, so a plugin cannot shadow a built-in type name.
@@ -73,7 +73,7 @@ class BaseInstruction(ABC):
         return data
 
     @classmethod
-    def from_dict(cls, data: dict) -> "BaseInstruction":
+    def from_dict(cls, data: dict) -> BaseInstruction:
         """Rebuild an instruction from :meth:`to_dict` output; unknown parameters are ignored.
 
         Non-dataclass instructions (e.g. from plugins) that need constructor arguments should
@@ -120,7 +120,7 @@ class InstructionGroup:
     def add_instruction(self, instr: BaseInstruction) -> None:
         self.instructions.append(instr)
 
-    def add_group(self, group: "InstructionGroup") -> None:
+    def add_group(self, group: InstructionGroup) -> None:
         self.groups.append(group)
 
     def add_condition(self, cond: BaseCondition) -> None:
@@ -142,13 +142,13 @@ class AdvancedSequenceDef:
         self.root = root or InstructionGroup(name="Root")
 
 
-def save_template(group: InstructionGroup, path: "Path | str") -> None:
+def save_template(group: InstructionGroup, path: Path | str) -> None:
     """Persist an InstructionGroup as a reusable template (SEQ-ADV-060)."""
     data = {"name": group.name, "instructions": [i.to_dict() for i in group.instructions]}
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def load_template(path: "Path | str") -> InstructionGroup:
+def load_template(path: Path | str) -> InstructionGroup:
     """Load an InstructionGroup template from a .gtpl file."""
     data = json.loads(Path(path).read_text("utf-8"))
     registry = InstructionRegistry.instance()

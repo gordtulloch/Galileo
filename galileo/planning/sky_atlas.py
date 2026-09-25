@@ -16,7 +16,7 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -73,12 +73,12 @@ class LocationManager:
     """Manages a list of named observing locations (SKY-060)."""
 
     def __init__(self) -> None:
-        self._locations: dict[str, "ObservingLocation"] = {}
+        self._locations: dict[str, ObservingLocation] = {}
 
-    def add(self, loc: "ObservingLocation") -> None:
+    def add(self, loc: ObservingLocation) -> None:
         self._locations[loc.name] = loc
 
-    def get(self, name: str) -> "ObservingLocation":
+    def get(self, name: str) -> ObservingLocation:
         return self._locations[name]
 
     @property
@@ -424,7 +424,7 @@ def _thumbnail_field_arcmin(size_arcmin: float) -> float:
 
 def _thumbnail_cache_path(
     ra_deg: float, dec_deg: float, width_arcmin: float, height_arcmin: float, size_px: int = 150,
-) -> "Path":
+) -> Path:
     from galileo.platform import get_cache_dir
     # No suffix for the default 150px thumbnail size, so this doesn't change
     # the filename (and so invalidate) every thumbnail already cached before
@@ -664,12 +664,12 @@ class SkyAtlas:
         max_magnitude: float = 99.0,
         min_size_arcmin: float = 0.0,
         max_size_arcmin: float = 0.0,
-        location: "ObservingLocation | None" = None,
+        location: ObservingLocation | None = None,
         visible_tonight: bool = False,
         min_altitude_deg: float = 20.0,
         min_duration_hours: float = 0.0,
         min_moon_separation_deg: float = 0.0,
-        catalogs: "set[str] | None" = None,
+        catalogs: set[str] | None = None,
         date_str: str | None = None,
     ) -> list[DeepSkyObject]:
         """Filter the catalog by type, magnitude, size (a min/max range — a
@@ -724,7 +724,7 @@ class SkyAtlas:
     def altitude_chart(
         self,
         obj: DeepSkyObject,
-        location: "ObservingLocation",
+        location: ObservingLocation,
         date: str | None = None,
     ) -> dict:
         """Return an altitude-over-time chart for *obj* from *location*."""
@@ -735,7 +735,7 @@ class SkyAtlas:
     def altitude_charts_batch(
         self,
         objs: list[DeepSkyObject],
-        location: "ObservingLocation",
+        location: ObservingLocation,
         date: str | None = None,
     ) -> list[dict]:
         """:meth:`altitude_chart` for many *objs* at once, ~16x faster than
@@ -748,9 +748,9 @@ class SkyAtlas:
     def rise_transit_set(
         self,
         obj: DeepSkyObject,
-        location: "ObservingLocation",
+        location: ObservingLocation,
         date: str | None = None,
-        chart: "dict | None" = None,
+        chart: dict | None = None,
     ) -> dict:
         """Return *obj*'s rise/transit/set times from *location* tonight
         (SKY-030). Pass an already-computed *chart* (:meth:`altitude_chart`/

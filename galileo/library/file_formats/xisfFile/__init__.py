@@ -27,9 +27,9 @@ __version__ = "2.0.0"
 __author__ = "AstroFiler"
 
 __all__ = [
-    "XISFConverter", 
-    "XISFSampleFormat", 
+    "XISFConverter",
     "XISFGeometry",
+    "XISFSampleFormat",
     "prepare_fits_data",
     "validate_data_integrity"
 ]

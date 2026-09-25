@@ -24,8 +24,18 @@ from galileo.library.models.solver_settings import SolverSettingsRecord
 from galileo.library.models.variable_stars import VariableStars
 
 __all__ = [
-    "BaseModel", "db",
-    "fitsFile", "fitsSession", "Mapping", "Masters", "VariableStars",
-    "ObservatoryRecord", "PierRecord", "DeviceConfigRecord", "OpticalTubeRecord",
-    "HorizonPointRecord", "AutofocusSettingsRecord", "SolverSettingsRecord",
+    "AutofocusSettingsRecord",
+    "BaseModel",
+    "DeviceConfigRecord",
+    "HorizonPointRecord",
+    "Mapping",
+    "Masters",
+    "ObservatoryRecord",
+    "OpticalTubeRecord",
+    "PierRecord",
+    "SolverSettingsRecord",
+    "VariableStars",
+    "db",
+    "fitsFile",
+    "fitsSession",
 ]

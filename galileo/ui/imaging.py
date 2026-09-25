@@ -79,7 +79,7 @@ async def nudge_mount(mount, direction: str, rate: float, duration: float,
 class ImagingService:
     """Domain-layer service for the imaging tab; no PySide6 dependency."""
 
-    def __init__(self, camera=None, output_dir: "Path | str" = ".") -> None:
+    def __init__(self, camera=None, output_dir: Path | str = ".") -> None:
         self._camera = camera
         self._output_dir = Path(output_dir)
         self.current_frame = None
@@ -99,7 +99,7 @@ class ImagingService:
         # The Pier's current object (IMG-140): names saved frames and is written to their OBJECT keyword.
         self.object_name: str = ""
         # Page layout (IMG-120): follows the frame's shape unless the user picks one.
-        self.manual_orientation: "str | None" = None
+        self.manual_orientation: str | None = None
         # Capture settings and header context (IMG-150). Gain 0 means "leave the camera as configured".
         self.gain: int = 0
         self.frame_context: dict = {}          # what the page knows about the rig: telescope, site, ...
@@ -107,7 +107,7 @@ class ImagingService:
         # Series capture and Library auto-save (IMG-150).
         self.auto_save_to_library: bool = True
         self.library_registrar = None          # anything with register_capture(path) -> id | None
-        self.scratch_dir: "Path | None" = None
+        self.scratch_dir: Path | None = None
         self.series_total: int = 0
         self.series_done: int = 0
         self.stop_requested: bool = False
@@ -122,7 +122,7 @@ class ImagingService:
         # "auto" (the default) is the pre-existing behaviour; loaded fresh per instance so a
         # changed setting takes effect on the next screen build rather than needing a restart.
         from galileo.imaging_settings import load_imaging_settings
-        self.bitpix: "int | str" = load_imaging_settings()["bitpix"]
+        self.bitpix: int | str = load_imaging_settings()["bitpix"]
         # Framing Assistant (IMG-180): a mosaic defined and run directly from this tab.
         self.active_mosaic = None
         self._mount = None      # set by the page (Equipment > Mount's adapter) before a mosaic capture
@@ -192,7 +192,7 @@ class ImagingService:
             meta["ccd_temp_c"] = temperature
         return meta
 
-    def _sensor_temperature(self) -> "float | None":
+    def _sensor_temperature(self) -> float | None:
         """The camera's sensor temperature in °C, or ``None`` if it can't say."""
         getter = getattr(self._camera, "get_temperature", None)
         if getter is None:
@@ -306,7 +306,7 @@ class ImagingService:
                 pane = panels[step.pane_index]
                 ra_deg, dec_deg = pane.ra_deg, pane.dec_deg
                 if (await self._mount.get_status() or {}).get("equatorial_system") != "J2000":
-                    jd = julian_date(_dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None))
+                    jd = julian_date(_dt.datetime.now(_dt.UTC).replace(tzinfo=None))
                     ra_deg, dec_deg = (float(v) for v in precess_from_j2000(ra_deg, dec_deg, jd))
                 await self._mount.slew_to_coordinates(ra_deg, dec_deg)
                 await wait_for_slew(self._mount)
@@ -352,7 +352,7 @@ class ImagingService:
             meta["date_obs_utc"] = _fits_time(self.stack_started)      # the stack covers from the first sub
         return meta
 
-    def save_stack(self, path: "Path | str") -> None:
+    def save_stack(self, path: Path | str) -> None:
         """Write the stack to *path* as FITS, with the stack's own header (IMG-160)."""
         if self.stacker.result is None:
             raise ValueError("There is no stack to save.")
@@ -364,7 +364,7 @@ class ImagingService:
         return (f"{self.file_stem}_stack_{self.stacker.frames}x{exposure:g}s_"
                 f"{datetime.datetime.now():%Y%m%dT%H%M%S}.fits")
 
-    def save_stack_to_library(self) -> "str | None":
+    def save_stack_to_library(self) -> str | None:
         """Write the stack to the scratch folder and register it in the Library, which files it in
         the repository. Returns its catalog id, or ``None`` if it was not registered (the reason is
         in ``library_note``)."""
@@ -404,7 +404,7 @@ class ImagingService:
         if frame_type.lower().startswith("light") and not meta.get("object"):
             meta["object"] = "Unknown"          # the Library can't file a light frame without one
             self.library_note = "No current object, so frames were filed under 'Unknown' — pick one in the Star Atlas."
-        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
+        stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
         stem = safe_file_stem(meta.get("object")) or self.file_stem
         path = self._scratch_folder() / f"{stem}_{frame_type}_{stamp}_{index:03d}.fits"
         _save_fits(self.current_frame, path, self.object_name, meta, self.bitpix)
@@ -435,7 +435,7 @@ class ImagingService:
         if they made one, else the current frame's."""
         return self.manual_orientation or self.detected_orientation
 
-    def set_manual_orientation(self, orientation: "str | None") -> None:
+    def set_manual_orientation(self, orientation: str | None) -> None:
         """Force ``"portrait"`` or ``"landscape"``; ``None`` (or anything else)
         goes back to following the frame."""
         self.manual_orientation = orientation if orientation in (PORTRAIT, LANDSCAPE) else None
@@ -447,20 +447,19 @@ class ImagingService:
         duration: float,
         filter_name: str = "",
         frame_type: str = "Light",
-        save_dir: "Path | str | None" = None,
-        gain: "int | None" = None,
+        save_dir: Path | str | None = None,
+        gain: int | None = None,
     ) -> None:
         """Expose, download, stretch, and cache the current frame (IMG-010 … IMG-030)."""
-        import numpy as np
 
         self._capture_status = "exposing"
         self.capture_status = "exposing"
 
-        started = datetime.datetime.now(datetime.timezone.utc)
+        started = datetime.datetime.now(datetime.UTC)
         options = {"gain": int(gain)} if gain else {}
         await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)
         data = await self._camera.get_image_array()
-        self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.timezone.utc),
+        self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.UTC),
                           "duration": float(duration), "frame_type": frame_type,
                           "filter": filter_name, "gain": int(gain) if gain else None}
 
@@ -496,7 +495,7 @@ class ImagingService:
         self.debayer_enabled = enabled
         self._rebuild_preview()
 
-    def set_bayer_pattern(self, pattern: "str | None", rebuild: bool = True) -> None:
+    def set_bayer_pattern(self, pattern: str | None, rebuild: bool = True) -> None:
         """Set the mosaic layout used to debayer (``RGGB``, ``GRBG``, ``GBRG``
         or ``BGGR``), re-rendering the current frame unless ``rebuild`` is
         false (e.g. just before a capture, which replaces it anyway).
@@ -567,7 +566,7 @@ class ImagingService:
 
     # --- Save current frame (IMG-100) ------------------------------------
 
-    def save_current_frame(self, path: "Path | str") -> None:
+    def save_current_frame(self, path: Path | str) -> None:
         _save_fits(self.current_frame, Path(path), self.object_name, self.frame_metadata(), self.bitpix)
 
 
@@ -620,14 +619,14 @@ def _compute_histogram(data) -> dict:
         return {"bins": [], "counts": []}
 
 
-def _fits_time(moment: "datetime.datetime") -> str:
+def _fits_time(moment: datetime.datetime) -> str:
     """*moment* (UTC) as a FITS date-time, to the millisecond."""
-    moment = moment.astimezone(datetime.timezone.utc)
+    moment = moment.astimezone(datetime.UTC)
     return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}"
 
 
-def _save_fits(data, path: Path, object_name: str = "", metadata: "dict | None" = None,
-               bitpix: "int | str | None" = None) -> None:
+def _save_fits(data, path: Path, object_name: str = "", metadata: dict | None = None,
+               bitpix: int | str | None = None) -> None:
     """Write *data* to *path* as FITS with every card *metadata* provides (see
     ``galileo.metadata.FitsMetadataWriter``), plus ``OBJECT`` from *object_name* if the metadata has
     none. *bitpix* is the desired sample format (IMG-170); ``None``/``"auto"`` picks one automatically.

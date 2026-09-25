@@ -8,7 +8,6 @@ and file movement operations.
 import os
 import shutil
 import logging
-import configparser
 from galileo.library.config import load_config as load_library_config
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,7 @@ class RepositoryManager:
     """
     Handles repository file organization and management operations.
     """
-    
+
     def __init__(self):
         """Initialize RepositoryManager with configuration."""
         config = load_library_config()
@@ -42,14 +41,14 @@ class RepositoryManager:
                 os.path.join(self.repoFolder, 'Archive'),
                 os.path.join(self.repoFolder, 'Processed'),
             ]
-            
+
             for directory in directories:
                 os.makedirs(directory, exist_ok=True)
                 logger.debug(f"Created directory: {directory}")
-            
+
             logger.info(f"Repository structure created at: {self.repoFolder}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error creating repository structure: {e}")
             return False
@@ -70,25 +69,25 @@ class RepositoryManager:
             if not os.path.exists(file_path):
                 logger.error(f"File does not exist: {file_path}")
                 return None
-            
+
             # Determine file type and destination
             imagetyp = hdr.get('IMAGETYP', '').upper()
             object_name = hdr.get('OBJECT', 'Unknown')
             telescope = hdr.get('TELESCOP', 'Unknown')
             instrument = hdr.get('INSTRUME', 'Unknown')
-            
+
             # Sanitize names for filesystem
             from .utils import sanitize_filesystem_name
             object_safe = sanitize_filesystem_name(object_name)
             telescope_safe = sanitize_filesystem_name(telescope)
             instrument_safe = sanitize_filesystem_name(instrument)
-            
+
             # Determine destination directory
             if 'LIGHT' in imagetyp:
                 # Light frames: Light/{OBJECT}/{TELESCOPE}/{INSTRUMENT}/{DATE}/
                 date_str = self._getDateString(hdr)
                 dest_dir = os.path.join(
-                    self.repoFolder, 'Light', object_safe, 
+                    self.repoFolder, 'Light', object_safe,
                     telescope_safe, instrument_safe, date_str
                 )
             elif imagetyp in ['BIAS', 'DARK', 'FLAT']:
@@ -100,26 +99,26 @@ class RepositoryManager:
             else:
                 # Unknown type: put in Incoming for manual sorting
                 dest_dir = os.path.join(self.repoFolder, 'Incoming')
-            
+
             # Create destination directory
             os.makedirs(dest_dir, exist_ok=True)
-            
+
             # Determine filename
             if new_filename:
                 filename = new_filename
             else:
                 filename = os.path.basename(file_path)
-            
+
             # Ensure unique filename
             dest_path = os.path.join(dest_dir, filename)
             dest_path = self._ensureUniqueFilename(dest_path)
-            
+
             # Move the file
             shutil.move(file_path, dest_path)
             logger.info(f"Moved file to repository: {dest_path}")
-            
+
             return dest_path
-            
+
         except Exception as e:
             logger.error(f"Error organizing file {file_path}: {e}")
             return None
@@ -136,7 +135,7 @@ class RepositoryManager:
         """
         try:
             from datetime import datetime
-            
+
             date_obs = hdr.get('DATE-OBS', '')
             if date_obs:
                 # Parse the date string
@@ -146,7 +145,7 @@ class RepositoryManager:
             else:
                 # Use current date as fallback
                 return datetime.now().strftime('%Y%m%d')
-                
+
         except Exception as e:
             logger.error(f"Error parsing date from header: {e}")
             from datetime import datetime
@@ -164,13 +163,13 @@ class RepositoryManager:
         """
         if not os.path.exists(file_path):
             return file_path
-        
+
         base, ext = os.path.splitext(file_path)
         counter = 1
-        
+
         while os.path.exists(f"{base}_{counter:03d}{ext}"):
             counter += 1
-        
+
         return f"{base}_{counter:03d}{ext}"
 
     def validateRepositoryStructure(self):
@@ -186,17 +185,17 @@ class RepositoryManager:
             'missing_directories': [],
             'permission_issues': []
         }
-        
+
         try:
             # Check if repository root exists
             if not os.path.exists(self.repoFolder):
                 results['valid'] = False
                 results['messages'].append(f"Repository root does not exist: {self.repoFolder}")
                 return results
-            
+
             # Check required directories
             required_dirs = ['Light', 'Calibrate', 'Masters']
-            
+
             for dirname in required_dirs:
                 dir_path = os.path.join(self.repoFolder, dirname)
                 if not os.path.exists(dir_path):
@@ -205,7 +204,7 @@ class RepositoryManager:
                 elif not os.access(dir_path, os.W_OK):
                     results['permission_issues'].append(dir_path)
                     results['valid'] = False
-            
+
             # Check disk space
             try:
                 statvfs = os.statvfs(self.repoFolder)
@@ -215,18 +214,18 @@ class RepositoryManager:
             except (OSError, AttributeError):
                 # statvfs not available on Windows
                 pass
-            
+
             if results['missing_directories']:
                 results['messages'].append(f"Missing directories: {', '.join(results['missing_directories'])}")
-            
+
             if results['permission_issues']:
                 results['messages'].append(f"Permission issues: {', '.join(results['permission_issues'])}")
-            
+
             if results['valid']:
                 results['messages'].append("Repository structure is valid")
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Error validating repository structure: {e}")
             results['valid'] = False
@@ -250,16 +249,16 @@ class RepositoryManager:
             'errors': [],
             'actions': []
         }
-        
+
         try:
             logger.info(f"Starting repository cleanup (dry_run={dry_run})")
-            
+
             # Find empty directories
             empty_dirs = []
             for root, dirs, files in os.walk(self.repoFolder, topdown=False):
                 if not dirs and not files and root != self.repoFolder:
                     empty_dirs.append(root)
-            
+
             # Remove empty directories
             for empty_dir in empty_dirs:
                 try:
@@ -273,7 +272,7 @@ class RepositoryManager:
                     error_msg = f"Error removing directory {empty_dir}: {e}"
                     results['errors'].append(error_msg)
                     logger.error(error_msg)
-            
+
             # Look for misplaced FITS files in the repository root
             for item in os.listdir(self.repoFolder):
                 item_path = os.path.join(self.repoFolder, item)
@@ -293,13 +292,13 @@ class RepositoryManager:
                         error_msg = f"Error moving file {item}: {e}"
                         results['errors'].append(error_msg)
                         logger.error(error_msg)
-            
+
             if progress_callback:
                 progress_callback(100, 100, "Cleanup completed")
-            
+
             logger.info(f"Repository cleanup completed: {results['empty_dirs_removed']} empty dirs, {results['files_organized']} files organized")
             return results
-            
+
         except Exception as e:
             error_msg = f"Error during repository cleanup: {e}"
             results['errors'].append(error_msg)
@@ -322,43 +321,43 @@ class RepositoryManager:
             'directory_breakdown': {},
             'error_count': 0
         }
-        
+
         try:
             for root, dirs, files in os.walk(self.repoFolder):
                 for file in files:
                     if file.lower().endswith(('.fit', '.fits', '.fts')):
                         file_path = os.path.join(root, file)
-                        
+
                         try:
                             # Get file size
                             file_size = os.path.getsize(file_path)
                             stats['total_size_gb'] += file_size / (1024**3)
                             stats['total_files'] += 1
-                            
+
                             # Categorize by directory structure
                             rel_path = os.path.relpath(root, self.repoFolder)
                             path_parts = rel_path.split(os.sep)
-                            
+
                             if path_parts[0] == 'Light':
                                 stats['light_frames'] += 1
                             elif path_parts[0] == 'Calibrate':
                                 stats['calibration_frames'] += 1
                             elif path_parts[0] == 'Masters':
                                 stats['master_frames'] += 1
-                            
+
                             # Directory breakdown
                             category = path_parts[0] if path_parts[0] != '.' else 'Root'
                             if category not in stats['directory_breakdown']:
                                 stats['directory_breakdown'][category] = 0
                             stats['directory_breakdown'][category] += 1
-                            
+
                         except Exception as e:
                             stats['error_count'] += 1
                             logger.error(f"Error processing file {file_path}: {e}")
-            
+
             logger.info(f"Repository stats: {stats['total_files']} files, {stats['total_size_gb']:.2f} GB")
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error gathering repository statistics: {e}")
             stats['error_count'] += 1
@@ -383,11 +382,11 @@ class RepositoryManager:
             'files_backed_up': 0,
             'error_message': None
         }
-        
+
         try:
             if progress_callback:
                 progress_callback(0, 100, "Starting backup...")
-            
+
             if compress:
                 # Create compressed backup
                 import tarfile
@@ -396,7 +395,7 @@ class RepositoryManager:
             else:
                 # Create uncompressed copy
                 shutil.copytree(self.repoFolder, backup_path, dirs_exist_ok=True)
-            
+
             # Get backup size and file count
             if compress:
                 results['backup_size_gb'] = os.path.getsize(backup_path) / (1024**3)
@@ -409,17 +408,17 @@ class RepositoryManager:
                 stats = backup_stats.getRepositoryStats()
                 results['backup_size_gb'] = stats['total_size_gb']
                 results['files_backed_up'] = stats['total_files']
-            
+
             results['success'] = True
-            
+
             if progress_callback:
                 progress_callback(100, 100, "Backup completed")
-            
+
             logger.info(f"Repository backup completed: {results['backup_size_gb']:.2f} GB, {results['files_backed_up']} files")
-            
+
         except Exception as e:
             error_msg = f"Error creating backup: {e}"
             results['error_message'] = error_msg
             logger.error(error_msg)
-        
+
         return results

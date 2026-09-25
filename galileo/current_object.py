@@ -30,7 +30,7 @@ class CurrentObject:
     designation: str = ""
 
     @classmethod
-    def from_atlas(cls, obj: dict[str, Any]) -> "CurrentObject":
+    def from_atlas(cls, obj: dict[str, Any]) -> CurrentObject:
         """Build one from a Star Atlas object dict (``StarAtlasView.select``'s payload)."""
         return cls(
             name=str(obj["name"]), ra_deg=float(obj["ra_deg"]), dec_deg=float(obj["dec_deg"]),
@@ -43,12 +43,12 @@ class CurrentObject:
         return safe_file_stem(self.name)
 
 
-def safe_file_stem(name: "str | None") -> str:
+def safe_file_stem(name: str | None) -> str:
     """*name* with anything unsafe in a file name replaced by ``_``; empty if nothing usable is left."""
     return re.sub(r"[^\w.+-]+", "_", (name or "").strip()).strip("_.")
 
 
-def pier_key(pier: Any) -> "Any | None":
+def pier_key(pier: Any) -> Any | None:
     """What identifies *pier* in the store: its database id when it has one (Pier names repeat
     across Observatories), else its name. ``None`` for no Pier."""
     if pier is None:
@@ -60,15 +60,15 @@ def pier_key(pier: Any) -> "Any | None":
 class CurrentObjects:
     """The current object of each Pier, keyed by ``pier_key``."""
 
-    def __init__(self, bus: "EventBus | None" = None) -> None:
+    def __init__(self, bus: EventBus | None = None) -> None:
         self._bus = bus
         self._objects: dict[Any, CurrentObject] = {}
 
-    def get(self, pier: Any) -> "CurrentObject | None":
+    def get(self, pier: Any) -> CurrentObject | None:
         key = pier_key(pier)
         return self._objects.get(key) if key is not None else None
 
-    def set(self, pier: Any, obj: "CurrentObject | None") -> None:
+    def set(self, pier: Any, obj: CurrentObject | None) -> None:
         """Make *obj* the Pier's current object (``None`` clears it), announcing a change."""
         key = pier_key(pier)
         if key is None or self._objects.get(key) == obj:
@@ -83,7 +83,7 @@ class CurrentObjects:
         self.set(pier, None)
 
 
-_default_store: "CurrentObjects | None" = None
+_default_store: CurrentObjects | None = None
 
 
 def get_current_objects() -> CurrentObjects:

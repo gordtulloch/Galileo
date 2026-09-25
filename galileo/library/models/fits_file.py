@@ -9,7 +9,7 @@ from galileo.library.models.base import BaseModel
 
 class fitsFile(BaseModel):
     """Model representing a FITS file in the system."""
-    
+
     fitsFileId = pw.TextField(primary_key=True)
     fitsFileName = pw.TextField(null=True)
     fitsFileDate = pw.DateField(null=True)
@@ -35,18 +35,18 @@ class fitsFile(BaseModel):
     fitsFileCalibrationDate = pw.DateTimeField(null=True)
     fitsFileOriginalFile = pw.TextField(null=True)
     fitsFileOriginalCloudURL = pw.TextField(null=True)
-    
+
     # Quality metrics fields
     fitsFileAvgFWHMArcsec = pw.FloatField(null=True)  # Average FWHM in arcseconds
     fitsFileAvgEccentricity = pw.FloatField(null=True)  # Average star eccentricity (0-1)
-    fitsFileAvgHFRArcsec = pw.FloatField(null=True)  # Average HFR in arcseconds  
+    fitsFileAvgHFRArcsec = pw.FloatField(null=True)  # Average HFR in arcseconds
     fitsFileImageSNR = pw.FloatField(null=True)  # Signal-to-noise ratio for image
     fitsFileStarCount = pw.IntegerField(null=True)  # Number of detected stars
     fitsFileImageScale = pw.FloatField(null=True)  # Arcsec/pixel scale
 
     class Meta:
         table_name = 'fitsFile'
-    
+
     def is_calibration_frame(self):
         """
         Check if this file is a calibration frame (bias, dark, flat).
@@ -55,7 +55,7 @@ class fitsFile(BaseModel):
             bool: True if this is a calibration frame
         """
         return self.fitsFileType in ['Bias Frame', 'Dark Frame', 'Flat Field']
-    
+
     def is_light_frame(self):
         """
         Check if this file is a light frame.
@@ -64,7 +64,7 @@ class fitsFile(BaseModel):
             bool: True if this is a light frame
         """
         return self.fitsFileType == 'Light Frame'
-    
+
     def get_calibration_criteria(self):
         """
         Get the calibration matching criteria for this file.
@@ -83,7 +83,7 @@ class fitsFile(BaseModel):
             'exposure_time': self.fitsFileExpTime if self.fitsFileType == 'Dark Frame' else None,
             'filter_name': self.fitsFileFilter if self.fitsFileType == 'Flat Field' else None
         }
-    
+
     def mark_as_calibrated(self, calibration_date=None):
         """
         Mark this file as calibrated.
@@ -98,7 +98,7 @@ class fitsFile(BaseModel):
         else:
             self.fitsFileCalibrationDate = datetime.datetime.now()
         self.save()
-    
+
     def is_precalibrated(self):
         """
         Check if this file is from a telescope that provides pre-calibrated images.

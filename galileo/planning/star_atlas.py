@@ -221,7 +221,7 @@ class ConstellationBoundaries:
         return slice(self.starts[i], self.starts[i + 1])
 
     @classmethod
-    def empty(cls) -> "ConstellationBoundaries":
+    def empty(cls) -> ConstellationBoundaries:
         return cls(np.empty(0), np.empty(0), [0], [], np.empty(0), np.empty(0))
 
 
@@ -351,7 +351,7 @@ class ConstellationLines:
         return slice(self.starts[i], self.starts[i + 1])
 
     @classmethod
-    def empty(cls) -> "ConstellationLines":
+    def empty(cls) -> ConstellationLines:
         return cls(np.empty(0), np.empty(0), [0])
 
 
@@ -400,7 +400,7 @@ def _fetch_constellation_lines() -> list[list[list[float]]] | None:
     """Fetch the constellation stick figures (d3-celestial, BSD-3, J2000 lon/lat)."""
     try:
         import urllib.request
-        with urllib.request.urlopen(_LINES_URL, timeout=20) as resp:     # noqa: S310 — fixed https URL
+        with urllib.request.urlopen(_LINES_URL, timeout=20) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         lines = [[[float(lon), float(lat)] for lon, lat in line]
                  for feature in data["features"] for line in feature["geometry"]["coordinates"]]
@@ -443,7 +443,7 @@ def load_constellation_lines() -> ConstellationLines:
 def julian_date(when: _dt.datetime) -> float:
     """Julian date of *when* (naive datetimes are taken as UTC)."""
     if when.tzinfo is not None:
-        when = when.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+        when = when.astimezone(_dt.UTC).replace(tzinfo=None)
     epoch = _dt.datetime(2000, 1, 1, 12)
     return 2451545.0 + (when - epoch).total_seconds() / 86400.0
 
@@ -505,7 +505,7 @@ def solar_system_positions(when: _dt.datetime) -> list[dict[str, Any]]:
         from astropy.coordinates import get_body
         from astropy.time import Time
         if when.tzinfo is not None:
-            when = when.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+            when = when.astimezone(_dt.UTC).replace(tzinfo=None)
         t = Time(when, scale="utc")
     except Exception:
         logger.exception("Could not set up the solar-system ephemeris")

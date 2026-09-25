@@ -184,11 +184,11 @@ def checkout_single_session(parent: QWidget, item) -> None:
             if "LIGHT" in file.fitsFileType.upper():
                 dest_folder = light_dir
             elif "DARK" in file.fitsFileType.upper():
-                dest_folder = dark_dir if dark_dir else None
+                dest_folder = dark_dir or None
             elif "FLAT" in file.fitsFileType.upper():
-                dest_folder = flat_dir if flat_dir else None
+                dest_folder = flat_dir or None
             elif "BIAS" in file.fitsFileType.upper():
-                dest_folder = bias_dir if bias_dir else None
+                dest_folder = bias_dir or None
             else:
                 logger.warning(f"Unknown file type for {file.fitsFileName}, skipping")
                 continue
@@ -263,8 +263,8 @@ def checkout_single_session(parent: QWidget, item) -> None:
         )
 
     except Exception as e:
-        QMessageBox.critical(parent, "Checkout Failed", f"Failed to create symbolic links: {str(e)}")
-        logger.error(f"Error in checkout_session: {str(e)}")
+        QMessageBox.critical(parent, "Checkout Failed", f"Failed to create symbolic links: {e!s}")
+        logger.error(f"Error in checkout_session: {e!s}")
 
 
 def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
@@ -453,7 +453,7 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
 
                 error_msg = (
                     f"{object_name if 'object_name' in locals() else 'Unknown'} - "
-                    f"{session_date if 'session_date' in locals() else 'Unknown'}: {str(e)}"
+                    f"{session_date if 'session_date' in locals() else 'Unknown'}: {e!s}"
                 )
                 failed_sessions.append(error_msg)
                 logger.error(f"Error processing session: {error_msg}")
@@ -486,5 +486,5 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
             _show_checkout_failed(parent, message=message)
 
     except Exception as e:
-        QMessageBox.critical(parent, "Checkout Failed", f"Failed to checkout multiple sessions: {str(e)}")
-        logger.error(f"Error in checkout_multiple_sessions: {str(e)}")
+        QMessageBox.critical(parent, "Checkout Failed", f"Failed to checkout multiple sessions: {e!s}")
+        logger.error(f"Error in checkout_multiple_sessions: {e!s}")

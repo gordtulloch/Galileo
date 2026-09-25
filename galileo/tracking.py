@@ -97,7 +97,7 @@ async def set_tracking_rate(mount, target=None) -> str:
     return rate
 
 
-async def resume_tracking(mount, target=None, timeout_s: float = SLEW_TIMEOUT_S) -> "str | None":
+async def resume_tracking(mount, target=None, timeout_s: float = SLEW_TIMEOUT_S) -> str | None:
     """Wait for *mount*'s slew to finish, then track *target* at its proper rate (EQP-MNT-050).
 
     Returns the rate set, or ``None`` if the mount never settled — in which case tracking is left

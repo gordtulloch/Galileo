@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class Masters(BaseModel):
     """Model for storing master calibration frames separately from fitsFile and fitsSession."""
-    
+
     id = pw.AutoField()
     master_id = pw.TextField(unique=True)
     master_type = pw.TextField()  # 'bias', 'dark', 'flat'
@@ -65,20 +65,20 @@ class Masters(BaseModel):
             cls.master_type == master_type,
             cls.soft_delete == False
         )
-        
+
         # Add type-specific criteria
         if master_type == 'dark' and 'exposure_time' in criteria:
             query = query.where(cls.exposure_time == criteria['exposure_time'])
         elif master_type == 'flat' and 'filter_name' in criteria:
             query = query.where(cls.filter_name == criteria['filter_name'])
-            
+
         # Add binning criteria only (removed ccd_temp, gain, offset for more flexible matching)
         for field in ['binning_x', 'binning_y']:
             if field in criteria and criteria[field] is not None:
                 query = query.where(getattr(cls, field) == criteria[field])
-                
+
         return query.first()
-    
+
     @classmethod
     def _retry_database_operation(cls, operation, max_retries=5, delay=1.0):
         """
@@ -123,7 +123,7 @@ class Masters(BaseModel):
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         telescope_safe = session_data.get('telescope', 'unknown').replace(' ', '_')
         master_id = f"{cal_type}_{telescope_safe}_{timestamp}"
-        
+
         # Calculate file hash if file exists
         file_hash = None
         file_size = None
@@ -131,7 +131,7 @@ class Masters(BaseModel):
             file_size = os.path.getsize(master_path)
             with open(master_path, 'rb') as f:
                 file_hash = hashlib.md5(f.read()).hexdigest()
-        
+
         def create_operation():
             return cls.create(
                 master_id=master_id,
@@ -152,9 +152,9 @@ class Masters(BaseModel):
                 file_size=file_size,
                 hash_value=file_hash
             )
-        
+
         return cls._retry_database_operation(create_operation)
-    
+
     def validate_file_integrity(self):
         """
         Validate that the master file exists and matches the stored hash.
@@ -164,14 +164,14 @@ class Masters(BaseModel):
         """
         if not os.path.exists(self.master_path):
             return False
-            
+
         if self.hash_value:
             with open(self.master_path, 'rb') as f:
                 current_hash = hashlib.md5(f.read()).hexdigest()
                 return current_hash == self.hash_value
-                
+
         return True
-    
+
     def get_matching_criteria(self):
         """
         Get the criteria dictionary for matching this master to sessions.
@@ -184,18 +184,18 @@ class Masters(BaseModel):
             'instrument': self.instrument,
             'master_type': self.master_type
         }
-        
+
         if self.master_type == 'dark' and self.exposure_time:
             criteria['exposure_time'] = self.exposure_time
         elif self.master_type == 'flat' and self.filter_name:
             criteria['filter_name'] = self.filter_name
-            
+
         # Add optional matching criteria
         for field in ['binning_x', 'binning_y', 'ccd_temp', 'gain', 'offset']:
             value = getattr(self, field)
             if value is not None:
                 criteria[field] = value
-                
+
         return criteria
 
     def update_quality_score(self, score):
@@ -291,14 +291,14 @@ class Masters(BaseModel):
         total_size = 0
         total_count = 0
         by_type = {'bias': 0, 'dark': 0, 'flat': 0}
-        
+
         for master in cls.select().where(cls.soft_delete == False):
             if master.file_size:
                 total_size += master.file_size
                 total_count += 1
                 if master.master_type in by_type:
                     by_type[master.master_type] += master.file_size
-        
+
         return {
             'total_size_bytes': total_size,
             'total_count': total_count,

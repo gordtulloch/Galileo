@@ -41,7 +41,6 @@ import sys
 import os
 import argparse
 import logging
-import configparser
 from datetime import datetime
 
 
@@ -55,7 +54,7 @@ def setup_logging(verbose=False):
     """Setup logging configuration."""
     level = logging.DEBUG if verbose else logging.INFO
     format_str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
+
     # Configure logging - using central library.log
     logging.basicConfig(
         level=level,
@@ -65,14 +64,14 @@ def setup_logging(verbose=False):
             logging.StreamHandler(sys.stdout)
         ]
     )
-    
+
     return logging.getLogger(__name__)
 
 def validate_paths(repo_folder):
     """Validate repository folder path."""
     if not os.path.exists(repo_folder):
         raise FileNotFoundError(f"Repository folder does not exist: {repo_folder}")
-    
+
     # Check write permissions
     if not os.access(repo_folder, os.W_OK):
         raise PermissionError(f"No write permission for repository folder: {repo_folder}")
@@ -91,7 +90,7 @@ Examples:
     python -m galileo.commands.sync_repo -n                  # Clear database before sync
         """
     )
-    
+
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose logging')
     parser.add_argument('-c', '--config', default=None,
@@ -100,72 +99,72 @@ Examples:
                         help='Override repository folder path')
     parser.add_argument('-n', '--clear', action='store_true',
                         help="Clear database before sync (recommended for clean sync)")
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     logger = setup_logging(args.verbose)
-    
+
     try:
         logger.info("=== Galileo Repository Sync Starting ===")
         logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        
+
+
         # Load configuration
         logger.info(f"Loading configuration from: {args.config or 'library.ini'}")
         config = load_config(args.config)
-        
+
         # Get repository folder path
         repo_folder = args.repo or config.get('DEFAULT', 'repo', fallback='.')
-        
+
         # Convert to absolute path
         repo_folder = os.path.abspath(repo_folder)
-        
+
         logger.info(f"Repository folder: {repo_folder}")
         logger.info(f"Clear database: {args.clear}")
-        
+
         # Validate paths
         validate_paths(repo_folder)
-        
+
         # Setup database
         logger.info("Setting up database...")
         setup_database()
-        
+
         # If clear mode requested, clear the database tables first
         if args.clear:
             logger.info("Clear mode detected - clearing database tables...")
             try:
-                from galileo.library.models import fitsFile, fitsSession, Mapping, Masters
-                
+                from galileo.library.models import fitsFile, fitsSession
+
                 # Clear all tables in dependency order
                 logger.info("Clearing fitsFile table...")
                 fitsFile.delete().execute()
-                
+
                 logger.info("Clearing fitsSession table...")
                 fitsSession.delete().execute()
-                               
+
                 logger.info("Database tables cleared successfully for sync.")
-                
+
             except Exception as e:
                 logger.error(f"Error clearing database tables: {e}")
                 raise
-        
+
         # Create processor instance
         processor = fitsProcessing()
-        
+
         # Override repository folder path if specified
         if args.repo:
             processor.repoFolder = repo_folder
-        
+
         # Process files - scan the repository folder instead of source folder
         logger.info("Starting repository sync...")
-        
+
         result = processor.registerFitsImages(
             moveFiles=False,  # Never move files during sync
             progress_callback=None,  # Disabled for non-interactive use
             source_folder=repo_folder  # Use repository folder as source
         )
-        
+
         # Handle the new tuple return format (registered_files, duplicate_count)
         if isinstance(result, tuple):
             registered_files, duplicate_count = result
@@ -173,13 +172,13 @@ Examples:
             # Backward compatibility for old return format
             registered_files = result
             duplicate_count = 0
-        
+
         # Report results
-        logger.info(f"=== Repository Sync Complete ===")
+        logger.info("=== Repository Sync Complete ===")
         logger.info(f"Files synchronized: {len(registered_files)}")
         if duplicate_count > 0:
             logger.info(f"Duplicate files skipped: {duplicate_count}")
-        
+
         if len(registered_files) == 0:
             if duplicate_count > 0:
                 logger.warning(f"No new FITS/XISF files synchronized! {duplicate_count} duplicate files were skipped.")
@@ -189,7 +188,7 @@ Examples:
         else:
             logger.info("Repository sync completed successfully!")
             return 0
-            
+
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1

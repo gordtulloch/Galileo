@@ -171,7 +171,7 @@ def test_derotation_target_gives_altaz_and_a_signed_rate_that_reverse_flips(wind
     lat, lon = [s for s in page.findChildren(QtWidgets.QDoubleSpinBox) if s.suffix() in ("° N", "° E")]
     lat.setValue(60.0)
     lon.setValue(0.0)
-    lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.timezone.utc), 0.0) / 15.0
+    lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.UTC), 0.0) / 15.0
     _, h, m, s = derotation.to_sexagesimal(lst_hours)
     ints = [w for w in page.findChildren(QtWidgets.QSpinBox)]
     ra_h, ra_m, dec_d = [w for w in ints if w.suffix() == " h"][0], [w for w in ints if w.suffix() == " m"][0], \
@@ -202,7 +202,7 @@ def test_start_derotation_needs_a_target_then_locks_goto_while_running(window):
     lat, lon = [s for s in page.findChildren(QtWidgets.QDoubleSpinBox) if s.suffix() in ("° N", "° E")]
     lat.setValue(60.0)
     lon.setValue(0.0)
-    lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.timezone.utc), 0.0) / 15.0
+    lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.UTC), 0.0) / 15.0
     _, h, m, s = derotation.to_sexagesimal(lst_hours)
     ints = page.findChildren(QtWidgets.QSpinBox)
     [w for w in ints if w.suffix() == " h"][0].setValue(h)

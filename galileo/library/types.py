@@ -4,26 +4,25 @@ Type definitions for AstroFiler application.
 This module provides type aliases and protocols for better type safety.
 """
 
-from typing import Protocol, Dict, Any, Optional, List, Tuple, Union
+from typing import Protocol, Any, Union
 from pathlib import Path
 from datetime import datetime
-import numpy as np
 
 # Type aliases for common data structures
-FitsHeaderDict = Dict[str, Any]
+FitsHeaderDict = dict[str, Any]
 FilePath = Union[str, Path]
 SessionId = str
 FileId = str
-QualityMetrics = Dict[str, float]
-ProcessingOptions = Dict[str, Any]
+QualityMetrics = dict[str, float]
+ProcessingOptions = dict[str, Any]
 
 # Configuration types
 class DatabaseConfig(Protocol):
     """Protocol for database configuration."""
     host: str
     database: str
-    user: Optional[str]
-    password: Optional[str]
+    user: str | None
+    password: str | None
 
 class RepositoryConfig(Protocol):
     """Protocol for repository configuration."""
@@ -36,7 +35,7 @@ class TelescopeConfig(Protocol):
     name: str
     host: str
     protocol: str  # 'ftp', 'smb', etc.
-    credentials: Dict[str, str]
+    credentials: dict[str, str]
 
 # File processing types
 class FitsFileInfo(Protocol):
@@ -47,7 +46,7 @@ class FitsFileInfo(Protocol):
     image_type: str
     telescope: str
     instrument: str
-    object_name: Optional[str]
+    object_name: str | None
     exposure_time: float
     date_obs: datetime
 
@@ -56,7 +55,7 @@ class QualityResult(Protocol):
     """Protocol for quality analysis results."""
     overall_score: float
     metrics: QualityMetrics
-    recommendations: List[str]
+    recommendations: list[str]
     timestamp: datetime
 
 # Session types
@@ -68,7 +67,7 @@ class SessionInfo(Protocol):
     instrument: str
     date: datetime
     file_count: int
-    
+
 # Processing callbacks
 
 class ProgressCallback(Protocol):
@@ -78,15 +77,15 @@ class ProgressCallback(Protocol):
         ...
 
 # Result types
-ProcessingResult = Tuple[bool, str, Optional[Dict[str, Any]]]
-CalibrationResult = Tuple[bool, List[FilePath], Optional[str]]
+ProcessingResult = tuple[bool, str, dict[str, Any] | None]
+CalibrationResult = tuple[bool, list[FilePath], str | None]
 
 # Cloud storage types
 class CloudProvider(Protocol):
     """Protocol for cloud storage providers."""
     def upload_file(self, local_path: FilePath, remote_path: str) -> bool: ...
     def download_file(self, remote_path: str, local_path: FilePath) -> bool: ...
-    def list_files(self, remote_path: str) -> List[str]: ...
+    def list_files(self, remote_path: str) -> list[str]: ...
     def file_exists(self, remote_path: str) -> bool: ...
 
 # Telescope connection types
@@ -94,5 +93,5 @@ class TelescopeConnection(Protocol):
     """Protocol for telescope connections."""
     def connect(self) -> bool: ...
     def disconnect(self) -> None: ...
-    def list_files(self, path: str) -> List[str]: ...
+    def list_files(self, path: str) -> list[str]: ...
     def download_file(self, remote_path: str, local_path: FilePath) -> bool: ...

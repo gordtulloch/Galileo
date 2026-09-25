@@ -4,7 +4,7 @@
 """SKYMAP — Interactive Star Map / Planetarium (TC-SKYMAP-010 … TC-SKYMAP-060)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
 @pytest.fixture

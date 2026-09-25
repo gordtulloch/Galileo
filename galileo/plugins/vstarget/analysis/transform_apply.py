@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
 
 def apply_transformation(
-    results: "list[PhotometryResult]",
-    coefficients: "TransformationCoefficients",
-) -> "list[PhotometryResult]":
+    results: list[PhotometryResult],
+    coefficients: TransformationCoefficients,
+) -> list[PhotometryResult]:
     """Return *results* (one same-epoch measurement per filter, for one target) with the AAVSO
     colour transformation applied (VST-AN-070).
 
@@ -41,7 +41,7 @@ def apply_transformation(
     from galileo.plugins.vstarget.analysis.photometry import PhotometryResult  # noqa: F401 (for typing clarity)
 
     by_filter = {r.filter_band: r for r in results}
-    corrected: dict[str, "PhotometryResult"] = {}
+    corrected: dict[str, PhotometryResult] = {}
 
     b, v, r = by_filter.get("B"), by_filter.get("V"), by_filter.get("R")
 

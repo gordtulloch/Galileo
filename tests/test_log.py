@@ -4,7 +4,6 @@
 """LOG — Diagnostics & Logging (TC-LOG-010 … TC-LOG-060)."""
 
 import pytest
-from unittest.mock import MagicMock
 
 
 @pytest.fixture

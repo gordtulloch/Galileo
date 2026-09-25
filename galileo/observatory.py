@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # ORM records, imported lazily inside the functions that use them (the domain
@@ -139,7 +138,7 @@ class Observatory:
 # save to and reload across restarts — as Peewee master records in the same
 # project-wide database used by galileo.library/galileo.history (ADR-002).
 
-def list_observatories() -> list["ObservatoryRecord"]:
+def list_observatories() -> list[ObservatoryRecord]:
     """Return every saved Observatory, alphabetically by name."""
     from galileo.library.models.observatory import ObservatoryRecord
     return list(ObservatoryRecord.select().order_by(ObservatoryRecord.name))
@@ -152,7 +151,7 @@ def create_observatory(
     timezone: str | None = None,
     physical_address: str | None = None,
     owner: str | None = None,
-) -> "ObservatoryRecord":
+) -> ObservatoryRecord:
     """Create and persist a new Observatory settings record."""
     from galileo.library.models.observatory import ObservatoryRecord
     return ObservatoryRecord.create(
@@ -165,19 +164,19 @@ def create_observatory(
     )
 
 
-def list_piers(observatory: "ObservatoryRecord") -> list["PierRecord"]:
+def list_piers(observatory: ObservatoryRecord) -> list[PierRecord]:
     """Return every saved Pier belonging to *observatory*, alphabetically by name."""
     from galileo.library.models.observatory import PierRecord
     return list(PierRecord.select().where(PierRecord.observatory == observatory).order_by(PierRecord.name))
 
 
-def create_pier(observatory: "ObservatoryRecord", name: str) -> "PierRecord":
+def create_pier(observatory: ObservatoryRecord, name: str) -> PierRecord:
     """Create and persist a new Pier settings record under *observatory*."""
     from galileo.library.models.observatory import PierRecord
     return PierRecord.create(observatory=observatory, name=name)
 
 
-def list_horizon_points(observatory: "ObservatoryRecord") -> list[tuple[float, float]]:
+def list_horizon_points(observatory: ObservatoryRecord) -> list[tuple[float, float]]:
     """Return *observatory*'s horizon obstruction table as ``(azimuth°, altitude°)``
     pairs in azimuth order — empty if none has been uploaded."""
     from galileo.library.models.horizon import HorizonPointRecord
@@ -187,7 +186,7 @@ def list_horizon_points(observatory: "ObservatoryRecord") -> list[tuple[float, f
     return [(row.azimuth_deg, row.altitude_deg) for row in rows]
 
 
-def save_horizon_points(observatory: "ObservatoryRecord", points: list[tuple[float, float]]) -> None:
+def save_horizon_points(observatory: ObservatoryRecord, points: list[tuple[float, float]]) -> None:
     """Replace *observatory*'s horizon obstruction table with *points* (Options >
     Star Atlas' upload). An empty list clears it."""
     from galileo.library.models.base import db
@@ -201,8 +200,8 @@ def save_horizon_points(observatory: "ObservatoryRecord", points: list[tuple[flo
 
 
 def get_device_config(
-    pier: "PierRecord", category: str, slot: str = "primary"
-) -> "DeviceConfigRecord | None":
+    pier: PierRecord, category: str, slot: str = "primary"
+) -> DeviceConfigRecord | None:
     """Return the saved device configuration for *category*/*slot* on *pier*,
     or ``None`` if it has never been saved for this Pier. *slot* distinguishes
     multiple devices sharing one category and connection — currently only
@@ -218,7 +217,7 @@ def get_device_config(
 
 
 def save_device_config(
-    pier: "PierRecord",
+    pier: PierRecord,
     category: str,
     driver: str,
     server: str,
@@ -230,7 +229,7 @@ def save_device_config(
     sensor_height_px: int | None = None,
     sensor_name: str | None = None,
     bayer_pattern: str | None = None,
-) -> "DeviceConfigRecord":
+) -> DeviceConfigRecord:
     """Create or update the saved device configuration for *category*/*slot*
     on *pier* (the Equipment page's per-device Save button). *bayer_pattern*
     (cameras only) is left as it was when omitted, and starts as ``RGGB``."""
@@ -255,7 +254,7 @@ def save_device_config(
     return record
 
 
-def delete_device_config(pier: "PierRecord", category: str, slot: str = "primary") -> None:
+def delete_device_config(pier: PierRecord, category: str, slot: str = "primary") -> None:
     """Delete the saved device configuration for *category*/*slot* on *pier*,
     if any (used to prune a camera slot removed with the Camera page's "+"
     list, once the remaining slots no longer reach that far)."""
@@ -267,7 +266,7 @@ def delete_device_config(pier: "PierRecord", category: str, slot: str = "primary
     ).execute()
 
 
-def get_autofocus_params(pier: "PierRecord | None") -> "AutofocusParams":
+def get_autofocus_params(pier: PierRecord | None) -> AutofocusParams:
     """Return *pier*'s saved autofocus defaults (Options > Focus, FOC-070), or
     ``AutofocusParams()`` if none have been saved yet or no Pier is selected."""
     from galileo.autofocus import AutofocusParams
@@ -283,7 +282,7 @@ def get_autofocus_params(pier: "PierRecord | None") -> "AutofocusParams":
     )
 
 
-def save_autofocus_params(pier: "PierRecord", params: "AutofocusParams") -> None:
+def save_autofocus_params(pier: PierRecord, params: AutofocusParams) -> None:
     """Create or update *pier*'s saved autofocus defaults (Options > Focus)."""
     from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
     fields = dict(
@@ -299,7 +298,7 @@ def save_autofocus_params(pier: "PierRecord", params: "AutofocusParams") -> None
     record.save()
 
 
-def get_solver_settings(pier: "PierRecord | None") -> "tuple[str, SolverParams]":
+def get_solver_settings(pier: PierRecord | None) -> tuple[str, SolverParams]:
     """Return *pier*'s saved ``(executable, SolverParams)`` (Options > Solve,
     PLT-060), or the Solve screen's long-standing defaults (auto-detected
     executable, no downsampling) if none have been saved yet or no Pier is
@@ -317,7 +316,7 @@ def get_solver_settings(pier: "PierRecord | None") -> "tuple[str, SolverParams]"
     )
 
 
-def save_solver_settings(pier: "PierRecord", executable: str, params: "SolverParams") -> None:
+def save_solver_settings(pier: PierRecord, executable: str, params: SolverParams) -> None:
     """Create or update *pier*'s saved solver defaults (Options > Solve)."""
     from galileo.library.models.solver_settings import SolverSettingsRecord
     fields = dict(
@@ -344,7 +343,7 @@ def _slot_sort_key(slot: str) -> tuple:
     return (2, 0, slot)
 
 
-def list_device_config_slots(pier: "PierRecord", category: str) -> list[str]:
+def list_device_config_slots(pier: PierRecord, category: str) -> list[str]:
     """Return every slot name saved for *category* on *pier* — used by the
     Camera page on load to know how many additional camera panels (beyond
     the always-present "primary") to rebuild.
@@ -362,7 +361,7 @@ def list_device_config_slots(pier: "PierRecord", category: str) -> list[str]:
     return sorted((row.slot for row in rows), key=_slot_sort_key)
 
 
-def list_device_configs(pier: "PierRecord") -> list["DeviceConfigRecord"]:
+def list_device_configs(pier: PierRecord) -> list[DeviceConfigRecord]:
     """Return every saved device configuration on *pier*, across all
     categories and slots — the pool the Optics page's "Associated" picker
     offers to attach to an optical tube."""
@@ -374,7 +373,7 @@ def list_device_configs(pier: "PierRecord") -> list["DeviceConfigRecord"]:
     )
 
 
-def list_optical_tubes(pier: "PierRecord") -> list["OpticalTubeRecord"]:
+def list_optical_tubes(pier: PierRecord) -> list[OpticalTubeRecord]:
     """Return *pier*'s saved optical tubes in display order."""
     from galileo.library.models.optical_tube import OpticalTubeRecord
     return list(
@@ -384,7 +383,7 @@ def list_optical_tubes(pier: "PierRecord") -> list["OpticalTubeRecord"]:
     )
 
 
-def save_optical_tubes(pier: "PierRecord", tubes: list[dict]) -> None:
+def save_optical_tubes(pier: PierRecord, tubes: list[dict]) -> None:
     """Replace *pier*'s optical tubes with *tubes*, in order (the Optics
     page's Save button). Each dict may carry ``name``, ``focal_length_mm``,
     ``aperture_mm``, ``optical_system``, ``image_reversed``,

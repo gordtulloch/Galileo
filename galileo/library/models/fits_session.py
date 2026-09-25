@@ -9,7 +9,7 @@ from galileo.library.models.base import BaseModel
 
 class fitsSession(BaseModel):
     """Model representing an imaging session with common characteristics."""
-    
+
     fitsSessionId = pw.TextField(primary_key=True)
     fitsSessionObjectName = pw.TextField(null=True)
     fitsSessionDate = pw.DateField(null=True)
@@ -30,13 +30,13 @@ class fitsSession(BaseModel):
     fitsBiasMaster = pw.TextField(null=True)
     fitsDarkMaster = pw.TextField(null=True)
     fitsFlatMaster = pw.TextField(null=True)
-    
+
     # Auto-calibration tracking fields
     is_auto_calibration = pw.BooleanField(null=True, default=False)
     auto_calibration_dark_session_id = pw.TextField(null=True)
     auto_calibration_flat_session_id = pw.TextField(null=True)
     auto_calibration_bias_session_id = pw.TextField(null=True)
-    
+
     # Session-level quality metrics (averaged from files)
     fitsSessionAvgFWHMArcsec = pw.FloatField(null=True)  # Average FWHM in arcseconds
     fitsSessionAvgEccentricity = pw.FloatField(null=True)  # Average star eccentricity (0-1)
@@ -50,7 +50,7 @@ class fitsSession(BaseModel):
 
     class Meta:
         table_name = 'fitsSession'
-    
+
     def is_calibration_session(self):
         """
         Check if this session contains calibration frames.
@@ -59,7 +59,7 @@ class fitsSession(BaseModel):
             bool: True if this is a calibration session
         """
         return self.is_auto_calibration or False
-    
+
     def is_light_session(self):
         """
         Check if this session contains light frames.
@@ -68,7 +68,7 @@ class fitsSession(BaseModel):
             bool: True if this is a light frame session
         """
         return not self.is_calibration_session()
-    
+
     def get_calibration_criteria(self):
         """
         Get the calibration matching criteria for this session.
@@ -87,7 +87,7 @@ class fitsSession(BaseModel):
             'exposure_time': self.fitsSessionExposure,
             'filter_name': self.fitsSessionFilter
         }
-    
+
     def link_calibration_sessions(self, bias_session=None, dark_session=None, flat_session=None):
         """
         Link this session to calibration sessions.
@@ -104,7 +104,7 @@ class fitsSession(BaseModel):
         if flat_session:
             self.fitsFlatSession = flat_session
         self.save()
-    
+
     def has_linked_calibrations(self):
         """
         Check if this session has linked calibration sessions.
@@ -113,7 +113,7 @@ class fitsSession(BaseModel):
             bool: True if calibration sessions are linked
         """
         return bool(self.fitsBiasSession or self.fitsDarkSession or self.fitsFlatSession)
-    
+
     def get_linked_calibration_sessions(self):
         """
         Get the linked calibration session IDs.
@@ -126,7 +126,7 @@ class fitsSession(BaseModel):
             'dark': self.fitsDarkSession,
             'flat': self.fitsFlatSession
         }
-    
+
     def mark_as_auto_calibration(self, cal_type, source_session_ids=None):
         """
         Mark this session as an auto-calibration session.
@@ -136,7 +136,7 @@ class fitsSession(BaseModel):
             source_session_ids (dict): Source session IDs for auto-calibration
         """
         self.is_auto_calibration = True
-        
+
         if source_session_ids:
             if 'dark' in source_session_ids:
                 self.auto_calibration_dark_session_id = source_session_ids['dark']
@@ -144,9 +144,9 @@ class fitsSession(BaseModel):
                 self.auto_calibration_flat_session_id = source_session_ids['flat']
             if 'bias' in source_session_ids:
                 self.auto_calibration_bias_session_id = source_session_ids['bias']
-                
+
         self.save()
-    
+
     def get_session_files(self):
         """
         Get all FITS files associated with this session.
@@ -156,7 +156,7 @@ class fitsSession(BaseModel):
         """
         from .fits_file import fitsFile
         return list(fitsFile.select().where(fitsFile.fitsFileSession == self.fitsSessionId))
-    
+
     def get_session_file_count(self):
         """
         Get the count of files in this session.

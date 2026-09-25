@@ -69,7 +69,7 @@ _BITPIX_DTYPES = {8: "uint8", 16: "uint16", 32: "int32", -32: "float32"}
 BITPIX_CHOICES = (BITPIX_AUTO, *_BITPIX_DTYPES)     # display/settings order: Auto, 8, 16, 32, -32
 
 
-def normalise_pixels(data, bitpix: "int | str | None" = None):
+def normalise_pixels(data, bitpix: int | str | None = None):
     """*data* in a pixel format other astronomy software can read.
 
     Cameras reached over Alpaca hand their image back as JSON numbers, which numpy turns into
@@ -113,7 +113,7 @@ def normalise_pixels(data, bitpix: "int | str | None" = None):
     if np.issubdtype(array.dtype, np.integer) and array.size:
         if array.min() >= 0 and array.max() <= 65535:
             return array.astype(np.uint16)
-        if -2147483648 <= array.min() and array.max() <= 2147483647:
+        if array.min() >= -2147483648 and array.max() <= 2147483647:
             return array.astype(np.int32)
     return array.astype(np.float32)
 
@@ -134,7 +134,7 @@ def build_header(metadata: dict):
     return header
 
 
-def build_primary_hdu(data, metadata: dict, bitpix: "int | str | None" = None, extra_cards=None):
+def build_primary_hdu(data, metadata: dict, bitpix: int | str | None = None, extra_cards=None):
     """A ``PrimaryHDU`` holding *data* (see ``normalise_pixels``) with *metadata*'s header cards
     (``build_header``) — and, after those, any ``extra_cards`` (an iterable of ``(keyword, value)``
     or ``(keyword, value, comment)``, e.g. session keywords or ``DATE``) — appended *after* the
@@ -165,7 +165,7 @@ class FitsMetadataWriter:
 
     def __init__(
         self,
-        output_dir: "Path | str" = ".",
+        output_dir: Path | str = ".",
         compression: str | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
@@ -176,7 +176,7 @@ class FitsMetadataWriter:
         """Define custom static FITS keywords applied to every frame (META-050)."""
         self._session_keywords.update(keywords)
 
-    def write(self, data, metadata: dict, filename: str | None = None, bitpix: "int | str | None" = None) -> Path:
+    def write(self, data, metadata: dict, filename: str | None = None, bitpix: int | str | None = None) -> Path:
         """Write *data* to a FITS file with headers derived from *metadata*.
 
         *bitpix* is the desired sample format (see ``normalise_pixels``); left as ``None`` it is
@@ -194,7 +194,7 @@ class FitsMetadataWriter:
         # from when the exposure began (DATE-OBS) — appended after the metadata cards, in the same
         # trailing-after-the-data-block order build_primary_hdu keeps for those.
         extra_cards = [(kw, val) for kw, val in self._session_keywords.items()]
-        extra_cards.append(("DATE", datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")))
+        extra_cards.append(("DATE", datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")))
 
         # Build output path
         if filename is None:
@@ -221,7 +221,7 @@ class FitsMetadataWriter:
 
 
 def write_solve_result(
-    fits_path: "Path | str",
+    fits_path: Path | str,
     ra_deg: float,
     dec_deg: float,
     rotation_deg: float,
@@ -246,7 +246,7 @@ def write_solve_result(
         hdul.flush()
 
 
-def read_fits(fits_path: "Path | str") -> tuple:
+def read_fits(fits_path: Path | str) -> tuple:
     """Read a FITS file (compressed or not) and return (data, header)."""
     from astropy.io import fits
 

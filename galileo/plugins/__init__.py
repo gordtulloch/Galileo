@@ -37,7 +37,7 @@ class PluginBase(ABC):
     panel_label: str = ""
 
     @abstractmethod
-    def activate(self, ctx: "PluginContext") -> None:
+    def activate(self, ctx: PluginContext) -> None:
         """Called when the plugin is enabled."""
 
     @abstractmethod

@@ -386,7 +386,7 @@ class SolveWorkflow:
         mount=None,
         work_dir: Path | str | None = None,
         log: Callable[[str], None] | None = None,
-        frame_metadata: "dict | None" = None,
+        frame_metadata: dict | None = None,
     ) -> None:
         self.solver = solver
         self.camera = camera
@@ -692,7 +692,7 @@ def frame_for_solver(data):
     return normalise_pixels(array)
 
 
-def _write_frame(data, path: Path, metadata: "dict | None" = None) -> None:
+def _write_frame(data, path: Path, metadata: dict | None = None) -> None:
     """Write a camera frame as FITS for the solver, in a form it can read (:func:`frame_for_solver`).
 
     *metadata* carries what the solver can use to work out the scale for itself — the pixel size

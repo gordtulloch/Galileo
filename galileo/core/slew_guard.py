@@ -53,7 +53,7 @@ class SlewGuard:
             logger.warning("Horizon check skipped: the Observatory has no latitude/longitude set")
             return
         from galileo.planning import star_atlas as sa
-        when = when or _dt.datetime.now(_dt.timezone.utc)
+        when = when or _dt.datetime.now(_dt.UTC)
         lst = sa.local_sidereal_deg(sa.julian_date(when), self.longitude)
         alt, az = sa.equatorial_to_horizontal(ra_deg, dec_deg, lst, self.latitude)
         self.check_altaz(float(alt), float(az))

@@ -24,7 +24,7 @@ pip-audit
 
 | Tool | Result |
 |---|---|
-| ruff | **2,127 findings** (1,126 auto-fixable) across the repo; no `[tool.ruff]` config exists, so this is ruff's out-of-the-box default rule set, not a project-tuned one |
+| ruff | Originally **2,127 findings** under no config (ruff's out-of-the-box defaults). A project-tuned `[tool.ruff]` config was added (Finding 14) and `--fix` run against it: **4,007 of 5,422 auto-fixed**, **1,415 remain** needing manual judgment |
 | mypy | **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76) |
 | bandit | **88 findings** (27 High, 10 Medium, 51 Low) over 42,975 scanned lines; includes 3 real shell-injection sites and 1 disabled SSH host-key check |
 | pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Finding 1 fixed since, now **701 passed, 9 failed, 1 skipped, 6 deselected** |
@@ -282,7 +282,28 @@ assumes — so this may not be fixable without dropping support for those device
 awareness rather than as a required fix: if any of the FTP targets are ever reachable over
 something other than a trusted LAN, credentials and file contents cross in the clear.
 
-### 14. No ruff configuration exists in the repository
+### 14. ~~No ruff configuration exists in the repository~~ — Fixed
+
+**Status: fixed.** `pyproject.toml` now has an explicit `[tool.ruff]`/`[tool.ruff.lint]` config
+with a curated `select` list (tied to the categories this review actually found real instances of:
+`B`, `SIM`, `C4`, `RUF`, `DTZ`, `LOG`, `G`, `ASYNC`, `TRY`, `PIE`, `FURB`, `S`, plus the `E`/`F`/`W`/`UP`
+baseline), a short `ignore` list for rules that fight this codebase's established style rather than
+finding real defects (`G004` — f-strings in logging is the existing convention; `RUF001-003` —
+this app deliberately prints `″`/`°`/em dashes in user-facing strings; `TRY300`/`TRY301`/`TRY003` —
+pure control-flow restructuring with no behavior change), and a `tests/**/*.py` override for
+`S101`/`S105-107` (assert and fake fixture credentials are normal pytest idiom, not findings). Ran
+`ruff check . --fix` (safe fixes only, no `--unsafe-fixes`) against that config: **4,007 of 5,422
+findings auto-fixed** across 151 files (mostly whitespace, `Optional[X]`/`List[X]`→`X | None`/`list[X]`
+modernization, unused imports, redundant f-strings), verified with a full test-suite run before/after
+(701 passed/9 failed both times — the 9 are the pre-existing, already-documented failures, nothing
+newly broken). One fix *was* wrong and got corrected by hand: F401 stripped
+`from galileo.core.monitor import ConnectionMonitor` from `galileo/core/devices.py`, which is a
+deliberate re-export (marked by a comment, not `__all__`) that ruff's unused-import check can't
+see — restored using the `import X as X` explicit-re-export convention so it won't be stripped
+again. 1,415 findings remain and need manual judgment (bare `except:`, `try/except/pass`, the 232
+`LOG015` root-logger calls, etc.) — none of those are auto-fixable by design.
+
+Original finding, for reference:
 
 There is no `pyproject.toml [tool.ruff]` section, `ruff.toml`, or `.ruff.toml` anywhere in the
 tree, despite `ruff` being a declared dev dependency and `ruff check .` being the documented lint
@@ -365,6 +386,9 @@ a naive `pip-audit` in an environment where the install failed silently audits t
 
 1. ~~Fix the migration-017 FK bug (Finding 1)~~ — **done.**
 2. Fix the three shell-injection sites (Finding 2) — concrete, exploitable, cheap to fix.
+   (~~Add a ruff config and run `--fix`, Finding 14~~ — **done** — separate from, and much lower
+   stakes than, the shell-injection fix; `S602`/`S605` still flag those 3 sites since they aren't
+   auto-fixable.)
 3. Fix `pip install -e .` (Finding 5) — blocks the documented onboarding path entirely.
 4. Add the `current_object` test-isolation fixture (Finding 3) and reassess whether `pier_key()`'s
    name-fallback is safe in production.

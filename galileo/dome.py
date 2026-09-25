@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,4 +49,4 @@ class DomeService:
 
     async def on_meridian_flip(self) -> None:
         """Keep the shutter open during a meridian flip (DOME-020)."""
-        pass  # shutter remains open; dome slaving will track as needed
+        # shutter remains open; dome slaving will track as needed

@@ -31,12 +31,12 @@ from peewee_migrate import Migrator
 
 
 with suppress(ImportError):
-    import playhouse.postgres_ext as pw_pext
+    pass
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your migrations here."""
-    
+
     # Create fitsFile table
     @migrator.create_model
     class FitsFile(pw.Model):
@@ -58,10 +58,10 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
         fitsFileFilter = pw.TextField(null=True)
         fitsFileHash = pw.TextField(null=True)
         fitsFileSession = pw.TextField(null=True)
-        
+
         class Meta:
             table_name = "fitsfile"
-    
+
     # Create fitsSession table
     @migrator.create_model
     class FitsSession(pw.Model):
@@ -80,15 +80,15 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
         fitsBiasSession = pw.TextField(null=True)
         fitsDarkSession = pw.TextField(null=True)
         fitsFlatSession = pw.TextField(null=True)
-        
+
         class Meta:
             table_name = "fitssession"
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your rollback migrations here."""
-    
+
     # Drop tables in reverse order
     migrator.remove_model('fitssession')
     migrator.remove_model('fitsfile')
-    
+

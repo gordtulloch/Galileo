@@ -12,12 +12,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-async def stack_frames(frames: "list[Path]", output_path: "Path | str") -> Path:
+async def stack_frames(frames: list[Path], output_path: Path | str) -> Path:
     """Mean-stack *frames* after star registration (VST-AN-030)."""
     return await asyncio.to_thread(_stack_sync, frames, Path(output_path))
 
 
-def _stack_sync(frames: "list[Path]", output_path: Path) -> Path:
+def _stack_sync(frames: list[Path], output_path: Path) -> Path:
     import numpy as np
     from astropy.io import fits
 

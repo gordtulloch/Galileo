@@ -27,8 +27,8 @@ class ConnectionMonitor:
 
     def __init__(
         self,
-        backend: "DeviceBackend",
-        event_bus: "EventBus | None" = None,
+        backend: DeviceBackend,
+        event_bus: EventBus | None = None,
         poll_interval_s: float = 5.0,
         timeout_s: float = 30.0,
     ) -> None:
@@ -51,7 +51,7 @@ class ConnectionMonitor:
                     await getter()
                 else:
                     await asyncio.to_thread(getter)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Device %r timed out during health check", name)
             if self._event_bus:
                 self._event_bus.publish(

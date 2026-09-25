@@ -10,7 +10,6 @@ conditions to decide which job runs next.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -25,13 +24,11 @@ logger = logging.getLogger(__name__)
 
 class StartImmediate:
     """Start the job as soon as it is runnable."""
-    pass
 
 
 @dataclass
 class StartAtCulmination:
     """Start when the target reaches transit (culmination)."""
-    pass
 
 
 @dataclass
@@ -62,7 +59,6 @@ def _startup_from_dict(d: dict) -> Any:
 
 class RunOnce:
     """Run the job once then mark it complete."""
-    pass
 
 
 @dataclass
@@ -73,7 +69,6 @@ class RepeatNTimes:
 
 class RepeatIndefinitely:
     """Repeat the job until manually stopped."""
-    pass
 
 
 def _completion_to_dict(condition: Any) -> dict:
@@ -194,7 +189,7 @@ class ObservatoryScheduler:
         self.jobs.sort(key=lambda j: j.priority)
 
     def get_ordered_jobs(self) -> list[SchedulerJob]:
-        return list(sorted(self.jobs, key=lambda j: j.priority))
+        return sorted(self.jobs, key=lambda j: j.priority)
 
     def reap_completed_jobs(self) -> list[SchedulerJob]:
         """Remove every job that has completed successfully (SCHED-050) and delete

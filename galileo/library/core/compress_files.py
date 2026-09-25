@@ -91,7 +91,7 @@ def _is_readable_fits(path: str) -> bool:
     try:
         with fits.open(path, mode='readonly'):
             return True
-    except Exception:  # noqa: BLE001 - any failure to open means "not a usable FITS file"
+    except Exception:
         return False
 
 
@@ -122,7 +122,7 @@ def _copy_header_cards(dst: fits.Header, src: fits.Header, skip: set[str]) -> li
                 dst.add_history(card.value)
             else:
                 dst[key] = (card.value, card.comment)
-        except Exception:  # noqa: BLE001 - recorded in the return value; the caller aborts on any failure
+        except Exception:
             failed.append(key)
     return failed
 
@@ -737,7 +737,7 @@ def compress_fits_file(file_path: str) -> str | None:
     """
     compressor = get_fits_compressor()
     result = compressor.process_file_for_compression(file_path)
-    return result if result else file_path
+    return result or file_path
 
 
 def is_compression_enabled() -> bool:

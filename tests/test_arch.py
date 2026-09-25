@@ -3,7 +3,6 @@
 
 """ARCH — Protocol & Device Abstraction Layer (TC-ARCH-010 … TC-ARCH-080)."""
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 

@@ -908,7 +908,7 @@ def test_mount_adapters_refuse_obstructed_slews_before_moving(horizon_env):
     indi = IndiMountAdapter()
     indi._refuse_if_parked = lambda _command: None
     indi._set_num = indi._select = lambda *args, **kwargs: sent.append(args)
-    lst = sa.local_sidereal_deg(sa.julian_date(dt.datetime.now(dt.timezone.utc)), 0.0)
+    lst = sa.local_sidereal_deg(sa.julian_date(dt.datetime.now(dt.UTC)), 0.0)
     with pytest.raises(SlewObstructedError):
         asyncio.run(indi.slew_to_altaz(10.0, 90.0))
     with pytest.raises(SlewObstructedError):

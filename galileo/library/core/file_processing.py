@@ -6,16 +6,13 @@ compression, and database operations for importing astronomical images.
 """
 
 import os
-import hashlib
 import logging
 import uuid
-import zipfile
-import configparser
 from galileo.library.config import load_config as load_library_config
 import shutil
 from datetime import datetime
 from math import cos, sin
-from typing import Optional, Dict, Any, List, Tuple, Union
+from typing import Any
 from astropy.io import fits
 from peewee import IntegrityError
 
@@ -26,10 +23,10 @@ from .utils import (
     mapFitsHeader,
     get_master_calibration_path,
 )
-from ..types import FilePath, FitsHeaderDict, ProcessingResult, QualityMetrics
+from ..types import FilePath
 from ..exceptions import (
-    FileProcessingError, FitsHeaderError, DatabaseError, 
-    ValidationError, AstroFilerError
+    FileProcessingError, FitsHeaderError, DatabaseError,
+    ValidationError
 )
 from .file_formats import get_file_format_processor
 from .services.file_hash_calculator import get_file_hash_calculator
@@ -42,19 +39,19 @@ class FileProcessor:
     """
     Handles FITS file processing operations including registration and database operations.
     """
-    
+
     def __init__(self) -> None:
         """Initialize FileProcessor with configuration and services."""
         config = load_library_config()
         self.sourceFolder: str = config.get('DEFAULT', 'source', fallback='.')
         self.repoFolder: str = config.get('DEFAULT', 'repo', fallback='.')
-        
+
         # Initialize services following Dependency Inversion Principle
         self.format_processor = get_file_format_processor()
         self.hash_calculator = get_file_hash_calculator()
         self.compressor = get_fits_compressor()
 
-    def calculateFileHash(self, filePath: FilePath) -> Optional[str]:
+    def calculateFileHash(self, filePath: FilePath) -> str | None:
         """
         Calculate SHA-256 hash of a file for duplicate detection.
         
@@ -74,11 +71,11 @@ class FileProcessor:
     def registerMasters(
         self,
         progress_callback=None,
-        source_folder: Optional[str] = None,
+        source_folder: str | None = None,
         moveFiles: bool = False,
-        destination_folder: Optional[str] = None,
+        destination_folder: str | None = None,
         precount: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Scan a folder for existing master calibration FITS files and register them.
 
         Detection is based on FITS header `IMAGETYP` containing 'MASTER' and one of
@@ -92,8 +89,8 @@ class FileProcessor:
         Returns:
             List of registered master IDs.
         """
-        scan_folder = source_folder if source_folder else self.sourceFolder
-        master_ids: List[str] = []
+        scan_folder = source_folder or self.sourceFolder
+        master_ids: list[str] = []
 
         logger.info(f"registerMasters: scanning folder: {scan_folder}")
 
@@ -214,30 +211,30 @@ class FileProcessor:
         # Normalize path separators
         normalized_path = os.path.normpath(file_path)
         path_parts = normalized_path.split(os.sep)
-        
+
         # Check if file is in a Masters directory
         if 'Masters' in path_parts:
             return True
-        
+
         # Check for master-related naming patterns
         filename = os.path.basename(file_path).lower()
         master_patterns = [
             'master',
             'masterbias',
-            'masterdark', 
+            'masterdark',
             'masterflat',
             'master_bias',
             'master_dark',
             'master_flat',
             'bias_master',
-            'dark_master', 
+            'dark_master',
             'flat_master'
         ]
-        
+
         for pattern in master_patterns:
             if pattern in filename:
                 return True
-        
+
         return False
 
     def _register_master_file(self, file_path):
@@ -264,12 +261,12 @@ class FileProcessor:
                     "Masters table not available yet. Run migrations to create Masters table.",
                     error_code="MASTERS_TABLE_MISSING"
                 )
-            
+
             # Open the FITS file to read header
             try:
                 with fits.open(file_path, mode='readonly') as hdul:
                     hdr = hdul[0].header
-            except (OSError, IOError) as e:
+            except OSError as e:
                 raise FileProcessingError(
                     f"Cannot read FITS file: {e}",
                     file_path=file_path,
@@ -281,7 +278,7 @@ class FileProcessor:
                     file_path=file_path,
                     error_code="FITS_HEADER_ERROR"
                 )
-            
+
             # Determine master type from filename or header
             master_type = self._determine_master_type(file_path, hdr)
             if not master_type:
@@ -290,7 +287,7 @@ class FileProcessor:
                     field="master_type",
                     file_path=file_path
                 )
-            
+
             # Extract session data from header
             session_data = {
                 'telescope': hdr.get('TELESCOP', 'Unknown'),
@@ -302,13 +299,13 @@ class FileProcessor:
                 'offset': str(hdr.get('OFFSET', '')),
                 'session_id': None  # No source session for existing masters
             }
-            
+
             # Add type-specific data
             if master_type == 'dark':
                 session_data['exposure_time'] = str(hdr.get('EXPTIME', hdr.get('EXPOSURE', '')))
             elif master_type == 'flat':
                 session_data['filter_name'] = hdr.get('FILTER', '')
-            
+
             # Get file count from header if available
             file_count = hdr.get('NCOMBINE', hdr.get('NIMAGES', 0))
             if isinstance(file_count, str):
@@ -316,16 +313,16 @@ class FileProcessor:
                     file_count = int(file_count)
                 except ValueError:
                     file_count = 0
-            
+
             # Check if this master already exists
             existing_master = Masters.find_matching_master(
                 session_data['telescope'],
-                session_data['instrument'], 
+                session_data['instrument'],
                 master_type,
-                **{k: v for k, v in session_data.items() 
+                **{k: v for k, v in session_data.items()
                    if k not in ['telescope', 'instrument', 'session_id'] and v}
             )
-            
+
             if existing_master:
                 logger.info(f"Master {master_type} already exists in database: {existing_master.master_id}")
                 # Update path if different
@@ -334,7 +331,7 @@ class FileProcessor:
                     existing_master.save()
                     logger.info(f"Updated master path: {file_path}")
                 return existing_master.master_id
-            
+
             # Create new master record
             try:
                 master = Masters.create_master_record(
@@ -349,7 +346,7 @@ class FileProcessor:
                     file_path=file_path,
                     error_code="MASTER_CREATE_ERROR"
                 )
-            
+
             # Validate the file
             try:
                 if master.validate_and_mark():
@@ -361,7 +358,7 @@ class FileProcessor:
             except Exception as e:
                 logger.error(f"Master validation error: {e}")
                 return master.master_id  # Return ID anyway for partial success
-                
+
         except (FileProcessingError, ValidationError, DatabaseError, FitsHeaderError):
             # Re-raise our custom exceptions
             raise
@@ -385,14 +382,14 @@ class FileProcessor:
         """
         # Check filename for master type indicators
         filename = os.path.basename(file_path).lower()
-        
+
         if any(pattern in filename for pattern in ['bias', 'masterbias', 'master_bias', 'bias_master']):
             return 'bias'
         elif any(pattern in filename for pattern in ['dark', 'masterdark', 'master_dark', 'dark_master']):
             return 'dark'
         elif any(pattern in filename for pattern in ['flat', 'masterflat', 'master_flat', 'flat_master']):
             return 'flat'
-        
+
         # Check FITS header
         imagetyp = hdr.get('IMAGETYP', '').upper()
         if 'BIAS' in imagetyp:
@@ -401,7 +398,7 @@ class FileProcessor:
             return 'dark'
         elif 'FLAT' in imagetyp:
             return 'flat'
-        
+
         # Check OBJECT field for master indicators
         object_name = hdr.get('OBJECT', '').lower()
         if 'bias' in object_name or 'master-bias' in object_name:
@@ -410,10 +407,10 @@ class FileProcessor:
             return 'dark'
         elif 'flat' in object_name or 'master-flat' in object_name:
             return 'flat'
-        
+
         return None
 
-    def submitFileToDB(self, fileName: str, hdr: Any, fileHash: Optional[str] = None) -> Optional[str]:
+    def submitFileToDB(self, fileName: str, hdr: Any, fileHash: str | None = None) -> str | None:
         """
         Submit FITS file to database after processing.
         
@@ -437,7 +434,7 @@ class FileProcessor:
                 f"Cannot import database models: {e}",
                 error_code="MODEL_IMPORT_ERROR"
             )
-        
+
         try:
             # Calculate hash if not provided
             if fileHash is None:
@@ -448,7 +445,7 @@ class FileProcessor:
                         file_path=fileName,
                         error_code="HASH_CALCULATION_FAILED"
                     )
-            
+
             # Check for duplicate files by hash
             try:
                 existing_file = FitsFileModel.get(FitsFileModel.fitsFileHash == fileHash)
@@ -456,7 +453,7 @@ class FileProcessor:
                 return existing_file.fitsFileId
             except FitsFileModel.DoesNotExist:
                 pass  # File is unique, proceed with registration
-            
+
             # Validate required header values
             date_obs = hdr.get("DATE-OBS")
             if not date_obs:
@@ -465,15 +462,15 @@ class FileProcessor:
                     field="DATE-OBS",
                     file_path=fileName
                 )
-            
+
             image_type = hdr.get("IMAGETYP")
             if not image_type:
                 raise ValidationError(
                     "Missing required IMAGETYP field in FITS header",
-                    field="IMAGETYP", 
+                    field="IMAGETYP",
                     file_path=fileName
                 )
-            
+
             # Get exposure time
             exposure = hdr.get("EXPTIME", hdr.get("EXPOSURE"))
             if exposure is None:
@@ -482,11 +479,11 @@ class FileProcessor:
                     field="EXPTIME",
                     file_path=fileName
                 )
-            
+
             # Get telescope and instrument
             telescope = hdr.get("TELESCOP", "Unknown")
             instrument = hdr.get("INSTRUME", "Unknown")
-            
+
             # Check if telescope is iTelescope or instrument is SeeStar - mark as calibrated
             is_precalibrated = False
             if (telescope and "itelescope" in telescope.lower()) or \
@@ -496,7 +493,7 @@ class FileProcessor:
                     logger.debug(f"Marking file as pre-calibrated from iTelescope: {telescope}")
                 else:
                     logger.debug(f"Marking file as pre-calibrated from SeeStar instrument: {instrument}")
-            
+
             # Create new file record
             if hdr.get("OBJECT"):
                 newfile = FitsFileModel.create(
@@ -534,10 +531,10 @@ class FileProcessor:
                     fitsFileSession=None,
                     fitsFileCalibrated=1 if is_precalibrated else 0
                 )
-            
+
             logger.info(f"Successfully registered FITS file: {newfile.fitsFileId}")
             return newfile.fitsFileId
-            
+
         except IntegrityError as e:
             raise DatabaseError(
                 f"Database integrity constraint violated: {e}",
@@ -554,7 +551,7 @@ class FileProcessor:
                 error_code="DB_UNEXPECTED_ERROR"
             )
 
-    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> Union[str, bool]:
+    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | bool:
         """
         Register a FITS image file, process headers, and move to repository structure.
         
@@ -584,15 +581,15 @@ class FileProcessor:
                 file_path=os.path.join(root, file),
                 error_code="UNEXPECTED_REGISTRATION_ERROR"
             )
-    
-    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool) -> Union[str, bool]:
+
+    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool) -> str | bool:
         """Internal implementation of FITS image registration with proper error handling."""
         newFitsFileId = None
         file_name, file_extension = os.path.splitext(os.path.join(root, file))
 
         original_input_path = os.path.join(root, file)
         cleanup_source_path = None
-        
+
         # Read configuration
         config = load_library_config()
         save_modified = config.getboolean('DEFAULT', 'save_modified_headers', fallback=False)
@@ -606,35 +603,35 @@ class FileProcessor:
                 # the import succeeds (DB record created).
                 if str(original_input_path).lower().endswith('.gz') and processed_file_path != original_input_path:
                     cleanup_source_path = original_input_path
-                
+
                 # Update root and file to point to processed file
                 root = os.path.dirname(processed_file_path)
                 file = os.path.basename(processed_file_path)
                 file_name, file_extension = os.path.splitext(processed_file_path)
-                
+
                 logger.info(f"Successfully processed file: {processed_file_path}")
             else:
                 # If no handler available, check if it's a FITS file directly
                 if "fit" not in file_extension.lower():
                     logger.debug(f"Ignoring unsupported file {os.path.join(root, file)}")
                     return False
-        except FileProcessingError as e:
+        except FileProcessingError:
             # Re-raise file processing errors
             raise
-        
+
         # Check if this is a master calibration frame
         full_file_path = os.path.join(root, file)
         if self._is_master_file(full_file_path):
             logger.info(f"Detected master calibration frame: {file}")
             # Register in Masters table instead of regular file table
             return self._register_master_file(full_file_path)
-        
+
         # Open the FITS file for reading and close immediately after reading header
         try:
             hdul = fits.open(os.path.join(root, file), mode='readonly')
             hdr = hdul[0].header
             hdul.close()
-        except (OSError, IOError) as e:
+        except OSError as e:
             raise FileProcessingError(
                 f"Cannot read FITS file: {e}",
                 file_path=os.path.join(root, file),
@@ -660,25 +657,25 @@ class FileProcessor:
                 )
             hdr = modified_hdr
             header_modified = True
-        
+
         # Apply FITS header mappings from the Mapping table
         mapping_modified = mapFitsHeader(hdr, os.path.join(root, file))
         if mapping_modified:
             header_modified = True
-        
+
         # Validate required header fields
         if not (hdr.get("IMAGETYP") or hdr.get("FRAME")):
             raise ValidationError(
                 "Missing required IMAGETYP or FRAME field in FITS header",
-                field="IMAGETYP", 
+                field="IMAGETYP",
                 file_path=os.path.join(root, file)
             )
-        
+
         # Fix header field variations
         if hdr.get("FRAME") and not hdr.get("IMAGETYP"):
             hdr["IMAGETYP"] = hdr["FRAME"]
             header_modified = True
-        
+
         # Get exposure time
         exposure = hdr.get("EXPTIME", hdr.get("EXPOSURE"))
         if exposure is None:
@@ -687,10 +684,10 @@ class FileProcessor:
                 field="EXPTIME",
                 file_path=os.path.join(root, file)
             )
-                
+
         # Get telescope
         telescope = hdr.get("TELESCOP", "Unknown")
-        
+
         # Fix calibration frames where OBJECT is set to an object rather than the frame type
         if "DARK" in hdr["IMAGETYP"].upper():
             hdr["OBJECT"] = "Dark"
@@ -710,13 +707,13 @@ class FileProcessor:
                 field="DATE-OBS",
                 file_path=os.path.join(root, file)
             )
-        
+
         try:
             datestr = date_obs.replace("T", " ")
             datestr = datestr[0:datestr.find('.')] if '.' in datestr else datestr
             dateobj = datetime.strptime(datestr, '%Y-%m-%d %H:%M:%S')
             fitsDate = dateobj.strftime("%Y%m%d%H%M%S")
-        except ValueError as e:
+        except ValueError:
             raise ValidationError(
                 f"Invalid date format in DATE-OBS field: {date_obs}",
                 field="DATE-OBS",
@@ -725,7 +722,7 @@ class FileProcessor:
 
         # Process different image types
         newName = None
-        
+
         if "LIGHT" in hdr["IMAGETYP"].upper():
             # Handle WCS transformation for light frames
             if "CD1_1" not in hdr and all(field in hdr for field in ["CDELT1", "CDELT2", "CROTA2"]):
@@ -741,7 +738,7 @@ class FileProcessor:
                 hdr.append(('CD2_1', str(fitsCD2_1), 'Rotation Matrix'), end=True)
                 hdr.append(('CD2_2', str(fitsCD2_2), 'Rotation Matrix'), end=True)
                 header_modified = True
-            
+
             # Create filename for light frames
             if hdr.get("OBJECT"):
                 filter_name = hdr.get("FILTER", "OSC")
@@ -814,14 +811,14 @@ class FileProcessor:
                 backup_path = os.path.join(root, file + ".backup")
                 import shutil
                 shutil.copy2(os.path.join(root, file), backup_path)
-                
+
                 # Save modified header
                 with fits.open(os.path.join(root, file), mode='update') as hdul:
                     hdul[0].header = hdr
                     hdul.flush()
-                
+
                 logger.info(f"Saved modified header for {file}")
-            except (OSError, IOError) as e:
+            except OSError as e:
                 logger.error(f"File I/O error saving modified header for {file}: {e}")
                 # Continue processing despite header save failure
             except Exception as e:
@@ -887,8 +884,8 @@ class FileProcessor:
                 logger.info(f"Removed source gzip file after successful import: {cleanup_source_path}")
             except Exception as e:
                 logger.warning(f"Failed to remove source gzip file {cleanup_source_path}: {e}")
-        
-        return newFitsFileId if newFitsFileId else False
+
+        return newFitsFileId or False
 
     # Legacy methods for backward compatibility - delegate to new services
     def extractZipFile(self, zip_path):
@@ -913,7 +910,7 @@ class FileProcessor:
             DeprecationWarning,
             stacklevel=2
         )
-        
+
         try:
             from .file_formats.handlers.zip_handler import ZipFileHandler
             handler = ZipFileHandler()
@@ -922,7 +919,7 @@ class FileProcessor:
             # Convert any exception to the expected format for backward compatibility
             logger.error(f"Error extracting zip file {zip_path}: {e}")
             return None
-    
+
     def convertXisfToFits(self, xisf_file_path):
         """
         DEPRECATED: Convert XISF file to FITS format.
@@ -945,7 +942,7 @@ class FileProcessor:
             DeprecationWarning,
             stacklevel=2
         )
-        
+
         try:
             from .file_formats.handlers.xisf_handler import XisfFileHandler
             handler = XisfFileHandler()

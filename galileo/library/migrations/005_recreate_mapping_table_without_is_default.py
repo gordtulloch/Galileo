@@ -31,22 +31,22 @@ from peewee_migrate import Migrator
 
 
 with suppress(ImportError):
-    import playhouse.postgres_ext as pw_pext
+    pass
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your migrations here."""
-    
+
     # Since SQLite doesn't support dropping columns, we need to recreate the table
     # First, save existing data
     migrator.sql("""
         CREATE TABLE mapping_temp AS 
         SELECT id, card, current, replace FROM mapping;
     """)
-    
+
     # Drop the old table
     migrator.sql("DROP TABLE mapping;")
-    
+
     # Recreate the table without is_default
     migrator.sql("""
         CREATE TABLE mapping (
@@ -56,28 +56,28 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
             replace VARCHAR(255)
         );
     """)
-    
+
     # Restore the data
     migrator.sql("""
         INSERT INTO mapping (id, card, current, replace)
         SELECT id, card, current, replace FROM mapping_temp;
     """)
-    
+
     # Drop the temporary table
     migrator.sql("DROP TABLE mapping_temp;")
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
     """Write your rollback migrations here."""
-    
+
     # Recreate with is_default field
     migrator.sql("""
         CREATE TABLE mapping_temp AS 
         SELECT id, card, current, replace FROM mapping;
     """)
-    
+
     migrator.sql("DROP TABLE mapping;")
-    
+
     migrator.sql("""
         CREATE TABLE mapping (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,10 +87,10 @@ def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
             is_default INTEGER
         );
     """)
-    
+
     migrator.sql("""
         INSERT INTO mapping (id, card, current, replace, is_default)
         SELECT id, card, current, replace, 0 FROM mapping_temp;
     """)
-    
+
     migrator.sql("DROP TABLE mapping_temp;")

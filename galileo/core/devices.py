@@ -18,7 +18,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities
-from galileo.core.monitor import ConnectionMonitor  # re-exported so importers find it here
+from galileo.core.monitor import ConnectionMonitor as ConnectionMonitor  # re-exported so importers find it here
 
 if TYPE_CHECKING:
     from galileo.bus import EventBus
@@ -52,7 +52,7 @@ class DeviceBackend(ABC):
     """
 
     # Registry: DeviceCategory → list[type[DeviceBackend]]
-    registered_backends: dict[DeviceCategory, list[type["DeviceBackend"]]] = defaultdict(list)
+    registered_backends: dict[DeviceCategory, list[type[DeviceBackend]]] = defaultdict(list)
 
     backend: str = "unknown"  # overridden by each concrete adapter class
 
@@ -80,7 +80,7 @@ class DeviceBackend(ABC):
     async def set_property(self, name: str, value: object) -> None:
         """Set a raw device property by name."""
 
-    async def get_driver_info(self) -> dict[str, "str | None"]:
+    async def get_driver_info(self) -> dict[str, str | None]:
         """Identify the driver behind this device, for the Equipment pages'
         "Driver info" / "Driver version" display.
 
@@ -105,7 +105,7 @@ class DevicePool:
     Satisfies ARCH-080 (one pool per Pier) and ARCH-060 (fault isolation).
     """
 
-    def __init__(self, pier_name: str = "default", event_bus: "EventBus | None" = None) -> None:
+    def __init__(self, pier_name: str = "default", event_bus: EventBus | None = None) -> None:
         self.pier_name = pier_name
         self._event_bus = event_bus
         self._devices: dict[str, DeviceBackend] = {}
@@ -114,7 +114,7 @@ class DevicePool:
         """Add *backend* to this pool, keyed on its ``device_type``."""
         self._devices[backend.device_type] = backend
 
-    def get(self, category: "str | DeviceCategory") -> DeviceBackend | None:
+    def get(self, category: str | DeviceCategory) -> DeviceBackend | None:
         """Return the device for *category*, or ``None`` if not registered."""
         key = category.value if isinstance(category, DeviceCategory) else str(category)
         return self._devices.get(key)
@@ -158,7 +158,7 @@ class DevicePool:
 class DeviceController:
     """Wraps a *DeviceBackend* with error handling and event publication."""
 
-    def __init__(self, backend: DeviceBackend, event_bus: "EventBus | None" = None) -> None:
+    def __init__(self, backend: DeviceBackend, event_bus: EventBus | None = None) -> None:
         self._backend = backend
         self._event_bus = event_bus
 

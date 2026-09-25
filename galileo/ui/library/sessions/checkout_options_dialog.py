@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -26,7 +25,7 @@ class CheckoutOptions:
     masters_only: bool
 
 
-def prompt_checkout_options(parent: QWidget, title: str) -> Optional[CheckoutOptions]:
+def prompt_checkout_options(parent: QWidget, title: str) -> CheckoutOptions | None:
     """Prompt for checkout target directory and options.
 
     Returns CheckoutOptions or None if cancelled.

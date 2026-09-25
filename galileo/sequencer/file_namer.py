@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 
@@ -24,7 +23,7 @@ class FileNamer:
         """Return the expanded file name for the given keyword values."""
         return self.pattern.format_map(_FormatMap(kwargs))
 
-    def make_path(self, output_dir: "Path | str", **kwargs) -> Path:
+    def make_path(self, output_dir: Path | str, **kwargs) -> Path:
         return Path(output_dir) / self.format(**kwargs)
 
 

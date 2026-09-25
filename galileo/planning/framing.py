@@ -208,13 +208,13 @@ class MosaicSettings:
     point. Backed by ``IMG-170``'s Options > Imaging screen once that setting is
     wired up there; until then this is the in-memory default."""
 
-    _instance: "MosaicSettings | None" = None
+    _instance: MosaicSettings | None = None
 
     def __init__(self) -> None:
         self.pane_overlap_pct: float = 10.0
 
     @classmethod
-    def instance(cls) -> "MosaicSettings":
+    def instance(cls) -> MosaicSettings:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -251,14 +251,14 @@ class FramingAssistant:
         self.opening_context: Any = None
 
     @classmethod
-    def _default(cls) -> "FramingAssistant":
+    def _default(cls) -> FramingAssistant:
         """Fallback optical-train parameters when no profile data is available —
         the reference camera/OTA from the PSD (Section 6.8)."""
         return cls(focal_length_mm=1000, sensor_width_px=4656, sensor_height_px=3520,
                     pixel_size_um=5.86, rotator_available=False)
 
     @classmethod
-    def from_profile(cls, profile_data: Any) -> "FramingAssistant":
+    def from_profile(cls, profile_data: Any) -> FramingAssistant:
         """Build a FramingAssistant from a profile dict or EquipmentProfile."""
         try:
             from galileo.equipment.profiles import EquipmentProfile

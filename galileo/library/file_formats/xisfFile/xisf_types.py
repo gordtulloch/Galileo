@@ -5,14 +5,12 @@ This module contains the data type definitions used by the XISF converter
 to avoid circular import issues.
 """
 
-import struct
 from enum import Enum
-from typing import Tuple
 
 
 class XISFSampleFormat(Enum):
     """Enumeration of XISF sample formats with conversion utilities."""
-    
+
     UINT8 = "UInt8"
     UINT16 = "UInt16"
     UINT32 = "UInt32"
@@ -23,7 +21,7 @@ class XISFSampleFormat(Enum):
     FLOAT64 = "Float64"
     COMPLEX32 = "Complex32"
     COMPLEX64 = "Complex64"
-    
+
     def size(self) -> int:
         """Return the size in bytes for this sample format."""
         sizes = {
@@ -39,7 +37,7 @@ class XISFSampleFormat(Enum):
             self.COMPLEX64: 16,  # 2 * 8 bytes
         }
         return sizes[self]
-    
+
     def to_fits_bitpix(self) -> int:
         """Convert to FITS BITPIX value."""
         bitpix_map = {
@@ -55,7 +53,7 @@ class XISFSampleFormat(Enum):
             self.COMPLEX64: -64,  # Convert to magnitude
         }
         return bitpix_map[self]
-    
+
     def to_numpy_dtype(self) -> str:
         """Convert to NumPy dtype string for binary reading."""
         dtype_map = {
@@ -71,7 +69,7 @@ class XISFSampleFormat(Enum):
             self.COMPLEX64: '<c16',
         }
         return dtype_map[self]
-    
+
     def to_numpy_type(self):
         """Convert to NumPy type for array creation."""
         import numpy as np
@@ -88,7 +86,7 @@ class XISFSampleFormat(Enum):
             self.COMPLEX64: np.complex128,
         }
         return type_map[self]
-    
+
     def to_struct_format(self) -> str:
         """Convert to struct format string for binary reading."""
         struct_map = {
@@ -104,19 +102,19 @@ class XISFSampleFormat(Enum):
             self.COMPLEX64: '<dd',  # Two doubles
         }
         return struct_map[self]
-    
+
     def is_unsigned(self) -> bool:
         """Check if this is an unsigned integer format."""
         return self in [self.UINT8, self.UINT16, self.UINT32, self.UINT64]
-    
+
     def is_complex(self) -> bool:
         """Check if this is a complex number format."""
         return self in [self.COMPLEX32, self.COMPLEX64]
-    
+
     def is_floating_point(self) -> bool:
         """Check if this is a floating-point format."""
         return self in [self.FLOAT32, self.FLOAT64, self.COMPLEX32, self.COMPLEX64]
-    
+
     @classmethod
     def from_string(cls, value: str) -> 'XISFSampleFormat':
         """Create XISFSampleFormat from string value."""
@@ -128,7 +126,7 @@ class XISFSampleFormat(Enum):
 
 class XISFGeometry:
     """Represents XISF image geometry parsed from colon-separated format."""
-    
+
     def __init__(self, geometry_str: str):
         """
         Initialize from geometry string.
@@ -138,30 +136,30 @@ class XISFGeometry:
         """
         self.geometry_str = geometry_str
         self.dimensions = [int(x) for x in geometry_str.split(':')]
-        
+
         if len(self.dimensions) < 2:
             raise ValueError(f"Invalid geometry: {geometry_str} (need at least width:height)")
-    
+
     @property
     def width(self) -> int:
         """Image width (first dimension)."""
         return self.dimensions[0]
-    
+
     @property
     def height(self) -> int:
         """Image height (second dimension)."""
         return self.dimensions[1]
-    
+
     @property
     def channels(self) -> int:
         """Number of channels (third dimension, default 1)."""
         return self.dimensions[2] if len(self.dimensions) > 2 else 1
-    
+
     @property
     def depth(self) -> int:
         """Depth dimension (fourth dimension, default 1)."""
         return self.dimensions[3] if len(self.dimensions) > 3 else 1
-    
+
     @property
     def total_pixels(self) -> int:
         """Total number of pixels across all dimensions."""
@@ -169,18 +167,18 @@ class XISFGeometry:
         for dim in self.dimensions:
             result *= dim
         return result
-    
+
     @property
     def is_color(self) -> bool:
         """Check if this is a color image (channels > 1)."""
         return self.channels > 1
-    
+
     @property
     def is_multidimensional(self) -> bool:
         """Check if this has more than 2 dimensions."""
         return len(self.dimensions) > 2
-    
-    def to_fits_shape(self) -> Tuple[int, ...]:
+
+    def to_fits_shape(self) -> tuple[int, ...]:
         """
         Convert to FITS array shape.
         
@@ -190,18 +188,18 @@ class XISFGeometry:
             return (self.height, self.width)
         else:
             return (self.channels, self.height, self.width)
-    
+
     def channel_size(self) -> int:
         """Calculate size of a single channel in pixels."""
         size = 1
         for dim in self.dimensions:
             size *= dim
         return size
-    
+
     def __str__(self) -> str:
         """String representation."""
         return f"XISFGeometry({self.geometry_str})"
-    
+
     def __repr__(self) -> str:
         """Detailed representation."""
         return (f"XISFGeometry(width={self.width}, height={self.height}, "

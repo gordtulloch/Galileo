@@ -5,11 +5,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from galileo.exceptions import FlatCalibrationError
 
@@ -32,7 +30,7 @@ class CalibrationService:
         camera=None,
         filter_wheel=None,
         flat_panel=None,
-        output_dir: "Path | str" = ".",
+        output_dir: Path | str = ".",
     ) -> None:
         self._camera = camera
         self._fw = filter_wheel

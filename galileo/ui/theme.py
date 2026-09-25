@@ -223,7 +223,7 @@ class ThemeManager:
 class LayoutManager:
     """Persists imaging-tab panel layouts across restarts (UI-020)."""
 
-    def __init__(self, config_path: "Path | str | None" = None) -> None:
+    def __init__(self, config_path: Path | str | None = None) -> None:
         if config_path is None:
             from galileo.platform import get_config_dir
             config_path = get_config_dir() / "panel_layouts.json"

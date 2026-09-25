@@ -13,7 +13,8 @@ separate image file per theme. Each entry in :data:`ICONS` is a small
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     # Qt is imported lazily inside the functions so this module loads without PySide6.
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 DrawFn = Callable[["QPainter", "QRectF"], None]
 
 
-def make_icon(name: str, color: str, size: int = 26) -> "QIcon":
+def make_icon(name: str, color: str, size: int = 26) -> QIcon:
     from PySide6.QtCore import Qt, QRectF
     from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
@@ -70,7 +71,7 @@ def _radial_ticks(painter, cx: float, cy: float, r_from: float, r_to: float, cou
 # ---------------------------------------------------------------------------
 
 def _equipment(painter, r):
-    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtCore import QRectF
     body = QRectF(r.left(), r.top() + r.height() * 0.28, r.width(), r.height() * 0.55)
     painter.drawRoundedRect(body, 2, 2)
     painter.drawEllipse(body.center(), r.width() * 0.17, r.width() * 0.17)
@@ -193,7 +194,7 @@ def _power(painter, r):
     rect = QRectF(r.left(), r.top() + r.height() * 0.02, r.width(), r.height() * 0.96)
     # A 260° ring whose 100° gap is centred on 12 o'clock (behind the bar):
     # Qt angles run counter-clockwise from 3 o'clock, so it starts at 90° + 50°.
-    painter.drawArc(rect, int(140 * 16), int(260 * 16))
+    painter.drawArc(rect, 140 * 16, 260 * 16)
     c = r.center()
     painter.drawLine(QLineF(c.x(), r.top(), c.x(), r.top() + r.height() * 0.5))
 
@@ -263,7 +264,7 @@ def _focuser(painter, r):
 def _rotator(painter, r):
     from PySide6.QtCore import QRectF
     rect = QRectF(r.left(), r.top(), r.width(), r.height())
-    painter.drawArc(rect, int(30 * 16), int(300 * 16))
+    painter.drawArc(rect, 30 * 16, 300 * 16)
     _arrow_head(painter, r.right() - r.width() * 0.02, r.top() + r.height() * 0.22, -40)
 
 
@@ -324,7 +325,7 @@ def _flat_panel(painter, r):
 
 
 def _weather(painter, r):
-    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtCore import QRectF
     painter.drawEllipse(QRectF(r.left(), r.top() + r.height() * 0.15, r.width() * 0.55, r.height() * 0.45))
     painter.drawRoundedRect(QRectF(r.left() + r.width() * 0.15, r.top() + r.height() * 0.35, r.width() * 0.75, r.height() * 0.4), 4, 4)
 
@@ -332,7 +333,7 @@ def _weather(painter, r):
 def _dome(painter, r):
     from PySide6.QtCore import QLineF, QRectF
     rect = QRectF(r.left(), r.top(), r.width(), r.height() * 1.6)
-    painter.drawArc(rect, 0, int(180 * 16))
+    painter.drawArc(rect, 0, 180 * 16)
     painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.5, r.right(), r.top() + r.height() * 0.5))
 
 

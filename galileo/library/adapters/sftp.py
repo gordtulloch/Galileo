@@ -24,7 +24,7 @@ class SftpImageRetriever:
         self,
         host: str = "",
         path: str = "/",
-        dest: "Path | str" = ".",
+        dest: Path | str = ".",
     ) -> list[str]:
         """Download all FITS files in *path* on the SFTP server to *dest*."""
         host = host or self.host

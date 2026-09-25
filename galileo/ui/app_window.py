@@ -169,7 +169,7 @@ def _camera_backend_key_for_slot(slot: str) -> str:
     return slot
 
 
-def _device_association_label(category: str, slot: str, device_name: "str | None") -> str:
+def _device_association_label(category: str, slot: str, device_name: str | None) -> str:
     """Display label for a saved device in the Optics page's "Associated"
     list — e.g. ``Camera 2: ZWO ASI120MM`` — built from its category, slot
     (see ``DeviceConfigRecord``) and the device name picked on its own page."""
@@ -197,7 +197,7 @@ def _optical_tube_label(tube, index: int) -> str:
     return label
 
 
-def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
+def _parse_alpaca_device_number(device_name: str | None) -> int | None:
     """Extract the Alpaca device number from a scan-result label such as
     "ZWO ASI294MM Pro (#0)" (see AlpacaAdapter.list_available_devices)."""
     if not device_name:
@@ -207,7 +207,7 @@ def _parse_alpaca_device_number(device_name: "str | None") -> "int | None":
     return int(match.group(1)) if match else None
 
 
-def _format_hms(hours: "float | None") -> str:
+def _format_hms(hours: float | None) -> str:
     """Format an hour-angle-like value (Right Ascension, Sidereal Time,
     time-to-meridian) as ``HH:MM:SS`` — the Mount page's status display
     convention for astronomy software."""
@@ -219,7 +219,7 @@ def _format_hms(hours: "float | None") -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def _format_dms(degrees: "float | None") -> str:
+def _format_dms(degrees: float | None) -> str:
     """Format a degree value (Declination, Altitude, Azimuth, Site
     Latitude/Longitude) as ``±DD° MM' SS"`` — the Mount page's status
     display convention, matching how these are conventionally shown in
@@ -253,7 +253,7 @@ class AppWindow:
 
         from galileo.ui.theme import ThemeManager
         self._theme = ThemeManager()
-        self._nav_columns: list["_NavColumn"] = []
+        self._nav_columns: list[_NavColumn] = []
         self._observatories: dict[str, object] = {}
         self._current_observatory = None
         self._current_pier = None
@@ -319,7 +319,7 @@ class AppWindow:
 
     # --- Top bar: Observatory / Pier selection -------------------------------
 
-    def _build_top_bar(self) -> "QWidget":
+    def _build_top_bar(self) -> QWidget:
         from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QComboBox
 
         bar = QWidget()
@@ -427,7 +427,7 @@ class AppWindow:
         create_session(str(name), float(ra_deg), float(dec_deg))
         self._window.statusBar().showMessage(f"New session created for {name}.", 4000)
 
-    def _shared_sky_atlas(self) -> "SkyAtlas":
+    def _shared_sky_atlas(self) -> SkyAtlas:
         """A single persistent ``SkyAtlas`` instance, reused across calls that
         need its *state* to actually persist — `add_to_target_list`'s own
         target-list accumulation (SKY-080) needs this, unlike the throwaway
@@ -440,7 +440,7 @@ class AppWindow:
             self._sky_atlas = SkyAtlas()
         return self._sky_atlas
 
-    def _select_result(self, obj: "DeepSkyObject") -> None:
+    def _select_result(self, obj: DeepSkyObject) -> None:
         """"Select" (a Targets-page result tile's own action button, SKY-050):
         makes *obj* the Pier's current target (IMG-140) and also adds it to
         `SkyAtlas`'s own target list (SKY-080) — reconciling two mechanisms
@@ -455,7 +455,7 @@ class AppWindow:
         except Exception:
             logger.debug("Could not add %s to the target list", obj.primary_name, exc_info=True)
 
-    def _show_full_image(self, obj: "DeepSkyObject") -> None:
+    def _show_full_image(self, obj: DeepSkyObject) -> None:
         """Clicking a Targets-page result tile's thumbnail (SKY-080) opens a
         larger view of the same survey-image field — fetched at
         `_FULL_IMAGE_SIZE_PX`, a separate cache entry from the small 150px
@@ -535,7 +535,7 @@ class AppWindow:
         else:
             self._refresh_pier_combo()
 
-    def _prompt_new_name(self, title: str, label_text: str) -> "str | None":
+    def _prompt_new_name(self, title: str, label_text: str) -> str | None:
         """Modal Name / OK / Cancel dialog used for New Pier."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
 
@@ -556,7 +556,7 @@ class AppWindow:
             return name or None
         return None
 
-    def _prompt_new_observatory(self) -> "dict | None":
+    def _prompt_new_observatory(self) -> dict | None:
         """Modal Name/Lat/Long/Timezone/Physical Address/Owner dialog for New Observatory."""
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
@@ -990,7 +990,7 @@ class AppWindow:
             f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>",
         )
 
-    def _build_submenu_page(self, items: list, builders: dict) -> "QWidget":
+    def _build_submenu_page(self, items: list, builders: dict) -> QWidget:
         """A primary section with a secondary icon menu down its left edge
         (the same layout as Equipment): one page per ``(id, label, icon)`` in
         ``items``, built by ``builders[id]`` or, if none is given, a
@@ -1030,7 +1030,7 @@ class AppWindow:
 
     # --- Library page (AstroFiler's screens) ---------------------------------
 
-    def _build_library_page(self) -> "QWidget":
+    def _build_library_page(self) -> QWidget:
         """Library section: Images, Sessions, Mappings, Dedup and Cloud — see
         ``galileo.ui.library.pages``. The screens read the whole catalog, so
         they are only built when the section is first opened."""
@@ -1041,7 +1041,7 @@ class AppWindow:
         return self._build_submenu_page(
             LIBRARY_ITEMS, {item_id: (lambda item_id=item_id: screens.page(item_id)) for item_id, _l, _i in LIBRARY_ITEMS})
 
-    def _build_library_settings_page(self) -> "QWidget":
+    def _build_library_settings_page(self) -> QWidget:
         """Options > Library: repository folders, cloud, compression, telescope
         credentials and the rest of ``library.ini`` — see
         ``galileo.ui.library.config_widget``."""
@@ -1055,7 +1055,7 @@ class AppWindow:
 
     # --- Equipment page (primary + secondary nav example) -------------------
 
-    def _build_equipment_page(self) -> "QWidget":
+    def _build_equipment_page(self) -> QWidget:
         from PySide6.QtWidgets import QWidget, QHBoxLayout, QStackedWidget
 
         page = QWidget()
@@ -1108,7 +1108,7 @@ class AppWindow:
 
         return page
 
-    def _build_log_pane(self) -> "QPlainTextEdit":
+    def _build_log_pane(self) -> QPlainTextEdit:
         """A read-only, scrollable pane showing the tail of the run's log
         (LOG-020) — 10 lines tall, but keeps more history to scroll back
         through than that."""
@@ -1135,7 +1135,7 @@ class AppWindow:
             self.set_log_pane_text(pane, text)
 
     @staticmethod
-    def set_log_pane_text(pane: "QPlainTextEdit", text: str) -> None:
+    def set_log_pane_text(pane: QPlainTextEdit, text: str) -> None:
         """Show *text* in a log pane, staying scrolled to the newest line if it was
         (and otherwise where the user left it). Shared by every screen with a live log tail."""
         if pane.toPlainText() == text:
@@ -1148,7 +1148,7 @@ class AppWindow:
 
     # --- Camera page (shared connection, N independent camera slots) --------
 
-    def _build_camera_page(self) -> "QWidget":
+    def _build_camera_page(self) -> QWidget:
         """Camera device-category page: one shared Driver/Server/Port
         connection plus any number of independently configured camera
         panels — a Primary imaging camera, always present, and additional
@@ -1338,7 +1338,7 @@ class AppWindow:
         # selectable, instead of an empty, unpopulated combo.
         last_scanned_devices: list[str] = []
 
-        def _populate_device_combo(combo: "QComboBox", devices: list[str]) -> None:
+        def _populate_device_combo(combo: QComboBox, devices: list[str]) -> None:
             current = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
@@ -1348,7 +1348,7 @@ class AppWindow:
             if current and combo.findText(current) < 0:
                 combo.addItem(current)
             idx = combo.findText(current)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.setCurrentIndex(max(idx, 0))
             combo.blockSignals(False)
 
         def _add_panel() -> dict:
@@ -1393,7 +1393,7 @@ class AppWindow:
                     from galileo.adapters.alpaca import get_adapter_class
                     adapter = get_adapter_class(DeviceCategory.CAMERA)(host=server, port=port)
                 devices = asyncio.run(adapter.list_available_devices(DeviceCategory.CAMERA))
-            except Exception as exc:
+            except Exception:
                 logger.exception("Camera scan failed on %s:%s", server, port)
                 self._window.statusBar().showMessage("Camera scan failed — see log.", 6000)
                 _refresh_slot_choices([])
@@ -1663,7 +1663,7 @@ class AppWindow:
 
     # --- Focuser page (shared connection, N independent focuser slots) ------
 
-    def _build_focuser_page(self) -> "QWidget":
+    def _build_focuser_page(self) -> QWidget:
         """Focuser device-category page: one shared Driver/Server/Port
         connection plus any number of independently configured focuser
         panels (a telescope can expose more than one focuser). Each panel is
@@ -1835,7 +1835,7 @@ class AppWindow:
 
         last_scanned_devices: list[str] = []
 
-        def _populate_device_combo(combo: "QComboBox", devices: list[str]) -> None:
+        def _populate_device_combo(combo: QComboBox, devices: list[str]) -> None:
             current = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
@@ -1845,7 +1845,7 @@ class AppWindow:
             if current and combo.findText(current) < 0:
                 combo.addItem(current)
             idx = combo.findText(current)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.setCurrentIndex(max(idx, 0))
             combo.blockSignals(False)
 
         def _apply_status(panel: dict, status: dict) -> None:
@@ -1891,7 +1891,7 @@ class AppWindow:
             panel["_last_is_moving"] = is_moving
             panel["_last_is_settling"] = is_settling
 
-        def _refresh_panel_status(panel: dict) -> "dict | None":
+        def _refresh_panel_status(panel: dict) -> dict | None:
             adapter = panel.get("adapter")
             if adapter is None:
                 return None
@@ -2008,7 +2008,7 @@ class AppWindow:
                     from galileo.adapters.alpaca import get_adapter_class
                     adapter = get_adapter_class(DeviceCategory.FOCUSER)(host=server, port=port)
                 devices = asyncio.run(adapter.list_available_devices(DeviceCategory.FOCUSER))
-            except Exception as exc:
+            except Exception:
                 logger.exception("Focuser scan failed on %s:%s", server, port)
                 self._window.statusBar().showMessage("Focuser scan failed — see log.", 6000)
                 _refresh_slot_choices([])
@@ -2164,7 +2164,7 @@ class AppWindow:
 
         return page
 
-    def _build_mount_page(self) -> "QWidget":
+    def _build_mount_page(self) -> QWidget:
         """Mount device-category page: a live ASCOM/INDI status display
         (Name/Description/Driver info/version, Site latitude/longitude/
         elevation, Sidereal time, Epoch, time-to-meridian, Right Ascension/
@@ -2261,7 +2261,7 @@ class AppWindow:
         status_row.addLayout(form_left)
         status_row.addLayout(form_right)
 
-        def _status_row(form: "QFormLayout", label: str) -> "QLabel":
+        def _status_row(form: QFormLayout, label: str) -> QLabel:
             value = QLabel("—")
             form.addRow(label, value)
             return value
@@ -2317,7 +2317,7 @@ class AppWindow:
         coords_grid = QGridLayout()
         coords_grid.setVerticalSpacing(4)
 
-        def _coord_row(row: int, label: str, spins: tuple) -> "QPushButton":
+        def _coord_row(row: int, label: str, spins: tuple) -> QPushButton:
             coords_grid.addWidget(QLabel(label), row, 0)
             for i, spin in enumerate(spins):
                 coords_grid.addWidget(spin, row, 1 + i)
@@ -2441,7 +2441,7 @@ class AppWindow:
             state["at_park"] = at_park
             park_btn.setText("Unpark" if at_park else "Park")
 
-        def _refresh_status() -> "dict | None":
+        def _refresh_status() -> dict | None:
             adapter = state.get("adapter")
             if adapter is None:
                 return None
@@ -2504,7 +2504,7 @@ class AppWindow:
             if current and device_combo.findText(current) < 0:
                 device_combo.addItem(current)
             idx = device_combo.findText(current)
-            device_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            device_combo.setCurrentIndex(max(idx, 0))
             device_combo.blockSignals(False)
             if devices:
                 logger.info(
@@ -2777,7 +2777,7 @@ class AppWindow:
 
         return page
 
-    def _build_rotator_page(self) -> "QWidget":
+    def _build_rotator_page(self) -> QWidget:
         """Rotator device-category page, modeled on the reference derotation
         screen (assets/samples/rot.png) but keeping this app's own
         Driver/Server/Port/Scan + Device/Connect line at the top like every
@@ -2865,7 +2865,7 @@ class AppWindow:
         layout.addLayout(driver_info_row)
 
         # --- controls (left) + derotation target (right) ----------------
-        def _heading(text: str) -> "QLabel":
+        def _heading(text: str) -> QLabel:
             label = QLabel(text)
             label.setObjectName("CriteriaHeading")
             return label
@@ -3101,7 +3101,7 @@ class AppWindow:
             state["target"] = (ra_deg % 360.0, dec_deg)
             _recompute()
 
-        def _current_rate() -> "tuple | None":
+        def _current_rate() -> tuple | None:
             """``(alt, az, effective deg/min)`` for the target now, or ``None``
             if there's no target. The rate is ``None`` while the target is
             below the horizon."""
@@ -3119,7 +3119,7 @@ class AppWindow:
             return alt, az, rate
 
         def _recompute() -> None:
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.UTC)
             date_value.setText(now.strftime("%Y - %m - %d"))
             utc_value.setText(now.strftime("%H : %M : %S"))
             result = _current_rate()
@@ -3198,7 +3198,7 @@ class AppWindow:
             if max_angle:
                 goto_hint.setText(f"(0 – {min(max_angle, 359.99):g})")
 
-        def _refresh_status() -> "dict | None":
+        def _refresh_status() -> dict | None:
             adapter = state.get("adapter")
             if adapter is None:
                 return None
@@ -3385,7 +3385,7 @@ class AppWindow:
             if current and device_combo.findText(current) < 0:
                 device_combo.addItem(current)
             idx = device_combo.findText(current)
-            device_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            device_combo.setCurrentIndex(max(idx, 0))
             device_combo.blockSignals(False)
             if devices:
                 logger.info(
@@ -3509,7 +3509,7 @@ class AppWindow:
 
         return page
 
-    def _build_filter_wheel_page(self) -> "QWidget":
+    def _build_filter_wheel_page(self) -> QWidget:
         """Filter Wheel device-category page: a live status display
         (Name/Description/Driver info/version — EQP-FW-010/020) plus a
         current-filter selector with an explicit Change action, and a
@@ -3673,7 +3673,7 @@ class AppWindow:
                 if i == position:
                     filters_list.setCurrentItem(item)
 
-        def _refresh_status() -> "dict | None":
+        def _refresh_status() -> dict | None:
             adapter = state.get("adapter")
             if adapter is None:
                 return None
@@ -3736,7 +3736,7 @@ class AppWindow:
             if current and device_combo.findText(current) < 0:
                 device_combo.addItem(current)
             idx = device_combo.findText(current)
-            device_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            device_combo.setCurrentIndex(max(idx, 0))
             device_combo.blockSignals(False)
             if devices:
                 logger.info(
@@ -3750,7 +3750,7 @@ class AppWindow:
 
         scan_btn.clicked.connect(run_scan)
 
-        def _filters_list_clicked(item: "QListWidgetItem") -> None:
+        def _filters_list_clicked(item: QListWidgetItem) -> None:
             idx = filters_list.row(item)
             if idx < 0:
                 return
@@ -3872,7 +3872,7 @@ class AppWindow:
 
         return page
 
-    def _build_optics_page(self) -> "QWidget":
+    def _build_optics_page(self) -> QWidget:
         """Optics page (PROF-070): one panel per optical tube on the current
         Pier — focal length, aperture, optical design, and image alignment
         (reversed/inverted) — plus an "Associated" list of the Pier's other
@@ -4151,7 +4151,7 @@ class AppWindow:
 
         return page
 
-    def _build_guider_page(self) -> "QWidget":
+    def _build_guider_page(self) -> QWidget:
         """Guiding page (a primary sidebar section): a live view onto PHD2
         (GUIDE-070 … GUIDE-090) — see ``galileo.ui.guider``. Unlike the
         Equipment categories there is no device
@@ -4163,7 +4163,7 @@ class AppWindow:
         page.reload()
         return page
 
-    def _build_focus_page(self) -> "QWidget":
+    def _build_focus_page(self) -> QWidget:
         """Focus page (a primary sidebar section): follows autofocus runs and
         can start one — see ``galileo.ui.focus``. It only redraws while a run
         is in progress."""
@@ -4172,7 +4172,7 @@ class AppWindow:
         self._device_pages["focus"] = {"reload": page.reload}
         return page
 
-    def _scheduler_for_pier(self, pier_name: "str | None") -> "ObservatoryScheduler":
+    def _scheduler_for_pier(self, pier_name: str | None) -> ObservatoryScheduler:
         """The one ``ObservatoryScheduler`` for *pier_name* — shared by Planning >
         Sessions and Planning > Scheduler, created lazily, one per Pier. Persists to
         (and, on first use, loads from) the shared database (SCHED-100) so a Pier's
@@ -4186,7 +4186,7 @@ class AppWindow:
             self._schedulers[key] = scheduler
         return self._schedulers[key]
 
-    def _build_sessions_page(self) -> "QWidget":
+    def _build_sessions_page(self) -> QWidget:
         """Planning > Sessions (SES-100 … SES-230): per-Pier, block-based session
         authoring — see ``galileo.ui.sessions``."""
         from galileo.ui.sessions import SessionsPageWidget
@@ -4197,7 +4197,7 @@ class AppWindow:
         }
         return page
 
-    def _build_scheduler_page(self) -> "QWidget":
+    def _build_scheduler_page(self) -> QWidget:
         """Planning > Scheduler (SCHED-010 … SCHED-100): the per-Pier job queue —
         see ``galileo.ui.scheduler``."""
         from galileo.ui.scheduler import SchedulerPageWidget
@@ -4205,7 +4205,7 @@ class AppWindow:
         self._device_pages["scheduler"] = {"reload": page.reload}
         return page
 
-    def _build_solve_page(self) -> "QWidget":
+    def _build_solve_page(self) -> QWidget:
         """Solve page (a primary sidebar section): plate solving, with the frame
         being solved and its results on show (PLT-070) — see ``galileo.ui.solve``.
         It follows every solve, whoever started it, but only while it is on
@@ -4215,7 +4215,7 @@ class AppWindow:
         self._device_pages["solve"] = {"reload": page.reload, "refresh_target": page.refresh_target}
         return page
 
-    def _build_device_config_page(self, cat_id: str, label: str) -> "QWidget":
+    def _build_device_config_page(self, cat_id: str, label: str) -> QWidget:
         """One Equipment device-category page: Driver/Server table + scan (ARCH-050)."""
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
@@ -4327,7 +4327,7 @@ class AppWindow:
 
         refresh_btn.clicked.connect(run_scan)
 
-        def _on_result_clicked(item: "QListWidgetItem") -> None:
+        def _on_result_clicked(item: QListWidgetItem) -> None:
             # Only an actual scanned device is selectable — not the
             # "No devices found" / "Scan failed" info rows above.
             if item.data(Qt.UserRole):
@@ -4717,7 +4717,7 @@ class AppWindow:
         try:
             if (asyncio.run(adapter.get_status()) or {}).get("equatorial_system") != "J2000":
                 # Every other mount takes coordinates of date (JNow).
-                jd = sa.julian_date(dt.datetime.now(dt.timezone.utc).replace(tzinfo=None))
+                jd = sa.julian_date(dt.datetime.now(dt.UTC).replace(tzinfo=None))
                 ra_deg, dec_deg = (float(v) for v in sa.precess_from_j2000(ra_deg, dec_deg, jd))
             if action == "goto":
                 asyncio.run(adapter.slew_to_coordinates(ra_deg, dec_deg))
@@ -4805,7 +4805,7 @@ class AppWindow:
         row.addLayout(version_form)
         row.addStretch(1)
 
-        def apply(info: "dict | None") -> None:
+        def apply(info: dict | None) -> None:
             info = info or {}
             info_value.setText(info.get("driver_info") or "—")
             version_value.setText(info.get("driver_version") or "—")
@@ -4830,7 +4830,7 @@ class AppWindow:
 
     # --- Imaging page (live preview / histogram / stats / manual capture) ---
 
-    def _build_imaging_page(self) -> "QWidget":
+    def _build_imaging_page(self) -> QWidget:
         """Imaging tab (IMG-010 … IMG-100): a live, pan/zoomable auto-stretch
         preview with histogram and per-frame statistics, plus manual
         single-exposure capture — modeled on the classic CCD-capture-tool
@@ -5618,7 +5618,7 @@ class AppWindow:
 
     # --- Star Atlas page (planetarium) ------------------------------------
 
-    def _build_star_atlas_page(self) -> "QWidget":
+    def _build_star_atlas_page(self) -> QWidget:
         """Star Atlas page: a basic planetarium (``galileo.ui.star_atlas``) with
         the time, site and display controls in the left panel and the sky view
         filling the rest. The site follows the selected Pier's Observatory."""
@@ -5845,7 +5845,7 @@ class AppWindow:
             live_check.setChecked(False)
             set_view_time()
 
-        def on_step(delta: "dt.timedelta") -> None:
+        def on_step(delta: dt.timedelta) -> None:
             live_check.setChecked(False)
             when_edit.setDateTime(when_edit.dateTime().addSecs(int(delta.total_seconds())))  # -> dateTimeChanged
 
@@ -5959,7 +5959,7 @@ class AppWindow:
 
     # --- Options > Star Atlas / Planning ------------------------------------
 
-    def _build_star_atlas_settings_page(self) -> "QWidget":
+    def _build_star_atlas_settings_page(self) -> QWidget:
         """Options > Star Atlas: upload a file of azimuth/altitude pairs describing the
         horizon obstructions at the current Observatory, or edit them point by point
         (SKY-040). They are kept in a table shown here, shaded on the Star Atlas by its
@@ -6119,7 +6119,7 @@ class AppWindow:
         refresh([])
         return page
 
-    def _build_planning_settings_page(self) -> "QWidget":
+    def _build_planning_settings_page(self) -> QWidget:
         """Options > Planning: whether slews into the Star Atlas horizon
         obstructions are refused, and bulk-caching every catalog object's
         survey-image thumbnail ahead of time (SKY-080)."""
@@ -6181,7 +6181,7 @@ class AppWindow:
         cache_btn.clicked.connect(lambda: self._cache_all_catalog_thumbnails(page))
         return page
 
-    def _cache_all_catalog_thumbnails(self, parent: "QWidget") -> None:
+    def _cache_all_catalog_thumbnails(self, parent: QWidget) -> None:
         """Options > Planning's "Cache All Catalog Thumbnails…" button
         (SKY-080): confirms the scale of the operation (this is a real,
         potentially hours-long bulk network fetch, not a quick local task),
@@ -6243,7 +6243,7 @@ class AppWindow:
 
     # --- Options > Imaging ---------------------------------------------------
 
-    def _build_imaging_settings_page(self) -> "QWidget":
+    def _build_imaging_settings_page(self) -> QWidget:
         """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)."""
         from PySide6.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
         from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
@@ -6285,7 +6285,7 @@ class AppWindow:
         )
         settings = load_imaging_settings()
         idx = bitpix_combo.findData(settings["bitpix"])
-        bitpix_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        bitpix_combo.setCurrentIndex(max(idx, 0))
         form.addRow("Desired BITPIX", bitpix_combo)
 
         hint = QLabel(
@@ -6311,7 +6311,7 @@ class AppWindow:
 
     # --- Options > Focus -------------------------------------------------------
 
-    def _build_focus_settings_page(self) -> "QWidget":
+    def _build_focus_settings_page(self) -> QWidget:
         """Options > Focus: the current Pier's saved autofocus defaults
         (step size, points, exposure, backlash — FOC-070), which seed the
         Focus screen's own controls. Scoped per Pier, like the Equipment
@@ -6409,7 +6409,7 @@ class AppWindow:
 
     # --- Options > Solve --------------------------------------------------------
 
-    def _build_solve_settings_page(self) -> "QWidget":
+    def _build_solve_settings_page(self) -> QWidget:
         """Options > Solve: the current Pier's saved solver defaults —
         an ASTAP executable-path override, field-of-view hint, search radius
         and downsample factor (PLT-060). Scoped per Pier, like Options > Focus."""
@@ -6517,7 +6517,7 @@ class AppWindow:
 
     # --- Planning page (formerly Sky Atlas; secondary panel = search criteria, not icons) ---
 
-    def _build_sky_atlas_page(self) -> "QWidget":
+    def _build_sky_atlas_page(self) -> QWidget:
         """Planning page — the catalog lookup formerly labelled Sky Atlas
         (SKY-010 … SKY-120): search criteria on the left, one result tile
         per row filling the rest of the page — no separate details panel,
@@ -6575,13 +6575,13 @@ class AppWindow:
         _TILE_WIDTH_FRACTION = 0.50
         _TILE_MIN_WIDTH_PX = 420
 
-        def _fmt_rise_set_time(iso: "str | None") -> str:
+        def _fmt_rise_set_time(iso: str | None) -> str:
             if iso is None:
                 return "—"
             import datetime as _dt
             return _dt.datetime.fromisoformat(iso).strftime("%H:%M")
 
-        def _build_result_card(obj, rise_set_text: str, chart: "dict | None") -> "tuple[QWidget, QLabel]":
+        def _build_result_card(obj, rise_set_text: str, chart: dict | None) -> tuple[QWidget, QLabel]:
             """One result's card: thumbnail slot, name/type/magnitude/size/
             constellation/RA/Dec/rise-transit-set, and (rightmost) a mini
             altitude chart — everything the removed details panel used to
@@ -6790,7 +6790,7 @@ class AppWindow:
         results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         content_layout.addWidget(results, 1)
 
-        def _tile_row(card: "QWidget") -> "tuple[QWidget, object]":
+        def _tile_row(card: QWidget) -> tuple[QWidget, object]:
             """Wrap *card* in a full-row container so results stay one
             per row (a plain vertical list, not a grid), while the visible
             tile itself is narrowed to ``_TILE_WIDTH_FRACTION`` of the
@@ -6839,7 +6839,7 @@ class AppWindow:
                 return
             import datetime as _dt
             from galileo.planning import star_atlas as sa
-            jd = sa.julian_date(_dt.datetime.now(_dt.timezone.utc))
+            jd = sa.julian_date(_dt.datetime.now(_dt.UTC))
             lst = sa.local_sidereal_deg(jd, location.longitude)
             ra_of_date, dec_of_date = sa.precess_from_j2000(obj.ra_deg, obj.dec_deg, jd)
             alt, _az = sa.equatorial_to_horizontal(ra_of_date, dec_of_date, lst, location.latitude)
@@ -7013,7 +7013,7 @@ class AppWindow:
             }]
         }
 
-    def _framing_dialog_initial_target(self) -> "tuple[str, float, float] | None":
+    def _framing_dialog_initial_target(self) -> tuple[str, float, float] | None:
         """The Imaging tab's current object (IMG-140), if any — used to pre-fill the
         Framing Assistant dialog's Name/RA/Dec fields, so a target already picked
         on the Star Atlas doesn't need retyping into Framing's own fields too."""
@@ -7137,12 +7137,12 @@ class AppWindow:
         canvas = _FramingCanvas()
         outer.addWidget(canvas, 1)
 
-        def mosaic_grid() -> "tuple | None":
+        def mosaic_grid() -> tuple | None:
             """The grid the user explicitly set, if any."""
             return ((cols_spin.value(), rows_spin.value(), overlap_spin.value())
                     if cols_spin.value() > 1 or rows_spin.value() > 1 else None)
 
-        def effective_grid() -> "tuple | None":
+        def effective_grid() -> tuple | None:
             """The grid actually in effect: the user's own explicit choice, else —
             with no rotator connected and a nonzero rotation — one auto-sized to
             cover the tilted frame's bounding box (FRAME-030's fallback), else
@@ -7278,9 +7278,8 @@ class AppWindow:
 
     # --- Generic placeholder content -----------------------------------------
 
-    def _build_placeholder_page(self, title: str) -> "QWidget":
+    def _build_placeholder_page(self, title: str) -> QWidget:
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
-        from PySide6.QtCore import Qt
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -7547,8 +7546,8 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         self._fov_deg: tuple = (0.0, 0.0)
         self._footprint_deg: tuple = (0.0, 0.0)  # overlay's own overall extent (>= _fov_deg for a mosaic)
         self._rotation_deg: float = 0.0
-        self._mosaic_grid: "tuple | None" = None  # (cols, rows, overlap_pct)
-        self._reference_rotation_deg: "float | None" = None
+        self._mosaic_grid: tuple | None = None  # (cols, rows, overlap_pct)
+        self._reference_rotation_deg: float | None = None
         self._message = "Set a target and click Load Sky Image."
 
     def set_image(self, data: bytes, extent_deg: tuple) -> None:
@@ -7563,8 +7562,8 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         self.update()
 
     def set_overlay(self, fov_width_deg: float, fov_height_deg: float, rotation_deg: float,
-                    mosaic_grid: "tuple | None" = None, footprint_deg: "tuple | None" = None,
-                    reference_rotation_deg: "float | None" = None) -> None:
+                    mosaic_grid: tuple | None = None, footprint_deg: tuple | None = None,
+                    reference_rotation_deg: float | None = None) -> None:
         """*rotation_deg* is what the drawn pane(s) are actually rotated by (0 for
         an auto-mosaic covering a tilt no rotator can achieve); *reference_rotation_deg*,
         when given, additionally draws the originally-requested tilted single-frame
@@ -7750,7 +7749,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
         dim_color: str,
         on_select,
         power_action=None,
-        utility_actions: "list[tuple[str, str, object]] | None" = None,
+        utility_actions: list[tuple[str, str, object]] | None = None,
     ) -> None:
         super().__init__()
         from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QToolButton, QButtonGroup, QSizePolicy
@@ -7763,11 +7762,11 @@ class _NavColumn(QWidget if _HAS_QT else object):
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(0)
 
-        self._icon_entries: list[tuple["QToolButton", str]] = []
+        self._icon_entries: list[tuple[QToolButton, str]] = []
 
         group = QButtonGroup(self)
         group.setExclusive(True)
-        self._buttons: dict[str, "QToolButton"] = {}
+        self._buttons: dict[str, QToolButton] = {}
 
         def _set_icon_pair(btn, icon_name: str, size: int) -> None:
             btn.setIconSize(QSize(size, size))
@@ -7776,7 +7775,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
             btn.setIcon(btn._icon_accent if btn.isChecked() else btn._icon_dim)
             self._icon_entries.append((btn, icon_name))
 
-        def add_button(section_id: str, label: str, icon_name: str) -> "QToolButton":
+        def add_button(section_id: str, label: str, icon_name: str) -> QToolButton:
             btn = QToolButton()
             btn.setObjectName(button_object_name)
             btn.setCheckable(True)
@@ -7852,6 +7851,6 @@ class _NavColumn(QWidget if _HAS_QT else object):
             btn.setIcon(btn._icon_accent if checked else btn._icon_dim)
 
     @staticmethod
-    def _first_button(group: "QButtonGroup"):
+    def _first_button(group: QButtonGroup):
         buttons = group.buttons()
         return buttons[0] if buttons else None

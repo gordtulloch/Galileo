@@ -4,7 +4,6 @@
 """SCHED — Observatory Scheduler (TC-SCHED-010 … TC-SCHED-100)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture

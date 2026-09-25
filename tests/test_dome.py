@@ -4,7 +4,6 @@
 """DOME — Dome Control (TC-DOME-010 … TC-DOME-030)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture

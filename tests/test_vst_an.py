@@ -4,7 +4,7 @@
 """VST-AN — Variable Star Analysis & Photometry (TC-VST-AN-010 … TC-VST-AN-090)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 
 @pytest.fixture
@@ -57,7 +57,6 @@ async def test_tc_vst_an_020_plate_solve_retrieved_images(vst_analysis, sample_f
 @pytest.mark.priority("MVP")
 async def test_tc_vst_an_030_stack_same_target_filter(vst_analysis, sample_fits_repo):
     """VST-AN-030: Produce a registered mean-stacked image from same-target, same-filter frames for improved SNR."""
-    import numpy as np
     fits = pytest.importorskip("astropy.io.fits")
     frames = list(sample_fits_repo.rglob("*.fits"))
     assert len(frames) >= 2

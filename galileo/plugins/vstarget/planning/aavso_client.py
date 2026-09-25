@@ -9,7 +9,6 @@ import json
 import logging
 import urllib.parse
 import urllib.request
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,6 @@ class AavsoTargetToolClient:
 
         try:
             import asyncio
-            import functools
             response = await asyncio.to_thread(self._get_sync, url)
             return response
         except Exception as exc:

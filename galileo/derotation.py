@@ -29,7 +29,7 @@ FITS_SUFFIXES = (".fits", ".fit", ".fts")
 
 def julian_date(when: datetime.datetime) -> float:
     if when.tzinfo is not None:
-        when = when.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        when = when.astimezone(datetime.UTC).replace(tzinfo=None)
     y, m = when.year, when.month
     if m <= 2:
         y, m = y - 1, m + 12
@@ -49,10 +49,10 @@ def local_sidereal_deg(when: datetime.datetime, longitude_deg: float) -> float:
 
 
 def radec_to_altaz(ra_deg: float, dec_deg: float, lat_deg: float, lon_deg: float,
-                   when: "datetime.datetime | None" = None) -> tuple[float, float]:
+                   when: datetime.datetime | None = None) -> tuple[float, float]:
     """Altitude and azimuth (degrees, azimuth from north through east) of an
     RA/Dec (degrees) for a site (longitude east-positive) at *when* (UTC)."""
-    when = when or datetime.datetime.now(datetime.timezone.utc)
+    when = when or datetime.datetime.now(datetime.UTC)
     hour_angle = math.radians(local_sidereal_deg(when, lon_deg) - ra_deg)
     dec, lat = math.radians(dec_deg), math.radians(lat_deg)
     sin_alt = math.sin(dec) * math.sin(lat) + math.cos(dec) * math.cos(lat) * math.cos(hour_angle)
@@ -86,9 +86,9 @@ class Derotator:
         self.min_step_deg = min_step_deg
         self._virtual = float(start_angle_deg)
         self._commanded = float(start_angle_deg)
-        self._last_t: "float | None" = None
+        self._last_t: float | None = None
 
-    def update(self, rate_deg_per_min: float, now_s: float) -> "float | None":
+    def update(self, rate_deg_per_min: float, now_s: float) -> float | None:
         """Advance the virtual angle to time *now_s* (any monotonic clock, in
         seconds) at *rate_deg_per_min*. Returns the new angle (0–360) the
         rotator should be moved to, or ``None`` if no move is due yet."""
@@ -146,14 +146,14 @@ def pointing_from_fits_header(header) -> tuple[float, float]:
     raise ValueError("FITS header has no pointing (CRVAL1/2, OBJCTRA/OBJCTDEC, or RA/DEC)")
 
 
-def newest_fits_file(folder: "str | Path") -> Path:
+def newest_fits_file(folder: str | Path) -> Path:
     files = [p for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in FITS_SUFFIXES]
     if not files:
         raise FileNotFoundError(f"No FITS files in {folder}")
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
-def pointing_from_fits_folder(folder: "str | Path") -> tuple[float, float, Path]:
+def pointing_from_fits_folder(folder: str | Path) -> tuple[float, float, Path]:
     """Pointing of the most recently written FITS file in *folder*."""
     from astropy.io import fits
     path = newest_fits_file(folder)

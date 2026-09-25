@@ -31,7 +31,8 @@ import xml.etree.ElementTree as ET
 import zlib
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 from xml.sax.saxutils import escape, quoteattr
 
 from galileo.exceptions import DeviceConnectionError, DeviceTimeoutError

@@ -21,9 +21,7 @@ Some examples (model - class or model name)::
 
 """
 
-import datetime as dt
 import peewee as pw
-from decimal import ROUND_HALF_EVEN
 
 try:
     import playhouse.postgres_ext as pw_pext
@@ -35,7 +33,7 @@ SQL = pw.SQL
 
 def migrate(migrator, database, fake=False, **kwargs):
     """Write your migrations here."""
-    
+
     # Define the Mapping model for migration
     @migrator.create_model
     class Mapping(pw.Model):
@@ -43,12 +41,12 @@ def migrate(migrator, database, fake=False, **kwargs):
         card = pw.CharField(max_length=20)  # TELESCOP, INSTRUME, OBSERVER, NOTES
         current = pw.CharField(max_length=255, null=True)  # Current value (can be blank)
         replace = pw.CharField(max_length=255, null=True)  # Replacement value (can be blank)
-        
+
         class Meta:
             table_name = "mapping"
 
 
 def rollback(migrator, database, fake=False, **kwargs):
     """Write your rollback migrations here."""
-    
+
     migrator.remove_model('mapping')

@@ -700,7 +700,7 @@ class SessionsPageWidget(QWidget):
         self.setObjectName("SessionsPage")
         self._window = window
         self.screen = SessionsScreen()
-        self._local_schedulers: "dict[str, Any]" = {}  # fallback when window lacks _scheduler_for_pier
+        self._local_schedulers: dict[str, Any] = {}  # fallback when window lacks _scheduler_for_pier
         self._build()
         self.reload()
 
@@ -736,7 +736,7 @@ class SessionsPageWidget(QWidget):
         self._palette = _build_palette(self)
         body.addWidget(self._palette)
 
-    def _scheduler_for(self, pier_name: "str | None"):
+    def _scheduler_for(self, pier_name: str | None):
         """The Pier's shared ``ObservatoryScheduler`` (owned by ``AppWindow`` so
         Planning > Scheduler sees the same jobs), or a local fallback instance when
         used standalone (e.g. outside a real ``AppWindow``, in a smoke test)."""

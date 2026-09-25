@@ -311,7 +311,7 @@ def test_tc_foc_090_a_deleted_page_stops_listening(window):
 def test_tc_foc_070_options_focus_page_persists_per_pier(window, page):
     """FOC-070: Options > Focus saves autofocus defaults per Pier, and both the Options
     page and the live Focus screen reload from them on a Pier switch."""
-    from galileo.observatory import create_observatory, create_pier, get_autofocus_params
+    from galileo.observatory import create_observatory, create_pier
 
     pier = create_pier(create_observatory("Obs FOC-070"), "Pier FOC-070")
     window._current_pier = pier

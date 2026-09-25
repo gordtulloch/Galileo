@@ -16,19 +16,16 @@ import os
 import logging
 import hashlib
 import datetime
-import shutil
-import configparser
 from galileo.library.config import load_config as load_library_config
-from pathlib import Path
 
 try:
     import winreg  # For checking Windows Developer Mode
 except ImportError:
     winreg = None  # Not on Windows
-from typing import Optional, Dict, Any, List, Callable
+from typing import Any
+from collections.abc import Callable
 
-from ..models import Masters, fitsSession, fitsFile, db
-from ..config import get_temp_folder
+from ..models import Masters, fitsSession, fitsFile
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +38,11 @@ def check_symlink_support():
         with tempfile.TemporaryDirectory() as temp_dir:
             test_file = os.path.join(temp_dir, 'test.txt')
             test_link = os.path.join(temp_dir, 'test_link.txt')
-            
+
             # Create a test file
             with open(test_file, 'w') as f:
                 f.write('test')
-            
+
             # Try to create a symlink
             os.symlink(test_file, test_link)
             return True
@@ -57,7 +54,7 @@ def check_windows_developer_mode():
     """Check if Windows Developer Mode is enabled."""
     if winreg is None or os.name != 'nt':
         return False
-    
+
     try:
         key = winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
@@ -78,12 +75,12 @@ def _get_config():
 
 class MasterFrameManager:
     """Advanced manager class for master calibration frame operations."""
-    
+
     def __init__(self):
         """Initialize the master frame manager."""
         self.config = _get_config()
         self.masters_dir = self._get_master_calibration_path()
-    
+
     def _get_master_calibration_path(self) -> str:
         """
         Get the path to the master calibration frames directory.
@@ -97,11 +94,11 @@ class MasterFrameManager:
         except Exception as e:
             logger.warning(f"Could not get repository folder from config: {e}")
             repo_folder = os.getcwd()
-        
+
         masters_dir = os.path.join(repo_folder, 'Masters')
         # Don't create the directory here - let it be created when actually needed
         return masters_dir
-    
+
     def _ensure_masters_directory_exists(self) -> str:
         """
         Ensure the Masters directory exists and return its path.
@@ -126,7 +123,7 @@ class MasterFrameManager:
         os.makedirs(thumbs_dir, exist_ok=True)
         return thumbs_dir
 
-    def _write_light_session_thumbnail(self, stacked_fits_path: str, session_id: str, width_px: int = 150) -> Optional[str]:
+    def _write_light_session_thumbnail(self, stacked_fits_path: str, session_id: str, width_px: int = 150) -> str | None:
         """Write a PNG thumbnail for a stacked FITS file into the repository Thumbnails folder.
 
         The thumbnail will be width_px wide and preserve aspect ratio. File is named "<session_id>.png".
@@ -222,8 +219,8 @@ class MasterFrameManager:
         except Exception as e:
             logger.warning(f"Failed to write thumbnail for session {session_id}: {e}")
             return None
-    
-    def find_matching_master(self, session_data: Dict[str, Any], cal_type: str) -> Optional[Masters]:
+
+    def find_matching_master(self, session_data: dict[str, Any], cal_type: str) -> Masters | None:
         """
         Find a matching master frame for the given session and calibration type.
         
@@ -244,25 +241,25 @@ class MasterFrameManager:
                 'gain': session_data.get('gain'),
                 'offset': session_data.get('offset')
             }
-            
+
             # Remove None values
             criteria = {k: v for k, v in criteria.items() if v is not None}
-            
+
             return Masters.find_matching_master(
                 telescope=session_data.get('telescope'),
                 instrument=session_data.get('instrument'),
                 master_type=cal_type,
                 **criteria
             )
-            
+
         except Exception as e:
             logger.error(f"Error finding matching master: {e}")
             return None
-    
-    def create_master_from_session(self, session_id: str, cal_type: str, 
-                                 min_files: int = 2, 
-                                 progress_callback: Optional[Callable] = None,
-                                 verbose: bool = False) -> Optional[Masters]:
+
+    def create_master_from_session(self, session_id: str, cal_type: str,
+                                 min_files: int = 2,
+                                 progress_callback: Callable | None = None,
+                                 verbose: bool = False) -> Masters | None:
         """
         Create a master calibration frame from a session's files using advanced Siril integration.
         
@@ -279,21 +276,21 @@ class MasterFrameManager:
         try:
             if progress_callback:
                 progress_callback(0, 100, f"Starting {cal_type} master creation...")
-            
+
             # Get session and files
             session = fitsSession.get_by_id(session_id)
             files = list(fitsFile.select().where(
                 fitsFile.fitsFileSession == session.fitsSessionId,
                 fitsFile.fitsFileObject.contains(cal_type.upper())
             ))
-            
+
             if len(files) < min_files:
                 logger.warning(f"Not enough files for {cal_type} master: {len(files)} < {min_files}")
                 return None
-            
+
             if progress_callback:
                 progress_callback(10, 100, f"Found {len(files)} {cal_type} frames...")
-            
+
             # Verbose output: List all files being used to create the master
             if verbose:
                 logger.info(f"\n{'='*80}")
@@ -304,14 +301,14 @@ class MasterFrameManager:
                 logger.info(f"Exposure: {session.fitsSessionExposure}s")
                 logger.info(f"Binning: {session.fitsSessionBinningX}x{session.fitsSessionBinningY}")
                 logger.info(f"Temperature: {session.fitsSessionCCDTemp}°C")
-                logger.info(f"\nFiles being stacked:")
+                logger.info("\nFiles being stacked:")
                 for i, f in enumerate(files, 1):
                     logger.info(f"  {i:3d}. {os.path.basename(f.fitsFileName)}")
                     if verbose and cal_type.lower() == 'dark':
                         # For dark frames, also show exposure time from file
                         logger.info(f"       Exposure: {f.fitsFileExpTime}s, Temp: {f.fitsFileCCDTemp}°C")
                 logger.info(f"{'='*80}\n")
-            
+
             # Generate output filename with Master prefix using session date not current date
             if session.fitsSessionDate:
                 # Use the session date (observation date) instead of current date
@@ -320,11 +317,11 @@ class MasterFrameManager:
                 # Fallback to current date if session date is not available
                 timestamp = datetime.datetime.now().strftime("%Y%m%d")
                 logger.warning(f"Session {session_id} has no date, using current date for master filename")
-            
-            # Clean telescope and imager names for filename compatibility  
+
+            # Clean telescope and imager names for filename compatibility
             telescope_clean = session.fitsSessionTelescope.replace(" ", "_").replace("\\", "_").replace("@", "_").replace("/", "_")
             imager_clean = session.fitsSessionImager.replace(" ", "_").replace("\\", "_").replace("@", "_").replace("/", "_")
-            
+
             # Build filename following the same pattern as calibration frames in fitsFile registration
             if cal_type.lower() == 'flat':
                 # For flats: Master-Flat-[Telescope]-[Instrument]-[Filter]-[Date]-[Exposure]s-[XBinning]x[YBinning]-t[CCDTemp].fits
@@ -333,33 +330,33 @@ class MasterFrameManager:
             else:
                 # For bias/dark: Master-[Type]-[Telescope]-[Instrument]-[Date]-[Exposure]s-[XBinning]x[YBinning]-t[CCDTemp].fits
                 output_filename = f"Master-{cal_type.title()}-{telescope_clean}-{imager_clean}-{timestamp}-{session.fitsSessionExposure}s-{session.fitsSessionBinningX}x{session.fitsSessionBinningY}-t{session.fitsSessionCCDTemp}.fits"
-            
+
             # Ensure Masters directory exists before creating the file
             masters_dir = self._ensure_masters_directory_exists()
             output_path = os.path.join(masters_dir, output_filename)
-            
+
             # Extract file paths
             file_paths = [f.fitsFileName for f in files]
-            
+
             if progress_callback:
                 progress_callback(20, 100, "Creating master frame with internal stacking...")
-            
+
             # Create master frame using internal sigma-clipped stacking
             success = self._create_master_sigma_clip(file_paths, output_path, cal_type, progress_callback)
-            
+
             if not success or not os.path.exists(output_path):
                 logger.error(f"Failed to create master {cal_type} frame")
                 return None
-            
+
             if progress_callback:
                 progress_callback(80, 100, "Updating FITS header...")
-            
+
             # Update FITS header with metadata
             self._update_master_header(output_path, session, files, cal_type)
-            
+
             if progress_callback:
                 progress_callback(90, 100, "Saving master frame record...")
-            
+
             # Create database record
             session_data = {
                 'session_id': str(session.fitsSessionId),
@@ -373,18 +370,18 @@ class MasterFrameManager:
                 'gain': session.fitsSessionGain,
                 'offset': session.fitsSessionOffset
             }
-            
+
             master_record = Masters.create_master_record(
                 master_path=output_path,
                 session_data=session_data,
                 cal_type=cal_type,
                 file_count=len(files)
             )
-            
+
             # Soft-delete source calibration frames now that master is created
             if progress_callback:
                 progress_callback(95, 100, f"Marking {len(files)} source frames as soft-deleted...")
-            
+
             soft_deleted_count = 0
             for source_file in files:
                 try:
@@ -393,29 +390,29 @@ class MasterFrameManager:
                     soft_deleted_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to soft-delete source file {source_file.fitsFileName}: {e}")
-            
+
             logger.info(f"Soft-deleted {soft_deleted_count} of {len(files)} source calibration frames for master {output_filename}")
-            
+
             if progress_callback:
                 progress_callback(100, 100, f"Master {cal_type} frame created successfully")
-            
+
             logger.info(f"Created master {cal_type} frame: {output_filename}")
             return master_record
-            
+
         except Exception as e:
             logger.error(f"Error creating master {cal_type} frame: {e}")
             if progress_callback:
                 progress_callback(100, 100, f"Error creating master {cal_type} frame")
             return None
-    
+
     def _create_master_sigma_clip(
         self,
-        file_paths: List[str],
+        file_paths: list[str],
         output_path: str,
         cal_type: str,
-        progress_callback: Optional[Callable] = None,
-        reference_path: Optional[str] = None,
-        thumbnail_session_id: Optional[str] = None,
+        progress_callback: Callable | None = None,
+        reference_path: str | None = None,
+        thumbnail_session_id: str | None = None,
     ) -> bool:
         """
         Create master frame using sigma-clipped averaging (internal implementation).
@@ -436,13 +433,13 @@ class MasterFrameManager:
                 import astroalign as aa  # type: ignore
             except Exception:
                 aa = None
-            
+
             if not file_paths:
                 logger.error("No input files provided")
                 return False
-            
+
             logger.info(f"Creating {cal_type} master from {len(file_paths)} files using sigma-clipped stacking")
-            
+
             if progress_callback:
                 progress_callback(25, 100, f"Loading {len(file_paths)} {cal_type} frames...")
 
@@ -543,7 +540,7 @@ class MasterFrameManager:
                 except Exception as e:
                     # If astroalign can't find a match, fall back to stacking the unaligned image.
                     if _is_astroalign_maxiter_error(e):
-                        def _try_wcs_reproject() -> Optional[np.ndarray]:
+                        def _try_wcs_reproject() -> np.ndarray | None:
                             if ref_header is None or ref_full is None:
                                 return None
                             if data.ndim != 2 or ref_full.ndim != 2:
@@ -606,18 +603,18 @@ class MasterFrameManager:
                         )
                         return data.astype(np.float32, copy=False)
                     raise
-            
+
             if progress_callback:
                 progress_callback(30, 100, "Computing statistics (pass 1/2)...")
-            
+
             # Streaming approach using chunked processing
             # Determine optimal chunk size based on available memory
             # Process frames in chunks small enough to fit in memory
             max_chunk_size = min(20, len(file_paths))  # Process up to 20 frames at a time
-            
+
             valid_files = []
             frame_medians = []
-            
+
             # First pass: validate files and compute frame medians for flats
             logger.info("Pass 1: Validating files and computing frame medians...")
             for i, file_path in enumerate(file_paths):
@@ -636,33 +633,33 @@ class MasterFrameManager:
                     valid_files.append(file_path)
                     if cal_type == 'flat':
                         frame_medians.append(float(np.median(data)))
-                    
+
                     if (i + 1) % 10 == 0 and progress_callback:
                         progress = 30 + int((i + 1) / len(file_paths) * 10)
                         progress_callback(progress, 100, f"Validating: {i+1}/{len(file_paths)} files...")
                 except Exception as e:
                     logger.warning(f"Skipping corrupted file {file_path}: {e}")
                     continue
-            
+
             if not valid_files:
                 logger.error("No valid frames loaded")
                 return False
-            
+
             n_frames = len(valid_files)
             logger.info(f"Processing {n_frames} valid frames")
-            
+
             if progress_callback:
                 progress_callback(40, 100, "Computing sigma clipping bounds...")
-            
+
             # Compute median and std using chunked processing
             logger.info(f"Computing statistics in chunks of {max_chunk_size} frames...")
             median = None
             M2 = None  # For Welford's online variance algorithm
-            
+
             for chunk_start in range(0, n_frames, max_chunk_size):
                 chunk_end = min(chunk_start + max_chunk_size, n_frames)
                 chunk_files = valid_files[chunk_start:chunk_end]
-                
+
                 # Load chunk into memory
                 chunk_data = []
                 for file_path in chunk_files:
@@ -671,9 +668,9 @@ class MasterFrameManager:
                     if is_light_stack and ref_full is not None:
                         data = _register_to_reference(data, file_path)
                     chunk_data.append(data)
-                
+
                 chunk_array = np.array(chunk_data)
-                
+
                 # Update running statistics
                 if median is None:
                     median = np.median(chunk_array, axis=0)
@@ -683,34 +680,34 @@ class MasterFrameManager:
                     chunk_median = np.median(chunk_array, axis=0)
                     median = (median + chunk_median) / 2  # Approximate for speed
                     M2 += np.sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
-                
+
                 del chunk_data, chunk_array
-                
+
                 if progress_callback:
                     progress = 40 + int((chunk_end / n_frames) * 20)
                     progress_callback(progress, 100, f"Statistics: {chunk_end}/{n_frames} frames...")
-            
+
             std = np.sqrt(M2 / n_frames)
             del M2
-            
+
             # Sigma clipping parameters
             sigma_low = 3.0
             sigma_high = 3.0
             lower_bound = median - sigma_low * std
             upper_bound = median + sigma_high * std
-            
+
             logger.info("Sigma clipping bounds computed")
-            
+
             if progress_callback:
                 progress_callback(60, 100, f"Combining {n_frames} frames with sigma clipping (pass 2/2)...")
-            
+
             # Pass 2 - Accumulate with sigma clipping
             logger.info("Pass 2: Combining frames with sigma clipping...")
             accumulator = np.zeros(data_shape, dtype=np.float32)
             count = np.zeros(data_shape, dtype=np.uint16)
             rejected_pixels = 0
             total_pixels = 0
-            
+
             for i, file_path in enumerate(valid_files):
                 try:
                     data, _hdr = _read_fits_image(file_path)
@@ -733,21 +730,21 @@ class MasterFrameManager:
 
                     rejected_pixels += np.sum(~mask)
                     total_pixels += data.size
-                    
+
                     if (i + 1) % 5 == 0 and progress_callback:
                         progress = 60 + int((i + 1) / n_frames * 20)
                         progress_callback(progress, 100, f"Pass 2: {i+1}/{n_frames} frames...")
-                        
+
                 except Exception as e:
                     logger.warning(f"Error processing {file_path}: {e}")
                     continue
-            
+
             rejection_rate = (rejected_pixels / total_pixels) * 100 if total_pixels > 0 else 0
             logger.info(f"Sigma clipping: {rejected_pixels}/{total_pixels} pixels rejected ({rejection_rate:.3f}%)")
-            
+
             if progress_callback:
                 progress_callback(80, 100, "Computing final master frame...")
-            
+
             # Compute final master without triggering divide-by-zero warnings.
             # Note: np.where would still evaluate (accumulator / count) for all pixels.
             master_data = np.empty_like(accumulator, dtype=np.float32)
@@ -758,15 +755,15 @@ class MasterFrameManager:
             # Replace any remaining NaN/Inf (e.g. from pathological inputs) with median.
             if median is not None:
                 master_data = np.where(np.isfinite(master_data), master_data, median)
-            
+
             if cal_type == 'flat':
                 logger.info("Applied multiplicative normalization for flat frames")
             else:
                 logger.info("Applied additive combination for bias/dark frames")
-            
+
             if progress_callback:
                 progress_callback(80, 100, "Saving master frame...")
-            
+
             # Update header with metadata
             header['HISTORY'] = f'Master {cal_type} created from {n_frames} files'
             header['NFILES'] = n_frames
@@ -774,14 +771,14 @@ class MasterFrameManager:
             header['METHOD'] = f'Sigma-clipped mean (sigma_low={sigma_low}, sigma_high={sigma_high})'
             header['REJECTED'] = f'{rejection_rate:.3f}%'
             header['DATE'] = datetime.datetime.now().isoformat()
-            
+
             # Convert to appropriate dtype (preserve as uint16 for most cases, float32 for flats)
             if cal_type == 'flat':
                 output_data = master_data.astype(np.float32)
             else:
                 # Clip to uint16 range and convert
                 output_data = np.clip(master_data, 0, 65535).astype(np.uint16)
-            
+
             # Save master frame
             hdu = fits.PrimaryHDU(data=output_data, header=header)
             hdu.writeto(output_path, overwrite=True)
@@ -789,28 +786,28 @@ class MasterFrameManager:
             # If this is a light stack, emit/update a session thumbnail.
             if is_light_stack and thumbnail_session_id:
                 self._write_light_session_thumbnail(output_path, str(thumbnail_session_id), width_px=150)
-            
+
             logger.info(f"Internal stacking: Master {cal_type} created successfully: {output_path}")
             logger.info(f"  Output shape: {output_data.shape}, dtype: {output_data.dtype}")
             logger.info(f"  Data range: [{np.min(output_data):.1f}, {np.max(output_data):.1f}]")
             logger.info(f"  Mean: {np.mean(output_data):.1f}, Median: {np.median(output_data):.1f}")
-            
+
             if progress_callback:
                 progress_callback(100, 100, "Master frame created successfully")
-            
+
             return True
-                
+
         except Exception as e:
             logger.error(f"Error in sigma-clipped master creation: {e}", exc_info=True)
             return False
 
     def _create_light_stack_photometric_mean(
         self,
-        file_paths: List[str],
+        file_paths: list[str],
         output_path: str,
-        progress_callback: Optional[Callable] = None,
-        reference_path: Optional[str] = None,
-        thumbnail_session_id: Optional[str] = None,
+        progress_callback: Callable | None = None,
+        reference_path: str | None = None,
+        thumbnail_session_id: str | None = None,
     ) -> bool:
         """Create a photometry-safe light stack.
 
@@ -882,7 +879,7 @@ class MasterFrameManager:
                     return aligned
                 except Exception as e:
                     if _is_astroalign_maxiter_error(e):
-                        def _try_wcs_reproject() -> Optional[np.ndarray]:
+                        def _try_wcs_reproject() -> np.ndarray | None:
                             if ref_full is None:
                                 return None
                             if data.ndim != 2 or ref_full.ndim != 2:
@@ -943,7 +940,7 @@ class MasterFrameManager:
                     raise
 
             # Validate and stream accumulate
-            valid_files: List[str] = []
+            valid_files: list[str] = []
             for i, file_path in enumerate(file_paths):
                 try:
                     with fits.open(file_path) as hdul:
@@ -1005,8 +1002,8 @@ class MasterFrameManager:
         except Exception as e:
             logger.error("Error creating photometric light stack: %s", e, exc_info=True)
             return False
-    
-    def _create_master_simple_average(self, file_paths: List[str], output_path: str) -> bool:
+
+    def _create_master_simple_average(self, file_paths: list[str], output_path: str) -> bool:
         """
         Fallback method to create master frame using simple averaging.
         
@@ -1020,17 +1017,17 @@ class MasterFrameManager:
         try:
             from astropy.io import fits
             import numpy as np
-            
+
             if not file_paths:
                 return False
-            
+
             # Read first file to get dimensions and header
             with fits.open(file_paths[0]) as hdul:
                 header = hdul[0].header.copy()
                 data_shape = hdul[0].data.shape
                 data_stack = np.zeros((len(file_paths), *data_shape), dtype=np.float32)
                 data_stack[0] = hdul[0].data.astype(np.float32)
-            
+
             # Read remaining files
             for i, file_path in enumerate(file_paths[1:], 1):
                 try:
@@ -1039,29 +1036,29 @@ class MasterFrameManager:
                 except Exception as e:
                     logger.warning(f"Skipping corrupted file {file_path}: {e}")
                     continue
-            
+
             # Calculate average
             master_data = np.mean(data_stack, axis=0)
-            
+
             # Update header
             header['HISTORY'] = f'Created master frame from {len(file_paths)} files'
             header['NFILES'] = len(file_paths)
             header['CREATOR'] = 'Galileo Master Frame Manager'
             header['DATE'] = datetime.datetime.now().isoformat()
-            
+
             # Save master frame
             hdu = fits.PrimaryHDU(data=master_data.astype(np.uint16), header=header)
             hdu.writeto(output_path, overwrite=True)
-            
+
             logger.info(f"Created simple average master frame: {output_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error in simple average master creation: {e}")
             return False
-    
-    def _update_master_header(self, master_path: str, session: fitsSession, 
-                            files: List[fitsFile], cal_type: str):
+
+    def _update_master_header(self, master_path: str, session: fitsSession,
+                            files: list[fitsFile], cal_type: str):
         """
         Update master frame FITS header with comprehensive metadata.
         
@@ -1073,10 +1070,10 @@ class MasterFrameManager:
         """
         try:
             from astropy.io import fits
-            
+
             with fits.open(master_path, mode='update') as hdul:
                 header = hdul[0].header
-                
+
                 # Basic master frame info
                 header['IMAGETYP'] = f'Master {cal_type.title()}'
                 header['MSTTYPE'] = cal_type.upper()
@@ -1084,12 +1081,12 @@ class MasterFrameManager:
                 header['CREATOR'] = 'Galileo Advanced Master Manager'
                 header['VERSION'] = '2.0.0'
                 header['DATE'] = datetime.datetime.now().isoformat()
-                
+
                 # Session information
                 header['TELESCOP'] = session.fitsSessionTelescope
                 header['INSTRUME'] = session.fitsSessionImager
                 header['SESSID'] = str(session.fitsSessionId)
-                
+
                 # Equipment settings
                 if session.fitsSessionExposure:
                     header['EXPTIME'] = session.fitsSessionExposure
@@ -1105,23 +1102,23 @@ class MasterFrameManager:
                     header['GAIN'] = session.fitsSessionGain
                 if session.fitsSessionOffset:
                     header['OFFSET'] = session.fitsSessionOffset
-                
+
                 # File statistics
                 total_size = sum(os.path.getsize(f.fitsFileName) for f in files if os.path.exists(f.fitsFileName))
                 header['TOTSIZE'] = total_size
-                
+
                 # Add history
                 header['HISTORY'] = f'Master {cal_type} created from {len(files)} frames'
                 header['HISTORY'] = f'Source session: {session.id}'
                 header['HISTORY'] = f'Processing date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-                
+
                 # Add comment
-                header['COMMENT'] = f'Created by Galileo Master Frame Manager v2.0'
-                
+                header['COMMENT'] = 'Created by Galileo Master Frame Manager v2.0'
+
         except Exception as e:
             logger.error(f"Error updating master frame header: {e}")
-    
-    def validate_masters(self, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+
+    def validate_masters(self, progress_callback: Callable | None = None) -> dict[str, Any]:
         """
         Validate all master frames in the database and filesystem.
         
@@ -1140,13 +1137,13 @@ class MasterFrameManager:
                 'corrupted_files': 0,
                 'validated_masters': []
             }
-            
+
             masters = list(Masters.select())
             results['total_masters'] = len(masters)
-            
+
             if progress_callback:
                 progress_callback(0, len(masters), "Starting master validation...")
-            
+
             for i, master in enumerate(masters):
                 try:
                     # Check file existence
@@ -1155,7 +1152,7 @@ class MasterFrameManager:
                         results['invalid_masters'] += 1
                         logger.warning(f"Master file not found: {master.file_path}")
                         continue
-                    
+
                     # Verify file hash
                     current_hash = self._calculate_file_hash(master.file_path)
                     if master.file_hash and current_hash != master.file_hash:
@@ -1163,7 +1160,7 @@ class MasterFrameManager:
                         results['invalid_masters'] += 1
                         logger.warning(f"Master file hash mismatch: {master.file_path}")
                         continue
-                    
+
                     # Try to open FITS file
                     try:
                         from astropy.io import fits
@@ -1175,34 +1172,34 @@ class MasterFrameManager:
                         results['invalid_masters'] += 1
                         logger.warning(f"Cannot read master FITS file {master.file_path}: {e}")
                         continue
-                    
+
                     # Mark as validated
                     master.is_validated = True
                     master.validation_date = datetime.datetime.now()
                     master.save()
-                    
+
                     results['valid_masters'] += 1
                     results['validated_masters'].append(master.id)
-                    
+
                     if progress_callback:
                         progress_callback(i + 1, len(masters), f"Validated: {os.path.basename(master.file_path)}")
-                    
+
                 except Exception as e:
                     logger.error(f"Error validating master {master.id}: {e}")
                     results['invalid_masters'] += 1
-            
+
             if progress_callback:
                 progress_callback(len(masters), len(masters), "Validation completed")
-            
+
             logger.info(f"Master validation completed: {results['valid_masters']}/{results['total_masters']} valid")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error during master validation: {e}")
             return {'error': str(e)}
-    
-    def cleanup_masters(self, retention_days: Optional[int] = None, 
-                       progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+
+    def cleanup_masters(self, retention_days: int | None = None,
+                       progress_callback: Callable | None = None) -> dict[str, Any]:
         """
         Clean up old and unused master frames.
         
@@ -1220,24 +1217,24 @@ class MasterFrameManager:
                 'space_freed': 0,
                 'errors': []
             }
-            
+
             # Get retention period from config if not specified
             if retention_days is None:
                 retention_days = self.config.getint('maintenance', 'master_retention_days', fallback=365)
-            
+
             cutoff_date = datetime.datetime.now() - datetime.timedelta(days=retention_days)
-            
+
             # Find masters older than retention period
             old_masters = list(Masters.select().where(
                 Masters.creation_date < cutoff_date,
                 Masters.is_validated == True  # Only delete validated masters
             ))
-            
+
             results['total_masters'] = len(old_masters)
-            
+
             if progress_callback:
                 progress_callback(0, len(old_masters), f"Starting cleanup of {len(old_masters)} old masters...")
-            
+
             for i, master in enumerate(old_masters):
                 try:
                     # Check if master is still in use by any sessions
@@ -1246,42 +1243,42 @@ class MasterFrameManager:
                         (fitsSession.master_dark == master.id) |
                         (fitsSession.master_flat == master.id)
                     ).count()
-                    
+
                     if sessions_using > 0:
                         logger.info(f"Keeping master {master.id} - still in use by {sessions_using} sessions")
                         continue
-                    
+
                     # Get file size before deletion
                     file_size = 0
                     if os.path.exists(master.file_path):
                         file_size = os.path.getsize(master.file_path)
                         os.remove(master.file_path)
                         results['space_freed'] += file_size
-                    
+
                     # Delete database record
                     master.delete_instance()
                     results['deleted_masters'] += 1
-                    
+
                     if progress_callback:
-                        progress_callback(i + 1, len(old_masters), 
+                        progress_callback(i + 1, len(old_masters),
                                         f"Deleted: {os.path.basename(master.file_path)}")
-                    
+
                 except Exception as e:
                     error_msg = f"Error deleting master {master.id}: {e}"
                     logger.error(error_msg)
                     results['errors'].append(error_msg)
-            
+
             if progress_callback:
                 progress_callback(len(old_masters), len(old_masters), "Cleanup completed")
-            
+
             logger.info(f"Master cleanup completed: {results['deleted_masters']} deleted, "
                        f"{results['space_freed'] / (1024*1024):.2f} MB freed")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error during master cleanup: {e}")
             return {'error': str(e)}
-    
+
     def update_session_with_master(self, session_id: str, master_id: int, cal_type: str) -> bool:
         """
         Update a session to use a specific master frame.
@@ -1297,7 +1294,7 @@ class MasterFrameManager:
         try:
             session = fitsSession.get_by_id(session_id)
             master = Masters.get_by_id(master_id)
-            
+
             # Update appropriate field based on calibration type
             if cal_type == 'bias':
                 session.master_bias = master.id
@@ -1308,16 +1305,16 @@ class MasterFrameManager:
             else:
                 logger.error(f"Invalid calibration type: {cal_type}")
                 return False
-            
+
             session.save()
             logger.info(f"Updated session {session_id} with master {cal_type} {master_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating session with master: {e}")
             return False
-    
-    def get_master_statistics(self) -> Dict[str, Any]:
+
+    def get_master_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive statistics about master frames.
         
@@ -1337,67 +1334,67 @@ class MasterFrameManager:
                 'creation_dates': [],
                 'avg_quality': 0
             }
-            
+
             masters = list(Masters.select())
             stats['total_masters'] = len(masters)
-            
+
             if len(masters) == 0:
                 return stats
-            
+
             total_size = 0
             total_frame_count = 0
             total_quality = 0
             quality_count = 0
-            
+
             for master in masters:
                 # By type
                 master_type = master.master_type or 'unknown'
                 stats['by_type'][master_type] = stats['by_type'].get(master_type, 0) + 1
-                
+
                 # By telescope
                 telescope = master.telescope or 'unknown'
                 stats['by_telescope'][telescope] = stats['by_telescope'].get(telescope, 0) + 1
-                
+
                 # By instrument
                 instrument = master.instrument or 'unknown'
                 stats['by_instrument'][instrument] = stats['by_instrument'].get(instrument, 0) + 1
-                
+
                 # File size
                 if master.file_size:
                     total_size += master.file_size
-                
+
                 # Frame count
                 if master.file_count:
                     total_frame_count += master.file_count
-                
+
                 # Creation dates
                 if master.creation_date:
                     stats['creation_dates'].append(master.creation_date.isoformat())
-                
+
                 # Quality scores
                 if hasattr(master, 'quality_score') and master.quality_score:
                     total_quality += master.quality_score
                     quality_count += 1
-                
+
                 # Validation status
                 validated = 'validated' if master.is_validated else 'not_validated'
                 stats['validation_status'][validated] = stats['validation_status'].get(validated, 0) + 1
-            
+
             # Calculate averages
             stats['total_size'] = total_size
             if len(masters) > 0:
                 stats['avg_file_size'] = total_size / len(masters)
                 stats['avg_frame_count'] = total_frame_count / len(masters)
-            
+
             if quality_count > 0:
                 stats['avg_quality'] = total_quality / quality_count
-            
+
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error getting master statistics: {e}")
             return {}
-    
+
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate SHA-256 hash of a file."""
         try:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable, List, Set, Tuple
+from collections.abc import Iterable
 
 from galileo.library.core.master_manager import get_master_manager
 
 
-def find_matching_masters_for_light_session(session, light_files: Iterable) -> List[Tuple[str, str]]:
+def find_matching_masters_for_light_session(session, light_files: Iterable) -> list[tuple[str, str]]:
     """Return a list of (master_type, master_path) for a light session.
 
     - Bias/Dark are resolved once from session parameters.
@@ -15,9 +15,9 @@ def find_matching_masters_for_light_session(session, light_files: Iterable) -> L
 
     This helper is UI-agnostic and does not touch the filesystem besides existence checks.
     """
-    master_files: List[Tuple[str, str]] = []
+    master_files: list[tuple[str, str]] = []
 
-    filters: Set[str] = set(
+    filters: set[str] = set(
         [getattr(lf, 'fitsFileFilter', None) for lf in light_files if getattr(lf, 'fitsFileFilter', None)]
     )
 
@@ -55,8 +55,8 @@ def find_matching_masters_for_light_session(session, light_files: Iterable) -> L
             master_files.append(('flat', master_flat.master_path))
 
     # De-dupe by path while preserving order (prevents double-counting the same master).
-    seen: Set[str] = set()
-    unique: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
     for t, p in master_files:
         if p in seen:
             continue

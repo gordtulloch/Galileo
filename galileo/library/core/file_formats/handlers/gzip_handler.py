@@ -16,7 +16,6 @@ import gzip
 import logging
 import os
 import shutil
-from typing import List
 
 from ....exceptions import FileProcessingError
 from ....types import FilePath
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 class GzipFileHandler(BaseFileFormatHandler):
     """Handler for gzip-compressed FITS files (.fits.gz)."""
 
-    def _get_supported_extensions(self) -> List[str]:
+    def _get_supported_extensions(self) -> list[str]:
         return ['.gz']
 
     def get_format_name(self) -> str:
@@ -77,11 +76,10 @@ class GzipFileHandler(BaseFileFormatHandler):
 
         try:
             logger.info(f"Decompressing gzip FITS: {file_path} -> {output_path}")
-            with gzip.open(file_path, 'rb') as f_in:
-                with open(output_path, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
             return output_path
-        except (OSError, IOError) as e:
+        except OSError as e:
             raise FileProcessingError(
                 f"File system error during gzip decompression: {e}",
                 file_path=str(file_path),

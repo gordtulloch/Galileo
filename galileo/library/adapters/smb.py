@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -38,7 +37,7 @@ class SmartTelescopeSmbAdapter:
             logger.debug("SMB browse error: %s", exc)
             return []
 
-    async def download(self, remote_path: str, dest: "Path | str") -> Path:
+    async def download(self, remote_path: str, dest: Path | str) -> Path:
         """Download *remote_path* from the SMB share to *dest*."""
         dest_path = Path(dest) / Path(remote_path).name
         dest_path.parent.mkdir(parents=True, exist_ok=True)

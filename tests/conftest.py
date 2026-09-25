@@ -7,7 +7,6 @@ import json
 import sys
 import pytest
 from unittest.mock import MagicMock, AsyncMock
-from pathlib import Path
 
 
 @pytest.fixture(autouse=True)

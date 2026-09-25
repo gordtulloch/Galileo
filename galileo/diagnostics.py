@@ -12,7 +12,6 @@ import threading
 import traceback
 from enum import IntEnum
 from pathlib import Path
-from typing import Any
 
 from galileo.exceptions import DeviceError
 
@@ -58,7 +57,7 @@ class _ConciseFormatter(logging.Formatter):
 # passes through here once installed, since it hooks the root logger.
 # ---------------------------------------------------------------------------
 
-_TAIL_BUFFER: "collections.deque[str]" = collections.deque(maxlen=1000)
+_TAIL_BUFFER: collections.deque[str] = collections.deque(maxlen=1000)
 _TAIL_LOCK = threading.Lock()
 _tail_handler_installed = False
 
@@ -125,7 +124,7 @@ class LogEntry:
 class DiagnosticsService:
     """Records structured log entries and writes them to a log file (LOG-010 … LOG-040)."""
 
-    def __init__(self, log_dir: "Path | str | None" = None) -> None:
+    def __init__(self, log_dir: Path | str | None = None) -> None:
         if log_dir is None:
             log_dir = default_log_dir()
         self._log_dir = Path(log_dir)
@@ -176,10 +175,9 @@ class DiagnosticsService:
     def get_entries(self) -> list[LogEntry]:
         return list(self._entries)
 
-    def export_support_bundle(self, dest: "Path | str") -> None:
+    def export_support_bundle(self, dest: Path | str) -> None:
         """Export a zip bundle of recent logs plus non-sensitive config (LOG-040)."""
         import zipfile
-        import glob
 
         dest_path = Path(dest)
         with zipfile.ZipFile(dest_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

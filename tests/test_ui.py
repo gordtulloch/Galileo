@@ -4,7 +4,6 @@
 """UI — Customization & Theming (TC-UI-010 … TC-UI-030)."""
 
 import pytest
-from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------

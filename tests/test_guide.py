@@ -4,7 +4,7 @@
 """GUIDE — Guiding Integration (TC-GUIDE-010 … TC-GUIDE-060)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 
 @pytest.fixture

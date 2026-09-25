@@ -1,11 +1,10 @@
 import os
 import logging
 import configparser
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, 
-                               QGroupBox, QLineEdit, QPushButton, QCheckBox, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+                               QGroupBox, QLineEdit, QPushButton, QCheckBox,
                                QComboBox, QSpinBox, QFileDialog, QMessageBox,
-                               QApplication, QTabWidget)
+                               QTabWidget)
 from galileo.library.config import (
     get_itelescope_password,
     load_config as load_library_config,
@@ -29,16 +28,16 @@ class ConfigWidget(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        
+
         # Create tab widget
         self.tab_widget = QTabWidget()
-        
+
         # Create individual tabs
         self.create_general_tab()
         self.create_cloud_sync_tab()
         self.create_calibration_tab()
         self.create_smart_telescopes_tab()
-        
+
         # Reset and Save sit at the right, as on the Equipment screens
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
@@ -123,7 +122,7 @@ class ConfigWidget(QWidget):
         self.compression_algorithm.setCurrentText("fits_gzip2")
         self.compression_algorithm.setToolTip(
             "Compression algorithms (FITS internal only - Siril compatible):\n"
-            "• fits_gzip2 = FITS GZIP level 2 (best compression for float data)\n" 
+            "• fits_gzip2 = FITS GZIP level 2 (best compression for float data)\n"
             "\n"
             "External compression removed (not supported by Siril/NINA workflows)"
         )
@@ -406,30 +405,30 @@ class ConfigWidget(QWidget):
         layout.addStretch()
 
         self.tab_widget.addTab(smart_telescopes_tab, "Smart Telescopes")
-    
+
     def save_settings(self):
         """Save configuration settings to library settings file"""
         try:
             config = configparser.ConfigParser()
-            
+
             # Read existing config first to preserve any other settings
             config.read('library.ini')
-            
+
             # Ensure DEFAULT section exists
             if 'DEFAULT' not in config:
                 config.add_section('DEFAULT')
-            
+
             # Get paths and ensure they end with a slash
             source_path = self.source_path.text().strip()
             repo_path = self.repo_path.text().strip()
             temp_path = self.temp_path.text().strip()
-            
+
             # Automatically append slash if not present for source and repo paths
             if source_path and not source_path.endswith('/') and not source_path.endswith('\\'):
                 source_path += '/'
             if repo_path and not repo_path.endswith('/') and not repo_path.endswith('\\'):
                 repo_path += '/'
-            
+
             # Update individual settings instead of replacing the entire DEFAULT section
             config.set('DEFAULT', 'source', source_path)
             config.set('DEFAULT', 'repo', repo_path)
@@ -443,7 +442,7 @@ class ConfigWidget(QWidget):
             config.set('DEFAULT', 'auth_file_path', self.auth_file_path.text().strip())
             config.set('DEFAULT', 'sync_profile', self.sync_profile.currentData())
             config.set('DEFAULT', 'auto_cleanup_backed_files', str(self.auto_cleanup_backed_files.isChecked()))
-            
+
             # Auto-calibration settings
             config.set('DEFAULT', 'min_files_per_master', str(self.min_files_per_master.value()))
             config.set('DEFAULT', 'auto_calibration_progress', str(self.auto_calibration_progress.isChecked()))
@@ -451,20 +450,20 @@ class ConfigWidget(QWidget):
             config.set('DEFAULT', 'pysiril_stack_timeout', str(self.pysiril_stack_timeout.value()))
             config.set('DEFAULT', 'pysiril_debug_logging', str(self.pysiril_debug_logging.isChecked()))
             config.set('DEFAULT', 'frame_processing_method', self.frame_processing_method.currentText())
-            
+
             # iTelescope settings — the password goes to the OS keychain (NFR-SEC-010), not the ini file
             config.set('DEFAULT', 'itelescope_username', self.itelescope_username.text().strip())
             if config.has_option('DEFAULT', 'itelescope_password'):
                 config.remove_option('DEFAULT', 'itelescope_password')
             set_itelescope_password(self.itelescope_password.text().strip())
-            
+
             # FITS compression settings
             config.set('DEFAULT', 'compress_fits', str(self.compress_fits.isChecked()))
             config.set('DEFAULT', 'compression_algorithm', self.compression_algorithm.currentText())
             config.set('DEFAULT', 'compression_level', str(self.compression_level.value()))
             config.set('DEFAULT', 'verify_compression', str(self.verify_compression.isChecked()))
             config.set('DEFAULT', 'min_compression_size', str(self.min_compression_size.value()))
-            
+
             # Write to the library settings file
             save_library_config(config)
 
@@ -474,51 +473,51 @@ class ConfigWidget(QWidget):
 
             logger.info("Settings saved to library.ini!")
             QMessageBox.information(self, "Success", "Settings saved successfully!")
-            
+
         except Exception as e:
             logger.error(f"Error saving settings: {e}")
             QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
-    
+
     def load_settings(self):
         """Load configuration settings from library settings file"""
         try:
             config = load_library_config()
-            
+
             # Load path settings
             if config.has_option('DEFAULT', 'source'):
                 self.source_path.setText(config.get('DEFAULT', 'source'))
-            
+
             if config.has_option('DEFAULT', 'repo'):
                 self.repo_path.setText(config.get('DEFAULT', 'repo'))
-            
+
             if config.has_option('DEFAULT', 'temp_folder'):
                 self.temp_path.setText(config.get('DEFAULT', 'temp_folder'))
-            
+
             # Load additional settings with defaults
             if config.has_option('DEFAULT', 'refresh_on_startup'):
                 refresh_value = config.getboolean('DEFAULT', 'refresh_on_startup')
                 self.refresh_on_startup.setChecked(refresh_value)
-            
+
             if config.has_option('DEFAULT', 'save_modified_headers'):
                 save_headers_value = config.getboolean('DEFAULT', 'save_modified_headers')
                 self.save_modified_headers.setChecked(save_headers_value)
-            
+
             if config.has_option('DEFAULT', 'fits_viewer_path'):
                 fits_viewer_path = config.get('DEFAULT', 'fits_viewer_path')
                 self.fits_viewer_path.setText(fits_viewer_path)
-            
+
             if config.has_option('DEFAULT', 'suppress_delete_warnings'):
                 suppress_value_str = config.get('DEFAULT', 'suppress_delete_warnings')
                 logger.debug(f"Raw suppress_delete_warnings value from INI: '{suppress_value_str}'")
-                
+
                 # Convert to boolean
                 if isinstance(suppress_value_str, str):
                     suppress_value = suppress_value_str.lower() in ('true', '1', 'yes', 'on')
                 else:
                     suppress_value = bool(suppress_value_str)
-                
+
                 logger.debug(f"Converted suppress_delete_warnings value: {suppress_value}")
-                
+
                 if hasattr(self, 'suppress_delete_warnings'):
                     self.suppress_delete_warnings.setChecked(suppress_value)
                     logger.debug(f"Checkbox set to: {self.suppress_delete_warnings.isChecked()}")
@@ -533,15 +532,15 @@ class ConfigWidget(QWidget):
                 index = self.cloud_vendor.findText(cloud_vendor)
                 if index >= 0:
                     self.cloud_vendor.setCurrentIndex(index)
-            
+
             if config.has_option('DEFAULT', 'bucket_url'):
                 bucket_url = config.get('DEFAULT', 'bucket_url')
                 self.bucket_url.setText(bucket_url)
-            
+
             if config.has_option('DEFAULT', 'auth_file_path'):
                 auth_file_path = config.get('DEFAULT', 'auth_file_path')
                 self.auth_file_path.setText(auth_file_path)
-            
+
             if config.has_option('DEFAULT', 'sync_profile'):
                 sync_profile = config.get('DEFAULT', 'sync_profile')
                 # Find the index by data value
@@ -549,7 +548,7 @@ class ConfigWidget(QWidget):
                     if self.sync_profile.itemData(i) == sync_profile:
                         self.sync_profile.setCurrentIndex(i)
                         break
-            
+
             if config.has_option('DEFAULT', 'auto_cleanup_backed_files'):
                 auto_cleanup_str = config.get('DEFAULT', 'auto_cleanup_backed_files')
                 # Convert to boolean
@@ -568,39 +567,39 @@ class ConfigWidget(QWidget):
                 progress_str = config.get('DEFAULT', 'auto_calibration_progress')
                 progress_value = progress_str.lower() in ('true', '1', 'yes', 'on')
                 self.auto_calibration_progress.setChecked(progress_value)
-                
+
             if config.has_option('DEFAULT', 'pysiril_convert_timeout'):
                 convert_timeout = config.getint('DEFAULT', 'pysiril_convert_timeout', fallback=120)
                 self.pysiril_convert_timeout.setValue(convert_timeout)
-                
+
             if config.has_option('DEFAULT', 'pysiril_stack_timeout'):
                 stack_timeout = config.getint('DEFAULT', 'pysiril_stack_timeout', fallback=300)
                 self.pysiril_stack_timeout.setValue(stack_timeout)
-                
+
             if config.has_option('DEFAULT', 'pysiril_debug_logging'):
                 debug_logging_str = config.get('DEFAULT', 'pysiril_debug_logging')
                 debug_logging_value = debug_logging_str.lower() in ('true', '1', 'yes', 'on')
                 self.pysiril_debug_logging.setChecked(debug_logging_value)
-                
+
             if config.has_option('DEFAULT', 'frame_processing_method'):
                 frame_method = config.get('DEFAULT', 'frame_processing_method')
                 index = self.frame_processing_method.findText(frame_method)
                 if index >= 0:
                     self.frame_processing_method.setCurrentIndex(index)
-            
+
             # Load iTelescope settings
             if config.has_option('DEFAULT', 'itelescope_username'):
                 itelescope_username = config.get('DEFAULT', 'itelescope_username')
                 self.itelescope_username.setText(itelescope_username)
-            
+
             self.itelescope_password.setText(get_itelescope_password())
-            
+
             # Load FITS compression settings
             if config.has_option('DEFAULT', 'compress_fits'):
                 compress_fits_str = config.get('DEFAULT', 'compress_fits')
                 compress_fits_value = compress_fits_str.lower() in ('true', '1', 'yes', 'on')
                 self.compress_fits.setChecked(compress_fits_value)
-            
+
             if config.has_option('DEFAULT', 'compression_algorithm'):
                 compression_algorithm = config.get('DEFAULT', 'compression_algorithm', fallback='fits_gzip2')
                 if compression_algorithm in ('auto', 'fits_gzip1', 'fits_rice'):
@@ -608,27 +607,27 @@ class ConfigWidget(QWidget):
                 index = self.compression_algorithm.findText(compression_algorithm)
                 if index >= 0:
                     self.compression_algorithm.setCurrentIndex(index)
-            
+
             if config.has_option('DEFAULT', 'compression_level'):
                 compression_level = config.getint('DEFAULT', 'compression_level', fallback=6)
                 self.compression_level.setValue(compression_level)
-            
+
             if config.has_option('DEFAULT', 'verify_compression'):
                 verify_compression_str = config.get('DEFAULT', 'verify_compression')
                 verify_compression_value = verify_compression_str.lower() in ('true', '1', 'yes', 'on')
                 self.verify_compression.setChecked(verify_compression_value)
-            
+
             if config.has_option('DEFAULT', 'min_compression_size'):
                 min_compression_size = config.getint('DEFAULT', 'min_compression_size', fallback=1024)
                 self.min_compression_size.setValue(min_compression_size)
-                
+
             logger.debug("Settings loaded from library.ini!")
-            
+
         except Exception as e:
             logger.error(f"Error loading settings: {e}")
             # Use default values if loading fails
             self.reset_settings()
-    
+
     def reset_settings(self):
         # Reset to default values
         self.source_path.setText("")
@@ -642,7 +641,7 @@ class ConfigWidget(QWidget):
         self.auth_file_path.setText("")
         self.sync_profile.setCurrentIndex(0)  # Default to Complete Sync
         self.auto_cleanup_backed_files.setChecked(False)
-        
+
         # Auto-calibration defaults
         self.min_files_per_master.setValue(3)
         self.auto_calibration_progress.setChecked(True)
@@ -650,48 +649,48 @@ class ConfigWidget(QWidget):
         self.pysiril_convert_timeout.setValue(120)
         self.pysiril_stack_timeout.setValue(300)
         self.pysiril_debug_logging.setChecked(True)
-        
+
         # iTelescope defaults
         self.itelescope_username.setText("")
         self.itelescope_password.setText("")
-        
+
         # FITS compression defaults
         self.compress_fits.setChecked(False)
         self.compression_algorithm.setCurrentIndex(0)  # Reset to 'fits_gzip2'
         self.compression_level.setValue(6)
         self.verify_compression.setChecked(True)
         self.min_compression_size.setValue(1024)
-    
+
     def browse_source_path(self):
         """Open directory dialog for source path"""
         directory = QFileDialog.getExistingDirectory(
-            self, 
-            "Select Source Directory", 
+            self,
+            "Select Source Directory",
             self.source_path.text() or os.path.expanduser("~")
         )
         if directory:
             self.source_path.setText(directory)
-    
+
     def browse_repo_path(self):
         """Open directory dialog for repository path"""
         directory = QFileDialog.getExistingDirectory(
-            self, 
-            "Select Repository Directory", 
+            self,
+            "Select Repository Directory",
             self.repo_path.text() or os.path.expanduser("~")
         )
         if directory:
             self.repo_path.setText(directory)
-    
+
     def browse_temp_path(self):
         """Open directory dialog for temporary files folder"""
         directory = QFileDialog.getExistingDirectory(
-            self, 
-            "Select Temporary Files Folder", 
+            self,
+            "Select Temporary Files Folder",
             self.temp_path.text() or os.path.expanduser("~")
         )
         if directory:
             self.temp_path.setText(directory)
-    
+
     def browse_fits_viewer(self):
         """Open file dialog for FITS viewer executable"""
         file_path, _ = QFileDialog.getOpenFileName(

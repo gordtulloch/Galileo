@@ -16,7 +16,6 @@ import argparse
 import logging
 import os
 import sys
-from typing import List
 
 
 
@@ -39,7 +38,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     return logging.getLogger(__name__)
 
 
-def _iter_inputs(path_or_file: str, glob_pattern: str) -> List[str]:
+def _iter_inputs(path_or_file: str, glob_pattern: str) -> list[str]:
     if os.path.isdir(path_or_file):
         import glob
 

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,10 +16,10 @@ if TYPE_CHECKING:
 
 
 async def solve_fits(
-    fits_path: "Path | str",
+    fits_path: Path | str,
     astap_executable: str = "",
-) -> "SolveResult":
+) -> SolveResult:
     """Plate-solve *fits_path* with ASTAP and write the WCS back to the file."""
-    from galileo.platesolve import PlateSolver, SolverParams
+    from galileo.platesolve import PlateSolver
     solver = PlateSolver(backend="astap", executable=astap_executable)
     return await solver.solve(fits_path)

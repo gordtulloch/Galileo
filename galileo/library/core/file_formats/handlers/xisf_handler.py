@@ -6,7 +6,6 @@ Converts XISF files to FITS format for processing.
 
 import os
 import logging
-from typing import List
 from ....types import FilePath
 from ....exceptions import FileProcessingError
 from .. import BaseFileFormatHandler
@@ -16,15 +15,15 @@ logger = logging.getLogger(__name__)
 
 class XisfFileHandler(BaseFileFormatHandler):
     """Handler for XISF format files."""
-    
-    def _get_supported_extensions(self) -> List[str]:
+
+    def _get_supported_extensions(self) -> list[str]:
         """XISF file extensions."""
         return ['.xisf']
-    
+
     def get_format_name(self) -> str:
         """Format name for XISF files."""
         return "XISF"
-    
+
     def _process_file_internal(self, file_path: FilePath) -> FilePath:
         """
         Convert XISF file to FITS format.
@@ -46,15 +45,15 @@ class XisfFileHandler(BaseFileFormatHandler):
                 file_path=str(file_path),
                 error_code="XISF_SUPPORT_MISSING"
             )
-        
+
         try:
             # Create output path
             fits_path = os.path.splitext(file_path)[0] + '.fits'
-            
+
             # Convert the file
             converter = XISFConverter()
             success = converter.convert_to_fits(file_path, fits_path)
-            
+
             if success:
                 logger.info(f"Successfully converted XISF to FITS: {fits_path}")
                 return fits_path
@@ -64,7 +63,7 @@ class XisfFileHandler(BaseFileFormatHandler):
                     file_path=str(file_path),
                     error_code="XISF_CONVERSION_FAILED"
                 )
-                
+
         except FileProcessingError:
             # Re-raise our custom exceptions
             raise

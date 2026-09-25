@@ -5,7 +5,6 @@ import logging
 import os
 import shutil
 import sys
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +106,8 @@ def decompress_to(src_path: str, dest_path: str) -> bool:
 
         if lower.endswith('.gz'):
             # stream-decompress
-            with gzip.open(src_path, 'rb') as f_in:
-                with open(dest_path, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            with gzip.open(src_path, 'rb') as f_in, open(dest_path, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
             return True
 
         # Unknown compression

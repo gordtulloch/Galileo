@@ -4,7 +4,6 @@
 """HIST — Session History & Statistics (TC-HIST-010 … TC-HIST-040)."""
 
 import pytest
-from unittest.mock import MagicMock
 
 
 @pytest.fixture

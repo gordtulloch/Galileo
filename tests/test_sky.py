@@ -4,7 +4,7 @@
 """SKY — Sky Atlas / Targets (TC-SKY-010 … TC-SKY-120)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 @pytest.fixture

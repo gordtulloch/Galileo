@@ -4,7 +4,7 @@ import csv
 import math
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 from astropy.io import fits
@@ -63,7 +63,7 @@ def _instrumental_mag(flux: float) -> float:
     return -2.5 * _safe_log10(float(flux))
 
 
-def _load_fits_image(path: str) -> Tuple[np.ndarray, fits.Header]:
+def _load_fits_image(path: str) -> tuple[np.ndarray, fits.Header]:
     with fits.open(path, memmap=False) as hdul:
         hdu = hdul[0]
         data = np.asarray(hdu.data, dtype=float)
@@ -152,8 +152,8 @@ def aperture_photometry_sep(
 
 def run_aperture_photometry(
     fits_path: str,
-    options: Optional[PhotometryOptions] = None,
-) -> List[dict]:
+    options: PhotometryOptions | None = None,
+) -> list[dict]:
     """Run simple automated aperture photometry on a FITS image.
 
     Returns a list of dict rows suitable for CSV export.
@@ -209,7 +209,7 @@ def run_aperture_photometry(
     flux_raw = np.asarray(flux_raw, dtype=float)
 
     # Local background median from annulus; net flux = raw - (bkg_median * area)
-    bkg_medians: List[float] = []
+    bkg_medians: list[float] = []
     for xi, yi in zip(x, y):
         bkg_medians.append(
             _annulus_median_background(
@@ -238,7 +238,7 @@ def run_aperture_photometry(
     except Exception:
         pass
 
-    rows: List[dict] = []
+    rows: list[dict] = []
     for idx in range(len(x)):
         rows.append(
             {

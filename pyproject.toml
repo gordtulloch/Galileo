@@ -13,6 +13,49 @@ filterwarnings = [
     "ignore::PendingDeprecationWarning",
 ]
 
+[tool.ruff]
+target-version = "py311"   # matches requires-python below; lets UP suggest PEP 604/585 syntax safely
+line-length = 120          # close to the codebase's actual p99 (269 lines currently exceed 120, none by much)
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9", "F",  # pyflakes/pycodestyle core (ruff's own baseline)
+    "W",                     # pycodestyle warnings
+    "UP",                    # pyupgrade — modernize to what py311 actually supports (154 findings: Optional/List/Dict-style hints)
+    "B",                     # flake8-bugbear — real-bug patterns (mutable defaults, loop-var closures, etc.); not previously measured, worth the first-run noise
+    "SIM",                   # flake8-simplify — genuine simplifications found (collapsible-if, needless-bool, ...)
+    "C4",                    # flake8-comprehensions — cheap comprehension/collection cleanups
+    "RUF",                   # ruff-native rules — unsorted __all__, mutable class defaults, stale `# noqa`, ...
+    "DTZ",                   # flake8-datetimez — tz-naive datetime.now()/utcnow() (71 findings); a real correctness risk
+                              # for an app that schedules observations by UTC, not just a style nit
+    "LOG",                   # flake8-logging — root-logger calls (232 findings, almost all in commands/ and
+                              # library/core/auto_calibration.py) bypass this app's per-module logging entirely
+    "G",                     # flake8-logging-format — companion to LOG (logging.exception vs exc_info, etc.)
+    "ASYNC",                 # flake8-async — blocking calls inside async def; this app's whole concurrency model
+                              # (CLAUDE.md's qasync bridge) depends on async functions never blocking the UI loop
+    "TRY",                   # tryceratops — exception-handling idioms (vanilla Exception, verbose raise/log)
+    "PIE",                   # flake8-pie — misc cleanups (unnecessary placeholders, redundant startswith calls)
+    "FURB",                  # refurb — modern-idiom suggestions
+    "S",                     # flake8-bandit — fast, editor-time version of the same checks `bandit` runs deeper;
+                              # already caught real findings here (weak MD5/SHA1, shell=True, paramiko AutoAddPolicy)
+]
+ignore = [
+    "TRY003",   # "avoid long messages outside the exception class" — this project raises with contextual
+                # f-strings throughout (see galileo/exceptions.py callers); not worth a mass refactor to comply
+    "TRY300", "TRY301",  # "move the success return into an else:" / "extract raise into its own function" —
+                # pure control-flow restructuring with no behavior change; ~140 combined hits, not worth the diff
+    "G004",     # f-strings in logging calls — this is the codebase's established logging style (~1,000 call
+                # sites); the lazy %-formatting alternative is a real project-wide style change, not a fix
+    "RUF001", "RUF002", "RUF003",  # "ambiguous unicode character" — this app deliberately prints real
+                # arcsecond/degree symbols (″, °) and em dashes in user-facing strings; not a typo to flag
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",     # `assert` is the normal pytest idiom, not a security smell, in test files
+    "S105", "S106", "S107",  # fixture credentials/tokens are fake test doubles, not hardcoded secrets
+]
+
 [project]
 name = "galileo"
 version = "0.1.0"

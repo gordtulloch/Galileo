@@ -29,7 +29,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import List, Optional
 
 
 
@@ -56,13 +55,13 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     return logging.getLogger(__name__)
 
 
-def _is_precalibrated_session(telescope: Optional[str], instrument: Optional[str]) -> bool:
+def _is_precalibrated_session(telescope: str | None, instrument: str | None) -> bool:
     telescope = telescope or ''
     instrument = instrument or ''
     return ('itelescope' in telescope.lower()) or ('seestar' in instrument.lower())
 
 
-def _light_type_values() -> List[str]:
+def _light_type_values() -> list[str]:
     # Database values vary across imports; include common variants.
     return ['Light Frame', 'LIGHT', 'LIGHT FRAME']
 
@@ -86,7 +85,7 @@ def _get_stack_candidates(session_id: str, precalibrated: bool):
     )
 
 
-def _select_best_reference_path(files) -> Optional[str]:
+def _select_best_reference_path(files) -> str | None:
     best_ref_path = None
     best_hfr = None
 
@@ -108,7 +107,7 @@ def _select_best_reference_path(files) -> Optional[str]:
     return best_ref_path
 
 
-def _default_output_path(session, file_paths: List[str], object_name: str) -> str:
+def _default_output_path(session, file_paths: list[str], object_name: str) -> str:
     from galileo.library.core.utils import sanitize_filesystem_name
 
     out_dir = os.path.dirname(file_paths[0])
@@ -130,7 +129,7 @@ def _session_is_unstacked(session_id: str) -> bool:
     return q.count() == 0
 
 
-def _mark_files_stacked(file_ids: List[str]) -> None:
+def _mark_files_stacked(file_ids: list[str]) -> None:
     from galileo.library.models import fitsFile as FitsFileModel
 
     if not file_ids:
@@ -236,7 +235,7 @@ def stack_session(session_id: str, dry_run: bool, logger: logging.Logger, photom
     return True
 
 
-def _select_target_sessions(mode_all: bool, mode_unstacked: bool, single_session: Optional[str]):
+def _select_target_sessions(mode_all: bool, mode_unstacked: bool, single_session: str | None):
     from galileo.library.models import fitsSession as FitsSessionModel
 
     # Light sessions are sessions that are not auto-calibration and not named Bias/Dark/Flat.

@@ -81,7 +81,7 @@ class IndiAdapter(DeviceBackend):
 
     def __init__(
         self,
-        device_type: "DeviceCategory | str" = DeviceCategory.CAMERA,
+        device_type: DeviceCategory | str = DeviceCategory.CAMERA,
         host: str = "localhost",
         port: int = 7624,
         device_name: str = "",
@@ -213,7 +213,7 @@ class IndiAdapter(DeviceBackend):
         """Return device names available on the INDI server for *category*."""
         return await self._list_devices(category)
 
-    async def _list_devices(self, category: "DeviceCategory | None" = None) -> list[str]:
+    async def _list_devices(self, category: DeviceCategory | None = None) -> list[str]:
         category = category if isinstance(category, DeviceCategory) else self._category
         mask = _INTERFACE_MASK.get(category, 0)
         if not mask:
@@ -271,10 +271,10 @@ class IndiAdapter(DeviceBackend):
         found = self._require(prop)
         self._c().send_switch(self.device_name, prop, {n: n == element for n in found.elements})
 
-    def _driver_info(self, client: "ic.IndiClient | None" = None) -> dict[str, "str | None"]:
+    def _driver_info(self, client: ic.IndiClient | None = None) -> dict[str, str | None]:
         client = client or self._client
 
-        def txt(element: str) -> "str | None":
+        def txt(element: str) -> str | None:
             return client.get_text(self.device_name, "DRIVER_INFO", element) if client else None
 
         return {
@@ -284,7 +284,7 @@ class IndiAdapter(DeviceBackend):
             "driver_version": txt("DRIVER_VERSION"),
         }
 
-    async def get_driver_info(self) -> dict[str, "str | None"]:
+    async def get_driver_info(self) -> dict[str, str | None]:
         """The device's ``DRIVER_INFO`` property. A driver defines it as soon
         as the server knows the device, before anything connects it, so when
         this adapter isn't connected it borrows the server connection just
@@ -295,7 +295,7 @@ class IndiAdapter(DeviceBackend):
             return {}
         return await asyncio.to_thread(self._read_driver_info_sync)
 
-    def _read_driver_info_sync(self) -> dict[str, "str | None"]:
+    def _read_driver_info_sync(self) -> dict[str, str | None]:
         client = ic.acquire_client(self.host, self.port)
         try:
             if self.device_name not in client.device_names():
@@ -360,7 +360,7 @@ class IndiCameraAdapter(IndiAdapter):
             pixel_size_y=self._num("CCD_INFO", "CCD_PIXEL_SIZE_Y") or self._num("CCD_INFO", "CCD_PIXEL_SIZE") or 0.0,
         )
 
-    def _sw_or_num_gain(self) -> "float | None":
+    def _sw_or_num_gain(self) -> float | None:
         # Older drivers expose gain through the generic CCD_CONTROLS vector.
         return self._num("CCD_CONTROLS", "Gain")
 
@@ -713,9 +713,9 @@ class IndiFocuserAdapter(IndiAdapter):
         self.temperature = 15.0
         self.is_moving = False
         self.is_settling = False
-        self.max_increment: "int | None" = None
-        self.max_step: "int | None" = None
-        self.absolute: "bool | None" = None
+        self.max_increment: int | None = None
+        self.max_step: int | None = None
+        self.absolute: bool | None = None
         self.temp_comp = False
 
     def _on_connected(self) -> None:
@@ -740,7 +740,7 @@ class IndiFocuserAdapter(IndiAdapter):
         if temp is not None:
             self.temperature = temp
 
-    def _temp_comp_property(self) -> "ic.IndiProperty | None":
+    def _temp_comp_property(self) -> ic.IndiProperty | None:
         # INDI has no standard temperature-compensation property; drivers that
         # support it (MoonLite, Pegasus, ...) each name it differently.
         return self._client.find_property(

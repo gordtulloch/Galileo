@@ -31,9 +31,9 @@ class ObservingLocation:
     timezone: str = "UTC"
 
     def __post_init__(self) -> None:
-        self._horizon: "HorizonProfile | None" = None
+        self._horizon: HorizonProfile | None = None
 
-    def set_horizon(self, profile: "HorizonProfile") -> None:
+    def set_horizon(self, profile: HorizonProfile) -> None:
         self._horizon = profile
 
 
@@ -113,7 +113,7 @@ def altitude_chart(
     dec_deg: float,
     location: ObservingLocation,
     date_str: str | None = None,
-    horizon: "HorizonProfile | None" = None,
+    horizon: HorizonProfile | None = None,
     resolution_min: int = 30,
 ) -> dict:
     """Return altitude over one night for a target at (*ra_deg*, *dec_deg*).
@@ -170,11 +170,11 @@ def altitude_chart(
 
 
 def altitude_charts_batch(
-    targets: "list[tuple[float, float]]",
+    targets: list[tuple[float, float]],
     location: ObservingLocation,
     date_str: str | None = None,
     resolution_min: int = 30,
-) -> "list[dict]":
+) -> list[dict]:
     """:func:`altitude_chart` for many *targets* (a list of ``(ra_deg,
     dec_deg)`` pairs) at once, via a single vectorized astropy transform
     instead of one per target — each individual call otherwise rebuilds the
@@ -261,9 +261,9 @@ def rise_transit_set(
     dec_deg: float,
     location: ObservingLocation,
     date_str: str | None = None,
-    horizon: "HorizonProfile | None" = None,
+    horizon: HorizonProfile | None = None,
     threshold_deg: float = 0.0,
-    chart: "dict | None" = None,
+    chart: dict | None = None,
 ) -> dict:
     """Rise, transit (highest-altitude), and set times for a target over one
     night (SKY-030's rise/transit/set display), read off the same altitude
@@ -330,7 +330,7 @@ def rise_transit_set(
     return {"rise": rise, "transit": times[transit_idx], "set": set_}
 
 
-def moon_position_deg(location: ObservingLocation, date_str: str | None = None) -> "tuple[float, float] | None":
+def moon_position_deg(location: ObservingLocation, date_str: str | None = None) -> tuple[float, float] | None:
     """The Moon's apparent RA/Dec (degrees) as seen from *location* at local
     midnight on *date_str* (today, when not given) — a single reference-time
     position (not tracked across the night), matching :func:`altitude_chart`'s

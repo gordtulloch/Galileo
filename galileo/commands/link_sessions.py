@@ -42,9 +42,9 @@ def setup_logging(verbose=False):
     log_dir = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    
+
     log_file = os.path.join(log_dir, 'linksessions.log')
-    
+
     # Configure logging - using central library.log
     log_level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -55,7 +55,7 @@ def setup_logging(verbose=False):
             logging.StreamHandler(sys.stdout)
         ]
     )
-    
+
     return logging.getLogger(__name__)
 
 def main():
@@ -70,17 +70,17 @@ Examples:
     python -m galileo.commands.link_sessions -c config.ini      # Link sessions with custom config file
         """
     )
-    
+
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose logging')
     parser.add_argument('-c', '--config', default=None,
                         help='Path to configuration file (default: library.ini in the Galileo config folder)')
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     logger = setup_logging(args.verbose)
-    
+
     try:
         logger.info("Starting session linking process")
         logger.info(f"Config file: {get_config_path()}")
@@ -94,39 +94,39 @@ Examples:
         # Initialize database
         logger.info("Setting up database connection")
         setup_database()
-        
+
         # Create processing instance
         logger.info("Initializing FITS processing")
         fits_processor = fitsProcessing()
-        
+
         # Define progress callback for non-interactive mode
         def progress_callback(current, total, session_name):
             if args.verbose:
                 logger.info(f"Processing session {current}/{total}: {session_name}")
             return True  # Always continue in non-interactive mode
-        
+
         # Run session linking
         logger.info("Starting session linking...")
         start_time = datetime.now()
-        
+
         updated_sessions = fits_processor.linkSessions(progress_callback=progress_callback)
-        
+
         end_time = datetime.now()
         processing_time = end_time - start_time
-        
+
         # Log results
         logger.info(f"Session linking completed in {processing_time}")
         logger.info(f"Successfully linked {len(updated_sessions)} light sessions with calibration sessions")
-        
+
         if args.verbose and updated_sessions:
             logger.info("Updated session IDs:")
             for session_id in updated_sessions:
                 logger.info(f"  - {session_id}")
-        
-        print(f"Session linking completed successfully!")
+
+        print("Session linking completed successfully!")
         print(f"Updated {len(updated_sessions)} light sessions with calibration links")
         print(f"Processing time: {processing_time}")
-        
+
     except KeyboardInterrupt:
         logger.info("Session linking cancelled by user")
         print("Session linking cancelled by user")

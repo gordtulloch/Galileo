@@ -17,7 +17,7 @@ import pytest
 
 from galileo import derotation as d
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 
 # --- time and coordinates ----------------------------------------------------

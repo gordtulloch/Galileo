@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-from typing import Optional
 
 
 
@@ -37,7 +36,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     return logging.getLogger(__name__)
 
 
-def _is_precalibrated_session(telescope: Optional[str], instrument: Optional[str]) -> bool:
+def _is_precalibrated_session(telescope: str | None, instrument: str | None) -> bool:
     telescope = telescope or ""
     instrument = instrument or ""
     return ("itelescope" in telescope.lower()) or ("seestar" in instrument.lower())
@@ -84,7 +83,6 @@ def main() -> int:
         from galileo.library.models import fitsSession as FitsSessionModel, fitsFile as FitsFileModel
         from galileo.library.core.master_manager import get_master_manager
         from galileo.library.core.utils import sanitize_filesystem_name
-        import configparser
         from galileo.library.core.auto_calibration import calibrate_light_frames
 
         session_id = str(args.session)
