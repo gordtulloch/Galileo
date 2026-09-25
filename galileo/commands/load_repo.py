@@ -162,13 +162,14 @@ def setup_logging(verbose=False):
 
 def validate_paths(source_folder, repo_folder):
     """Validate source and repository folder paths."""
+    logger = logging.getLogger(__name__)
     if not os.path.exists(source_folder):
         raise FileNotFoundError(f"Source folder does not exist: {source_folder}")
 
     if not os.path.exists(repo_folder):
         try:
             os.makedirs(repo_folder, exist_ok=True)
-            logging.info(f"Created repository folder: {repo_folder}")
+            logger.info(f"Created repository folder: {repo_folder}")
         except Exception as e:
             raise RuntimeError(f"Cannot create repository folder {repo_folder}: {e}")
 

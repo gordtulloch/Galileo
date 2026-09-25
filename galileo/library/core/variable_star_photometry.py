@@ -143,6 +143,7 @@ def match_catalog_to_sources(
             ra = float(star["ra"])
             dec = float(star["dec"])
         except Exception:
+            logger.debug("Skipping catalog entry with unusable ra/dec: %r", star, exc_info=True)
             continue
         sky = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
         x, y = wcs.world_to_pixel(sky)

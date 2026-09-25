@@ -555,10 +555,10 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
         # Add bias master hash for verification
         try:
             with open(bias_master, 'rb') as f:
-                bias_hash = hashlib.md5(f.read()).hexdigest()[:16]  # Truncate for FITS
+                bias_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]  # Truncate for FITS
             header['BIASMD5'] = (bias_hash, 'MD5 checksum of bias master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash bias master %s", bias_master, exc_info=True)
 
     if dark_master and os.path.exists(dark_master):
         master_count += 1
@@ -568,10 +568,10 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
 
         try:
             with open(dark_master, 'rb') as f:
-                dark_hash = hashlib.md5(f.read()).hexdigest()[:16]
+                dark_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]
             header['DARKMD5'] = (dark_hash, 'MD5 checksum of dark master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash dark master %s", dark_master, exc_info=True)
 
     if flat_master and os.path.exists(flat_master):
         master_count += 1
@@ -581,10 +581,10 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
 
         try:
             with open(flat_master, 'rb') as f:
-                flat_hash = hashlib.md5(f.read()).hexdigest()[:16]
+                flat_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]
             header['FLATMD5'] = (flat_hash, 'MD5 checksum of flat master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash flat master %s", flat_master, exc_info=True)
 
     # Summary information
     header['CALMAST'] = (master_count, 'Number of master frames used')
@@ -607,8 +607,8 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
         header['DATARANG'] = (float(p99 - p1), 'Dynamic range (99th - 1st percentile)')
         header['DATAP01'] = (float(p1), '1st percentile pixel value')
         header['DATAP99'] = (float(p99), '99th percentile pixel value')
-    except:
-        pass
+    except Exception:
+        logger.debug("Could not compute dynamic-range percentiles", exc_info=True)
 
     # =================================================================
     # PROCESSING METADATA

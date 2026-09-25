@@ -135,6 +135,7 @@ def set_itelescope_password(password: str) -> None:
             try:
                 keyring.delete_password(_KEYRING_SERVICE, _KEYRING_ITELESCOPE_USER)
             except Exception:
-                pass  # nothing was stored, or this backend can't delete — either way, nothing to do
+                # nothing was stored, or this backend can't delete — either way, nothing to do
+                logger.debug("Could not delete iTelescope password from the OS keychain", exc_info=True)
     except Exception:
         logger.warning("Could not save the iTelescope password to the OS keychain", exc_info=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import math
 import os
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from collections.abc import Sequence
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
+
+logger = logging.getLogger(__name__)
 
 
 try:
@@ -236,7 +239,7 @@ def run_aperture_photometry(
             ra_deg = np.array(world.ra.deg, dtype=float)
             dec_deg = np.array(world.dec.deg, dtype=float)
     except Exception:
-        pass
+        logger.debug("Could not derive RA/Dec from WCS header", exc_info=True)
 
     rows: list[dict] = []
     for idx in range(len(x)):

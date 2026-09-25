@@ -116,7 +116,7 @@ class SmartTelescopeManager:
                 sock.settimeout(timeout)
                 result = sock.connect_ex((str(ip), 445))
                 return result == 0
-        except:
+        except Exception:
             return False
 
     def check_ftp_port(self, ip, timeout=2):
@@ -126,7 +126,7 @@ class SmartTelescopeManager:
                 sock.settimeout(timeout)
                 result = sock.connect_ex((str(ip), 21))
                 return result == 0
-        except:
+        except Exception:
             return False
 
     def get_hostname(self, ip):
@@ -134,7 +134,7 @@ class SmartTelescopeManager:
         try:
             hostname = socket.gethostbyaddr(str(ip))[0]
             return hostname
-        except:
+        except Exception:
             return None
 
     def is_target_device(self, hostname, telescope_type):
@@ -585,7 +585,7 @@ class SmartTelescopeManager:
                     file_path = f"{folder_name}/{file}"
                     try:
                         size = ftp.size(file)
-                    except:
+                    except Exception:
                         size = 0
 
                     fits_files.append({
@@ -651,7 +651,7 @@ class SmartTelescopeManager:
                 if file.lower().endswith('.fits') or file.lower().endswith('.fit'):
                     try:
                         size = ftp.size(file)
-                    except:
+                    except Exception:
                         size = 0
 
                     fits_files.append({
@@ -682,7 +682,7 @@ class SmartTelescopeManager:
                 if file.startswith('tele_') and (file.lower().endswith('.fits') or file.lower().endswith('.fit')):
                     try:
                         size = ftp.size(file)
-                    except:
+                    except Exception:
                         size = 0
 
                     fits_files.append({
@@ -775,13 +775,13 @@ class SmartTelescopeManager:
                             ftps.cwd('/')
                             ftps.cwd(current_path)
                         size = ftps.size(filename)
-                    except:
+                    except Exception:
                         size = 0
 
                     # Extract date from LIST output if possible
                     try:
                         date_str = f"{parts[5]} {parts[6]} {parts[7]}"
-                    except:
+                    except Exception:
                         date_str = "Unknown"
 
                     fits_files.append({
@@ -826,7 +826,7 @@ class SmartTelescopeManager:
                 return parts[0].title()
 
         except Exception:
-            pass
+            logger.debug("Could not derive object name from filename", exc_info=True)
 
         return "Unknown"
 
@@ -1147,10 +1147,10 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
         # Add master frame checksum for verification
         try:
             with open(bias_master, 'rb') as f:
-                bias_hash = hashlib.md5(f.read()).hexdigest()[:16]  # Truncate for FITS
+                bias_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]  # Truncate for FITS
             header['BIASMD5'] = (bias_hash, 'MD5 checksum of bias master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash bias master %s", bias_master, exc_info=True)
 
         # Try to get master frame creation info
         try:
@@ -1161,8 +1161,8 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
                     header['BIASMADE'] = (bias_header['CREATED'], 'Bias master creation date')
                 if 'NFRAMES' in bias_header:
                     header['BIASN'] = (bias_header['NFRAMES'], 'Number of frames in bias master')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not read creation info from bias master %s", bias_master, exc_info=True)
 
     if dark_master and os.path.exists(dark_master):
         master_count += 1
@@ -1171,10 +1171,10 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
 
         try:
             with open(dark_master, 'rb') as f:
-                dark_hash = hashlib.md5(f.read()).hexdigest()[:16]
+                dark_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]
             header['DARKMD5'] = (dark_hash, 'MD5 checksum of dark master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash dark master %s", dark_master, exc_info=True)
 
         try:
             from astropy.io import fits
@@ -1186,8 +1186,8 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
                     header['DARKN'] = (dark_header['NFRAMES'], 'Number of frames in dark master')
                 if 'EXPTIME' in dark_header:
                     header['DARKEXP'] = (dark_header['EXPTIME'], 'Dark master exposure time')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not read creation info from dark master %s", dark_master, exc_info=True)
 
     if flat_master and os.path.exists(flat_master):
         master_count += 1
@@ -1196,10 +1196,10 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
 
         try:
             with open(flat_master, 'rb') as f:
-                flat_hash = hashlib.md5(f.read()).hexdigest()[:16]
+                flat_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:16]
             header['FLATMD5'] = (flat_hash, 'MD5 checksum of flat master (truncated)')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not hash flat master %s", flat_master, exc_info=True)
 
         try:
             from astropy.io import fits
@@ -1211,8 +1211,8 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
                     header['FLATN'] = (flat_header['NFRAMES'], 'Number of frames in flat master')
                 if 'FILTER' in flat_header:
                     header['FLATFILT'] = (flat_header['FILTER'], 'Flat master filter')
-        except:
-            pass
+        except Exception:
+            logger.debug("Could not read creation info from flat master %s", flat_master, exc_info=True)
 
     header['NMASTERS'] = (master_count, 'Number of master frames applied')
 
@@ -1565,5 +1565,5 @@ def get_session_master_frames(session_id):
         return masters
 
     except Exception as e:
-        logging.exception(f"Failed to get master frames for session {session_id}: {e}")
+        logger.exception(f"Failed to get master frames for session {session_id}: {e}")
         return {"dark": None, "flat": None, "bias": None}

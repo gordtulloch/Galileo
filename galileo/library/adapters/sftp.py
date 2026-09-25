@@ -37,7 +37,12 @@ class SftpImageRetriever:
         try:
             import paramiko  # type: ignore[import]
             client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.load_system_host_keys()
+            # WarningPolicy, not AutoAddPolicy: an unknown host key is still accepted (this is a
+            # LAN-only smart-telescope/server use case with no interactive prompt available here),
+            # but it's logged rather than trusted silently, so key rotation or a MITM on an
+            # unfamiliar host is at least visible instead of being cached with zero trace.
+            client.set_missing_host_key_policy(paramiko.WarningPolicy())
             connect_kwargs = {"hostname": host, "username": self.user, "timeout": 10}
             if self.key_path:
                 connect_kwargs["key_filename"] = self.key_path

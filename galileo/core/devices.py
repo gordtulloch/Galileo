@@ -15,7 +15,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities
 from galileo.core.monitor import ConnectionMonitor as ConnectionMonitor  # re-exported so importers find it here
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Concurrency model identifier consumed by NFR-PERF-020 test.
+# Concurrency model identifier (SDD §2.3); the executor itself is galileo.core.compute.
 CONCURRENCY_MODEL = "ProcessPoolExecutor"
 
 
@@ -55,6 +55,7 @@ class DeviceBackend(ABC):
     registered_backends: dict[DeviceCategory, list[type[DeviceBackend]]] = defaultdict(list)
 
     backend: str = "unknown"  # overridden by each concrete adapter class
+    device_type: str  # every concrete adapter sets this in __init__ (its DeviceCategory.value)
 
     @abstractmethod
     async def connect(self) -> None:
@@ -93,6 +94,80 @@ class DeviceBackend(ABC):
         details return an empty dict.
         """
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Category-specific backend protocols
+#
+# Every concrete adapter (galileo.adapters.indi / .alpaca / a plugin) implements
+# far more than the four DeviceBackend abstract methods — the category-specific
+# surface (start_exposure, slew_to_coordinates, move_to_angle, ...) that its
+# *Controller counterpart below actually drives. DeviceBackend itself can't
+# declare those, since they differ per category; these Protocols let each
+# *Controller narrow its self._backend to what it actually calls, via cast(),
+# without weakening DeviceBackend's own shared abstract interface.
+# ---------------------------------------------------------------------------
+
+class _CameraBackend(Protocol):
+    async def start_exposure(self, *, duration: float, gain: int, offset: int,
+                              binning: int, frame_type: str) -> None: ...
+    async def abort_exposure(self) -> None: ...
+    async def set_temperature(self, temp_c: float) -> None: ...
+    def get_temperature(self) -> float: ...
+    def get_cooler_power(self) -> float: ...
+    async def warm_up(self) -> None: ...
+
+
+class _MountBackend(Protocol):
+    async def slew_to_coordinates(self, *, ra: float, dec: float) -> None: ...
+    async def abort_slew(self) -> None: ...
+    async def park(self) -> None: ...
+    async def unpark(self) -> None: ...
+    async def set_tracking(self, *, enabled: bool) -> None: ...
+    async def set_tracking_rate(self, *, ra_rate_arcsec_s: float, dec_rate_arcsec_s: float) -> None: ...
+    async def sync_to_coordinates(self, *, ra: float, dec: float) -> None: ...
+
+
+class _FilterWheelBackend(Protocol):
+    filter_names: list[str]
+    async def move_to(self, position: int) -> None: ...
+
+
+class _FocuserBackend(Protocol):
+    position: int
+    temperature: float
+    async def move_to(self, position: int) -> None: ...
+    async def move_by(self, steps: int) -> None: ...
+
+
+class _RotatorBackend(Protocol):
+    async def move_to_angle(self, angle: float) -> None: ...
+
+
+class _FlatPanelBackend(Protocol):
+    async def open_cover(self) -> None: ...
+    async def close_cover(self) -> None: ...
+    async def set_brightness(self, level: int) -> None: ...
+
+
+class _WeatherBackend(Protocol):
+    async def poll(self) -> None: ...
+
+
+class _DomeBackend(Protocol):
+    async def slew_to_azimuth(self, azimuth: float) -> None: ...
+    async def open_shutter(self) -> None: ...
+    async def close_shutter(self) -> None: ...
+    async def park(self) -> None: ...
+
+
+class _SafetyMonitorBackend(Protocol):
+    is_safe: bool
+    async def poll(self) -> None: ...
+
+
+class _SwitchBackend(Protocol):
+    async def set_switch(self, name: str, value: object) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -242,28 +317,28 @@ class CameraController(DeviceController):
 
     async def start_exposure(self, duration: float, gain: int = 0, offset: int = 0,
                               binning: int = 1, frame_type: str = "Light") -> None:
-        await self._backend.start_exposure(
+        await cast(_CameraBackend, self._backend).start_exposure(
             duration=duration, gain=gain, offset=offset,
             binning=binning, frame_type=frame_type,
         )
 
     async def abort_exposure(self) -> None:
-        await self._backend.abort_exposure()
+        await cast(_CameraBackend, self._backend).abort_exposure()
 
     async def get_image_array(self):
         return await self._backend.get_image_array()
 
     async def set_target_temperature(self, temp_c: float) -> None:
-        await self._backend.set_temperature(temp_c)
+        await cast(_CameraBackend, self._backend).set_temperature(temp_c)
 
     def get_temperature(self) -> float:
-        return self._backend.get_temperature()
+        return cast(_CameraBackend, self._backend).get_temperature()
 
     def get_cooler_power(self) -> float:
-        return self._backend.get_cooler_power()
+        return cast(_CameraBackend, self._backend).get_cooler_power()
 
     async def warm_up(self) -> None:
-        await self._backend.warm_up()
+        await cast(_CameraBackend, self._backend).warm_up()
 
 
 class MountController(DeviceController):
@@ -282,28 +357,28 @@ class MountController(DeviceController):
         }
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
-        await self._backend.slew_to_coordinates(ra=ra, dec=dec)
+        await cast(_MountBackend, self._backend).slew_to_coordinates(ra=ra, dec=dec)
 
     async def abort_slew(self) -> None:
-        await self._backend.abort_slew()
+        await cast(_MountBackend, self._backend).abort_slew()
 
     async def park(self) -> None:
-        await self._backend.park()
+        await cast(_MountBackend, self._backend).park()
 
     async def unpark(self) -> None:
-        await self._backend.unpark()
+        await cast(_MountBackend, self._backend).unpark()
 
     async def set_tracking(self, enabled: bool) -> None:
-        await self._backend.set_tracking(enabled=enabled)
+        await cast(_MountBackend, self._backend).set_tracking(enabled=enabled)
 
     async def set_tracking_rate(self, ra_rate_arcsec_s: float, dec_rate_arcsec_s: float) -> None:
-        await self._backend.set_tracking_rate(
+        await cast(_MountBackend, self._backend).set_tracking_rate(
             ra_rate_arcsec_s=ra_rate_arcsec_s,
             dec_rate_arcsec_s=dec_rate_arcsec_s,
         )
 
     async def sync_to_coordinates(self, ra: float, dec: float) -> None:
-        await self._backend.sync_to_coordinates(ra=ra, dec=dec)
+        await cast(_MountBackend, self._backend).sync_to_coordinates(ra=ra, dec=dec)
 
 
 class FilterWheelController(DeviceController):
@@ -314,11 +389,12 @@ class FilterWheelController(DeviceController):
         self._focus_offsets: dict[str, int] = {}
 
     def get_filter_names(self) -> list[str]:
-        return list(self._backend.filter_names)
+        return list(cast(_FilterWheelBackend, self._backend).filter_names)
 
     async def move_to_filter(self, filter_name: str) -> None:
-        idx = self._backend.filter_names.index(filter_name)
-        await self._backend.move_to(idx)
+        backend = cast(_FilterWheelBackend, self._backend)
+        idx = backend.filter_names.index(filter_name)
+        await backend.move_to(idx)
 
     def set_focus_offset(self, filter_name: str, offset_steps: int) -> None:
         self._focus_offsets[filter_name] = offset_steps
@@ -335,10 +411,10 @@ class FocuserController(DeviceController):
         self.backlash_steps = backlash_steps
 
     def get_position(self) -> int:
-        return int(self._backend.position)
+        return int(cast(_FocuserBackend, self._backend).position)
 
     def get_temperature(self) -> float:
-        return float(self._backend.temperature)
+        return float(cast(_FocuserBackend, self._backend).temperature)
 
     def _clamp_position(self, position: int) -> int:
         """Clamp *position* to the focuser's valid travel range, 0..MaxStep
@@ -370,16 +446,17 @@ class FocuserController(DeviceController):
 
     async def move_to(self, position: int) -> None:
         position = self._clamp_position(position)
+        backend = cast(_FocuserBackend, self._backend)
         if self.backlash_steps > 0:
             # Overshoot then return to apply backlash compensation
             overshoot = self._clamp_position(position - self.backlash_steps)
-            await self._backend.move_to(overshoot)
-        await self._backend.move_to(position)
+            await backend.move_to(overshoot)
+        await backend.move_to(position)
 
     async def move_by(self, steps: int) -> None:
         current = self.get_position()
         target = self._clamp_position(current + steps)
-        await self._backend.move_by(target - current)
+        await cast(_FocuserBackend, self._backend).move_by(target - current)
 
 
 class RotatorController(DeviceController):
@@ -392,20 +469,20 @@ class RotatorController(DeviceController):
         }
 
     async def move_to_angle(self, angle: float) -> None:
-        await self._backend.move_to_angle(angle)
+        await cast(_RotatorBackend, self._backend).move_to_angle(angle)
 
 
 class FlatPanelController(DeviceController):
     """Controls a flat panel (EQP-FP-010)."""
 
     async def open_cover(self) -> None:
-        await self._backend.open_cover()
+        await cast(_FlatPanelBackend, self._backend).open_cover()
 
     async def close_cover(self) -> None:
-        await self._backend.close_cover()
+        await cast(_FlatPanelBackend, self._backend).close_cover()
 
     async def set_brightness(self, level: int) -> None:
-        await self._backend.set_brightness(level)
+        await cast(_FlatPanelBackend, self._backend).set_brightness(level)
 
 
 class WeatherController(DeviceController):
@@ -416,7 +493,7 @@ class WeatherController(DeviceController):
         self.poll_interval_s = poll_interval_s
 
     async def poll(self) -> None:
-        await self._backend.poll()
+        await cast(_WeatherBackend, self._backend).poll()
 
     def get_readings(self) -> dict:
         b = self._backend
@@ -433,16 +510,16 @@ class DomeController(DeviceController):
     """Controls a dome device (EQP-DOME-010)."""
 
     async def slew_to_azimuth(self, azimuth: float) -> None:
-        await self._backend.slew_to_azimuth(azimuth)
+        await cast(_DomeBackend, self._backend).slew_to_azimuth(azimuth)
 
     async def open_shutter(self) -> None:
-        await self._backend.open_shutter()
+        await cast(_DomeBackend, self._backend).open_shutter()
 
     async def close_shutter(self) -> None:
-        await self._backend.close_shutter()
+        await cast(_DomeBackend, self._backend).close_shutter()
 
     async def park(self) -> None:
-        await self._backend.park()
+        await cast(_DomeBackend, self._backend).park()
 
     def get_status(self) -> dict:
         b = self._backend
@@ -474,8 +551,9 @@ class SafetyMonitorController(DeviceController):
         from galileo.bus import SafetyUnsafeEvent
         import datetime
 
-        await self._backend.poll()
-        new_safe = self._backend.is_safe
+        backend = cast(_SafetyMonitorBackend, self._backend)
+        await backend.poll()
+        new_safe = backend.is_safe
         new_expl = getattr(self._backend, "explanation", "")
 
         if not new_safe and (self._is_safe or new_expl != self._explanation):
@@ -520,4 +598,4 @@ class SwitchController(DeviceController):
         return list(getattr(self._backend, "switches", []))
 
     async def set_switch(self, name: str, value) -> None:
-        await self._backend.set_switch(name, value)
+        await cast(_SwitchBackend, self._backend).set_switch(name, value)

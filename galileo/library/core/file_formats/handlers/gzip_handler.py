@@ -72,7 +72,7 @@ class GzipFileHandler(BaseFileFormatHandler):
                     return output_path
         except Exception:
             # If stat fails, just proceed to decompress.
-            pass
+            logger.debug("Could not stat existing decompressed FITS %s", output_path, exc_info=True)
 
         try:
             logger.info(f"Decompressing gzip FITS: {file_path} -> {output_path}")

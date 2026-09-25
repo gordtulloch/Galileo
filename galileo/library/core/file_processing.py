@@ -129,7 +129,7 @@ class FileProcessor:
                             return master_ids
                     except Exception:
                         # Keep going on callback errors
-                        pass
+                        logger.debug("progress_callback raised for %s", file_path, exc_info=True)
 
                 try:
                     candidate_path = file_path

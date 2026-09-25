@@ -130,7 +130,7 @@ class Masters(BaseModel):
         if os.path.exists(master_path):
             file_size = os.path.getsize(master_path)
             with open(master_path, 'rb') as f:
-                file_hash = hashlib.md5(f.read()).hexdigest()
+                file_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
 
         def create_operation():
             return cls.create(
@@ -167,7 +167,7 @@ class Masters(BaseModel):
 
         if self.hash_value:
             with open(self.master_path, 'rb') as f:
-                current_hash = hashlib.md5(f.read()).hexdigest()
+                current_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
                 return current_hash == self.hash_value
 
         return True

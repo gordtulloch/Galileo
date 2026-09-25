@@ -153,7 +153,7 @@ class SessionsWidget(QWidget):
                     return os.path.dirname(p)
 
         except Exception:
-            pass
+            logger.debug("Could not determine a light-frame directory for the session", exc_info=True)
 
         return ''
 
@@ -760,7 +760,7 @@ class SessionsWidget(QWidget):
                     calibrated_hash = None
                     try:
                         with open(calibrated_path, 'rb') as f:
-                            calibrated_hash = hashlib.md5(f.read()).hexdigest()
+                            calibrated_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
                     except Exception as e:
                         logger.warning(f"Failed to hash calibrated file {calibrated_path}: {e}")
 
@@ -1062,6 +1062,7 @@ class SessionsWidget(QWidget):
                 try:
                     hfr_val = float(hfr)
                 except Exception:
+                    logger.debug("Skipping unusable HFR value %r for %s", hfr, p)
                     continue
                 if best_hfr is None or hfr_val < best_hfr:
                     best_hfr = hfr_val

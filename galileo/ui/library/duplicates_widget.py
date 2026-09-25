@@ -163,7 +163,7 @@ class DuplicatesWidget(QWidget):
                 self.delete_button.setEnabled(False)
 
         except Exception as e:
-            logging.exception(f"Error refreshing duplicates: {e!s}")
+            logger.exception(f"Error refreshing duplicates: {e!s}")
             if progress_dialog:
                 progress_dialog.close()
             self.info_label.setText(f"Error loading duplicates: {e!s}")
@@ -226,7 +226,7 @@ class DuplicatesWidget(QWidget):
                         deleted_count += 1
 
                     except Exception as e:
-                        logging.exception(f"Error deleting duplicate file {fits_file.fitsFileName}: {e!s}")
+                        logger.exception(f"Error deleting duplicate file {fits_file.fitsFileName}: {e!s}")
                         error_count += 1
 
             # Close progress dialog
@@ -245,7 +245,7 @@ class DuplicatesWidget(QWidget):
             self.refresh_duplicates()
 
         except Exception as e:
-            logging.exception(f"Error during duplicate deletion: {e!s}")
+            logger.exception(f"Error during duplicate deletion: {e!s}")
             if progress_dialog:
                 progress_dialog.close()
             QMessageBox.critical(

@@ -286,7 +286,7 @@ def _write_temp_fits(data, path: Path) -> None:
             data = np.zeros((100, 100), dtype=np.float32)
         fits.PrimaryHDU(data).writeto(path, overwrite=True)
     except Exception:
-        pass
+        logger.warning("Could not write temporary FITS file %s", path, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

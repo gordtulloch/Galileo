@@ -34,6 +34,8 @@ from datetime import datetime
 
 from galileo.commands._common import get_log_path
 
+logger = logging.getLogger(__name__)
+
 def setup_logging(verbose: bool = False) -> logging.Logger:
     """Setup logging to both console and library.log."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -99,6 +101,7 @@ def _select_best_reference_path(files) -> str | None:
         try:
             hfr_val = float(hfr)
         except Exception:
+            logger.debug("Skipping unusable HFR value %r for %s", hfr, p)
             continue
         if best_hfr is None or hfr_val < best_hfr:
             best_hfr = hfr_val

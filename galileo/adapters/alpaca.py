@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import socket
+import time
 from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
@@ -126,11 +127,19 @@ def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str
     macOS and Linux (with avahi/nss-mdns) resolve ``.local`` themselves, and
     that also works where ``zeroconf``'s compiled extension can't load (e.g.
     a Windows Application Control policy blocking its DLL).
+
+    Logs how long each lookup took and which resolver answered: every new
+    adapter resolves again, so this is a per-device cost of a Pier switch.
     """
+    start = time.perf_counter()
     try:
-        return socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        address = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
     except OSError:
         pass  # fall back to querying mDNS directly
+    else:
+        logger.info("Resolved %s to %s via the OS resolver in %.2fs", host, address, time.perf_counter() - start)
+        return address
+    os_secs = time.perf_counter() - start
 
     try:
         from zeroconf import AddressResolver, Zeroconf
@@ -155,6 +164,10 @@ def resolve_mdns_host_sync(host: str, timeout_ms: int = _MDNS_TIMEOUT_MS) -> str
         addresses = resolver.parsed_addresses()
         if not addresses:
             raise DeviceConnectionError(f"mDNS lookup for '{host}' returned no address.")
+        logger.info(
+            "Resolved %s to %s via zeroconf in %.2fs (OS resolver failed after %.2fs)",
+            host, addresses[0], time.perf_counter() - start, os_secs,
+        )
         return addresses[0]
     finally:
         zc.close()
@@ -537,7 +550,7 @@ class AlpacaCameraAdapter(AlpacaAdapter):
             info["sensor_name"] = await self._get("sensorname")
         except Exception:
             # SensorName is optional in the ASCOM spec — many drivers omit it.
-            pass
+            logger.debug("SensorName not available from %s", self.base_url)
         return info
 
 
@@ -841,7 +854,7 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
         try:
             self.temperature = float(await self._get("temperature"))
         except Exception:
-            pass
+            logger.debug("Temperature not available from %s", self.base_url)
 
     async def move_to(self, position: int) -> None:
         await self._put("move", Position=position)
@@ -853,7 +866,7 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
         try:
             self.is_moving = bool(await self._get("ismoving"))
         except Exception:
-            pass
+            logger.debug("IsMoving not available from %s", self.base_url)
 
     async def move_by(self, steps: int) -> None:
         if self.absolute is False:
@@ -910,12 +923,12 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
             status["temp_comp"] = bool(await self._get("tempcomp"))
         except Exception:
             # TempComp is only present when TempCompAvailable is True.
-            pass
+            logger.debug("TempComp not available from %s", self.base_url)
         try:
             status["temperature"] = float(await self._get("temperature"))
             self.temperature = status["temperature"]
         except Exception:
-            pass
+            logger.debug("Temperature not available from %s", self.base_url)
         return status
 
 

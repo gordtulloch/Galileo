@@ -4454,25 +4454,51 @@ class AppWindow:
         Pier, then re-attempt each page's auto-connect (currently the Camera
         and Focuser pages') for it. Reload happens for all pages first so a
         page that auto-connects never does so against another page's stale
-        fields."""
-        for state in self._device_pages.values():
-            state["reload"]()
-        for state in self._device_pages.values():
+        fields.
+
+        Every step is timed and the total logged, slowest steps first, since
+        a Pier switch blocks the UI until the last device has connected."""
+        import time
+
+        timings: list[tuple[str, float]] = []
+
+        def timed(label: str, fn) -> None:
+            start = time.perf_counter()
+            try:
+                fn()
+            finally:
+                timings.append((label, time.perf_counter() - start))
+
+        switch_start = time.perf_counter()
+        for page_id, state in self._device_pages.items():
+            timed(f"{page_id} reload", state["reload"])
+        for page_id, state in self._device_pages.items():
             autoconnect = state.get("autoconnect")
             if autoconnect is not None:
-                autoconnect()
-        self._refresh_optics_combo()
-        self._refresh_camera_combo()
-        self._refresh_imaging_filters()
-        self._refresh_current_object()
+                timed(f"{page_id} autoconnect", autoconnect)
+        timed("optics combo", self._refresh_optics_combo)
+        timed("camera combo", self._refresh_camera_combo)
+        timed("imaging filters", self._refresh_imaging_filters)
+        timed("current object", self._refresh_current_object)
         refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
         if refresh_star_atlas_site is not None:
-            refresh_star_atlas_site()
-        self._apply_horizon()
+            timed("star atlas site", refresh_star_atlas_site)
+        timed("horizon", self._apply_horizon)
         for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
             refresh = getattr(self, refresh_name, None)
             if refresh is not None:
-                refresh()
+                timed(refresh_name.strip("_").replace("_", " "), refresh)
+        self._log_pier_switch_timings(time.perf_counter() - switch_start, timings)
+
+    def _log_pier_switch_timings(self, total: float, timings: list[tuple[str, float]]) -> None:
+        """Log how long a Pier switch took, with its steps slowest first (steps
+        under 10 ms are left out of the INFO line and only logged at DEBUG)."""
+        pier_name = self._current_pier.name if self._current_pier is not None else None
+        ranked = sorted(timings, key=lambda t: t[1], reverse=True)
+        notable = ", ".join(f"{label} {secs:.2f}s" for label, secs in ranked if secs >= 0.01)
+        logger.info("Pier switch to %r took %.2fs: %s", pier_name, total, notable or "no step over 10 ms")
+        for label, secs in ranked:
+            logger.debug("Pier switch step %s: %.4fs", label, secs)
 
     def _apply_horizon(self) -> None:
         """Load the current Observatory's horizon obstruction table and hand it to
@@ -5242,14 +5268,31 @@ class AppWindow:
                     logger.exception("Could not load the camera's Bayer pattern")
             service.set_bayer_pattern(pattern, rebuild=rebuild)
 
-        def _debayer_toggled(checked: bool) -> None:
-            _use_camera_bayer_pattern(rebuild=False)
-            service.set_debayer(checked)
-            _refresh_preview()
-            if service.current_frame is not None:
+        # Debayer + stretch takes seconds on a large frame, so it renders on a worker thread
+        # (numpy releases the GIL, so a thread is enough — NFR-PERF-020). Each toggle starts a
+        # new render; the service drops any that finish after a newer toggle.
+        preview_renders: set = set()
+
+        def _preview_rendered(thread, rendered) -> None:
+            preview_renders.discard(thread)
+            if service.apply_preview(rendered):
+                _refresh_preview()
                 status_label.setText(service.debayer_note or "Debayer off.")
 
+        def _debayer_toggled(checked: bool) -> None:
+            _use_camera_bayer_pattern(rebuild=False)
+            service.set_debayer(checked, rebuild=False)
+            if service.current_frame is None:
+                return
+            status_label.setText("Debayering…" if checked else "Removing debayer…")
+            thread = _PreviewRenderThread(service, self._window)
+            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(t, rendered))
+            thread.finished.connect(thread.deleteLater)
+            preview_renders.add(thread)
+            thread.start()
+
         debayer_check.toggled.connect(_debayer_toggled)
+        self._imaging_preview_renders = preview_renders
         self._imaging_debayer_check = debayer_check
 
         def _orientation_choice_changed(*_args) -> None:
@@ -7367,6 +7410,26 @@ class _MosaicCaptureThread(QThread if _HAS_QT else object):
                 self.failed.emit(str(exc))
                 return
         self.finished_ok.emit()
+
+
+class _PreviewRenderThread(QThread if _HAS_QT else object):
+    """Re-renders the Imaging page's preview (debayer + stretch) off the Qt UI thread — seconds
+    of work on a large frame (NFR-PERF-020). ``rendered`` carries the result for
+    ``ImagingService.apply_preview``, or ``None`` if rendering failed."""
+
+    rendered = Signal(object) if _HAS_QT else None
+
+    def __init__(self, service, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            result = self._service.render_preview()
+        except Exception:
+            logger.exception("Could not render the Imaging preview")
+            result = None
+        self.rendered.emit(result)
 
 
 class _FilterMoveThread(QThread if _HAS_QT else object):

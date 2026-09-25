@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
 from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
+from galileo.core.compute import run_cpu
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ class AutofocusService:
         frame = await self._camera.get_image_array()
         if frame is None:
             return None
-        return _compute_regional_hfr(frame)
+        return await run_cpu(_compute_regional_hfr, frame)
 
     # --- Private helpers --------------------------------------------------
 
@@ -240,7 +240,9 @@ class AutofocusService:
         frame = await self._camera.get_image_array()
         if frame is None:
             return float("nan")
-        hfr, star_count = await asyncio.to_thread(_measure_stars, frame)
+        # SEP holds the GIL for the whole extraction (seconds on a full frame), so a thread would
+        # still freeze the UI — it has to be a worker process (NFR-PERF-020).
+        hfr, star_count = await run_cpu(_measure_stars, frame)
         logger.info("Focuser position %d: %d stars, HFR %.2f.", self._current_position, star_count, hfr)
         self._publish(FocusFrameEvent(
             source="autofocus", position=self._current_position, frame=frame,

@@ -16,6 +16,8 @@ from datetime import datetime
 from ..models import fitsFile, fitsSession, Masters
 from .master_manager import get_master_manager
 
+logger = logging.getLogger(__name__)
+
 
 def load_config(config_path: str | None = None) -> configparser.ConfigParser:
     """Load the library settings (``library.ini`` unless *config_path* is given)."""
@@ -43,16 +45,16 @@ def validate_database_access() -> bool:
         file_count = fitsFile.select().count()
         session_count = fitsSession.select().count()
 
-        logging.info(f"Database validation successful: {file_count} files, {session_count} sessions")
+        logger.info(f"Database validation successful: {file_count} files, {session_count} sessions")
 
         if file_count == 0:
-            logging.warning("No FITS files found in database")
+            logger.warning("No FITS files found in database")
             return False
 
         return True
 
     except Exception as e:
-        logging.exception(f"Database validation failed: {e}")
+        logger.exception(f"Database validation failed: {e}")
         return False
 
 
@@ -65,26 +67,26 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
         Dict with analysis results or None if failed
     """
     try:
-        logging.info("Starting analyze_calibration_opportunities function...")
+        logger.info("Starting analyze_calibration_opportunities function...")
 
         # Get auto-calibration config
         try:
             auto_cal_config = get_auto_calibration_config(config)
             min_files_per_master = min_files or auto_cal_config['min_files_per_master']
-            logging.info(f"Config loaded: min_files_per_master = {min_files_per_master}")
+            logger.info(f"Config loaded: min_files_per_master = {min_files_per_master}")
         except Exception as e:
-            logging.exception(f"Error getting auto-calibration config: {e}")
+            logger.exception(f"Error getting auto-calibration config: {e}")
             raise
 
-        logging.info("Starting calibration opportunity analysis...")
-        logging.info(f"Using minimum files per master: {min_files_per_master} (config default: {auto_cal_config['min_files_per_master']})")
+        logger.info("Starting calibration opportunity analysis...")
+        logger.info(f"Using minimum files per master: {min_files_per_master} (config default: {auto_cal_config['min_files_per_master']})")
 
         if progress_callback:
             progress_callback(10, "Analyzing current master frame status...")
 
         # Get current master frame status
         try:
-            logging.debug("Querying Masters table...")
+            logger.debug("Querying Masters table...")
             masters = Masters.select()
             master_stats = {
                 'total': masters.count(),
@@ -92,9 +94,9 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
                 'dark': masters.where(Masters.master_type == 'dark').count(),
                 'flat': masters.where(Masters.master_type == 'flat').count(),
             }
-            logging.info(f"Master stats retrieved: {master_stats}")
+            logger.info(f"Master stats retrieved: {master_stats}")
         except Exception as e:
-            logging.exception(f"Error querying Masters table: {e}")
+            logger.exception(f"Error querying Masters table: {e}")
             # Continue without masters info
             master_stats = {'total': 0, 'bias': 0, 'dark': 0, 'flat': 0}
 
@@ -106,12 +108,12 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
 
         master_stats['total_size_gb'] = total_size / (1024**3)
 
-        logging.info("Current master frame status:")
-        logging.info(f"  - Total masters: {master_stats['total']}")
-        logging.info(f"  - Bias masters: {master_stats['bias']}")
-        logging.info(f"  - Dark masters: {master_stats['dark']}")
-        logging.info(f"  - Flat masters: {master_stats['flat']}")
-        logging.info(f"  - Total file size: {master_stats['total_size_gb']:.1f} GB")
+        logger.info("Current master frame status:")
+        logger.info(f"  - Total masters: {master_stats['total']}")
+        logger.info(f"  - Bias masters: {master_stats['bias']}")
+        logger.info(f"  - Dark masters: {master_stats['dark']}")
+        logger.info(f"  - Flat masters: {master_stats['flat']}")
+        logger.info(f"  - Total file size: {master_stats['total_size_gb']:.1f} GB")
 
         if progress_callback:
             progress_callback(30, "Scanning for calibration sessions...")
@@ -123,7 +125,7 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
             query = query.where(fitsSession.fitsSessionId == session_id)
 
         sessions = list(query)
-        logging.info(f"Found {len(sessions)} total calibration sessions")
+        logger.info(f"Found {len(sessions)} total calibration sessions")
 
         if progress_callback:
             progress_callback(50, "Analyzing master creation opportunities...")
@@ -164,26 +166,26 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
             progress_callback(80, "Generating analysis report...")
 
         # Log opportunities
-        logging.info("\n=== MASTER CREATION OPPORTUNITIES ===")
+        logger.info("\n=== MASTER CREATION OPPORTUNITIES ===")
 
         total_opportunities = 0
         for cal_type in ['BIAS', 'DARK', 'FLAT']:
             sessions_list = opportunities[cal_type]
             total_opportunities += len(sessions_list)
 
-            logging.info(f"\n{cal_type} Sessions:")
-            logging.info(f"  Sessions with {min_files_per_master}+ files: {len(sessions_list)}")
+            logger.info(f"\n{cal_type} Sessions:")
+            logger.info(f"  Sessions with {min_files_per_master}+ files: {len(sessions_list)}")
 
             for i, session_info in enumerate(sessions_list[:5]):  # Show first 5
-                logging.info(f"    {i+1}. Session {session_info['session_id']}: {session_info['file_count']} files")
-                logging.info(f"       {session_info['telescope']}, {session_info['instrument']}, {session_info['date']}")
+                logger.info(f"    {i+1}. Session {session_info['session_id']}: {session_info['file_count']} files")
+                logger.info(f"       {session_info['telescope']}, {session_info['instrument']}, {session_info['date']}")
 
             if len(sessions_list) > 5:
-                logging.info(f"    ... and {len(sessions_list)-5} more sessions")
+                logger.info(f"    ... and {len(sessions_list)-5} more sessions")
 
-        logging.info(f"\nTotal opportunities: {total_opportunities} sessions ready for master creation")
-        logging.info("To create these masters, run:")
-        logging.info("  python AutoCalibration.py -o masters -v")
+        logger.info(f"\nTotal opportunities: {total_opportunities} sessions ready for master creation")
+        logger.info("To create these masters, run:")
+        logger.info("  python AutoCalibration.py -o masters -v")
 
         if progress_callback:
             progress_callback(100, "Analysis complete")
@@ -196,7 +198,7 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
         }
 
     except Exception as e:
-        logging.exception(f"Error analyzing calibration opportunities: {e}")
+        logger.exception(f"Error analyzing calibration opportunities: {e}")
         return None
 
 
@@ -220,15 +222,15 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
         auto_cal_config = get_auto_calibration_config(config)
         min_files_per_master = auto_cal_config['min_files_per_master']
 
-        logging.info("Starting master frame creation...")
+        logger.info("Starting master frame creation...")
 
         if session_id:
-            logging.info(f"Processing specific session: {session_id}")
+            logger.info(f"Processing specific session: {session_id}")
         else:
-            logging.info("Creating masters for all viable calibration sessions...")
+            logger.info("Creating masters for all viable calibration sessions...")
 
         if dry_run:
-            logging.info("DRY RUN MODE - No actual master frames will be created")
+            logger.info("DRY RUN MODE - No actual master frames will be created")
 
         # Get master manager
         master_manager = get_master_manager()
@@ -264,10 +266,10 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
                     viable_sessions.append(session)
 
         if not viable_sessions:
-            logging.warning("No viable sessions found for master creation")
+            logger.warning("No viable sessions found for master creation")
             return False
 
-        logging.info(f"Found {len(viable_sessions)} sessions ready for master creation")
+        logger.info(f"Found {len(viable_sessions)} sessions ready for master creation")
 
         created_count = 0
         total_sessions = len(viable_sessions)
@@ -297,13 +299,13 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
                 existing_master = master_manager.find_matching_master(session_data, session.cal_type)
 
                 if existing_master:
-                    logging.info(f"Master {session.cal_type} already exists for session {session.fitsSessionId}, skipping: {os.path.basename(existing_master.master_path)}")
+                    logger.info(f"Master {session.cal_type} already exists for session {session.fitsSessionId}, skipping: {os.path.basename(existing_master.master_path)}")
                     continue
 
-            logging.info(f"Processing session {session.fitsSessionId} for {session.cal_type} master ({file_count} files)")
+            logger.info(f"Processing session {session.fitsSessionId} for {session.cal_type} master ({file_count} files)")
 
             if dry_run:
-                logging.info(f"DRY RUN: Would create {session.cal_type} master from {file_count} files")
+                logger.info(f"DRY RUN: Would create {session.cal_type} master from {file_count} files")
                 created_count += 1
                 continue
 
@@ -327,27 +329,27 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
                 )
 
                 if master_path:
-                    logging.info(f"Created {session.cal_type} master: {master_path}")
+                    logger.info(f"Created {session.cal_type} master: {master_path}")
                     created_count += 1
                 else:
-                    logging.warning(f"Failed to create {session.cal_type} master for session {session.fitsSessionId}")
+                    logger.warning(f"Failed to create {session.cal_type} master for session {session.fitsSessionId}")
 
             except Exception as e:
-                logging.exception(f"Error creating master for session {session.fitsSessionId}: {e}")
+                logger.exception(f"Error creating master for session {session.fitsSessionId}: {e}")
                 continue
 
         if progress_callback:
             progress_callback(100, f"Master creation complete - {created_count} masters created")
 
         skipped_count = total_sessions - created_count
-        logging.info(f"Master frame creation complete. Created {created_count} masters")
+        logger.info(f"Master frame creation complete. Created {created_count} masters")
         if skipped_count > 0 and not dry_run:
-            logging.info(f"Skipped {skipped_count} sessions (masters already exist). Use --force to recreate.")
+            logger.info(f"Skipped {skipped_count} sessions (masters already exist). Use --force to recreate.")
 
         return True
 
     except Exception as e:
-        logging.exception(f"Error creating master frames: {e}")
+        logger.exception(f"Error creating master frames: {e}")
         return False
 
 
@@ -369,21 +371,21 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
     try:
         from .light_calibration import calibrate_session_lights, find_light_sessions_for_calibration, get_calibration_statistics
 
-        logging.info("Starting light frame calibration...")
+        logger.info("Starting light frame calibration...")
         if force_recalibrate:
-            logging.info("Force recalibration enabled - will recalibrate already-calibrated frames")
+            logger.info("Force recalibration enabled - will recalibrate already-calibrated frames")
 
         if session_id:
-            logging.info(f"Processing specific session: {session_id}")
+            logger.info(f"Processing specific session: {session_id}")
         else:
-            logging.info("Calibrating all light sessions with available masters...")
+            logger.info("Calibrating all light sessions with available masters...")
 
         if dry_run:
-            logging.info("DRY RUN MODE - No actual calibration will be performed")
+            logger.info("DRY RUN MODE - No actual calibration will be performed")
 
         # Get initial calibration statistics
         initial_stats = get_calibration_statistics()
-        logging.info(f"Initial calibration status: {initial_stats['calibrated_frames']}/{initial_stats['total_light_frames']} frames calibrated ({initial_stats['calibration_percentage']:.1f}%)")
+        logger.info(f"Initial calibration status: {initial_stats['calibrated_frames']}/{initial_stats['total_light_frames']} frames calibrated ({initial_stats['calibration_percentage']:.1f}%)")
 
         if progress_callback:
             progress_callback(10, "Finding light sessions...")
@@ -394,10 +396,10 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
         else:
             light_sessions = find_light_sessions_for_calibration()
 
-        logging.info(f"Found {len(light_sessions)} light frame sessions")
+        logger.info(f"Found {len(light_sessions)} light frame sessions")
 
         if not light_sessions:
-            logging.warning("No light frame sessions found")
+            logger.warning("No light frame sessions found")
             return False
 
         calibrated_count = 0
@@ -411,7 +413,7 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
                 progress_callback(base_progress, f"Calibrating session {i+1}/{total_sessions}...")
 
             if dry_run:
-                logging.info(f"DRY RUN: Would calibrate session {light_session_id}")
+                logger.info(f"DRY RUN: Would calibrate session {light_session_id}")
                 calibrated_count += 1
                 continue
 
@@ -432,18 +434,18 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
                     total_processed += result.get('calibrated_count', 0)
                     calibrated_count += 1
 
-                    logging.info(f"Session {light_session_id} calibration completed: "
+                    logger.info(f"Session {light_session_id} calibration completed: "
                                f"{result['calibrated_count']} processed, "
                                f"{result['skipped_count']} skipped, "
                                f"{result['error_count']} errors")
                 else:
                     error_count += 1
                     error_msg = result.get('error', 'Unknown error')
-                    logging.warning(f"Session {light_session_id} calibration failed: {error_msg}")
+                    logger.warning(f"Session {light_session_id} calibration failed: {error_msg}")
 
             except Exception as e:
                 error_count += 1
-                logging.exception(f"Error calibrating session {light_session_id}: {e}")
+                logger.exception(f"Error calibrating session {light_session_id}: {e}")
                 continue
 
         # Get final calibration statistics
@@ -453,16 +455,16 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
         if progress_callback:
             progress_callback(100, f"Calibration complete - {total_processed} frames processed")
 
-        logging.info("Light frame calibration complete:")
-        logging.info(f"  - Sessions processed: {calibrated_count}/{total_sessions}")
-        logging.info(f"  - Frames calibrated: {frames_calibrated}")
-        logging.info(f"  - Sessions with errors: {error_count}")
-        logging.info(f"  - Final status: {final_stats['calibrated_frames']}/{final_stats['total_light_frames']} frames calibrated ({final_stats['calibration_percentage']:.1f}%)")
+        logger.info("Light frame calibration complete:")
+        logger.info(f"  - Sessions processed: {calibrated_count}/{total_sessions}")
+        logger.info(f"  - Frames calibrated: {frames_calibrated}")
+        logger.info(f"  - Sessions with errors: {error_count}")
+        logger.info(f"  - Final status: {final_stats['calibrated_frames']}/{final_stats['total_light_frames']} frames calibrated ({final_stats['calibration_percentage']:.1f}%)")
 
         return True
 
     except Exception as e:
-        logging.exception(f"Error calibrating light frames: {e}")
+        logger.exception(f"Error calibrating light frames: {e}")
         return False
 
 
@@ -518,7 +520,7 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
         True if successful, False otherwise
     """
     try:
-        logging.info("Starting enhanced quality assessment with SEP star detection...")
+        logger.info("Starting enhanced quality assessment with SEP star detection...")
 
         # Import the enhanced quality analyzer
         from .enhanced_quality import EnhancedQualityAnalyzer
@@ -528,14 +530,14 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
 
         # Get files to analyze
         if session_id:
-            logging.info(f"Assessing specific session: {session_id}")
+            logger.info(f"Assessing specific session: {session_id}")
             files_to_analyze = list(fitsFile.select().where(
                 fitsFile.fitsFileSession == session_id,
                 fitsFile.fitsFileName.is_null(False),
                 fitsFile.fitsFileSoftDelete == False
             ))
         else:
-            logging.info("Assessing quality of all light frames...")
+            logger.info("Assessing quality of all light frames...")
             # Focus on light frames for quality assessment
             files_to_analyze = list(fitsFile.select().where(
                 fitsFile.fitsFileType == 'LIGHT FRAME',
@@ -544,10 +546,10 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
             ).limit(100))  # Limit to prevent overwhelming analysis
 
         if not files_to_analyze:
-            logging.warning("No files found for quality assessment")
+            logger.warning("No files found for quality assessment")
             return True
 
-        logging.info(f"Analyzing quality for {len(files_to_analyze)} files...")
+        logger.info(f"Analyzing quality for {len(files_to_analyze)} files...")
 
         # Analyze each file
         successful_analyses = 0
@@ -576,15 +578,15 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
 
                 if quality_results.get("status") == "success":
                     successful_analyses += 1
-                    logging.debug(f"Successfully analyzed {fits_file.fitsFileName}")
+                    logger.debug(f"Successfully analyzed {fits_file.fitsFileName}")
                 else:
                     failed_analyses += 1
-                    logging.warning(f"Failed to analyze {fits_file.fitsFileName}: {quality_results.get('message', 'Unknown error')}")
+                    logger.warning(f"Failed to analyze {fits_file.fitsFileName}: {quality_results.get('message', 'Unknown error')}")
 
             except Exception as e:
                 failed_analyses += 1
                 results_by_file.append((fits_file, {"status": "error", "message": str(e)}))
-                logging.exception(f"Error analyzing {fits_file.fitsFileName}: {e}")
+                logger.exception(f"Error analyzing {fits_file.fitsFileName}: {e}")
                 continue
 
         # Update progress
@@ -592,14 +594,14 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
             progress_callback(90, "Finalizing quality assessment...")
 
         # Log results
-        logging.info(f"Quality assessment completed: {successful_analyses} successful, {failed_analyses} failed")
+        logger.info(f"Quality assessment completed: {successful_analyses} successful, {failed_analyses} failed")
 
         if generate_report:
             try:
                 report_path = generate_quality_report(results_by_file, session_id=session_id)
-                logging.info(f"Quality report written to {report_path}")
+                logger.info(f"Quality report written to {report_path}")
             except Exception as e:
-                logging.exception(f"Error generating quality report: {e}")
+                logger.exception(f"Error generating quality report: {e}")
 
         if progress_callback:
             progress_callback(100, "Quality assessment complete")
@@ -608,7 +610,7 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
         return successful_analyses > 0
 
     except Exception as e:
-        logging.exception(f"Error performing quality assessment: {e}")
+        logger.exception(f"Error performing quality assessment: {e}")
         return False
 
 
@@ -621,7 +623,7 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: str | N
         True if successful, False otherwise
     """
     try:
-        logging.info("Starting complete auto-calibration workflow...")
+        logger.info("Starting complete auto-calibration workflow...")
 
         steps = [
             ("analyze", "Analyzing calibration opportunities"),
@@ -665,9 +667,9 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: str | N
         if progress_callback:
             progress_callback(100, "Complete workflow finished")
 
-        logging.info("Complete auto-calibration workflow finished successfully")
+        logger.info("Complete auto-calibration workflow finished successfully")
         return True
 
     except Exception as e:
-        logging.exception(f"Error in complete workflow: {e}")
+        logger.exception(f"Error in complete workflow: {e}")
         return False

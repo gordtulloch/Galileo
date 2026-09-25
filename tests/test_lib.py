@@ -1211,6 +1211,44 @@ def test_tc_lib_060_light_calibration_reports_progress_per_session(monkeypatch):
 
 @pytest.mark.requirement("TC-LIB-050")
 @pytest.mark.priority("MVP")
+def test_tc_lib_050_sigma_clipped_light_stack_keeps_its_edges(tmp_path):
+    """LIB-050: the sigma-clip stacker behind the masters also stacks registered lights
+    (``galileo.commands.stack``). Where frames drifted, a pixel covered by only some of them is
+    stacked from those, not discarded, and nothing is written as a garbage NaN-to-integer cast."""
+    import warnings
+    np = pytest.importorskip("numpy")
+    fits = pytest.importorskip("astropy.io.fits")
+    pytest.importorskip("astroalign")
+    from galileo.library.core.master_manager import MasterFrameManager
+
+    size = 200
+    stars = [(30, 40), (70, 120), (120, 60), (100, 100), (40, 150), (150, 150), (55, 80), (170, 30), (90, 170), (160, 90)]
+    yy, xx = np.mgrid[:size, :size]
+    paths = []
+    for i, (dy, dx) in enumerate([(0, 0), (6, -8), (-5, 7), (3, 4)]):       # the reference is unshifted
+        image = np.random.default_rng(i).normal(500, 5, (size, size))
+        for n, (y, x) in enumerate(stars):
+            image += (3000 + 400 * n) * np.exp(-((yy - y - dy) ** 2 + (xx - x - dx) ** 2) / (2 * 1.8 ** 2))
+        path = tmp_path / f"light_{i}.fits"
+        fits.PrimaryHDU(image.astype(np.uint16)).writeto(path)
+        paths.append(str(path))
+
+    out = tmp_path / "stack.fits"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)              # e.g. "invalid value encountered in cast"
+        assert MasterFrameManager.__new__(MasterFrameManager)._create_master_sigma_clip(paths, str(out), "light")
+
+    with fits.open(out) as hdul:
+        stacked, header = hdul[0].data.astype(float), hdul[0].header
+    # The reference covers every pixel, so every pixel has data — the drifted edges included.
+    assert header["NODATA"] == 0
+    assert 450 < stacked.min() and 480 < np.median(stacked[:, :8]) < 520 and 480 < np.median(stacked[-6:, :]) < 520
+    # And the stars are registered, not smeared: the brightest is as bright as in the reference.
+    assert stacked.max() == pytest.approx(float(fits.getdata(paths[0]).max()), rel=0.05)
+
+
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("MVP")
 def test_tc_lib_050_master_creation_reports_progress_within_each_sessions_band(library):
     """LIB-050: Master-frame creation reports each session's per-master progress inside that session's own share of the overall bar."""
     reported = []

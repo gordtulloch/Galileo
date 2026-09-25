@@ -52,6 +52,8 @@ import itertools
 
 from galileo.commands._common import get_log_path, load_config
 
+logger = logging.getLogger(__name__)
+
 def setup_logging(verbose=False):
     """Setup logging configuration"""
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -108,7 +110,7 @@ def validate_bucket_access(cloud_config):
         # Try to list objects to test access
         list(bucket.list_blobs(max_results=1))
 
-        logging.info(f"Successfully validated access to bucket: {bucket_name}")
+        logger.info(f"Successfully validated access to bucket: {bucket_name}")
         return True
 
     except Exception as e:
@@ -119,7 +121,7 @@ def perform_analysis(cloud_config):
     from galileo.library.services.gcs import list_gcs_bucket_files
     from galileo.library.database import setup_database; from galileo.library.models import fitsFile
 
-    logging.info("Starting cloud storage analysis...")
+    logger.info("Starting cloud storage analysis...")
 
     # Setup database
     setup_database()
@@ -158,7 +160,7 @@ def perform_analysis(cloud_config):
         sys.stdout.write("\r" + " " * 80 + "\r")
         sys.stdout.flush()
     else:
-        logging.info("Downloading file listing from cloud (this may take a while)...")
+        logger.info("Downloading file listing from cloud (this may take a while)...")
         worker.join()
 
     if listing_error is not None:
@@ -166,7 +168,7 @@ def perform_analysis(cloud_config):
     if cloud_files is None:
         cloud_files = []
 
-    logging.info(f"Found {len(cloud_files)} files in cloud storage")
+    logger.info(f"Found {len(cloud_files)} files in cloud storage")
 
     # Get database statistics
     total_db_files = fitsFile.select().count()
@@ -203,7 +205,7 @@ def perform_sync(cloud_config, sync_profile, auto_confirm=False):
     """Perform the actual sync operation"""
     from galileo.library.database import setup_database
 
-    logging.info(f"Starting {sync_profile} sync...")
+    logger.info(f"Starting {sync_profile} sync...")
 
     # Setup database
     setup_database()
@@ -262,10 +264,10 @@ def perform_sync(cloud_config, sync_profile, auto_confirm=False):
         else:
             raise ValueError(f"Unknown sync profile: {sync_profile}")
 
-        logging.info(f"{sync_profile.capitalize()} sync completed successfully")
+        logger.info(f"{sync_profile.capitalize()} sync completed successfully")
 
     except Exception as e:
-        logging.exception(f"Sync operation failed: {e}")
+        logger.exception(f"Sync operation failed: {e}")
         raise
 
 def perform_backup_sync_cli(cloud_config, repo_path):
@@ -307,7 +309,7 @@ def perform_backup_sync_cli(cloud_config, repo_path):
 
             # Check if file exists
             if not os.path.exists(full_path):
-                logging.warning(f"File not found: {full_path}")
+                logger.warning(f"File not found: {full_path}")
                 error_count += 1
                 continue
 
@@ -340,24 +342,24 @@ def perform_backup_sync_cli(cloud_config, repo_path):
                             os.remove(full_path)
                             print("    → Uploaded and deleted soft-deleted file after cloud verification")
                         else:
-                            logging.error(f"SAFETY CHECK FAILED: File not found in cloud, keeping local copy: {relative_path}")
+                            logger.error(f"SAFETY CHECK FAILED: File not found in cloud, keeping local copy: {relative_path}")
                             print("    → Uploaded (cloud verification failed, keeping local copy)")
                     except OSError as e:
-                        logging.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
+                        logger.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
                         print("    → Uploaded (failed to delete local copy)")
                     except Exception as e:
-                        logging.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                        logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
                         print("    → Uploaded (cloud verification failed, keeping local copy)")
                 elif "uploaded" in message.lower():
                     print("    → Uploaded")
                 else:
                     print("    → Already exists")
             else:
-                logging.error(f"Failed to upload {relative_path}: {message}")
+                logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
         except Exception as e:
-            logging.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
             error_count += 1
 
     print("\nBackup sync completed:")
@@ -410,7 +412,7 @@ def perform_ondemand_sync_cli(cloud_config, repo_path):
 
             # Check if file exists
             if not os.path.exists(full_path):
-                logging.warning(f"Soft-deleted file not found: {full_path}")
+                logger.warning(f"Soft-deleted file not found: {full_path}")
                 error_count += 1
                 continue
 
@@ -442,20 +444,20 @@ def perform_ondemand_sync_cli(cloud_config, repo_path):
                         deleted_count += 1
                         print("    → Uploaded and deleted after cloud verification")
                     else:
-                        logging.error(f"SAFETY CHECK FAILED: File not found in cloud, keeping local copy: {relative_path}")
+                        logger.error(f"SAFETY CHECK FAILED: File not found in cloud, keeping local copy: {relative_path}")
                         print("    → Uploaded (cloud verification failed, keeping local copy)")
                 except OSError as e:
-                    logging.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
+                    logger.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
                     print("    → Uploaded (failed to delete local copy)")
                 except Exception as e:
-                    logging.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                    logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
                     print("    → Uploaded (cloud verification failed, keeping local copy)")
             else:
-                logging.error(f"Failed to upload {relative_path}: {message}")
+                logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
         except Exception as e:
-            logging.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
             error_count += 1
 
     print("\nOn-demand sync completed:")
@@ -504,7 +506,7 @@ def perform_upload_without_deletion_cli(cloud_config, repo_path):
 
             # Check if file exists
             if not os.path.exists(full_path):
-                logging.warning(f"File not found: {full_path}")
+                logger.warning(f"File not found: {full_path}")
                 error_count += 1
                 continue
 
@@ -528,11 +530,11 @@ def perform_upload_without_deletion_cli(cloud_config, repo_path):
                 else:
                     print("    → Already exists")
             else:
-                logging.error(f"Failed to upload {relative_path}: {message}")
+                logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
         except Exception as e:
-            logging.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
             error_count += 1
 
     print("\nUpload phase completed:")
@@ -614,7 +616,7 @@ def perform_complete_sync_cli(cloud_config, repo_path):
                 # Get source folder from configuration
                 source_path = config.get('DEFAULT', 'source', fallback='')
                 if not source_path:
-                    logging.error("Source folder not configured. Cannot download files.")
+                    logger.error("Source folder not configured. Cannot download files.")
                     continue
 
                 # Ensure source folder exists
@@ -655,7 +657,7 @@ def perform_complete_sync_cli(cloud_config, repo_path):
                         print("    → Downloaded non-FITS file")
 
             except Exception as e:
-                logging.exception(f"Failed to download {cloud_file['name']}: {e}")
+                logger.exception(f"Failed to download {cloud_file['name']}: {e}")
 
     print("\nPhase 1 completed:")
     print(f"  Files downloaded: {downloaded_count}")
@@ -713,7 +715,7 @@ def main():
         print("\nOperation cancelled by user.")
         sys.exit(1)
     except Exception as e:
-        logging.exception(f"Error: {e}")
+        logger.exception(f"Error: {e}")
         sys.exit(1)
 
 if __name__ == '__main__':

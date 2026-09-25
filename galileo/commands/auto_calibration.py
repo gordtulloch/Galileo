@@ -81,6 +81,8 @@ from datetime import datetime
 
 from galileo.commands._common import get_log_path, load_config
 
+logger = logging.getLogger(__name__)
+
 def setup_logging(verbose=False, quiet=False, log_file=None):
     """Setup logging configuration"""
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -139,8 +141,8 @@ def get_auto_calibration_config(config):
 
         # Validate Siril path if specified
         if auto_cal_config['siril_path'] and not os.path.exists(auto_cal_config['siril_path']):
-            logging.warning(f"Siril path not found: {auto_cal_config['siril_path']}")
-            logging.warning("Master frame creation will use fallback methods")
+            logger.warning(f"Siril path not found: {auto_cal_config['siril_path']}")
+            logger.warning("Master frame creation will use fallback methods")
 
         return auto_cal_config
 
@@ -162,7 +164,7 @@ def validate_database_access():
         file_count = fitsFile.select().count()
         session_count = fitsSession.select().count()
 
-        logging.info(f"Database validation successful: {file_count} files, {session_count} sessions")
+        logger.info(f"Database validation successful: {file_count} files, {session_count} sessions")
         return True
 
     except DatabaseError:
@@ -178,7 +180,7 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
     from galileo.library.core.master_manager import get_master_manager
     from galileo.library.models import fitsSession as FitsSessionModel
 
-    logging.info("Starting calibration opportunity analysis...")
+    logger.info("Starting calibration opportunity analysis...")
 
     try:
         master_manager = get_master_manager()
@@ -187,20 +189,20 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
         configured_min_files = config.getint('DEFAULT', 'min_files_per_master', fallback=3)
         actual_min_files = min_files or configured_min_files
 
-        logging.info(f"Using minimum files per master: {actual_min_files} (config default: {configured_min_files})")
+        logger.info(f"Using minimum files per master: {actual_min_files} (config default: {configured_min_files})")
 
         # Get master statistics to show current state
         stats = master_manager.get_master_statistics()
 
-        logging.info("Current master frame status:")
-        logging.info(f"  - Total masters: {stats.get('total_masters', 0)}")
-        logging.info(f"  - Bias masters: {stats.get('by_type', {}).get('bias', 0)}")
-        logging.info(f"  - Dark masters: {stats.get('by_type', {}).get('dark', 0)}")
-        logging.info(f"  - Flat masters: {stats.get('by_type', {}).get('flat', 0)}")
-        logging.info(f"  - Total file size: {stats.get('total_size', 0) / (1024**3):.1f} GB")
+        logger.info("Current master frame status:")
+        logger.info(f"  - Total masters: {stats.get('total_masters', 0)}")
+        logger.info(f"  - Bias masters: {stats.get('by_type', {}).get('bias', 0)}")
+        logger.info(f"  - Dark masters: {stats.get('by_type', {}).get('dark', 0)}")
+        logger.info(f"  - Flat masters: {stats.get('by_type', {}).get('flat', 0)}")
+        logger.info(f"  - Total file size: {stats.get('total_size', 0) / (1024**3):.1f} GB")
 
         # Analyze calibration sessions for opportunities
-        logging.info("Scanning for calibration sessions...")
+        logger.info("Scanning for calibration sessions...")
 
         # Query calibration sessions
         calibration_types = ['bias', 'Bias', 'BIAS', 'dark', 'Dark', 'DARK', 'flat', 'Flat', 'FLAT']
@@ -241,36 +243,36 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
                 if can_create_master:
                     sessions_by_type[cal_type].append(session_info)
 
-        logging.info(f"Found {total_sessions} total calibration sessions")
+        logger.info(f"Found {total_sessions} total calibration sessions")
 
         # Report analysis results
-        logging.info("\n=== MASTER CREATION OPPORTUNITIES ===")
+        logger.info("\n=== MASTER CREATION OPPORTUNITIES ===")
 
         total_opportunities = 0
         for cal_type in ['bias', 'dark', 'flat']:
             viable_sessions = sessions_by_type[cal_type]
             total_opportunities += len(viable_sessions)
 
-            logging.info(f"\n{cal_type.upper()} Sessions:")
-            logging.info(f"  Sessions with {actual_min_files}+ files: {len(viable_sessions)}")
+            logger.info(f"\n{cal_type.upper()} Sessions:")
+            logger.info(f"  Sessions with {actual_min_files}+ files: {len(viable_sessions)}")
 
             if viable_sessions:
                 for i, session in enumerate(viable_sessions[:5], 1):  # Show first 5
-                    logging.info(f"    {i}. Session {session['session_id']}: {session['file_count']} files")
-                    logging.info(f"       {session['telescope']}, {session['instrument']}, {session['date']}")
+                    logger.info(f"    {i}. Session {session['session_id']}: {session['file_count']} files")
+                    logger.info(f"       {session['telescope']}, {session['instrument']}, {session['date']}")
 
                 if len(viable_sessions) > 5:
-                    logging.info(f"    ... and {len(viable_sessions) - 5} more sessions")
+                    logger.info(f"    ... and {len(viable_sessions) - 5} more sessions")
 
         if total_opportunities > 0:
-            logging.info(f"\nTotal opportunities: {total_opportunities} sessions ready for master creation")
-            logging.info("To create these masters, run:")
-            logging.info("  python -m galileo.commands.auto_calibration -o masters -v")
+            logger.info(f"\nTotal opportunities: {total_opportunities} sessions ready for master creation")
+            logger.info("To create these masters, run:")
+            logger.info("  python -m galileo.commands.auto_calibration -o masters -v")
         else:
-            logging.info(f"\nNo calibration sessions found with sufficient files ({actual_min_files}+ each)")
+            logger.info(f"\nNo calibration sessions found with sufficient files ({actual_min_files}+ each)")
 
         # Analyze light frames calibration status
-        logging.info("\n=== LIGHT FRAME CALIBRATION STATUS ===")
+        logger.info("\n=== LIGHT FRAME CALIBRATION STATUS ===")
 
         from galileo.library.models import fitsFile as FitsFileModel
 
@@ -289,16 +291,16 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
 
         uncalibrated_light_frames = total_light_frames - calibrated_light_frames
 
-        logging.info(f"Total light frames: {total_light_frames}")
-        logging.info(f"  - Calibrated: {calibrated_light_frames}")
-        logging.info(f"  - Uncalibrated: {uncalibrated_light_frames}")
+        logger.info(f"Total light frames: {total_light_frames}")
+        logger.info(f"  - Calibrated: {calibrated_light_frames}")
+        logger.info(f"  - Uncalibrated: {uncalibrated_light_frames}")
 
         if uncalibrated_light_frames > 0:
             calibration_percentage = (calibrated_light_frames / total_light_frames * 100) if total_light_frames > 0 else 0
-            logging.info(f"  - Calibration progress: {calibration_percentage:.1f}%")
+            logger.info(f"  - Calibration progress: {calibration_percentage:.1f}%")
 
         # Analyze soft-deleted frames
-        logging.info("\n=== SOFT-DELETED FRAMES ===")
+        logger.info("\n=== SOFT-DELETED FRAMES ===")
 
         # Count soft-deleted light frames
         soft_deleted_lights = FitsFileModel.select().where(
@@ -325,16 +327,16 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
         soft_deleted_calibration = soft_deleted_bias + soft_deleted_dark + soft_deleted_flat
         total_soft_deleted = soft_deleted_lights + soft_deleted_calibration
 
-        logging.info(f"Total soft-deleted frames: {total_soft_deleted}")
-        logging.info(f"  - Light frames: {soft_deleted_lights}")
-        logging.info(f"  - Calibration frames: {soft_deleted_calibration}")
-        logging.info(f"    • Bias frames: {soft_deleted_bias}")
-        logging.info(f"    • Dark frames: {soft_deleted_dark}")
-        logging.info(f"    • Flat frames: {soft_deleted_flat}")
+        logger.info(f"Total soft-deleted frames: {total_soft_deleted}")
+        logger.info(f"  - Light frames: {soft_deleted_lights}")
+        logger.info(f"  - Calibration frames: {soft_deleted_calibration}")
+        logger.info(f"    • Bias frames: {soft_deleted_bias}")
+        logger.info(f"    • Dark frames: {soft_deleted_dark}")
+        logger.info(f"    • Flat frames: {soft_deleted_flat}")
 
         if total_soft_deleted > 0:
-            logging.info("\nTo permanently remove soft-deleted frames:")
-            logging.info("  Use the Galileo GUI Duplicates widget to manage deleted files")
+            logger.info("\nTo permanently remove soft-deleted frames:")
+            logger.info("  Use the Galileo GUI Duplicates widget to manage deleted files")
 
         return {
             'total_opportunities': total_opportunities,
@@ -357,7 +359,7 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
         }
 
     except Exception as e:
-        logging.exception(f"Error analyzing calibration opportunities: {e}")
+        logger.exception(f"Error analyzing calibration opportunities: {e}")
         return {'error': str(e)}
 
 def create_master_frames(config, session_id=None, force=False, dry_run=False, verbose=False):
@@ -365,7 +367,7 @@ def create_master_frames(config, session_id=None, force=False, dry_run=False, ve
 
     from galileo.library.core.auto_calibration import create_master_frames as core_create_master_frames
 
-    logging.info("Starting master frame creation...")
+    logger.info("Starting master frame creation...")
 
     try:
         # Call the core library function with CLI progress callback
@@ -381,7 +383,7 @@ def create_master_frames(config, session_id=None, force=False, dry_run=False, ve
         return success
 
     except Exception as e:
-        logging.exception(f"Error in master frame creation: {e}")
+        logger.exception(f"Error in master frame creation: {e}")
         return False
 
 def clear_all_masters(config, dry_run=False):
@@ -398,20 +400,20 @@ def clear_all_masters(config, dry_run=False):
     from galileo.library.models import Masters
     import os
 
-    logging.info("Starting master frames cleanup...")
+    logger.info("Starting master frames cleanup...")
 
     try:
         if dry_run:
-            logging.info("DRY RUN: Showing what would be cleared")
+            logger.info("DRY RUN: Showing what would be cleared")
 
         # Get all masters from database
         all_masters = list(Masters.select())
 
         if not all_masters:
-            logging.info("No master frames found in database")
+            logger.info("No master frames found in database")
             return True
 
-        logging.info(f"Found {len(all_masters)} master frame(s) in database")
+        logger.info(f"Found {len(all_masters)} master frame(s) in database")
 
         # Get statistics before deletion
         master_stats = {}
@@ -429,26 +431,26 @@ def clear_all_masters(config, dry_run=False):
                 files_to_delete.append((master.master_path, file_size))
 
                 if dry_run:
-                    logging.info(f"  Would delete: {master.master_path} ({file_size:,} bytes)")
+                    logger.info(f"  Would delete: {master.master_path} ({file_size:,} bytes)")
             elif master.master_path:
-                logging.warning(f"  File not found: {master.master_path}")
+                logger.warning(f"  File not found: {master.master_path}")
 
         # Report what will be cleared
-        logging.info("Master frame summary:")
+        logger.info("Master frame summary:")
         for cal_type, count in master_stats.items():
-            logging.info(f"  - {cal_type.title()} masters: {count}")
-        logging.info(f"  - Total file size: {total_size / (1024*1024):.1f} MB")
-        logging.info(f"  - Files to delete: {len(files_to_delete)}")
+            logger.info(f"  - {cal_type.title()} masters: {count}")
+        logger.info(f"  - Total file size: {total_size / (1024*1024):.1f} MB")
+        logger.info(f"  - Files to delete: {len(files_to_delete)}")
 
         if dry_run:
-            logging.info("DRY RUN: No changes made")
+            logger.info("DRY RUN: No changes made")
             return True
 
         # Confirm deletion
-        logging.warning("This will permanently delete ALL master frames and their database records!")
-        logging.info("Database records to delete:")
+        logger.warning("This will permanently delete ALL master frames and their database records!")
+        logger.info("Database records to delete:")
         for master in all_masters:
-            logging.info(f"  - {master.master_id} ({master.master_type}, {master.creation_date})")
+            logger.info(f"  - {master.master_id} ({master.master_type}, {master.creation_date})")
 
         # Delete files first
         deleted_files = 0
@@ -459,9 +461,9 @@ def clear_all_masters(config, dry_run=False):
                 os.remove(file_path)
                 deleted_files += 1
                 deleted_size += file_size
-                logging.info(f"Deleted file: {file_path}")
+                logger.info(f"Deleted file: {file_path}")
             except Exception as e:
-                logging.warning(f"Failed to delete file {file_path}: {e}")
+                logger.warning(f"Failed to delete file {file_path}: {e}")
 
         # Delete database records
         deleted_records = 0
@@ -469,9 +471,9 @@ def clear_all_masters(config, dry_run=False):
             try:
                 master.delete_instance()
                 deleted_records += 1
-                logging.info(f"Deleted database record: {master.master_id}")
+                logger.info(f"Deleted database record: {master.master_id}")
             except Exception as e:
-                logging.warning(f"Failed to delete database record {master.master_id}: {e}")
+                logger.warning(f"Failed to delete database record {master.master_id}: {e}")
 
         # Clean up ALL files and directories in Masters folder
         masters_dir = os.path.join(config.get('DEFAULT', 'repo', fallback='./'), 'Masters')
@@ -487,10 +489,10 @@ def clear_all_masters(config, dry_run=False):
                         if os.path.isdir(item_path):
                             # Count files in subdirectory
                             file_count = sum(len(files) for _, _, files in os.walk(item_path))
-                            logging.info(f"  Would remove directory: {item_path} ({file_count} files)")
+                            logger.info(f"  Would remove directory: {item_path} ({file_count} files)")
                         else:
                             file_size = os.path.getsize(item_path)
-                            logging.info(f"  Would remove file: {item_path} ({file_size:,} bytes)")
+                            logger.info(f"  Would remove file: {item_path} ({file_size:,} bytes)")
 
                 if not dry_run:
                     # Remove all items in Masters directory
@@ -498,33 +500,33 @@ def clear_all_masters(config, dry_run=False):
                         try:
                             if os.path.isdir(item_path):
                                 shutil.rmtree(item_path)
-                                logging.info(f"Removed directory: {item_path}")
+                                logger.info(f"Removed directory: {item_path}")
                             else:
                                 os.remove(item_path)
-                                logging.info(f"Removed file: {item_path}")
+                                logger.info(f"Removed file: {item_path}")
                         except Exception as e:
-                            logging.warning(f"Failed to remove {item_path}: {e}")
+                            logger.warning(f"Failed to remove {item_path}: {e}")
 
             except Exception as e:
-                logging.warning(f"Error cleaning up master directories: {e}")
+                logger.warning(f"Error cleaning up master directories: {e}")
         else:
-            logging.warning(f"Masters directory not found: {masters_dir}")
+            logger.warning(f"Masters directory not found: {masters_dir}")
 
         # Report results
-        logging.info("Master frames cleanup completed:")
-        logging.info(f"  - Files deleted: {deleted_files}")
-        logging.info(f"  - Space freed: {deleted_size / (1024*1024):.1f} MB")
-        logging.info(f"  - Database records deleted: {deleted_records}")
+        logger.info("Master frames cleanup completed:")
+        logger.info(f"  - Files deleted: {deleted_files}")
+        logger.info(f"  - Space freed: {deleted_size / (1024*1024):.1f} MB")
+        logger.info(f"  - Database records deleted: {deleted_records}")
 
         if deleted_records == len(all_masters) and deleted_files == len(files_to_delete):
-            logging.info("All master frames successfully cleared!")
+            logger.info("All master frames successfully cleared!")
             return True
         else:
-            logging.warning("Some master frames could not be cleared. Check logs for details.")
+            logger.warning("Some master frames could not be cleared. Check logs for details.")
             return False
 
     except Exception as e:
-        logging.exception(f"Error clearing master frames: {e}")
+        logger.exception(f"Error clearing master frames: {e}")
         return False
 
 def perform_quality_assessment(config, session_id=None, generate_report=False):
@@ -532,7 +534,7 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
     from galileo.library.core.enhanced_quality import EnhancedQualityAnalyzer
     from galileo.library.models import fitsFile
 
-    logging.info("Starting enhanced quality assessment with SEP star detection...")
+    logger.info("Starting enhanced quality assessment with SEP star detection...")
 
     try:
         analyzer = EnhancedQualityAnalyzer()
@@ -555,10 +557,10 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
         files_to_assess = list(query)
 
         if not files_to_assess:
-            logging.info("No files found for quality assessment")
+            logger.info("No files found for quality assessment")
             return True
 
-        logging.info(f"Analyzing quality for {len(files_to_assess)} files...")
+        logger.info(f"Analyzing quality for {len(files_to_assess)} files...")
 
         # Analyze each file and update database
         successful = 0
@@ -567,7 +569,7 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
 
         for i, fits_file in enumerate(files_to_assess):
             try:
-                logging.info(f"[{i+1}/{len(files_to_assess)}] Analyzing {fits_file.fitsFileObject}...")
+                logger.info(f"[{i+1}/{len(files_to_assess)}] Analyzing {fits_file.fitsFileObject}...")
 
                 # Analyze and update database
                 results = analyzer.analyze_and_update_file(
@@ -584,18 +586,18 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
                     fwhm = results.get('avg_fwhm_arcsec', 'N/A')
                     stars = results.get('star_count', 'N/A')
                     snr = results.get('image_snr', 'N/A')
-                    logging.info(f"  [OK] FWHM: {fwhm}, Stars: {stars}, SNR: {snr:.1f}")
+                    logger.info(f"  [OK] FWHM: {fwhm}, Stars: {stars}, SNR: {snr:.1f}")
                 else:
                     failed += 1
-                    logging.warning(f"  [FAIL] Failed: {results.get('message', 'Unknown error')}")
+                    logger.warning(f"  [FAIL] Failed: {results.get('message', 'Unknown error')}")
 
             except Exception as e:
                 failed += 1
-                logging.exception(f"  [ERROR] Error: {e}")
+                logger.exception(f"  [ERROR] Error: {e}")
                 continue
 
         # Summary statistics
-        logging.info(f"\nQuality assessment complete: {successful} successful, {failed} failed")
+        logger.info(f"\nQuality assessment complete: {successful} successful, {failed} failed")
 
         if quality_metrics:
             # Calculate average metrics
@@ -604,16 +606,16 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
             star_counts = [m.get('star_count') for m in quality_metrics if m.get('star_count')]
 
             if fwhm_values:
-                logging.info(f"Average FWHM: {sum(fwhm_values)/len(fwhm_values):.2f} arcsec")
+                logger.info(f"Average FWHM: {sum(fwhm_values)/len(fwhm_values):.2f} arcsec")
             if snr_values:
-                logging.info(f"Average SNR: {sum(snr_values)/len(snr_values):.1f}")
+                logger.info(f"Average SNR: {sum(snr_values)/len(snr_values):.1f}")
             if star_counts:
-                logging.info(f"Average star count: {sum(star_counts)/len(star_counts):.0f}")
+                logger.info(f"Average star count: {sum(star_counts)/len(star_counts):.0f}")
 
         return True
 
     except Exception as e:
-        logging.exception(f"Error in quality assessment: {e}")
+        logger.exception(f"Error in quality assessment: {e}")
         return False
 
 def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
@@ -630,9 +632,9 @@ def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
 
     from galileo.library.core.auto_calibration import calibrate_light_frames as core_calibrate_light_frames
 
-    logging.info("Starting light frame calibration...")
+    logger.info("Starting light frame calibration...")
     if force:
-        logging.info("Force recalibration enabled - will recalibrate already-calibrated frames")
+        logger.info("Force recalibration enabled - will recalibrate already-calibrated frames")
 
     try:
         # Call the core library function with CLI progress callback
@@ -646,14 +648,14 @@ def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
 
         return success
     except Exception as e:
-        logging.exception(f"Error in light frame calibration: {e}")
+        logger.exception(f"Error in light frame calibration: {e}")
         return False
 
 def run_complete_workflow(config, session_id=None, force=False, dry_run=False):
     """Run the complete auto-calibration workflow"""
     from galileo.library.core import fitsProcessing
 
-    logging.info("Starting complete auto-calibration workflow...")
+    logger.info("Starting complete auto-calibration workflow...")
 
     try:
         processor = fitsProcessing()
@@ -664,28 +666,28 @@ def run_complete_workflow(config, session_id=None, force=False, dry_run=False):
         )
 
         if result.get('success', False):
-            logging.info("Auto-calibration workflow completed successfully")
+            logger.info("Auto-calibration workflow completed successfully")
 
             # Report results
             masters_created = result.get('masters_created', 0)
             opportunities_found = result.get('opportunities_detected', 0)
             errors = result.get('errors', [])
 
-            logging.info(f"Results: {masters_created} masters created, {opportunities_found} opportunities found")
+            logger.info(f"Results: {masters_created} masters created, {opportunities_found} opportunities found")
 
             if errors:
-                logging.warning(f"Workflow completed with {len(errors)} errors:")
+                logger.warning(f"Workflow completed with {len(errors)} errors:")
                 for error in errors:
-                    logging.warning(f"  - {error}")
+                    logger.warning(f"  - {error}")
 
             return True
         else:
             errors = result.get('errors', [])
-            logging.error(f"Auto-calibration workflow failed: {'; '.join(errors)}")
+            logger.error(f"Auto-calibration workflow failed: {'; '.join(errors)}")
             return False
 
     except Exception as e:
-        logging.exception(f"Error in complete workflow: {e}")
+        logger.exception(f"Error in complete workflow: {e}")
         return False
 
 def create_cli_progress_callback(operation_name):
@@ -708,12 +710,12 @@ def create_cli_progress_callback(operation_name):
             percent = int((current / total) * 100)
         else:
             # Just log the message
-            logging.info(f"{operation_name}: {message or total}")
+            logger.info(f"{operation_name}: {message or total}")
             return True
 
         # Only log every 10% to avoid spam
         if percent != last_percent and percent % 10 == 0:
-            logging.info(f"{operation_name}: {percent}% - {message}")
+            logger.info(f"{operation_name}: {percent}% - {message}")
             last_percent = percent
 
         return True  # Continue processing
@@ -767,10 +769,10 @@ def generate_quality_report(quality_results, config):
 
                 f.write("\n")
 
-        logging.info(f"Quality report saved to: {report_filename}")
+        logger.info(f"Quality report saved to: {report_filename}")
 
     except Exception as e:
-        logging.exception(f"Error generating quality report: {e}")
+        logger.exception(f"Error generating quality report: {e}")
 
 def main():
     """Main CLI entry point"""
@@ -810,10 +812,10 @@ def main():
     # Setup logging with library.log as default
     setup_logging(args.verbose, args.quiet, args.log_file)
 
-    logging.info("Galileo Auto-Calibration CLI Tool Starting...")
-    logging.info(f"Operation: {args.operation}")
+    logger.info("Galileo Auto-Calibration CLI Tool Starting...")
+    logger.info(f"Operation: {args.operation}")
     if args.dry_run:
-        logging.info("DRY RUN MODE - No changes will be made")
+        logger.info("DRY RUN MODE - No changes will be made")
 
     try:
         # Load configuration
@@ -849,14 +851,14 @@ def main():
                 success = run_complete_workflow(config, args.session, args.force, args.dry_run)
 
         if success:
-            logging.info("Auto-calibration operation completed successfully")
+            logger.info("Auto-calibration operation completed successfully")
             return 0
         else:
-            logging.error("Auto-calibration operation failed")
+            logger.error("Auto-calibration operation failed")
             return 1
 
     except KeyboardInterrupt:
-        logging.info("Operation cancelled by user")
+        logger.info("Operation cancelled by user")
         return 130
 
     except Exception as e:
@@ -865,7 +867,7 @@ def main():
 
         # Handle database errors gracefully without traceback
         if isinstance(e, DatabaseError):
-            logging.exception(f"Database error: {e}")
+            logger.exception(f"Database error: {e}")
             print(f"\n{'='*70}")
             print("DATABASE ERROR")
             print(f"{'='*70}")
@@ -874,7 +876,7 @@ def main():
             return 1
 
         # For other exceptions, show traceback if verbose
-        logging.exception(f"Fatal error: {e}")
+        logger.exception(f"Fatal error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()

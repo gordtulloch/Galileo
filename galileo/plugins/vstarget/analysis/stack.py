@@ -5,16 +5,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
+
+from galileo.core.compute import run_cpu
 
 logger = logging.getLogger(__name__)
 
 
 async def stack_frames(frames: list[Path], output_path: Path | str) -> Path:
-    """Mean-stack *frames* after star registration (VST-AN-030)."""
-    return await asyncio.to_thread(_stack_sync, frames, Path(output_path))
+    """Mean-stack *frames* after star registration (VST-AN-030).
+
+    Runs in core's CPU worker pool: astroalign holds the GIL for seconds per frame, so a thread
+    would freeze the UI (NFR-PERF-020). Only paths cross into the worker, not frames."""
+    return await run_cpu(_stack_sync, list(frames), Path(output_path))
 
 
 def _stack_sync(frames: list[Path], output_path: Path) -> Path:

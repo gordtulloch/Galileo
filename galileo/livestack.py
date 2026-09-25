@@ -5,7 +5,8 @@
 
 Each new frame is registered onto the first one of the run and added to a running mean, so the
 displayed image gains signal-to-noise as the sequence goes on instead of each exposure replacing
-the last. Domain core: plain numpy, no Qt and no file access.
+the last. Domain core: plain numpy, no Qt and no file access. Registration is the expensive step,
+so :meth:`LiveStacker.add_async` runs it in the CPU worker pool (galileo.core.compute).
 
 Registration prefers ``astroalign`` (a declared dependency), which solves a full affine transform
 and so copes with field rotation. Where it is not installed, or cannot find a transform for a
@@ -19,6 +20,8 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+
+from galileo.core.compute import run_cpu
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +136,25 @@ class LiveStacker:
 
         A frame whose shape doesn't match the reference — the camera's binning or region of
         interest changed mid-run — is rejected rather than stacked into nonsense."""
+        handled = self._take_without_registering(frame, exposure_s)
+        if handled is not None:
+            return handled
+        self._accumulate(*register(np.asarray(frame), self.reference), exposure_s)
+        return True
+
+    async def add_async(self, frame: np.ndarray | None, exposure_s: float = 0.0) -> bool:
+        """:meth:`add`, with the registration run in the CPU worker pool. astroalign holds the GIL
+        for seconds on a full frame, which would freeze the UI from any thread (NFR-PERF-020)."""
+        handled = self._take_without_registering(frame, exposure_s)
+        if handled is not None:
+            return handled
+        registered = await run_cpu(register, np.asarray(frame), self.reference)
+        self._accumulate(*registered, exposure_s)
+        return True
+
+    def _take_without_registering(self, frame: np.ndarray | None, exposure_s: float) -> bool | None:
+        """Deal with a frame that needs no registration: ``True`` if it became the reference,
+        ``False`` if it was refused, ``None`` if it still has to be registered and accumulated."""
         if frame is None:
             return False
         if self.reference is None:
@@ -146,14 +168,16 @@ class LiveStacker:
             logger.warning("Live stack: a %s frame does not match the stack's %s frames; not stacked.",
                            frame.shape, self.reference.shape)
             return False
+        return None
 
-        registered, valid, self.method = register(np.asarray(frame), self.reference)
+    def _accumulate(self, registered: np.ndarray, valid: np.ndarray, method: str, exposure_s: float) -> None:
+        """Add a registered frame to the running sum."""
+        self.method = method
         assert self._sum is not None and self._counts is not None
         self._sum += registered * (valid[..., None] if self._sum.ndim == 3 else valid)
         self._counts += valid
         self.frames += 1
         self.total_exposure_s += float(exposure_s)
-        return True
 
     @property
     def result(self) -> np.ndarray | None:

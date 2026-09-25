@@ -77,7 +77,7 @@ class FileHashCalculator:
             FileProcessingError: If file cannot be read
         """
         try:
-            hash_md5 = hashlib.md5()
+            hash_md5 = hashlib.md5(usedforsecurity=False)
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(self.buffer_size), b""):
                     hash_md5.update(chunk)
@@ -111,7 +111,7 @@ class FileHashCalculator:
             FileProcessingError: If file cannot be read
         """
         try:
-            hash_sha1 = hashlib.sha1()
+            hash_sha1 = hashlib.sha1(usedforsecurity=False)
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(self.buffer_size), b""):
                     hash_sha1.update(chunk)
@@ -166,9 +166,9 @@ class FileHashCalculator:
                 if algorithm == 'sha256':
                     hashers[algorithm] = hashlib.sha256()
                 elif algorithm == 'md5':
-                    hashers[algorithm] = hashlib.md5()
+                    hashers[algorithm] = hashlib.md5(usedforsecurity=False)
                 elif algorithm == 'sha1':
-                    hashers[algorithm] = hashlib.sha1()
+                    hashers[algorithm] = hashlib.sha1(usedforsecurity=False)
 
             # Read file and update all hashers
             with open(file_path, "rb") as f:

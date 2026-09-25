@@ -11,6 +11,7 @@ import logging
 import math
 from pathlib import Path
 
+from galileo.core.compute import run_cpu
 from galileo.current_object import safe_file_stem
 from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN, debayer
 from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker
@@ -84,6 +85,11 @@ class ImagingService:
         self._output_dir = Path(output_dir)
         self.current_frame = None
         self.current_preview = None
+        # Statistics and histogram of ``_analysed_frame``, worked out off the UI thread as each frame
+        # arrives (NFR-PERF-020) so the page only has to read them.
+        self.frame_stats: dict | None = None
+        self.frame_histogram: dict | None = None
+        self._analysed_frame = None
         self.last_saved_array = None
         self.last_saved_path: Path | None = None
         self.zoom_factor: float = 1.0
@@ -96,6 +102,7 @@ class ImagingService:
         self.debayer_enabled: bool = False
         self.bayer_pattern: str = DEFAULT_PATTERN  # the camera's mosaic layout, as set on its Equipment page
         self.debayer_note: str = ""                # what the last preview did, for the UI to show
+        self._preview_generation: int = 0          # bumped by each display-setting change; stale renders are dropped
         # The Pier's current object (IMG-140): names saved frames and is written to their OBJECT keyword.
         self.object_name: str = ""
         # Page layout (IMG-120): follows the frame's shape unless the user picks one.
@@ -243,7 +250,9 @@ class ImagingService:
             if on_frame_start is not None:
                 on_frame_start(index, count)
             try:
-                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None)
+                # When stacking, it's the stack that gets shown and measured, not each sub.
+                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
+                                               analyse=not stacking)
             except Exception:
                 if self.stop_requested:
                     break
@@ -253,7 +262,7 @@ class ImagingService:
             if self.auto_save_to_library:
                 self._auto_save_to_library(index)
             if stacking:
-                self._stack_current_frame()
+                await self._stack_current_frame()
             if on_frame_done is not None:
                 on_frame_done(index, count)
         return list(self.library_ids)
@@ -325,15 +334,15 @@ class ImagingService:
                 on_frame_done(index, count)
         return list(self.library_ids)
 
-    def _stack_current_frame(self) -> None:
+    async def _stack_current_frame(self) -> None:
         """Add the frame just captured to the live stack and show the stack in its place."""
         if self.stack_started is None:
             self.stack_started = self.last_shot.get("started")
-        self.stacker.add(self.current_frame, self.last_shot.get("duration", 0.0))
+        await self.stacker.add_async(self.current_frame, self.last_shot.get("duration", 0.0))
         stacked = self.stacker.result
         if stacked is not None:
             self.current_frame = stacked
-            self._rebuild_preview()
+            await self._analyse_current_frame()
 
     # --- The stack (IMG-160) ----------------------------------------------
 
@@ -449,8 +458,12 @@ class ImagingService:
         frame_type: str = "Light",
         save_dir: Path | str | None = None,
         gain: int | None = None,
+        analyse: bool = True,
     ) -> None:
-        """Expose, download, stretch, and cache the current frame (IMG-010 … IMG-030)."""
+        """Expose, download, stretch, and cache the current frame (IMG-010 … IMG-030).
+
+        ``analyse=False`` skips the preview, statistics and histogram, for a caller that is about
+        to replace the frame anyway (a live stack shows the stack, not the sub)."""
 
         self._capture_status = "exposing"
         self.capture_status = "exposing"
@@ -466,8 +479,8 @@ class ImagingService:
         self.current_frame = data
         self.last_saved_array = data
 
-        if data is not None:
-            self._rebuild_preview()
+        if data is not None and analyse:
+            await self._analyse_current_frame()
 
         self._capture_status = "preview_ready"
         self.capture_status = "preview_ready"
@@ -488,12 +501,38 @@ class ImagingService:
 
     # --- Debayer (IMG-110) -----------------------------------------------
 
-    def set_debayer(self, enabled: bool) -> None:
+    def set_debayer(self, enabled: bool, rebuild: bool = True) -> None:
         """Turn debayering of the displayed frame on or off, re-rendering the
-        current frame at once (no new exposure). The raw frame — what
-        statistics, the histogram and Save Frame use — is never changed."""
+        current frame at once (no new exposure) unless ``rebuild`` is false —
+        the Imaging page passes false and re-renders on a worker thread instead
+        (:meth:`render_preview` / :meth:`apply_preview`), since a debayer and
+        stretch takes seconds on a large frame (NFR-PERF-020). The raw frame —
+        what statistics, the histogram and Save Frame use — is never changed."""
         self.debayer_enabled = enabled
-        self._rebuild_preview()
+        self._preview_generation += 1
+        if rebuild:
+            self._rebuild_preview()
+
+    def render_preview(self) -> tuple | None:
+        """Render the preview for the current frame and display settings, without showing it.
+        Safe to call from a worker thread: it only reads the service. Returns an opaque result for
+        :meth:`apply_preview`, or ``None`` if there is no frame."""
+        generation, frame = self._preview_generation, self.current_frame
+        if frame is None:
+            return None
+        preview, note = self._render_preview(frame)
+        return generation, frame, preview, note
+
+    def apply_preview(self, rendered: tuple | None) -> bool:
+        """Show a preview from :meth:`render_preview`, unless the frame or display settings have
+        changed since it was started (a newer render is on its way). Returns whether it was used."""
+        if rendered is None:
+            return False
+        generation, frame, preview, note = rendered
+        if generation != self._preview_generation or frame is not self.current_frame:
+            return False
+        self.current_preview, self.debayer_note = preview, note
+        return True
 
     def set_bayer_pattern(self, pattern: str | None, rebuild: bool = True) -> None:
         """Set the mosaic layout used to debayer (``RGGB``, ``GRBG``, ``GBRG``
@@ -503,19 +542,39 @@ class ImagingService:
         back to the default."""
         pattern = (pattern or "").strip().upper()
         self.bayer_pattern = pattern if pattern in BAYER_PATTERNS else DEFAULT_PATTERN
+        self._preview_generation += 1
         if rebuild:
             self._rebuild_preview()
 
     def _rebuild_preview(self) -> None:
         """Rebuild the 8-bit preview from ``current_frame``, debayered if asked to."""
-        data = self.current_frame
-        if data is None:
-            return
-        shown = data
-        self.debayer_note = ""
+        if self.current_frame is not None:
+            self.current_preview, self.debayer_note = self._render_preview(self.current_frame)
+
+    def _render_preview(self, data) -> tuple:
+        """``(preview, debayer note)`` for *data*: the 8-bit stretch, debayered if asked to."""
+        shown, note = data, ""
         if self.debayer_enabled:
-            shown, self.debayer_note = self._debayered(data)
-        self.current_preview = _auto_stretch(shown)
+            shown, note = self._debayered(data)
+        return _auto_stretch(shown), note
+
+    async def _analyse_current_frame(self) -> None:
+        """Build the preview, statistics and histogram for ``current_frame``, all off the UI thread
+        and at the same time (NFR-PERF-020).
+
+        The statistics include SEP star detection, which holds the GIL for seconds on a full frame,
+        so they go to the CPU worker pool. The preview and histogram are numpy, which releases the
+        GIL, so a thread is enough for them and saves copying the frame to another process."""
+        frame = self.current_frame
+        if frame is None:
+            return
+        (preview, note), stats, histogram = await asyncio.gather(
+            asyncio.to_thread(self._render_preview, frame),
+            run_cpu(_compute_stats, frame),
+            asyncio.to_thread(_compute_histogram, frame),
+        )
+        self.current_preview, self.debayer_note = preview, note
+        self.frame_stats, self.frame_histogram, self._analysed_frame = stats, histogram, frame
 
     def _debayered(self, data) -> tuple:
         """``(image, note)``: *data* debayered with ``bayer_pattern``, or
@@ -528,8 +587,12 @@ class ImagingService:
     # --- Statistics (IMG-040) --------------------------------------------
 
     def get_frame_stats(self) -> dict:
+        """Statistics for ``current_frame``: the ones worked out when it arrived, or, for a frame
+        that didn't come through the capture pipeline, computed now."""
         if self.current_frame is None:
             return {}
+        if self.frame_stats is not None and self._analysed_frame is self.current_frame:
+            return self.frame_stats
         return _compute_stats(self.current_frame)
 
     # --- Histogram (IMG-030) ---------------------------------------------
@@ -537,6 +600,8 @@ class ImagingService:
     def get_histogram(self) -> dict:
         if self.current_frame is None:
             return {"bins": [], "counts": []}
+        if self.frame_histogram is not None and self._analysed_frame is self.current_frame:
+            return self.frame_histogram
         return _compute_histogram(self.current_frame)
 
     # --- View controls (IMG-060) -----------------------------------------

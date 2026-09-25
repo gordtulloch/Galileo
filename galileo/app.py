@@ -19,6 +19,12 @@ _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "log
 
 def main() -> None:
     """Launch Galileo."""
+    # A frozen (Nuitka/MSI) build re-launches this executable for each CPU worker process
+    # (galileo.core.compute); this makes those launches run the worker, not a second app.
+    # It does nothing when running from source.
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtCore import Qt
@@ -46,7 +52,11 @@ def main() -> None:
     if splash is not None:
         splash.finish(getattr(window, "_window", None))
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
+    from galileo.core.compute import shutdown_cpu_executor
+    shutdown_cpu_executor(wait=False)
+    sys.exit(exit_code)
 
 
 def _show_splash(app):

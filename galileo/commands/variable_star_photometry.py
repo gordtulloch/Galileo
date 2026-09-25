@@ -148,6 +148,7 @@ def main() -> int:
             try:
                 hfr_val = float(hfr)
             except Exception:
+                logger.debug("Skipping unusable HFR value %r for %s", hfr, p)
                 continue
             if best_hfr is None or hfr_val < best_hfr:
                 best_hfr = hfr_val

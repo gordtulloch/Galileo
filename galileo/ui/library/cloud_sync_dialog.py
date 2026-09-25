@@ -381,7 +381,7 @@ class CloudSyncWidget(QWidget):
                                 hash_matches += 1
                             else:
                                 partial_matches += 1
-                        except:
+                        except Exception:
                             partial_matches += 1
                     else:
                         partial_matches += 1

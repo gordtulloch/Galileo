@@ -25,6 +25,8 @@ except ImportError:
 from typing import Any
 from collections.abc import Callable
 
+from galileo.core.compute import imap_cpu
+
 from ..models import Masters, fitsSession, fitsFile
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,149 @@ def _get_config():
     """Get configuration from the library settings file."""
     config = load_library_config()
     return config
+
+
+# ---------------------------------------------------------------------------
+# Light-frame registration, run in the CPU worker pool (galileo.core.compute)
+# ---------------------------------------------------------------------------
+# astroalign holds the GIL for 4-8 s per full frame, so from the stacking QThread it froze the
+# UI for the whole stack (NFR-PERF-020). The worker reads each frame, and the reference, from disk
+# itself, so only paths go in. The reference is deliberately re-read per frame rather than cached:
+# a cache would leave every idle worker holding a full-size frame after the stack finished, and the
+# re-read (from the OS file cache) costs about 2% of a registration.
+
+
+def _extract_image_hdu(hdul):
+    """Return ``(hdu, data)`` for the first HDU with 2-D image data, or ``(None, None)``."""
+    import numpy as np
+    for hdu in hdul:
+        data = getattr(hdu, 'data', None)
+        if data is None:
+            continue
+        arr = np.asarray(data)
+        # Some writers store a single plane as (1, H, W)
+        if arr.ndim == 3 and arr.shape[0] == 1:
+            arr = arr[0]
+        if arr.ndim != 2:
+            continue
+        return hdu, arr
+    return None, None
+
+
+def _read_fits_image(file_path: str, primary_only: bool = False):
+    """``(data, header)`` for a FITS image. By default the first HDU holding 2-D data is used (for
+    data-in-extension files), with its header, or the primary header if it has none;
+    ``primary_only`` reads the primary HDU and nothing else."""
+    from astropy.io import fits
+    with fits.open(file_path) as hdul:
+        if primary_only:
+            return hdul[0].data, hdul[0].header.copy()
+        primary_header = hdul[0].header.copy()
+        hdu, data = _extract_image_hdu(hdul)
+        if data is None:
+            raise ValueError("No 2D image data found in any HDU")
+        header = getattr(hdu, 'header', None)
+        return data, (header.copy() if header is not None else primary_header)
+
+
+def _is_astroalign_maxiter_error(exc: Exception) -> bool:
+    try:
+        import astroalign as aa  # type: ignore
+        max_iter_error = getattr(aa, 'MaxIterError', None)
+        if max_iter_error is not None and isinstance(exc, max_iter_error):
+            return True
+    except Exception:
+        logger.debug("isinstance check against astroalign.MaxIterError failed", exc_info=True)
+    return exc.__class__.__name__ == 'MaxIterError'
+
+
+def _wcs_reproject(data, src_header, ref_full, ref_header):
+    """*data* reprojected onto the reference by the two frames' WCS (bilinear), with pixels
+    outside its footprint set to NaN, or ``None`` if either frame lacks a celestial WCS or
+    ``reproject`` isn't installed."""
+    import numpy as np
+    if ref_header is None or ref_full is None or data.ndim != 2 or ref_full.ndim != 2:
+        return None
+    try:
+        import warnings
+        from astropy.wcs import WCS, FITSFixedWarning
+        from reproject import reproject_interp  # type: ignore
+        warnings.filterwarnings('ignore', category=FITSFixedWarning)
+    except Exception:
+        return None
+    try:
+        src_wcs = WCS(src_header)
+        dst_wcs = WCS(ref_header)
+        if not (getattr(src_wcs, 'has_celestial', False) and getattr(dst_wcs, 'has_celestial', False)):
+            return None
+        reproj, footprint = reproject_interp(
+            (data.astype(np.float32, copy=False), src_wcs), dst_wcs,
+            shape_out=ref_full.shape, order='bilinear',
+        )
+        aligned = np.asarray(reproj, dtype=np.float32)
+        if footprint is not None:
+            aligned = aligned.copy()
+            aligned[np.asarray(footprint) <= 0] = np.nan
+        return aligned
+    except Exception:
+        return None
+
+
+def register_light_frame(file_path: str, ref_path: str, primary_only: bool = False):
+    """Read *file_path* and register it onto the frame at *ref_path* with astroalign, returning a
+    float32 array with NaN where the frame doesn't cover the reference.
+
+    The reference itself comes back unchanged. If astroalign can't find a match (``MaxIterError``),
+    the frame is reprojected by WCS if both frames have one, or else returned unaligned, with a
+    warning either way. Any other error is raised. Module-level so it can run in the CPU worker
+    pool (``galileo.core.compute.imap_cpu``)."""
+    import numpy as np
+    import astroalign as aa  # type: ignore
+
+    data, src_header = _read_fits_image(file_path, primary_only)
+    data = np.asarray(data).astype(np.float32, copy=False)
+    if os.path.abspath(file_path) == os.path.abspath(ref_path):
+        return data
+    ref_data, ref_header = _read_fits_image(ref_path, primary_only)
+    ref_full = np.asarray(ref_data).astype(np.float32, copy=False)
+    try:
+        aligned, footprint = aa.register(data, ref_full, fill_value=np.nan)
+    except Exception as e:
+        if not _is_astroalign_maxiter_error(e):
+            raise
+        aligned_wcs = _wcs_reproject(data, src_header, ref_full, ref_header)
+        if aligned_wcs is not None:
+            logger.warning("Star registration failed for %s: %s. Used WCS reprojection fallback.",
+                           os.path.basename(file_path), e)
+            return aligned_wcs
+        logger.warning("Star registration failed for %s: %s. Proceeding without alignment for this frame.",
+                       os.path.basename(file_path), e)
+        return data
+    aligned = aligned.astype(np.float32, copy=False)
+    if footprint is not None:
+        aligned = aligned.copy()
+        aligned[footprint] = np.nan
+    return aligned
+
+
+def _nanmedian_quiet(a, axis=None):
+    """``np.nanmedian`` without the "All-NaN slice" warning: a pixel no frame covers is expected
+    at a registered stack's edges, and simply comes back NaN."""
+    import warnings
+    import numpy as np
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmedian(a, axis=axis)
+
+
+def _register_or_error(file_path: str, ref_path: str, primary_only: bool = False):
+    """``(registered, None)``, or ``(None, message)`` if :func:`register_light_frame` raised, so
+    one bad frame in a batch run through :func:`imap_cpu` can be skipped without ending it. The
+    error comes back as text because not every exception survives the trip out of a worker."""
+    try:
+        return register_light_frame(file_path, ref_path, primary_only), None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
 
 
 class MasterFrameManager:
@@ -443,35 +588,6 @@ class MasterFrameManager:
             if progress_callback:
                 progress_callback(25, 100, f"Loading {len(file_paths)} {cal_type} frames...")
 
-            def _extract_image_hdu(hdul):
-                """Return the first HDU with 2D image data, or None."""
-                for hdu in hdul:
-                    data = getattr(hdu, 'data', None)
-                    if data is None:
-                        continue
-                    arr = np.asarray(data)
-                    # Some writers store a single plane as (1, H, W)
-                    if arr.ndim == 3 and arr.shape[0] == 1:
-                        arr = arr[0]
-                    if arr.ndim != 2:
-                        continue
-                    return hdu, arr
-                return None, None
-
-            def _read_fits_image(file_path: str):
-                """Read a FITS image, handling data-in-extension FITS files.
-
-                Returns (data, header). Header is taken from the image HDU when
-                available; falls back to primary header.
-                """
-                with fits.open(file_path) as hdul:
-                    primary_header = hdul[0].header.copy()
-                    hdu, data = _extract_image_hdu(hdul)
-                    if data is None:
-                        raise ValueError("No 2D image data found in any HDU")
-                    header = getattr(hdu, 'header', None)
-                    return data, (header.copy() if header is not None else primary_header)
-
             # Find the first readable frame to get dimensions and dtype
             header = None
             data_shape = None
@@ -497,9 +613,7 @@ class MasterFrameManager:
             is_light_stack = str(cal_type).lower() == 'light'
 
             # Prepare reference for star registration (light stacking only)
-            ref_full = None
             ref_path = None
-            ref_header = None
             if is_light_stack:
                 if aa is None:
                     raise RuntimeError(
@@ -507,102 +621,8 @@ class MasterFrameManager:
                         "Install it (pip install astroalign) and try again."
                     )
 
-                candidate = reference_path if (reference_path and os.path.exists(reference_path)) else first_data_file
-                ref_path = candidate
-                ref_data, ref_header0 = _read_fits_image(candidate)
-                ref_full = ref_data.astype(np.float32, copy=False)
-                ref_header = ref_header0
-
-            def _is_astroalign_maxiter_error(exc: Exception) -> bool:
-                max_iter_error = getattr(aa, 'MaxIterError', None) if aa is not None else None
-                if max_iter_error is not None:
-                    try:
-                        if isinstance(exc, max_iter_error):
-                            return True
-                    except Exception:
-                        pass
-                return exc.__class__.__name__ == 'MaxIterError'
-
-            def _register_to_reference(data: np.ndarray, file_path: str) -> np.ndarray:
-                """Register a light frame to the reference frame using astroalign."""
-                if not is_light_stack or aa is None or ref_full is None:
-                    return data
-                if ref_path is not None and os.path.abspath(file_path) == os.path.abspath(ref_path):
-                    return data
-
-                try:
-                    aligned, footprint = aa.register(data.astype(np.float32, copy=False), ref_full, fill_value=np.nan)
-                    aligned = aligned.astype(np.float32, copy=False)
-                    if footprint is not None:
-                        aligned = aligned.copy()
-                        aligned[footprint] = np.nan
-                    return aligned
-                except Exception as e:
-                    # If astroalign can't find a match, fall back to stacking the unaligned image.
-                    if _is_astroalign_maxiter_error(e):
-                        def _try_wcs_reproject() -> np.ndarray | None:
-                            if ref_header is None or ref_full is None:
-                                return None
-                            if data.ndim != 2 or ref_full.ndim != 2:
-                                return None
-                            try:
-                                from astropy.wcs import WCS
-                                from astropy.wcs import FITSFixedWarning
-                                import warnings
-
-                                warnings.filterwarnings('ignore', category=FITSFixedWarning)
-                            except Exception:
-                                return None
-
-                            try:
-                                from reproject import reproject_interp  # type: ignore
-                            except Exception:
-                                return None
-
-                            try:
-                                with fits.open(file_path) as hdul:
-                                    hdu, _data = _extract_image_hdu(hdul)
-                                    if hdu is not None and getattr(hdu, 'header', None) is not None:
-                                        src_header = hdu.header
-                                    else:
-                                        src_header = hdul[0].header
-
-                                src_wcs = WCS(src_header)
-                                dst_wcs = WCS(ref_header)
-                                if not (getattr(src_wcs, 'has_celestial', False) and getattr(dst_wcs, 'has_celestial', False)):
-                                    return None
-
-                                reproj, footprint = reproject_interp(
-                                    (data.astype(np.float32, copy=False), src_wcs),
-                                    dst_wcs,
-                                    shape_out=ref_full.shape,
-                                    order='bilinear',
-                                )
-
-                                aligned = np.asarray(reproj, dtype=np.float32)
-                                if footprint is not None:
-                                    aligned = aligned.copy()
-                                    aligned[np.asarray(footprint) <= 0] = np.nan
-                                return aligned
-                            except Exception:
-                                return None
-
-                        aligned_wcs = _try_wcs_reproject()
-                        if aligned_wcs is not None:
-                            logger.warning(
-                                "Star registration failed for %s: %s. Used WCS reprojection fallback.",
-                                os.path.basename(file_path),
-                                e,
-                            )
-                            return aligned_wcs
-
-                        logger.warning(
-                            "Star registration failed for %s: %s. Proceeding without alignment for this frame.",
-                            os.path.basename(file_path),
-                            e,
-                        )
-                        return data.astype(np.float32, copy=False)
-                    raise
+                # The worker pool reads the reference itself (register_light_frame).
+                ref_path = reference_path if (reference_path and os.path.exists(reference_path)) else first_data_file
 
             if progress_callback:
                 progress_callback(30, 100, "Computing statistics (pass 1/2)...")
@@ -655,31 +675,42 @@ class MasterFrameManager:
             logger.info(f"Computing statistics in chunks of {max_chunk_size} frames...")
             median = None
             M2 = None  # For Welford's online variance algorithm
+            # Registered light frames are NaN wherever they don't cover the reference, so their
+            # statistics must skip NaNs per pixel: a plain median/sum turns a pixel NaN if *any*
+            # frame misses it, which gave NaN clip bounds there and rejected every frame — losing
+            # a band as wide as the drift. Calibration frames have no NaNs and keep the plain
+            # (faster, identical-result) functions.
+            stat_median = _nanmedian_quiet if is_light_stack else np.median
+            stat_sum = np.nansum if is_light_stack else np.sum
+            samples = np.zeros(data_shape, dtype=np.uint32)   # frames contributing to M2, per pixel
 
             for chunk_start in range(0, n_frames, max_chunk_size):
                 chunk_end = min(chunk_start + max_chunk_size, n_frames)
                 chunk_files = valid_files[chunk_start:chunk_end]
 
-                # Load chunk into memory
-                chunk_data = []
-                for file_path in chunk_files:
-                    data, _hdr = _read_fits_image(file_path)
-                    data = data.astype(np.float32, copy=False)
-                    if is_light_stack and ref_full is not None:
-                        data = _register_to_reference(data, file_path)
-                    chunk_data.append(data)
+                # Load chunk into memory; light frames are registered in parallel in the worker pool.
+                if is_light_stack:
+                    chunk_data = list(imap_cpu(register_light_frame, [(fp, ref_path) for fp in chunk_files]))
+                else:
+                    chunk_data = [_read_fits_image(fp)[0].astype(np.float32, copy=False) for fp in chunk_files]
 
                 chunk_array = np.array(chunk_data)
+                samples += np.isfinite(chunk_array).sum(axis=0, dtype=np.uint32)
 
                 # Update running statistics
                 if median is None:
-                    median = np.median(chunk_array, axis=0)
-                    M2 = np.sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
+                    median = stat_median(chunk_array, axis=0)
+                    M2 = stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
                 else:
                     # Combine statistics from chunks
-                    chunk_median = np.median(chunk_array, axis=0)
-                    median = (median + chunk_median) / 2  # Approximate for speed
-                    M2 += np.sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
+                    chunk_median = stat_median(chunk_array, axis=0)
+                    if is_light_stack:
+                        # A pixel no frame of one chunk covered takes the other chunk's median.
+                        median = np.where(np.isnan(median), chunk_median,
+                                          np.where(np.isnan(chunk_median), median, (median + chunk_median) / 2))
+                    else:
+                        median = (median + chunk_median) / 2  # Approximate for speed
+                    M2 += stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
 
                 del chunk_data, chunk_array
 
@@ -687,8 +718,10 @@ class MasterFrameManager:
                     progress = 40 + int((chunk_end / n_frames) * 20)
                     progress_callback(progress, 100, f"Statistics: {chunk_end}/{n_frames} frames...")
 
-            std = np.sqrt(M2 / n_frames)
-            del M2
+            # Per-pixel sample count: equal to n_frames for calibration frames (so unchanged there),
+            # smaller near a light stack's edges where only some frames reach.
+            std = np.sqrt(M2 / np.maximum(samples, 1))
+            del M2, samples
 
             # Sigma clipping parameters
             sigma_low = 3.0
@@ -708,15 +741,22 @@ class MasterFrameManager:
             rejected_pixels = 0
             total_pixels = 0
 
-            for i, file_path in enumerate(valid_files):
+            def _pass2_frames():
+                """``(data, error)`` per valid file, in order; light frames registered in the pool."""
+                if is_light_stack:
+                    yield from imap_cpu(_register_or_error, ((fp, ref_path) for fp in valid_files))
+                    return
+                for fp in valid_files:
+                    try:
+                        yield _read_fits_image(fp)[0].astype(np.float32, copy=False), None
+                    except Exception as e:
+                        yield None, f"{type(e).__name__}: {e}"
+
+            for i, (file_path, (data, error)) in enumerate(zip(valid_files, _pass2_frames(), strict=True)):
+                if error is not None:
+                    logger.warning(f"Error processing {file_path}: {error}")
+                    continue
                 try:
-                    data, _hdr = _read_fits_image(file_path)
-                    data = data.astype(np.float32, copy=False)
-
-                    # For light stacks, register stars to the reference frame
-                    if is_light_stack and ref_full is not None:
-                        data = _register_to_reference(data, file_path)
-
                     # Apply flat normalization if needed
                     if cal_type == 'flat':
                         data = data / frame_medians[i]
@@ -756,6 +796,16 @@ class MasterFrameManager:
             if median is not None:
                 master_data = np.where(np.isfinite(master_data), master_data, median)
 
+            # Pixels that are still not finite had no data in any frame (for a light stack: outside
+            # every registered frame). Write them as 0 — the usual fill for a registered stack's
+            # uncovered edges — rather than letting the integer cast below turn NaN into arbitrary
+            # values.
+            uncovered = ~np.isfinite(master_data)
+            n_uncovered = int(np.count_nonzero(uncovered))
+            if n_uncovered:
+                master_data = np.where(uncovered, 0.0, master_data).astype(np.float32, copy=False)
+                logger.info(f"{n_uncovered} pixel(s) had no data in any frame; written as 0")
+
             if cal_type == 'flat':
                 logger.info("Applied multiplicative normalization for flat frames")
             else:
@@ -770,6 +820,7 @@ class MasterFrameManager:
             header['CREATOR'] = 'Galileo Internal Stacking'
             header['METHOD'] = f'Sigma-clipped mean (sigma_low={sigma_low}, sigma_high={sigma_high})'
             header['REJECTED'] = f'{rejection_rate:.3f}%'
+            header['NODATA'] = (n_uncovered, 'Pixels with no data in any frame, written as 0')
             header['DATE'] = datetime.datetime.now().isoformat()
 
             # Convert to appropriate dtype (preserve as uint16 for most cases, float32 for flats)
@@ -847,97 +898,8 @@ class MasterFrameManager:
                 data_shape = hdul[0].data.shape
 
             # Prepare reference
-            candidate = reference_path if (reference_path and os.path.exists(reference_path)) else file_paths[0]
-            ref_path = candidate
-            with fits.open(candidate) as hdul:
-                ref_full = hdul[0].data.astype(np.float32)
-                ref_header = hdul[0].header.copy()
-
-            def _is_astroalign_maxiter_error(exc: Exception) -> bool:
-                max_iter_error = getattr(aa, 'MaxIterError', None)
-                if max_iter_error is not None:
-                    try:
-                        if isinstance(exc, max_iter_error):
-                            return True
-                    except Exception:
-                        pass
-                return exc.__class__.__name__ == 'MaxIterError'
-
-            def _register_to_reference(data: np.ndarray, file_path: str) -> np.ndarray:
-                if os.path.abspath(file_path) == os.path.abspath(ref_path):
-                    return data.astype(np.float32, copy=False)
-                try:
-                    aligned, footprint = aa.register(
-                        data.astype(np.float32, copy=False),
-                        ref_full,
-                        fill_value=np.nan,
-                    )
-                    aligned = aligned.astype(np.float32, copy=False)
-                    if footprint is not None:
-                        aligned = aligned.copy()
-                        aligned[footprint] = np.nan
-                    return aligned
-                except Exception as e:
-                    if _is_astroalign_maxiter_error(e):
-                        def _try_wcs_reproject() -> np.ndarray | None:
-                            if ref_full is None:
-                                return None
-                            if data.ndim != 2 or ref_full.ndim != 2:
-                                return None
-                            try:
-                                from astropy.wcs import WCS
-                                from astropy.wcs import FITSFixedWarning
-                                import warnings
-
-                                warnings.filterwarnings('ignore', category=FITSFixedWarning)
-                            except Exception:
-                                return None
-
-                            try:
-                                from reproject import reproject_interp  # type: ignore
-                            except Exception:
-                                return None
-
-                            try:
-                                with fits.open(file_path) as hdul:
-                                    src_header = hdul[0].header
-
-                                src_wcs = WCS(src_header)
-                                dst_wcs = WCS(ref_header)
-                                if not (getattr(src_wcs, 'has_celestial', False) and getattr(dst_wcs, 'has_celestial', False)):
-                                    return None
-
-                                reproj, footprint = reproject_interp(
-                                    (data.astype(np.float32, copy=False), src_wcs),
-                                    dst_wcs,
-                                    shape_out=ref_full.shape,
-                                    order='bilinear',
-                                )
-
-                                aligned = np.asarray(reproj, dtype=np.float32)
-                                if footprint is not None:
-                                    aligned = aligned.copy()
-                                    aligned[np.asarray(footprint) <= 0] = np.nan
-                                return aligned
-                            except Exception:
-                                return None
-
-                        aligned_wcs = _try_wcs_reproject()
-                        if aligned_wcs is not None:
-                            logger.warning(
-                                "Star registration failed for %s: %s. Used WCS reprojection fallback.",
-                                os.path.basename(file_path),
-                                e,
-                            )
-                            return aligned_wcs
-
-                        logger.warning(
-                            "Star registration failed for %s: %s. Proceeding without alignment for this frame.",
-                            os.path.basename(file_path),
-                            e,
-                        )
-                        return data.astype(np.float32, copy=False)
-                    raise
+            # The worker pool reads the reference itself (register_light_frame).
+            ref_path = reference_path if (reference_path and os.path.exists(reference_path)) else file_paths[0]
 
             # Validate and stream accumulate
             valid_files: list[str] = []
@@ -961,10 +923,9 @@ class MasterFrameManager:
             accumulator = np.zeros(data_shape, dtype=np.float64)
             count = np.zeros(data_shape, dtype=np.uint16)
 
-            for i, file_path in enumerate(valid_files):
-                with fits.open(file_path) as hdul:
-                    data = hdul[0].data.astype(np.float32)
-                data = _register_to_reference(data, file_path)
+            # Frames are registered in parallel in the CPU worker pool, and come back in order.
+            registered = imap_cpu(register_light_frame, ((fp, ref_path, True) for fp in valid_files))
+            for i, data in enumerate(registered):
                 mask = np.isfinite(data)
                 accumulator += np.where(mask, data, 0.0).astype(np.float64, copy=False)
                 count += mask.astype(np.uint16)

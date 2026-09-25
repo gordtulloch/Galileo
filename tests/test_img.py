@@ -342,6 +342,36 @@ def test_tc_img_110_camera_page_bayer_pattern_defaults_to_rggb_and_is_saved(wind
 
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
+def test_tc_img_110_a_stale_off_thread_preview_is_not_shown():
+    """IMG-110 / NFR-PERF-020: the Imaging page re-renders a debayer toggle on a worker thread; a render
+    that finishes after a newer toggle, or after a new frame arrived, is dropped rather than shown."""
+    import numpy as np
+    from galileo.ui.imaging import ImagingService
+    service = ImagingService()
+    service.current_frame = _mosaic_of((1000, 300, 60), "RGGB")
+
+    service.set_debayer(True, rebuild=False)
+    stale = service.render_preview()
+    service.set_debayer(False, rebuild=False)          # toggled back while the first render ran
+    fresh = service.render_preview()
+    assert service.apply_preview(stale) is False
+    assert service.apply_preview(fresh) is True and service.current_preview.ndim == 2
+
+    rendered = service.render_preview()
+    service.current_frame = np.zeros((8, 8), dtype=np.uint16)    # a new capture landed meanwhile
+    assert service.apply_preview(rendered) is False
+    assert service.apply_preview(None) is False
+
+
+def _wait_for_preview_renders(window):
+    """Wait for the Imaging page's debayer re-render threads and deliver their results."""
+    for thread in list(window._imaging_preview_renders):
+        thread.wait(10000)
+    window.app.processEvents()
+
+
+@pytest.mark.requirement("TC-IMG-110")
+@pytest.mark.priority("MVP")
 def test_tc_img_110_imaging_debayer_checkbox_uses_the_selected_cameras_pattern(window):
     """IMG-110: ticking Debayer on the Imaging tab colours the frame using the pattern saved for the selected camera."""
     import numpy as np
@@ -353,8 +383,10 @@ def test_tc_img_110_imaging_debayer_checkbox_uses_the_selected_cameras_pattern(w
     check = window._imaging_debayer_check
     assert check.text() == "Debayer" and not check.isChecked()
     check.setChecked(True)
+    _wait_for_preview_renders(window)
     assert service.bayer_pattern == "GBRG" and service.current_preview.ndim == 3
     check.setChecked(False)
+    _wait_for_preview_renders(window)
     assert service.current_preview.ndim == 2
     assert np.array_equal(service.current_frame, _mosaic_of((1000, 300, 60), "GBRG"))
 

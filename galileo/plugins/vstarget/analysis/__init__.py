@@ -85,6 +85,7 @@ class VariableStarAnalysis:
                 try:
                     cx, cy = wcs.all_world2pix(comp["ra"], comp["dec"], 0)
                 except Exception:
+                    logger.debug("Skipping comparison star with unusable WCS projection: %r", comp, exc_info=True)
                     continue
                 f, _ = self._photometry.measure_star(data, float(cx), float(cy))
                 comp_fluxes.append(f)

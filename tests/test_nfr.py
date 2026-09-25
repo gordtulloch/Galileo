@@ -36,12 +36,198 @@ async def test_tc_nfr_perf_010_large_frame_render_under_3s(mock_indi_camera):
 
 @pytest.mark.requirement("TC-NFR-PERF-020")
 @pytest.mark.priority("MVP")
-async def test_tc_nfr_perf_020_ui_responsive_during_background_ops():
-    """NFR-PERF-020: UI input latency remains < 200 ms during image download, plate solving, or autofocus."""
-    devices = pytest.importorskip("galileo.core.devices")
-    # The concurrency model must ensure CPU-bound work runs off the Qt main thread.
-    # Verified by checking the ProcessPoolExecutor is used, not inline blocking calls.
-    assert devices.CONCURRENCY_MODEL == "ProcessPoolExecutor" or hasattr(devices, "cpu_executor")
+async def test_tc_nfr_perf_020_ui_responsive_during_background_ops(monkeypatch):
+    """NFR-PERF-020: UI input latency remains < 200 ms during image download, plate solving, or autofocus.
+
+    SEP star detection (autofocus HFR, imaging statistics) holds the GIL for its whole run, so
+    in a thread it still stalls the event loop. Here it runs through the real worker pool while a
+    5 ms heartbeat on the loop records the longest gap between beats."""
+    import asyncio
+    import time
+    import numpy as np
+    from galileo.autofocus import _measure_stars
+    from galileo.core import compute
+
+    monkeypatch.setenv(compute.WORKERS_ENV, "2")
+    compute.shutdown_cpu_executor()
+    try:
+        # A 4000x4000 field of 1500 Gaussian stars: SEP takes about a second on it.
+        rng = np.random.default_rng(0)
+        frame = rng.normal(800, 20, (4000, 4000)).astype(np.float32)
+        yy, xx = np.mgrid[-8:9, -8:9]
+        star = 20000 * np.exp(-(yy ** 2 + xx ** 2) / 8.0)
+        for y, x in rng.integers(20, 3980, (1500, 2)):
+            frame[y - 8:y + 9, x - 8:x + 9] += star
+        frame = frame.astype(np.uint16)
+        await compute.run_cpu(_measure_stars, frame[:64, :64])     # start the workers first
+
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def heartbeat():
+            last = time.perf_counter()
+            while not done.is_set():
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        beat = asyncio.create_task(heartbeat())
+        hfr, stars = await compute.run_cpu(_measure_stars, frame)
+        done.set()
+        await beat
+
+        assert stars > 1000 and 1.0 < hfr < 5.0, "the worker measured the frame"
+        assert max(gaps) < 0.2, f"event loop stalled {max(gaps) * 1000:.0f} ms during star detection"
+    finally:
+        compute.shutdown_cpu_executor()
+
+
+@pytest.mark.requirement("TC-NFR-PERF-020")
+@pytest.mark.priority("MVP")
+async def test_tc_nfr_perf_020_gil_holding_work_is_sent_to_the_pool(monkeypatch):
+    """NFR-PERF-020: autofocus star measurement, imaging statistics and live-stack registration
+    (the work profiled as holding the GIL) go through ``run_cpu``, not a thread."""
+    import numpy as np
+    import galileo.autofocus as autofocus
+    import galileo.livestack as livestack
+    import galileo.ui.imaging as imaging
+
+    sent = []
+
+    async def recording_run_cpu(fn, *args, **kwargs):
+        sent.append(fn.__name__)
+        return fn(*args, **kwargs)
+
+    for module in (autofocus, livestack, imaging):
+        monkeypatch.setattr(module, "run_cpu", recording_run_cpu)
+
+    camera = MagicMock()
+    camera.start_exposure = AsyncMock()
+    camera.get_image_array = AsyncMock(return_value=np.zeros((32, 32), dtype=np.uint16))
+    focus = autofocus.AutofocusService(camera=camera, focuser=MagicMock(), event_bus=MagicMock())
+    await focus._measure_hfr()
+    await focus.run_aberration_inspection()
+
+    service = imaging.ImagingService(camera=camera)
+    await service.capture_and_preview(duration=1.0)
+
+    stacker = livestack.LiveStacker()
+    await stacker.add_async(np.zeros((32, 32), dtype=np.float32))
+    await stacker.add_async(np.zeros((32, 32), dtype=np.float32))
+
+    assert sent == ["_measure_stars", "_compute_regional_hfr", "_compute_stats", "register"]
+
+
+@pytest.mark.requirement("TC-NFR-PERF-020")
+@pytest.mark.priority("MVP")
+async def test_tc_nfr_perf_020_pool_recovers_from_a_dead_worker(monkeypatch):
+    """NFR-PERF-020 / ARCH-060: a worker that dies (e.g. a crash in a C extension) fails only the
+    task it was running; the next task gets a fresh pool rather than a permanently broken one."""
+    import os
+    from concurrent.futures.process import BrokenProcessPool
+    from galileo.core import compute
+
+    monkeypatch.setenv(compute.WORKERS_ENV, "1")
+    compute.shutdown_cpu_executor()
+    try:
+        with pytest.raises(BrokenProcessPool):
+            await compute.run_cpu(os._exit, 3)
+        assert await compute.run_cpu(abs, -5) == 5
+    finally:
+        compute.shutdown_cpu_executor()
+
+
+def _star_frames(tmp_path, shifts, size=160):
+    """FITS light frames of one star field, each shifted by ``(dy, dx)``. Returns their paths."""
+    import numpy as np
+    from astropy.io import fits
+    stars = [(30, 40), (70, 120), (120, 60), (100, 100), (40, 130), (140, 140), (55, 80), (130, 20)]
+    yy, xx = np.mgrid[:size, :size]
+    paths = []
+    for i, (dy, dx) in enumerate(shifts):
+        image = np.random.default_rng(i).normal(500, 5, (size, size))
+        for n, (y, x) in enumerate(stars):
+            image += (3000 + 400 * n) * np.exp(-((yy - y - dy) ** 2 + (xx - x - dx) ** 2) / (2 * 1.8 ** 2))
+        path = tmp_path / f"light_{i}.fits"
+        fits.PrimaryHDU(image.astype("float32")).writeto(path)
+        paths.append(str(path))
+    return paths
+
+
+@pytest.mark.requirement("TC-NFR-PERF-020")
+@pytest.mark.priority("MVP")
+def test_tc_nfr_perf_020_library_batch_work_gives_the_same_results_in_the_pool(monkeypatch, tmp_path):
+    """NFR-PERF-020: the Library's SEP quality metrics and astroalign light stacking (both photometric
+    and sigma-clipped), moved into the worker pool, give the same results as they do in-process."""
+    import numpy as np
+    from astropy.io import fits
+    from galileo.core import compute
+    from galileo.library.core.enhanced_quality import EnhancedQualityAnalyzer
+    from galileo.library.core.master_manager import MasterFrameManager
+
+    paths = _star_frames(tmp_path, [(0, 0), (3, -4), (-2, 5)])
+    manager = MasterFrameManager.__new__(MasterFrameManager)     # stacking needs no library config
+
+    def run_all(tag):
+        quality = EnhancedQualityAnalyzer().analyze_image_quality(paths[0])
+        assert manager._create_light_stack_photometric_mean(paths, str(tmp_path / f"photo_{tag}.fits"))
+        assert manager._create_master_sigma_clip(paths, str(tmp_path / f"clip_{tag}.fits"), "light")
+        return (quality, fits.getdata(tmp_path / f"photo_{tag}.fits"), fits.getdata(tmp_path / f"clip_{tag}.fits"))
+
+    in_process = run_all("thread")
+    monkeypatch.setenv(compute.WORKERS_ENV, "2")
+    compute.shutdown_cpu_executor()
+    try:
+        pooled = run_all("pool")
+    finally:
+        compute.shutdown_cpu_executor()
+
+    for key in ("status", "star_count", "avg_fwhm_pixels", "image_snr"):
+        assert pooled[0][key] == in_process[0][key]
+    assert pooled[0]["star_count"] == 8
+    np.testing.assert_allclose(pooled[1], in_process[1], equal_nan=True)
+    np.testing.assert_array_equal(pooled[2], in_process[2])
+    # Registered, not just averaged: the brightest star is as sharp in the stack as in the reference.
+    reference = fits.getdata(paths[0])
+    assert np.nanmax(pooled[1]) == pytest.approx(float(reference.max()), rel=0.05)
+
+
+@pytest.mark.requirement("TC-NFR-PERF-020")
+@pytest.mark.priority("MVP")
+def test_tc_nfr_perf_020_imap_keeps_order_and_bounds_work_in_flight(monkeypatch):
+    """NFR-PERF-020: ``imap_cpu`` returns results in input order and, in the pool, never has more
+    tasks in flight than there are workers, so a batch of full-size frames can't pile up in memory."""
+    import time
+    from galileo.core import compute
+
+    assert list(compute.imap_cpu(pow, [(2, n) for n in range(5)])) == [1, 2, 4, 8, 16]   # pool off
+
+    monkeypatch.setenv(compute.WORKERS_ENV, "2")
+    compute.shutdown_cpu_executor()
+    try:
+        results = compute.imap_cpu(time.sleep, [(0.05,)] * 6)
+        next(results)
+        executor = compute.cpu_executor()
+        assert len(executor._pending_work_items) <= 2
+        assert list(results) == [None] * 5
+        assert list(compute.imap_cpu(divmod, [(n, 3) for n in range(7)])) == [divmod(n, 3) for n in range(7)]
+    finally:
+        compute.shutdown_cpu_executor()
+
+
+@pytest.mark.requirement("TC-NFR-PERF-020")
+@pytest.mark.priority("MVP")
+async def test_tc_nfr_perf_020_pool_can_be_turned_off(monkeypatch):
+    """NFR-PERF-020: ``GALILEO_CPU_WORKERS=0`` runs CPU work in a thread instead of the pool."""
+    import threading
+    from galileo.core import compute
+
+    monkeypatch.setenv(compute.WORKERS_ENV, "0")
+    assert compute.cpu_executor() is None
+    assert await compute.run_cpu(lambda: threading.current_thread() is not threading.main_thread())
+    monkeypatch.setenv(compute.WORKERS_ENV, "not a number")
+    assert compute.worker_count() >= 1, "a bad setting falls back to the default"
 
 
 @pytest.mark.requirement("TC-NFR-PERF-030")

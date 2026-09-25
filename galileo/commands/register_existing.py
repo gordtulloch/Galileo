@@ -54,6 +54,8 @@ import time
 
 from galileo.commands._common import load_config
 
+logger = logging.getLogger(__name__)
+
 def setup_logging(verbose=False, quiet=False, log_file=None):
     """Setup logging configuration"""
     if quiet:
@@ -109,11 +111,11 @@ def validate_database_access():
         file_count = fitsFile.select().count()
         session_count = fitsSession.select().count()
 
-        logging.info(f"Database connection validated: {file_count} files, {session_count} sessions")
+        logger.info(f"Database connection validated: {file_count} files, {session_count} sessions")
         return True
 
     except Exception as e:
-        logging.exception(f"Database validation failed: {e}")
+        logger.exception(f"Database validation failed: {e}")
         return False
 
 def create_cli_progress_callback(description="Processing"):
@@ -146,18 +148,18 @@ def register_existing_files(config, scan_subdirectories=True, verify_headers=Tru
     """Register existing calibrated files and master frames"""
     from galileo.library.core import fitsProcessing
 
-    logging.info("Starting existing file registration...")
+    logger.info("Starting existing file registration...")
 
     if dry_run:
-        logging.info("DRY RUN - No database changes will be made")
+        logger.info("DRY RUN - No database changes will be made")
 
     try:
         processor = fitsProcessing()
 
         if dry_run:
-            logging.info("Would scan repository for existing calibrated files and master frames")
-            logging.info(f"  - Scan subdirectories: {scan_subdirectories}")
-            logging.info(f"  - Verify FITS headers: {verify_headers}")
+            logger.info("Would scan repository for existing calibrated files and master frames")
+            logger.info(f"  - Scan subdirectories: {scan_subdirectories}")
+            logger.info(f"  - Verify FITS headers: {verify_headers}")
             return True
 
         # Execute registration
@@ -173,27 +175,27 @@ def register_existing_files(config, scan_subdirectories=True, verify_headers=Tru
         calibrated_info = summary.get('calibrated_lights', {})
         errors = results.get('errors', [])
 
-        logging.info("Registration completed successfully!")
-        logging.info(f"  Total files processed: {summary.get('total_files_processed', 0)}")
-        logging.info(f"  Master frames found: {master_info.get('found', 0)}")
-        logging.info(f"    - Already linked: {master_info.get('already_linked', 0)}")
-        logging.info(f"    - Newly linked: {master_info.get('newly_linked', 0)}")
-        logging.info(f"  Calibrated light frames found: {calibrated_info.get('found', 0)}")
-        logging.info(f"    - Database updated: {calibrated_info.get('updated', 0)}")
-        logging.info(f"    - Verification errors: {calibrated_info.get('verification_errors', 0)}")
-        logging.info(f"  Database changes made: {summary.get('database_changes', 0)}")
+        logger.info("Registration completed successfully!")
+        logger.info(f"  Total files processed: {summary.get('total_files_processed', 0)}")
+        logger.info(f"  Master frames found: {master_info.get('found', 0)}")
+        logger.info(f"    - Already linked: {master_info.get('already_linked', 0)}")
+        logger.info(f"    - Newly linked: {master_info.get('newly_linked', 0)}")
+        logger.info(f"  Calibrated light frames found: {calibrated_info.get('found', 0)}")
+        logger.info(f"    - Database updated: {calibrated_info.get('updated', 0)}")
+        logger.info(f"    - Verification errors: {calibrated_info.get('verification_errors', 0)}")
+        logger.info(f"  Database changes made: {summary.get('database_changes', 0)}")
 
         if errors:
-            logging.warning(f"  Errors encountered: {len(errors)}")
+            logger.warning(f"  Errors encountered: {len(errors)}")
             for i, error in enumerate(errors[:10]):  # Show first 10 errors
-                logging.warning(f"    {i+1}. {error}")
+                logger.warning(f"    {i+1}. {error}")
             if len(errors) > 10:
-                logging.warning(f"    ... and {len(errors)-10} more errors")
+                logger.warning(f"    ... and {len(errors)-10} more errors")
 
         return len(errors) == 0
 
     except Exception as e:
-        logging.exception(f"Error in existing file registration: {e}")
+        logger.exception(f"Error in existing file registration: {e}")
         return False
 
 def main():

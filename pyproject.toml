@@ -56,6 +56,10 @@ ignore = [
     "S105", "S106", "S107",  # fixture credentials/tokens are fake test doubles, not hardcoded secrets
 ]
 
+[tool.mypy]
+python_version = "3.11"    # type-check against 3.11's stdlib, so a 3.12+-only API (itertools.batched, ...) is flagged;
+                           # ruff's target-version only catches newer *syntax*. Keep both in step with requires-python.
+
 [project]
 name = "galileo"
 version = "0.1.0"

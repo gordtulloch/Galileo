@@ -25,6 +25,7 @@ def _is_fits_tile_compressed(path: str) -> bool:
                     if bool(hdu.header.get('ZIMAGE', False)):
                         return True
                 except Exception:
+                    logger.debug("Could not read ZIMAGE from an HDU in %s", path, exc_info=True)
                     continue
     except Exception:
         return False
@@ -92,6 +93,7 @@ def decompress_to(src_path: str, dest_path: str) -> bool:
                             data_hdu = hdu
                             break
                     except Exception:
+                        logger.debug("Could not read data from an HDU in %s", src_path, exc_info=True)
                         continue
 
                 if data_hdu is None:

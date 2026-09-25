@@ -18,6 +18,9 @@ from astropy.wcs import WCS
 from astropy.wcs import FITSFixedWarning
 from astropy.stats import sigma_clipped_stats
 import datetime
+from collections.abc import Callable
+
+from galileo.core.compute import run_cpu_sync
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -57,9 +60,15 @@ class EnhancedQualityAnalyzer:
         self.min_area = 5  # Minimum area in pixels
 
     def analyze_image_quality(self, fits_file_path: str,
-                            progress_callback: callable | None = None) -> dict:
+                            progress_callback: Callable | None = None) -> dict:
         """
         Perform comprehensive quality analysis with star detection and photometry.
+
+        The analysis runs in the CPU worker pool (``galileo.core.compute``): SEP star detection
+        holds the GIL for seconds on a full frame, which froze the UI even from the Library's
+        worker threads (NFR-PERF-020). A callback can't be called from inside the worker process,
+        so progress is reported when the file starts and when it finishes, and a cancel request
+        is honoured before the file starts.
         
         Args:
             fits_file_path: Path to FITS file
@@ -74,12 +83,20 @@ class EnhancedQualityAnalyzer:
                 - star_count: Number of detected stars
                 - image_scale: Image scale in arcsec/pixel
         """
+        if progress_callback and not progress_callback(0, 100, "Analyzing image quality..."):
+            return {"status": "cancelled"}
         try:
-            if progress_callback:
-                should_continue = progress_callback(0, 100, "Loading FITS file...")
-                if not should_continue:
-                    return {"status": "cancelled"}
+            results = run_cpu_sync(self._analyze_file, fits_file_path)
+        except Exception as e:          # the worker process died (the analysis itself catches its own errors)
+            logger.error(f"Error analyzing {fits_file_path}: {e}")
+            return {"status": "error", "message": str(e), "file_path": fits_file_path}
+        if progress_callback and results.get("status") == "success":
+            progress_callback(100, 100, "Quality analysis completed!")
+        return results
 
+    def _analyze_file(self, fits_file_path: str) -> dict:
+        """The analysis behind :meth:`analyze_image_quality`, run in a worker process."""
+        try:
             # Load FITS file
             with fits.open(fits_file_path) as hdul:
                 header = hdul[0].header
@@ -97,48 +114,19 @@ class EnhancedQualityAnalyzer:
                     "status": "success"
                 }
 
-                # Step 1: Calculate image scale from header (20%)
-                if progress_callback:
-                    should_continue = progress_callback(10, 100, "Calculating image scale...")
-                    if not should_continue:
-                        return {"status": "cancelled"}
-
                 image_scale = self._calculate_image_scale(header)
                 results["image_scale"] = image_scale
-
-                # Step 2: Calculate basic image SNR (20%)
-                if progress_callback:
-                    should_continue = progress_callback(20, 100, "Calculating image SNR...")
-                    if not should_continue:
-                        return {"status": "cancelled"}
-
                 results["image_snr"] = self._calculate_image_snr(data)
-
-                # Step 3: Detect stars (30%)
-                if progress_callback:
-                    should_continue = progress_callback(40, 100, "Detecting stars...")
-                    if not should_continue:
-                        return {"status": "cancelled"}
 
                 sources = self._detect_stars(data)
                 results["star_count"] = len(sources) if sources is not None else 0
 
                 if sources is not None and len(sources) >= self.min_star_count:
-                    # Step 4: Measure star properties (30%)
-                    if progress_callback:
-                        should_continue = progress_callback(70, 100,
-                                        f"Analyzing {len(sources)} stars...")
-                        if not should_continue:
-                            return {"status": "cancelled"}
-
                     star_metrics = self._analyze_star_properties(data, sources, image_scale)
                     results.update(star_metrics)
                 else:
                     logger.warning(f"Insufficient stars detected ({results['star_count']}) for "
                                  f"reliable analysis in {fits_file_path}")
-
-                if progress_callback:
-                    progress_callback(100, 100, "Quality analysis completed!")
 
                 return results
 
@@ -207,7 +195,7 @@ class EnhancedQualityAnalyzer:
             return False
 
     def analyze_and_update_file(self, fits_file_path: str, fits_file_id: str,
-                              progress_callback: callable | None = None) -> dict:
+                              progress_callback: Callable | None = None) -> dict:
         """
         Perform quality analysis and update the database in one operation.
         
@@ -247,8 +235,8 @@ class EnhancedQualityAnalyzer:
                     scale = np.sqrt(np.abs(np.linalg.det(pixel_scale))) * 3600.0  # deg to arcsec
                     if 0.1 < scale < 100.0:  # Reasonable range for most telescopes
                         return float(scale)
-            except:
-                pass
+            except Exception:
+                logger.debug("Could not derive image scale from WCS header", exc_info=True)
 
             # Method 2: Try PIXSCALE header keyword
             pixscale = header.get('PIXSCALE')

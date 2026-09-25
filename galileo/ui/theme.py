@@ -247,4 +247,4 @@ class LayoutManager:
             try:
                 self._data = json.loads(self._path.read_text("utf-8"))
             except Exception:
-                pass
+                logger.debug("Could not load saved layout from %s", self._path, exc_info=True)

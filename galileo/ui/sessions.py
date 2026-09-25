@@ -484,7 +484,7 @@ def _block_color(kind_name: str) -> QColor:
     name), so every kind of block reads at a glance and new — including
     plugin-registered (SES-340) — block types get one for free without a
     hand-maintained colour table."""
-    digest = hashlib.md5(kind_name.encode("utf-8")).hexdigest()
+    digest = hashlib.md5(kind_name.encode("utf-8"), usedforsecurity=False).hexdigest()
     hue = int(digest[:8], 16) % 360
     return QColor.fromHsv(hue, 150, 210)
 

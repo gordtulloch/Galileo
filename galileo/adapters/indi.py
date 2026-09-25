@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from typing import Any
 
 from galileo.adapters import indi_client as ic
@@ -163,7 +164,19 @@ class IndiAdapter(DeviceBackend):
             )
 
     def _connect_sync(self) -> None:
+        # Phase timings, logged once connected — a Pier switch reconnects every
+        # device, so knowing which wait dominates is what makes it tunable.
+        phases: dict[str, float] = {}
+        mark = time.perf_counter()
+
+        def lap(name: str) -> None:
+            nonlocal mark
+            now = time.perf_counter()
+            phases[name] = now - mark
+            mark = now
+
         client = ic.acquire_client(self.host, self.port)
+        lap("server")
         try:
             if self.device_name not in client.device_names():
                 raise DeviceConnectionError(
@@ -171,6 +184,7 @@ class IndiAdapter(DeviceBackend):
                     f"(available: {', '.join(client.device_names()) or 'none'})."
                 )
             client.wait_property(self.device_name, "CONNECTION", 10.0)
+            lap("CONNECTION property")
             if not client.get_switch(self.device_name, "CONNECTION", "CONNECT"):
                 client.send_switch(self.device_name, "CONNECTION", {"CONNECT": True, "DISCONNECT": False})
                 self._we_connected_device = True
@@ -181,15 +195,22 @@ class IndiAdapter(DeviceBackend):
                 if not client.get_switch(self.device_name, "CONNECTION", "CONNECT"):
                     last = client.messages[-1] if client.messages else "no message from driver"
                     raise DeviceConnectionError(f"INDI device {self.device_name!r} failed to connect: {last}")
+            lap("device CONNECT" if self._we_connected_device else "already connected")
             # Drivers define most of their properties only once connected, and
             # do so *after* reporting CONNECT — wait for that burst to finish.
             client.wait_settled(quiet=0.6, timeout=8.0, restart=True)
+            lap("property settle")
         except BaseException:
             ic.release_client(client)
             self._we_connected_device = False
             raise
         self._client = client
         self._connected = True
+        logger.info(
+            "INDI %s %r (%s:%d) connected in %.2fs: %s",
+            self.device_type, self.device_name, self.host, self.port, sum(phases.values()),
+            ", ".join(f"{name} {secs:.2f}s" for name, secs in phases.items()),
+        )
 
     def _on_connected(self) -> None:
         """Category hook run right after the device connects."""

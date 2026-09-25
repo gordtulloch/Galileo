@@ -375,6 +375,19 @@ def event_bus():
 
 
 @pytest.fixture(autouse=True)
+def _cpu_work_in_threads(monkeypatch):
+    """Run ``galileo.core.compute.run_cpu`` work in a thread, not the worker pool.
+
+    Many tests monkeypatch the functions that production code sends to the pool (e.g.
+    ``autofocus._measure_stars``). A worker process would never see the patch, and a
+    lambda can't be pickled anyway. The tests in ``test_nfr.py`` that exercise the real
+    pool set ``GALILEO_CPU_WORKERS`` themselves."""
+    from galileo.core.compute import WORKERS_ENV
+
+    monkeypatch.setenv(WORKERS_ENV, "0")
+
+
+@pytest.fixture(autouse=True)
 def _reset_current_object_store():
     """Reset ``galileo.current_object``'s process-wide singleton between tests.
 

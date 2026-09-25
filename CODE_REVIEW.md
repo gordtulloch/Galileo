@@ -11,7 +11,7 @@ it stands and reports what each tool actually found. It does not re-derive archi
 ## How to reproduce
 
 ```bash
-pip install -e ".[test,dev]"      # currently fails — see Finding 2
+pip install -e ".[test,dev]"      # was failing — see Finding 5 (fixed)
 pip install bandit pytest-cov pip-audit
 ruff check .
 mypy . --ignore-missing-imports
@@ -24,10 +24,10 @@ pip-audit
 
 | Tool | Result |
 |---|---|
-| ruff | Originally **2,127 findings** under no config (ruff's out-of-the-box defaults). A project-tuned `[tool.ruff]` config was added (Finding 14) and `--fix` run against it: **4,007 of 5,422 auto-fixed**, **1,415 remain** needing manual judgment |
-| mypy | **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76) |
-| bandit | **88 findings** (27 High, 10 Medium, 51 Low) over 42,975 scanned lines; includes 3 real shell-injection sites and 1 disabled SSH host-key check |
-| pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Finding 1 fixed since, now **701 passed, 9 failed, 1 skipped, 6 deselected** |
+| ruff | Originally **2,127 findings** under no config (ruff's out-of-the-box defaults). A project-tuned `[tool.ruff]` config was added (Finding 14) and `--fix` run against it: **4,007 of 5,422 auto-fixed**, **1,415 remained** needing manual judgment. Findings 10 (232 `LOG015`) and 12 (all `E722`/`S110`/`S112`) fixed by hand since: **1,114 remain** |
+| mypy | Originally **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76). Finding 8 fixed all 34 in `galileo/core/devices.py`: **623 remain** in 48 files |
+| bandit | Originally **88 findings** (27 High, 10 Medium, 51 Low); Findings 2, 6, and 7 fixed the 3 real shell-injection sites, the disabled SSH host-key check, and all 15 weak-hash findings: **80 remain** (7 High, 10 Medium, 63 Low — the Low increase is the argument-list `subprocess.run` calls that replaced the `shell=True`/`os.system` sites, themselves lower-severity "partial path"/no-`shell=True` notes, not new injection risk) |
+| pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Findings 1, 3, and 4 fixed since, now **706 passed, 7 failed, 1 skipped, 6 deselected** (the 7 remaining are the pre-existing "unimplemented feature" gaps listed below, not regressions) |
 | coverage | **57%** overall (`--cov=galileo`); domain-core modules (`sequencer`, `core.devices`, `safety`, `meridianflip`) mostly 70–100%, but several `galileo.library.services`/`galileo.ui.library` modules are under 20% |
 | pip-audit | **0 vulnerabilities** in the project's actual runtime dependencies; only the ambient `pip` tool itself is flagged (pre-existing venv tooling, not a project dependency) |
 
@@ -219,7 +219,18 @@ why `pytest` still runs fine — but `pip install -e .` itself is broken.)
 include = ["galileo*"]
 ```
 
-### 6. Paramiko SFTP client trusts any unknown host key (`AutoAddPolicy`)
+### 6. ~~Paramiko SFTP client trusts any unknown host key (`AutoAddPolicy`)~~ — Fixed
+
+**Status: fixed.** `galileo/library/adapters/sftp.py` now calls `client.load_system_host_keys()`
+and sets `paramiko.WarningPolicy()` instead of `AutoAddPolicy()` — the "at minimum" option this
+finding itself named, since this code path runs headless (no UI thread available to prompt for
+trust-on-first-use) and a strict `RejectPolicy` would break every LAN telescope/server this
+adapter is meant to reach on first connect. An unknown host key is still accepted, but now through
+paramiko's own warning-log path rather than silently, so key rotation or an unfamiliar host is at
+least visible instead of leaving zero trace. Verified: `test_tc_ext_120_sftp_remote_telescope_retrieval`
+still passes.
+
+Original finding, for reference:
 
 `galileo/library/adapters/sftp.py:40`:
 ```python
@@ -231,7 +242,16 @@ practical MITM risk is low, but this is a genuine, easy-to-fix gap (`RejectPolic
 known-hosts/trust-on-first-use flow, or at minimum `WarningPolicy` plus logging) rather than
 something to leave as `AutoAddPolicy` indefinitely.
 
-### 7. Weak hashes (MD5/SHA1) used without `usedforsecurity=False`
+### 7. ~~Weak hashes (MD5/SHA1) used without `usedforsecurity=False`~~ — Fixed
+
+**Status: fixed.** All 15 call sites (13 MD5 + 2 SHA1) across `light_calibration.py`,
+`telescope.py`, `file_hash_calculator.py`, `masters.py`, `cloud.py`, `sessions_widget.py`, and
+`sessions.py` now pass `usedforsecurity=False`, documenting that each use is file-content
+deduplication/verification or deterministic UI color assignment, never a security boundary.
+Verified: `bandit -r galileo` no longer reports any `B324` findings, and the library/sessions test
+files covering these code paths (`test_lib.py`, `test_ses.py`, `test_ext.py`) still pass in full.
+
+Original finding, for reference:
 
 13 MD5 + 2 SHA1 call sites (bandit B324), e.g. `galileo/ui/library/sessions_widget.py:768` and
 `galileo/ui/sessions.py:487`. In both sampled cases the hash is used for file-content
@@ -241,7 +261,28 @@ false-positive-by-intent from bandit's perspective, but it's a one-line fix per 
 next reader. Worth sweeping in one pass rather than leaving 15 instances for bandit to keep
 flagging.
 
-### 8. `galileo.core.devices` — the project's own "port interface" boundary — doesn't type-check against its declared members
+### 8. ~~`galileo.core.devices` — the project's own "port interface" boundary — doesn't type-check against its declared members~~ — Fixed
+
+**Status: fixed.** Added ten `Protocol` classes (`_CameraBackend`, `_MountBackend`,
+`_FilterWheelBackend`, `_FocuserBackend`, `_RotatorBackend`, `_FlatPanelBackend`,
+`_WeatherBackend`, `_DomeBackend`, `_SafetyMonitorBackend`, `_SwitchBackend`) declaring exactly
+the category-specific members each `*Controller` calls on its `self._backend` — not mixed into
+`DeviceBackend`'s own class hierarchy (an ABC and a `Protocol` can't share a base-class list), just
+standalone structural types. Each `*Controller` method now narrows `self._backend` to the matching
+Protocol via `typing.cast(...)` immediately before the category-specific call — `cast()` is a
+type-checker-only no-op at runtime, so this is a pure typing change with zero behavior difference;
+any real adapter (INDI, Alpaca, a plugin) that implements the category's methods already satisfies
+the Protocol structurally, no explicit registration needed. Separately, `DeviceBackend` gained a
+`device_type: str` annotation-only class attribute (matching the existing `backend: str =
+"unknown"` declaration) since every concrete adapter already sets it in `__init__` and
+`DevicePool.register`'s `backend.device_type` lookup was the one error not tied to a specific
+category. Verified: `mypy galileo/core/devices.py` goes from 34 errors to **0**, the project-wide
+mypy error count drops from 665 to **623**, `ruff check` on the file shows no new findings (the 7
+remaining are pre-existing, unrelated `DTZ003` `datetime.utcnow()` notes), and
+`test_arch.py`/`test_eqp.py`/`test_foc.py`/`test_mflip.py` (77 tests covering this exact
+abstraction layer) all still pass.
+
+Original finding, for reference:
 
 `galileo/core/devices.py` is SDD's device-category port-interface module (`ARCH-*`). mypy reports
 34 errors in it, nearly all of the same shape:
@@ -279,7 +320,23 @@ category dialogs and Pier/Observatory management out of `app_window.py` into the
 shrink the blast radius of the `Name not defined` / `Argument ... incompatible type "None"` bugs
 already in there and make mypy's signal usable again.
 
-### 10. `galileo.commands.auto_calibration` / `galileo.library.core.auto_calibration` log through the root logger, not a module logger
+### 10. ~~`galileo.commands.auto_calibration` / `galileo.library.core.auto_calibration` log through the root logger, not a module logger~~ — Fixed
+
+**Status: fixed.** Every one of the 232 `logging.<level>(...)` root-logger call sites now goes
+through a module-level `logger = logging.getLogger(__name__)` instead — the four concentrated
+files (`galileo/commands/auto_calibration.py`, `galileo/library/core/auto_calibration.py`,
+`galileo/commands/cloud_sync.py`, `galileo/commands/register_existing.py`) plus 5 more scattered
+single-site occurrences (`galileo/commands/load_repo.py`, `galileo/library/services/telescope.py`,
+3 in `galileo/ui/library/duplicates_widget.py`) that a full-repo sweep turned up beyond the four
+the review sampled. Each command-line script's own `setup_logging()` (which configures the root
+logger's handlers/level via `logging.basicConfig`) is untouched — only the plain log-level calls
+(`logging.info`/`.warning`/`.error`/`.debug`/`.exception`/`.critical`) were retargeted at a module
+logger, so these modules can now be filtered/leveled/routed independently and their output carries
+the module name like every other logger in the codebase. Verified: `ruff check --select LOG015`
+now reports zero findings repo-wide, and the test files covering these modules
+(`test_lib.py`, `test_ext.py`, `test_vst_an.py`) still pass in full.
+
+Original finding, for reference:
 
 232 `logging.<level>(...)` module-level (root-logger) calls (ruff `LOG015`), concentrated almost
 entirely in four files:
@@ -310,7 +367,29 @@ let real errors (Finding 9's `Name not defined`, `arg-type` mismatches) go unnot
 bullet and switch to the nested enum spellings project-wide — either way, something should be done
 so the real 30–40% of `galileo/ui/*`'s mypy output isn't buried under Qt stub noise.
 
-### 12. `try/except: pass` and bare `except:` (33 sites) silently swallow errors
+### 12. ~~`try/except: pass` and bare `except:` (33 sites) silently swallow errors~~ — Fixed
+
+**Status: fixed.** Every silent site is fixed, in two passes:
+
+- The 19 bare `except:` sites (ruff `E722` — concentrated in `light_calibration.py`,
+  `telescope.py`, `enhanced_quality.py`, `cloud_sync_dialog.py`) are narrowed to
+  `except Exception:`, so a `KeyboardInterrupt`/`SystemExit` can no longer be swallowed by one of
+  these blocks — a real behavior improvement, not just style.
+- All 33 `try/except/pass` (`S110`) and `try/except/continue` (`S112`) sites that logged nothing
+  now call `logger.debug(..., exc_info=True)` (or, for `galileo/platesolve.py:288`'s failed
+  temp-FITS write — whose failure would surface confusingly downstream as a solve failure —
+  `logger.warning`) with a message specific to what was being attempted, mirroring the message
+  style already used by sibling `except` blocks in the same functions (e.g. `alpaca.py`'s
+  "Could not read X from %s" pattern). Deliberately-defensive sites (optional ASCOM properties,
+  best-effort hash/metadata reads) keep their original silent-*behavior* — they still don't raise
+  or change control flow — they just no longer log nothing. A handful of target files had no
+  module-level `logger` yet (`photometry.py`); one was added rather than reusing `logging.<level>`
+  directly, consistent with Finding 10's fix.
+
+Verified: `ruff check --select E722,S110,S112` now reports zero findings repo-wide, all touched
+files parse cleanly, and the full fast test suite still passes with no new failures.
+
+Original finding, for reference:
 
 Ruff/bandit: 26 `try/except/pass` (bandit B110), 7 `try/except/continue` (B112), plus 20 bare
 `except:` (ruff E722) — e.g. `galileo/ui/theme.py:249` swallows any exception loading the saved
@@ -320,7 +399,18 @@ logging makes a real failure indistinguishable from "feature not present" when s
 debugging a report. Worth an audit pass to add at least a `logger.debug(..., exc_info=True)` to
 the ones that currently log nothing.
 
-### 13. FTP (plaintext) used for smart-telescope sync
+### 13. FTP (plaintext) used for smart-telescope sync — Reviewed, accepted as unavoidable
+
+**Status: reviewed, not changed.** Confirmed against `galileo/library/services/telescope.py`'s
+`supported_telescopes` table: the DWARF 3 entry is hard-configured with `'protocol': 'ftp'` (no
+FTPS option), while iTelescope (a real internet-reachable, not LAN-only, target) already uses
+`'protocol': 'ftps'` — so this codebase already applies TLS everywhere it's available, and plain
+FTP is specifically the DWARF 3 hardware's own constraint, not an oversight. Switching it would
+mean dropping support for that device, which is a product decision, not a code fix; left as-is,
+matching the original finding's own "flagging for awareness rather than as a required fix"
+framing.
+
+Original finding, for reference:
 
 `galileo/library/services/telescope.py:363,941` and `galileo/library/adapters/ftp.py` use
 `ftplib.FTP()` — unencrypted control and data channels. This is very likely dictated by the
@@ -439,4 +529,12 @@ a naive `pip-audit` in an environment where the install failed silently audits t
 3. ~~Fix `pip install -e .` (Finding 5)~~ — **done.**
 4. ~~Add the `current_object` test-isolation fixture (Finding 3)~~ — **done.**
 5. ~~Fix the log-reset bug (Finding 4)~~ — **done.**
-6. Everything else is cleanup/hardening (Findings 6–14) — worth doing, none of it urgent.
+6. Everything else is cleanup/hardening. (~~Paramiko `AutoAddPolicy` (Finding 6)~~, ~~weak-hash
+   `usedforsecurity=False` sweep (Finding 7)~~, ~~root-logger → module-logger sweep (Finding
+   10)~~, ~~silent `except`/bare-`except` sweep (Finding 12)~~, and ~~`DeviceBackend` Protocol
+   typing (Finding 8)~~ — **done**, out of order relative to the rest of this bucket since all
+   five were bounded and low-risk. ~~FTP plaintext (Finding 13)~~ — **reviewed, accepted as
+   unavoidable** given the DWARF 3 hardware constraint. **Findings 9** (splitting the
+   7,857-line `app_window.py`) **and 11** (PySide6 enum mypy noise across ~100+ sites) remain
+   open by deliberate choice — both are larger, riskier structural changes than the rest of this
+   list, and were left for a dedicated future session rather than folded into this pass.)
