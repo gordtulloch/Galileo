@@ -56,7 +56,7 @@ Out of scope for v1 (see PSD §5): post-processing/stacking beyond calibration a
 
 ## Non-functional and release
 
-- [ ] `NFR-INSTALL` — one-step installer per platform. Windows has a first cut: `Install-Galileo.bat` (repo root) is the single file a user downloads and double-clicks; it fetches and runs `install/install.ps1`, which finds/installs Python 3.11, clones (or updates in place) the repo, sets up `.venv`, installs dependencies, and creates a Desktop shortcut to `install/launch_galileo.bat`, which auto-updates via git on every launch (`install/upgrade.ps1` covers a manual update). It's a source-checkout installer, not the bundled Nuitka/WiX MSI the SDD (§2.4) and `NFR-INSTALL-010` actually call for, and macOS/Linux still have only the temporary `run.sh`/`run.ps1` launch scripts.
+- [ ] `NFR-INSTALL` — one-step installer per platform. Windows has a first cut: `Install-Galileo.bat` (repo root) is the single file a user downloads and double-clicks; it fetches and runs `install/install.ps1`, which finds/installs Git and Python 3.11, clones (or updates in place) the repo, sets up `.venv`, installs dependencies, and creates a Desktop shortcut to `install/launch_galileo.bat`, which auto-updates via git on every launch (`install/upgrade.ps1` covers a manual update). It's a source-checkout installer, not the bundled Nuitka/WiX MSI the SDD (§2.4) and `NFR-INSTALL-010` actually call for, and macOS/Linux still have only the temporary `run.sh`/`run.ps1` launch scripts.
 - [ ] `NFR-PORT` — verify on macOS, Linux and Raspberry Pi 5; only Windows appears exercised.
 - [ ] `NFR-I18N` — confirm all UI strings are externalized.
 - [ ] `NFR-SEC` — review handling of WAN-exposed INDI/Alpaca endpoints.

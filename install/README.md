@@ -3,7 +3,7 @@
 | File | Purpose |
 |---|---|
 | [`Install-Galileo.bat`](../Install-Galileo.bat) (repo root) | The one file to download for a fresh install. Double-click it; it fetches `install.ps1` from GitHub and runs it. |
-| `install.ps1` | Clones (or updates) the repo, ensures Python 3.11+, creates `.venv`, installs dependencies, and creates a desktop shortcut. Safe to re-run any time. |
+| `install.ps1` | Clones (or updates) the repo, ensures Git and Python 3.11+ are present (installing either if missing), creates `.venv`, installs dependencies, and creates a desktop shortcut. Safe to re-run any time. |
 | `launch_galileo.bat` / `launch_galileo.ps1` | Installed as the desktop shortcut's target. Checks for updates on every launch, then starts Galileo. `.bat` is the actual shortcut target (no PowerShell execution-policy prompt); `.ps1` is the same logic for a PowerShell prompt. |
 | `upgrade.ps1` | Manual "update now" script - `git pull` plus a dependency refresh - for updating without starting the app, or after local changes blocked the automatic update. |
 
@@ -11,7 +11,7 @@
 
 1. The user downloads and double-clicks `Install-Galileo.bat` from the repo root.
 2. It downloads `install.ps1` and runs it via PowerShell (bypassing the execution-policy prompt for that one run only).
-3. `install.ps1` clones Galileo into `%USERPROFILE%\Galileo` (or wherever `-InstallDir` points), resolves or installs Python 3.11, creates `.venv`, installs `requirements.txt`, and creates a `Galileo` desktop shortcut pointing at `launch_galileo.bat`.
+3. `install.ps1` resolves or installs Git (via `winget` if available, otherwise the latest Git for Windows release, looked up from GitHub) and Python 3.11 (via python.org), clones Galileo into `%USERPROFILE%\Galileo` (or wherever `-InstallDir` points), creates `.venv`, installs `requirements.txt`, and creates a `Galileo` desktop shortcut pointing at `launch_galileo.bat`.
 
 Re-running `install.ps1` later (standalone, or from inside the checkout) is how to force a full refresh; ordinary use never needs it, because `launch_galileo.bat`/`.ps1` already update on every launch.
 

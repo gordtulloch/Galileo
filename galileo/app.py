@@ -15,6 +15,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "logo.png"
+_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "galileo.ico"
 
 
 def main() -> None:
@@ -27,7 +28,7 @@ def main() -> None:
 
     try:
         from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QIcon
     except ImportError:
         print("PySide6 is required to run Galileo.  Install it with: pip install PySide6")
         sys.exit(1)
@@ -35,6 +36,10 @@ def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Galileo")
     app.setOrganizationName("GordTulloch")
+    if _ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(_ICON_PATH)))
+    else:
+        logger.warning("Application icon not found at %s", _ICON_PATH)
 
     splash = _show_splash(app)
 

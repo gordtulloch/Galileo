@@ -25,6 +25,77 @@ Write-Host "Galileo Installation Script for Windows" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host
 
+function Update-SessionPath {
+    # Winget/the downloaded installers update the registry but not this process's PATH.
+    $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $user = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machine;$user"
+}
+
+function Install-Git {
+    Write-Host "Git was not found." -ForegroundColor Yellow
+    $installChoice = "Y"
+    if (-not $Quiet) {
+        $installChoice = Read-Host "Download and install Git for Windows now? [Y/n]"
+    }
+    if ($installChoice -match "^[Nn]") {
+        Write-Host "Please install Git for Windows from https://git-scm.com/download/win and re-run this script." -ForegroundColor Yellow
+        if (-not $Quiet) { Read-Host "Press Enter to exit" }
+        exit 1
+    }
+
+    # Prefer winget when it's available - it stays current without us tracking a version number.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "Installing Git via winget..." -ForegroundColor Yellow
+        & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Update-SessionPath
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+                Write-Host "Git installed." -ForegroundColor Green
+                return
+            }
+        }
+        Write-Host "winget install did not complete; falling back to a direct download." -ForegroundColor Yellow
+    }
+
+    Write-Host "Looking up the latest Git for Windows release..." -ForegroundColor Yellow
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" -UseBasicParsing
+        $asset = $release.assets | Where-Object { $_.name -match "-64-bit\.exe$" } | Select-Object -First 1
+        if (-not $asset) { throw "No 64-bit installer found in the latest release." }
+    } catch {
+        Write-Host "Error looking up the latest Git release: $_" -ForegroundColor Red
+        Write-Host "Please install Git for Windows manually from https://git-scm.com/download/win" -ForegroundColor Yellow
+        if (-not $Quiet) { Read-Host "Press Enter to exit" }
+        exit 1
+    }
+
+    $installerPath = Join-Path $env:TEMP $asset.name
+    Write-Host "Downloading $($asset.name)..." -ForegroundColor Yellow
+    try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installerPath -UseBasicParsing
+    } catch {
+        Write-Host "Error downloading Git: $_" -ForegroundColor Red
+        Write-Host "Please install Git for Windows manually from https://git-scm.com/download/win" -ForegroundColor Yellow
+        if (-not $Quiet) { Read-Host "Press Enter to exit" }
+        exit 1
+    }
+
+    Write-Host "Installing Git for Windows (this can take a minute)..." -ForegroundColor Yellow
+    # Silent, current-user install - Galileo only needs `git` itself on PATH, not the shell extras.
+    $process = Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT /NORESTART /NOCANCEL /SP- /CURRENTUSER" -Wait -PassThru
+    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+
+    if ($process.ExitCode -ne 0) {
+        Write-Host "Git installation failed with exit code $($process.ExitCode)." -ForegroundColor Red
+        if (-not $Quiet) { Read-Host "Press Enter to exit" }
+        exit 1
+    }
+
+    Update-SessionPath
+    Write-Host "Git installed." -ForegroundColor Green
+}
+
 # ---------------------------------------------------------------------------
 # Locate (or clone) the Galileo repository
 # ---------------------------------------------------------------------------
@@ -39,8 +110,11 @@ if ($ParentDir -and (Test-Path (Join-Path $ParentDir "pyproject.toml"))) {
     if (-not $InstallDir) { $InstallDir = Join-Path $env:USERPROFILE "Galileo" }
 
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host "Error: git is required to download Galileo but was not found." -ForegroundColor Red
-        Write-Host "Install Git for Windows from https://git-scm.com/download/win and re-run this script." -ForegroundColor Yellow
+        Install-Git
+    }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "Error: still could not find git after installation." -ForegroundColor Red
+        Write-Host "Close this window, open a new PowerShell session (so PATH updates take effect) and re-run this script." -ForegroundColor Yellow
         if (-not $Quiet) { Read-Host "Press Enter to exit" }
         exit 1
     }
@@ -76,13 +150,6 @@ Write-Host
 # ---------------------------------------------------------------------------
 # Python 3.11+ detection / installation
 # ---------------------------------------------------------------------------
-function Update-SessionPath {
-    # Winget/the Python installer update the registry but not this process's PATH.
-    $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $user = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = "$machine;$user"
-}
-
 function Resolve-Python {
     # Prefer the py launcher's exact 3.11 - the version this project develops/tests on.
     if (Get-Command py -ErrorAction SilentlyContinue) {
@@ -215,6 +282,7 @@ if ($createShortcut -notmatch "^[Nn]") {
         $Shortcut.WorkingDirectory = $RepoRoot
         $Shortcut.IconLocation = Join-Path $RepoRoot "assets\images\galileo.ico"
         $Shortcut.Description = "Galileo - Astrophotography Imaging Suite"
+        $Shortcut.WindowStyle = 7  # Minimized - hides the update-check console; the Galileo window itself is unaffected.
         $Shortcut.Save()
         Write-Host "Desktop shortcut created." -ForegroundColor Green
     } catch {
