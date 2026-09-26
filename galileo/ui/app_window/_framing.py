@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
+from ._common import _new_form_layout
 from ._widgets import _FramingCanvas
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class AppWindowFramingMixin:
         not its panels are shown here."""
         import asyncio
         from PySide6.QtWidgets import (
-            QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel,
+            QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout, QLabel,
             QLineEdit, QPushButton, QSpinBox, QVBoxLayout,
         )
         from galileo.planning.framing import MosaicSettings
@@ -104,7 +105,7 @@ class AppWindowFramingMixin:
 
         left = QVBoxLayout()
         outer.addLayout(left)
-        form = QFormLayout()
+        form = _new_form_layout()
         left.addLayout(form)
 
         name_edit = QLineEdit()
@@ -250,12 +251,12 @@ class AppWindowFramingMixin:
         if initial_target is not None:
             load_sky_image()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         left.addWidget(buttons)
 
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             assistant.close()
             return
 

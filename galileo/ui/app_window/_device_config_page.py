@@ -43,12 +43,12 @@ class AppWindowDeviceConfigMixin:
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.setMaximumHeight(70)
-        table.setSelectionMode(QTableWidget.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
         driver_combo.addItems(["Alpaca", "INDI"])
@@ -130,7 +130,7 @@ class AppWindowDeviceConfigMixin:
                 return
             for name in devices:
                 item = QListWidgetItem(name)
-                item.setData(Qt.UserRole, True)
+                item.setData(Qt.ItemDataRole.UserRole, True)
                 results.addItem(item)
 
         refresh_btn.clicked.connect(run_scan)
@@ -138,7 +138,7 @@ class AppWindowDeviceConfigMixin:
         def _on_result_clicked(item: QListWidgetItem) -> None:
             # Only an actual scanned device is selectable — not the
             # "No devices found" / "Scan failed" info rows above.
-            if item.data(Qt.UserRole):
+            if item.data(Qt.ItemDataRole.UserRole):
                 page_state["selected_device"] = item.text()
                 apply_driver_info(self._lookup_driver_info(
                     _CATEGORY_ENUM[cat_id], driver_combo.currentText(),
@@ -206,7 +206,7 @@ class AppWindowDeviceConfigMixin:
                     from PySide6.QtWidgets import QListWidgetItem
                     from PySide6.QtCore import Qt
                     item = QListWidgetItem(cfg.device_name)
-                    item.setData(Qt.UserRole, True)
+                    item.setData(Qt.ItemDataRole.UserRole, True)
                     results.addItem(item)
             else:
                 driver_combo.setCurrentIndex(0)

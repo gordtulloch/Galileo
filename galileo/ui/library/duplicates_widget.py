@@ -24,13 +24,13 @@ class DuplicatesWidget(QWidget):
 
         # Title and description
         title_label = QLabel("Duplicate Files Management")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
         layout.addWidget(title_label)
 
         description = QLabel("Files with identical content (same hash) are considered duplicates.\n"
                            "You can safely remove all but one copy of each duplicate group.")
-        description.setAlignment(Qt.AlignCenter)
+        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         description.setStyleSheet("margin: 5px;")
         layout.addWidget(description)
 
@@ -74,7 +74,7 @@ class DuplicatesWidget(QWidget):
 
         # Info label
         self.info_label = QLabel("No duplicates found.")
-        self.info_label.setAlignment(Qt.AlignLeft)
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         button_layout.addWidget(self.info_label)
         button_layout.addStretch()
@@ -97,7 +97,7 @@ class DuplicatesWidget(QWidget):
             if duplicate_hashes:
                 progress_dialog = QProgressDialog("Scanning for duplicate files...", "Cancel", 0, len(duplicate_hashes), self)
                 progress_dialog.setWindowTitle("Finding Duplicates")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.show()
 
             total_duplicates = 0
@@ -178,11 +178,11 @@ class DuplicatesWidget(QWidget):
             "This will permanently delete duplicate files from both the database and disk.\n"
             "One copy of each file will be kept. This action cannot be undone.\n\n"
             "Are you sure you want to continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         deleted_count = 0
@@ -198,7 +198,7 @@ class DuplicatesWidget(QWidget):
             if duplicate_hashes:
                 progress_dialog = QProgressDialog("Deleting duplicate files...", "Cancel", 0, len(duplicate_hashes), self)
                 progress_dialog.setWindowTitle("Deleting Duplicates")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.show()
 
             for i, hash_value in enumerate(duplicate_hashes):

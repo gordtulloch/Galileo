@@ -98,9 +98,23 @@ class Observatory:
         self.dome = None
         self._event_bus = None
         self.state = "idle"
+        self.contact_details: ContactDetails | None = None
 
     def add_pier(self, pier: Pier) -> None:
         self.piers.append(pier)
+
+    def set_contact_details(
+        self,
+        email: str | None = None,
+        phone_number: str | None = None,
+        channels: list[str] | None = None,
+    ) -> None:
+        """Set the operator's own external-notification contact details
+        (OBS-090) — one per Observatory, read by :mod:`galileo.notify`
+        (NOTIF-040) regardless of which Pier raised the event."""
+        self.contact_details = ContactDetails(
+            email=email, phone_number=phone_number, channels=channels,
+        )
 
     def set_safety_monitor(self, monitor, scope: str = "observatory") -> None:
         if scope == "observatory":

@@ -89,7 +89,7 @@ class SessionsWidget(QWidget):
             if not parent:
                 return  # ignore parent object rows
 
-            session_id = item.data(0, Qt.UserRole)
+            session_id = item.data(0, Qt.ItemDataRole.UserRole)
             if not session_id:
                 return
 
@@ -238,7 +238,7 @@ class SessionsWidget(QWidget):
 
         # Session ID clipboard helper
         session_items_for_clipboard = [si for si in selected_items if si.parent() is not None]
-        session_ids_for_clipboard = [str(si.data(0, Qt.UserRole)) for si in session_items_for_clipboard if si.data(0, Qt.UserRole)]
+        session_ids_for_clipboard = [str(si.data(0, Qt.ItemDataRole.UserRole)) for si in session_items_for_clipboard if si.data(0, Qt.ItemDataRole.UserRole)]
         if session_ids_for_clipboard:
             label = "📋 Copy Session ID" if len(session_ids_for_clipboard) == 1 else f"📋 Copy Session IDs ({len(session_ids_for_clipboard)})"
             copy_session_id_action = context_menu.addAction(label)
@@ -286,7 +286,7 @@ class SessionsWidget(QWidget):
         view_master_action = None
         if len(selected_items) == 1 and not parent_objects:
             # Check if this session has a master frame
-            session_id = selected_items[0].data(0, Qt.UserRole)
+            session_id = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
             if session_id:
                 try:
                     master = Masters.select().where(
@@ -340,7 +340,7 @@ class SessionsWidget(QWidget):
         elif action == regenerate_thumbnail_action:
             try:
                 item = light_sessions[0]
-                session_id = item.data(0, Qt.UserRole)
+                session_id = item.data(0, Qt.ItemDataRole.UserRole)
                 if not session_id:
                     QMessageBox.warning(self, "Error", "Session ID not found")
                     return
@@ -390,7 +390,7 @@ class SessionsWidget(QWidget):
 
         # View master action
         elif action == view_master_action:
-            session_id = selected_items[0].data(0, Qt.UserRole)
+            session_id = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
             self.view_master_frame(session_id)
 
         # Copy Session ID(s)
@@ -496,7 +496,7 @@ class SessionsWidget(QWidget):
             import hashlib
 
             # Get session ID from tree item
-            session_id = item.data(0, Qt.UserRole)
+            session_id = item.data(0, Qt.ItemDataRole.UserRole)
             if not session_id:
                 if show_results:
                     QMessageBox.warning(self, "Error", "Session ID not found")
@@ -576,9 +576,9 @@ class SessionsWidget(QWidget):
                     f"Available master frames:\n" + "\n".join(available_masters) + "\n\n"
                     "Calibrated frames will be saved with 'cal_' prefix.\n"
                     "Source uncalibrated frames will be soft-deleted.",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
 
-                if reply != QMessageBox.Yes:
+                if reply != QMessageBox.StandardButton.Yes:
                     return {"cancelled": True}
 
             # Get light frames from session
@@ -595,7 +595,7 @@ class SessionsWidget(QWidget):
 
             # Progress dialog
             progress = QProgressDialog("Calibrating light frames...", "Cancel", 0, len(light_files), self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setWindowTitle("Calibrating Session")
             progress.setMinimumDuration(0)
             progress.setValue(0)
@@ -848,7 +848,7 @@ class SessionsWidget(QWidget):
             from galileo.library.core.master_manager import get_master_manager
             from galileo.library.core.utils import sanitize_filesystem_name
 
-            session_id = item.data(0, Qt.UserRole)
+            session_id = item.data(0, Qt.ItemDataRole.UserRole)
             if not session_id:
                 QMessageBox.warning(self, "Error", "Session ID not found")
                 return
@@ -926,7 +926,7 @@ class SessionsWidget(QWidget):
 
             # Progress dialog for stacking
             progress = QProgressDialog("Stacking calibrated frames...", "Cancel", 0, 100, self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setWindowTitle("Stack")
             progress.setMinimumDuration(0)
             progress.setValue(0)
@@ -983,7 +983,7 @@ class SessionsWidget(QWidget):
             from galileo.library.models import fitsSession as FitsSessionModel
             from galileo.library.models import fitsFile as FitsFileModel
 
-            session_id = item.data(0, Qt.UserRole)
+            session_id = item.data(0, Qt.ItemDataRole.UserRole)
             if not session_id:
                 QMessageBox.warning(self, "Error", "Session ID not found")
                 return
@@ -1074,7 +1074,7 @@ class SessionsWidget(QWidget):
             output_path = os.path.join(out_dir, f"photometric_stack_{safe_object}_{date_str}.fits")
 
             progress = QProgressDialog("Creating photometric stack...", "Cancel", 0, 100, self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setWindowTitle("Stack (photometric)")
             progress.setMinimumDuration(0)
             progress.setValue(0)
@@ -1219,8 +1219,8 @@ class SessionsWidget(QWidget):
 
             # Configure files table
             header = files_table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.Stretch)
-            header.setSectionResizeMode(QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
             files_table.setAlternatingRowColors(True)
             files_table.setSelectionBehavior(QTableWidget.SelectRows)
 
@@ -1230,7 +1230,7 @@ class SessionsWidget(QWidget):
             layout.addWidget(tabs)
 
             # Buttons
-            buttons = QDialogButtonBox(QDialogButtonBox.Close)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
 
@@ -1248,7 +1248,7 @@ class SessionsWidget(QWidget):
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Creating Light Sessions")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)  # Show immediately
             progress_dialog.setValue(0)
             progress_dialog.show()
@@ -1303,7 +1303,7 @@ class SessionsWidget(QWidget):
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Creating Calibration Sessions")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)  # Show immediately
             progress_dialog.setValue(0)
             progress_dialog.show()
@@ -1481,7 +1481,7 @@ class SessionsWidget(QWidget):
                     child_item.setText(6, str(session_image_count))  # Image count for this session
 
                     # Store session ID in the item for later retrieval
-                    child_item.setData(0, Qt.UserRole, session.fitsSessionId)
+                    child_item.setData(0, Qt.ItemDataRole.UserRole, session.fitsSessionId)
 
                     # Attach thumbnail icon if it exists (light sessions only)
                     if session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']:
@@ -1489,7 +1489,7 @@ class SessionsWidget(QWidget):
                         if thumb_path and os.path.exists(thumb_path):
                             pix = QPixmap(thumb_path)
                             if not pix.isNull():
-                                pix = pix.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                pix = pix.scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                                 child_item.setIcon(1, QIcon(pix))
                                 child_item.setToolTip(1, f"Thumbnail: {thumb_path}")
 
@@ -1590,10 +1590,10 @@ class SessionsWidget(QWidget):
         """Create a colored icon for calibration status."""
         size = 12
         pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.transparent)
+        pixmap.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Define colors and shapes for different calibration types
         if icon_type == 'B':  # Bias
@@ -1918,7 +1918,7 @@ class SessionsWidget(QWidget):
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Linking Sessions")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)  # Show immediately
             progress_dialog.setValue(0)
             progress_dialog.show()
@@ -1976,7 +1976,7 @@ class SessionsWidget(QWidget):
             result = dialog.exec()
 
             # Refresh the sessions display if workflow completed
-            if result == QDialog.Accepted:
+            if result == QDialog.DialogCode.Accepted:
                 self.load_sessions_data()
 
         except Exception as e:
@@ -2011,10 +2011,10 @@ class SessionsWidget(QWidget):
                 reply = QMessageBox.question(self, "Confirm Regenerate All",
                                            "This will clear ALL existing sessions and recreate them from FITS files.\n\n"
                                            "Are you sure you want to continue?",
-                                           QMessageBox.Yes | QMessageBox.No,
-                                           QMessageBox.No)
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                           QMessageBox.StandardButton.No)
 
-                if reply != QMessageBox.Yes:
+                if reply != QMessageBox.StandardButton.Yes:
                     return
 
                 # Call the full regeneration method (existing behavior)
@@ -2057,7 +2057,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Creating light sessions...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Regenerating Sessions - Step 2/4")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2107,7 +2107,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Creating calibration sessions...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Regenerating Sessions - Step 3/4")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2160,7 +2160,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Linking Master sessions...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Regenerating Sessions - Step 4/4")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2254,7 +2254,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Creating light sessions for unassigned files...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Creating Sessions - Step 1/3")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2305,7 +2305,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Creating calibration sessions for unassigned files...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Creating Sessions - Step 2/3")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2358,7 +2358,7 @@ class SessionsWidget(QWidget):
             try:
                 progress_dialog = QProgressDialog("Linking calibration sessions...", "Cancel", 0, 100, self)
                 progress_dialog.setWindowTitle("Creating Sessions - Step 3/3")
-                progress_dialog.setWindowModality(Qt.WindowModal)
+                progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
                 progress_dialog.setMinimumDuration(0)
                 progress_dialog.setValue(0)
                 progress_dialog.show()
@@ -2430,7 +2430,7 @@ class SessionsWidget(QWidget):
             # Create a progress dialog for auto-regeneration
             progress_dialog = QProgressDialog("Auto-regenerating sessions...", None, 0, 100, self)
             progress_dialog.setWindowTitle("Updating Sessions")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)
             progress_dialog.setValue(0)
             progress_dialog.show()

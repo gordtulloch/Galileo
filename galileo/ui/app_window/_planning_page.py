@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import QLabel, QWidget
+from ._common import _new_form_layout, QLabel, QWidget
 from ._widgets import _ClickableThumbnail
 
 logger = logging.getLogger(__name__)
@@ -115,9 +115,9 @@ class AppWindowPlanningPageMixin:
             top_row.setSpacing(6)
             thumb_label = _ClickableThumbnail()
             thumb_label.setFixedSize(_CARD_THUMB_PX, _CARD_THUMB_PX)
-            thumb_label.setAlignment(Qt.AlignCenter)
+            thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             thumb_label.setObjectName("DeviceSlotPanel")
-            thumb_label.setCursor(Qt.PointingHandCursor)
+            thumb_label.setCursor(Qt.CursorShape.PointingHandCursor)
             thumb_label.setToolTip("Click for a full-size view.")
             thumb_label.clicked.connect(lambda o=obj: self._show_full_image(o))
             top_row.addWidget(thumb_label)
@@ -294,7 +294,7 @@ class AppWindowPlanningPageMixin:
 
         results = QListWidget()
         results.setSpacing(4)
-        results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content_layout.addWidget(results, 1)
 
         def _tile_row(card: QWidget) -> tuple[QWidget, object]:
@@ -365,7 +365,7 @@ class AppWindowPlanningPageMixin:
             import asyncio
             results.clear()
             self._window.statusBar().showMessage("Searching…")
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             location = _current_location()
             try:
                 from galileo.planning.sky_atlas import SkyAtlas, ObjectType
@@ -416,7 +416,7 @@ class AppWindowPlanningPageMixin:
             rise_set_texts = ["Set an Observatory location (top bar) for rise/transit/set."] * len(shown)
             if location is not None:
                 self._window.statusBar().showMessage(f"Found {len(matches)} object(s) — computing altitude charts…")
-                QApplication.setOverrideCursor(Qt.WaitCursor)
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
                     charts = atlas.altitude_charts_batch(shown, location)
                     for i, (obj, chart) in enumerate(zip(shown, charts)):
@@ -442,7 +442,7 @@ class AppWindowPlanningPageMixin:
             thumb_labels = []
             for obj, rise_set_text, chart in zip(shown, rise_set_texts, charts):
                 item = QListWidgetItem()
-                item.setData(Qt.UserRole, obj)
+                item.setData(Qt.ItemDataRole.UserRole, obj)
                 card, thumb_label = _build_result_card(obj, rise_set_text, chart)
                 row_container, size_hint = _tile_row(card)
                 item.setSizeHint(size_hint)
@@ -455,7 +455,7 @@ class AppWindowPlanningPageMixin:
             # _MAX_AUTO_THUMBNAILS above, a real network request each); the
             # rest still show every other detail, just without an image.
             if thumb_labels:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
                     for obj, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels):
                         try:
@@ -466,7 +466,7 @@ class AppWindowPlanningPageMixin:
                         pixmap = QPixmap()
                         if data and pixmap.loadFromData(data) and not pixmap.isNull():
                             thumb_label.setPixmap(pixmap.scaled(
-                                _CARD_THUMB_PX, _CARD_THUMB_PX, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                                _CARD_THUMB_PX, _CARD_THUMB_PX, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
                             ))
                 finally:
                     QApplication.restoreOverrideCursor()
@@ -481,7 +481,7 @@ class AppWindowPlanningPageMixin:
     def _build_criteria_panel(self: AppWindowState, heading: str):
         """A fixed-width form panel holding search/input criteria, used
         instead of a secondary icon column (Planning, Star Atlas)."""
-        from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel
+        from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
         panel = QWidget()
         panel.setObjectName("CriteriaPanel")
@@ -494,7 +494,7 @@ class AppWindowPlanningPageMixin:
         title.setObjectName("CriteriaHeading")
         outer.addWidget(title)
 
-        form = QFormLayout()
+        form = _new_form_layout()
         form.setSpacing(8)
         outer.addLayout(form)
         outer.addStretch(1)

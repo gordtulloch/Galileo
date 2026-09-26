@@ -149,7 +149,7 @@ def _heading_box(title: str) -> tuple[QGroupBox, QVBoxLayout]:
 
 def _value_label() -> QLabel:
     label = QLabel("—")
-    label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return label
 
 
@@ -191,9 +191,9 @@ class SolveErrorPlot(_PlotBase):
         tick = step
         while tick < half:
             for sign in (1, -1):
-                painter.drawText(QRectF(c.x() + sign * tick * k - 20, plot.bottom() + 2, 40, 14), Qt.AlignCenter, f"{sign * tick:g}")
+                painter.drawText(QRectF(c.x() + sign * tick * k - 20, plot.bottom() + 2, 40, 14), Qt.AlignmentFlag.AlignCenter, f"{sign * tick:g}")
                 painter.drawText(QRectF(plot.left() - 34, c.y() - sign * tick * k - 7, 30, 14),
-                                 Qt.AlignRight | Qt.AlignVCenter, f"{sign * tick:g}")
+                                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{sign * tick:g}")
             tick += step
 
         # accuracy rings
@@ -210,15 +210,15 @@ class SolveErrorPlot(_PlotBase):
         for i, (x, y) in enumerate(self.points):
             dot = QColor("#ffffff")
             dot.setAlpha(80 + int(175 * (i + 1) / n))
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(dot)
             painter.drawEllipse(QPointF(c.x() + x * k, c.y() - y * k), 2.6, 2.6)
         painter.setPen(QColor("#c8c8c8"))
-        painter.drawText(QRectF(plot.left(), plot.bottom() + 14, side, 14), Qt.AlignCenter, "dRA (arcsec)")
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 14, side, 14), Qt.AlignmentFlag.AlignCenter, "dRA (arcsec)")
         painter.save()
         painter.translate(10, c.y())
         painter.rotate(-90)
-        painter.drawText(QRectF(-50, -8, 100, 14), Qt.AlignCenter, "dDE (arcsec)")
+        painter.drawText(QRectF(-50, -8, 100, 14), Qt.AlignmentFlag.AlignCenter, "dDE (arcsec)")
         painter.restore()
         painter.end()
 
@@ -233,8 +233,8 @@ class SolveImageView(QGraphicsView):
         self._item = QGraphicsPixmapItem()
         self._scene.addItem(self._item)
         self.setScene(self._scene)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setBackgroundBrush(Qt.black)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setBackgroundBrush(Qt.GlobalColor.black)
         self.setMinimumHeight(200)
         self.fit = True
         self.has_image = False
@@ -243,9 +243,9 @@ class SolveImageView(QGraphicsView):
         arr = np.ascontiguousarray(array)
         h, w = arr.shape[:2]
         if arr.ndim == 3:
-            image = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+            image = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         else:
-            image = QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+            image = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
         self._item.setPixmap(QPixmap.fromImage(image))
         self._scene.setSceneRect(0, 0, w, h)
         self.has_image = True
@@ -259,7 +259,7 @@ class SolveImageView(QGraphicsView):
     def fit_to_window(self) -> None:
         self.fit = True
         if self.has_image:
-            self.fitInView(self._item, Qt.KeepAspectRatio)
+            self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
 
     def actual_size(self) -> None:
         self.fit = False
@@ -501,18 +501,18 @@ class SolvePage(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(QLabel("The results of each solve, from Capture & Solve, Load & Slew, or any other part of Galileo, appear below."))
 
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         left = QWidget()
         left_box = QVBoxLayout(left)
         left_box.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["RA", "DEC", "Obj Name", "Result", "dRA", "dDE"])
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setWordWrap(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         left_box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
         self.clear_results_btn = QPushButton("Clear")
@@ -714,7 +714,7 @@ class SolvePage(QWidget):
             ]
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignCenter if column != 2 else Qt.AlignLeft | Qt.AlignVCenter)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if column != 2 else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 if column == 3 and row.status == "failed":
                     item.setToolTip(row.reason)
                 table.setItem(i, column, item)

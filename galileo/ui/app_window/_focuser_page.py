@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _when_visible, _DEFAULT_PORTS, QWidget
+from ._common import _new_form_layout, _when_visible, _DEFAULT_PORTS, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class AppWindowFocuserPageMixin:
         Temperature — refreshed on a timer once connected, mirroring the
         Camera page's shared-connection/scroll-area/scan-to-log pattern."""
         from PySide6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel, QTableWidget,
+            QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QTableWidget,
             QComboBox, QLineEdit, QSpinBox, QPushButton, QCheckBox, QHeaderView,
             QScrollArea, QMessageBox,
         )
@@ -60,12 +60,12 @@ class AppWindowFocuserPageMixin:
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.setMaximumHeight(70)
-        table.setSelectionMode(QTableWidget.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
         driver_combo.addItems(["Alpaca", "INDI"])
@@ -102,7 +102,7 @@ class AppWindowFocuserPageMixin:
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         panels_container = QWidget()
         panels_layout = QVBoxLayout(panels_container)
         panels_layout.setContentsMargins(0, 0, 0, 0)
@@ -129,7 +129,7 @@ class AppWindowFocuserPageMixin:
                 header.addWidget(remove_btn)
             outer.addLayout(header)
 
-            form = QFormLayout()
+            form = _new_form_layout()
             outer.addLayout(form)
 
             device_combo = QComboBox()

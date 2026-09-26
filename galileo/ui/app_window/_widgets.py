@@ -75,12 +75,12 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         from PySide6.QtGui import QColor, QPainter, QPen
 
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor("#1a1a1a"))
 
         if self._pixmap is None:
             painter.setPen(QColor("#cccccc"))
-            painter.drawText(self.rect(), _Qt.AlignCenter | _Qt.TextWordWrap, self._message)
+            painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter | _Qt.TextFlag.TextWordWrap, self._message)
             painter.end()
             return
 
@@ -103,7 +103,7 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
 
         img_w_px = max(1, round(ext_w_deg * px_per_deg_x))
         img_h_px = max(1, round(ext_h_deg * px_per_deg_y))
-        scaled = self._pixmap.scaled(img_w_px, img_h_px, _Qt.IgnoreAspectRatio, _Qt.SmoothTransformation)
+        scaled = self._pixmap.scaled(img_w_px, img_h_px, _Qt.AspectRatioMode.IgnoreAspectRatio, _Qt.TransformationMode.SmoothTransformation)
         origin_x = target.x() + (target.width() - scaled.width()) / 2
         origin_y = target.y() + (target.height() - scaled.height()) / 2
         painter.drawPixmap(int(origin_x), int(origin_y), scaled)
@@ -112,7 +112,7 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
             # The field extends beyond what the survey cutout covers — mark
             # where the actual image data ends, so that's not mistaken for the
             # edge of the field itself.
-            border_pen = QPen(QColor("#666666"), 1, _Qt.DashLine)
+            border_pen = QPen(QColor("#666666"), 1, _Qt.PenStyle.DashLine)
             painter.setPen(border_pen)
             painter.drawRect(QRectF(origin_x, origin_y, scaled.width(), scaled.height()))
 
@@ -146,7 +146,7 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
             # The originally-requested tilted frame no rotator can achieve directly
             # — shown for context against the covering mosaic drawn above, not
             # itself a pane that will be captured.
-            painter.setPen(QPen(QColor("#ffa64d"), 1, _Qt.DashLine))
+            painter.setPen(QPen(QColor("#ffa64d"), 1, _Qt.PenStyle.DashLine))
             draw_rect(0.0, 0.0, self._reference_rotation_deg)
         painter.end()
 
@@ -161,7 +161,7 @@ class _ClickableThumbnail(QLabel if _HAS_QT else object):
 
     def mousePressEvent(self, event) -> None:
         from PySide6.QtCore import Qt as _Qt
-        if event.button() == _Qt.LeftButton:
+        if event.button() == _Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
@@ -190,7 +190,7 @@ class _HistogramWidget(QWidget if _HAS_QT else object):
         painter.fillRect(self.rect(), QColor("#1a1a1a"))
         if self._counts:
             import math
-            painter.setPen(_Qt.NoPen)
+            painter.setPen(_Qt.PenStyle.NoPen)
             painter.setBrush(QColor(self._color or "#4da3ff"))
             w, h = self.width(), self.height()
             n = len(self._counts)
@@ -217,7 +217,7 @@ class _LogPane(QPlainTextEdit if _HAS_QT else object):
 
     def wheelEvent(self, event) -> None:
         from PySide6.QtCore import Qt
-        if event.modifiers() & Qt.ControlModifier:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             event.ignore()
             return
         super().wheelEvent(event)
@@ -274,9 +274,9 @@ class _NavColumn(QWidget if _HAS_QT else object):
             btn = QToolButton()
             btn.setObjectName(button_object_name)
             btn.setCheckable(True)
-            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             btn.setMinimumHeight(button_min_height)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setText(label)
             # QToolButton never wraps its own text, so a label wider than the
             # column (e.g. "Variable Stars", "Safety Monitor") is clipped with an
@@ -306,11 +306,11 @@ class _NavColumn(QWidget if _HAS_QT else object):
         if power_action is not None:
             power_btn = QToolButton()
             power_btn.setObjectName(button_object_name)
-            power_btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            power_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             power_btn.setMinimumHeight(button_min_height)
             # Span the full column like every other nav button, so the icon and
             # label are centred rather than shrink-wrapped against the left edge.
-            power_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            power_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             power_btn.setText("Quit")
             _set_icon_pair(power_btn, "power", icon_size)
             power_btn.clicked.connect(power_action)

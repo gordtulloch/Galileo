@@ -29,15 +29,15 @@ def make_icon(name: str, color: str, size: int = 26) -> QIcon:
     from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
     pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     pen = QPen(QColor(color))
     pen.setWidthF(max(1.4, size * 0.06))
-    pen.setJoinStyle(Qt.RoundJoin)
-    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
-    painter.setBrush(Qt.NoBrush)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     margin = size * 0.14
     ICONS[name](painter, QRectF(margin, margin, size - 2 * margin, size - 2 * margin))
     painter.end()

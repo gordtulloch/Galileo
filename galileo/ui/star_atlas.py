@@ -127,7 +127,7 @@ class StarAtlasView(QWidget):
         super().__init__(parent)
         self.setMinimumSize(360, 300)
         self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.latitude = 0.0
         self.longitude = 0.0
@@ -436,7 +436,7 @@ class StarAtlasView(QWidget):
     def paintEvent(self, _event) -> None:
         vp = self._viewport()
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         brightness = float(np.clip((self._sun_alt + 18.0) / 26.0, 0.0, 1.0)) if self.daylight_sky else 0.0
         sky = (tuple(np.interp(self._sun_alt, _SKY_ALT_STOPS, _SKY_RGB_STOPS[:, c]) for c in range(3))
@@ -486,7 +486,7 @@ class StarAtlasView(QWidget):
 
     def _draw_grid(self, p: QPainter, vp) -> None:
         p.setPen(QPen(_GRID_COLOR, 1))
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         step = 15 if vp.fov_deg > 25 else 5
         decs = np.linspace(-90.0, 90.0, 181)
         for ra in range(0, 360, step):
@@ -504,7 +504,7 @@ class StarAtlasView(QWidget):
             return
         x, y, vis = vp.project(self._bnd_alt, self._bnd_az)
         p.setPen(QPen(_BOUNDARY_COLOR, 1.2))
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(len(self._bounds)):
             s = self._bounds.outline(i)
             xs, ys, vs = x[s], y[s], vis[s]
@@ -517,7 +517,7 @@ class StarAtlasView(QWidget):
             return
         x, y, vis = vp.project(self._line_alt, self._line_az)
         p.setPen(QPen(_LINES_COLOR, 1.3))
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(len(self._lines)):
             s = self._lines.polyline(i)
             xs, ys, vs = x[s], y[s], vis[s]
@@ -527,7 +527,7 @@ class StarAtlasView(QWidget):
 
     def _draw_stars(self, p: QPainter, star_set) -> None:
         idx, xs, ys = star_set
-        p.setPen(Qt.NoPen)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(255, 255, 240))
         mags = self._stars.mag[idx]
         for m, x, y in zip(mags.tolist(), xs.tolist(), ys.tolist()):
@@ -536,7 +536,7 @@ class StarAtlasView(QWidget):
 
     def _draw_dsos(self, p: QPainter, vp, dso_set) -> None:
         idx, xs, ys = dso_set
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_DSO_COLOR, 1))
         px_per_arcmin = vp.scale * 2.0 * math.tan(math.radians(1.0 / 60.0) / 2.0)
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
@@ -546,7 +546,7 @@ class StarAtlasView(QWidget):
             if kind == "Galaxy":
                 p.drawEllipse(QPointF(x, y), r * 1.3, r * 0.7)
             elif kind in ("OpenCluster", "GlobularCluster", "Cluster"):
-                pen = QPen(_DSO_COLOR, 1, Qt.DashLine if kind == "OpenCluster" else Qt.SolidLine)
+                pen = QPen(_DSO_COLOR, 1, Qt.PenStyle.DashLine if kind == "OpenCluster" else Qt.PenStyle.SolidLine)
                 p.setPen(pen)
                 p.drawEllipse(QPointF(x, y), r, r)
                 if kind == "GlobularCluster":
@@ -590,8 +590,8 @@ class StarAtlasView(QWidget):
         r, g, b = (int(12 + 40 * brightness), int(16 + 46 * brightness), int(14 + 38 * brightness))
         arr = np.zeros((gh, gw, 4), dtype=np.uint8)
         arr[below] = (b, g, r, 238)          # Format_ARGB32 is BGRA in memory (little-endian)
-        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_ARGB32).copy()
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format.Format_ARGB32).copy()
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.drawImage(QRectF(0, 0, gw * cell, gh * cell), img)
 
     def _draw_obstructions(self, p: QPainter, vp) -> None:
@@ -605,15 +605,15 @@ class StarAtlasView(QWidget):
         r, g, b, a = _OBSTRUCTION_RGBA
         arr = np.zeros((gh, gw, 4), dtype=np.uint8)
         arr[blocked] = (b, g, r, a)          # Format_ARGB32 is BGRA in memory (little-endian)
-        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format_ARGB32).copy()
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format.Format_ARGB32).copy()
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.drawImage(QRectF(0, 0, gw * cell, gh * cell), img)
 
     def _draw_horizon(self, p: QPainter, vp) -> None:
         az = np.linspace(0.0, 360.0, 361)
         x, y, vis = vp.project(np.zeros_like(az), az)
         p.setPen(QPen(_HORIZON_COLOR, 1.5))
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         self._polyline(p, x, y, vis)
         font = QFont(p.font())
         font.setBold(True)
@@ -675,7 +675,7 @@ class StarAtlasView(QWidget):
             x, y, vis = vp.project(np.array([alt]), np.array([az]))
             if vis[0]:
                 p.setPen(QPen(color, 1.5))
-                p.setBrush(Qt.NoBrush)
+                p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawEllipse(QPointF(x[0], y[0]), 14, 14)
 
     def _draw_pier_markers(self, p: QPainter, vp) -> None:
@@ -698,7 +698,7 @@ class StarAtlasView(QWidget):
             there = self._marker_point(vp, target) if target else None
             if there is not None and math.hypot(there[0] - here[0], there[1] - here[1]) > 4:
                 # Where it is headed, and the path still to go.
-                p.setPen(QPen(_PIER_TARGET_COLOR, 1.0, Qt.DotLine))
+                p.setPen(QPen(_PIER_TARGET_COLOR, 1.0, Qt.PenStyle.DotLine))
                 p.drawLine(QPointF(*here), QPointF(*there))
                 self._draw_reticle(p, there, _PIER_TARGET_COLOR, dashed=False, radius=8)
             self._draw_reticle(p, here, color, dashed=slewing)
@@ -725,9 +725,9 @@ class StarAtlasView(QWidget):
         x, y = point
         pen = QPen(color, 1.6)
         if dashed:
-            pen.setStyle(Qt.DashLine)
+            pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QPointF(x, y), radius, radius)
         p.setPen(QPen(color, 1.6))
         inner, outer = radius * 0.45, radius * 1.5
@@ -768,14 +768,14 @@ class StarAtlasView(QWidget):
         return best
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._press_pos = event.position()
             self._dragging = False
 
     def mouseMoveEvent(self, event) -> None:
         pos = event.position()
         self._cursor = (pos.x(), pos.y())
-        if self._press_pos is not None and event.buttons() & Qt.LeftButton:
+        if self._press_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
             delta = pos - self._press_pos
             if not self._dragging and delta.manhattanLength() > 4:
                 self._dragging = True
@@ -790,14 +790,14 @@ class StarAtlasView(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._press_pos is not None:
+        if event.button() == Qt.MouseButton.LeftButton and self._press_pos is not None:
             if not self._dragging:
                 self.select(self.object_at(event.position().x(), event.position().y()))
             self._press_pos = None
             self._dragging = False
 
     def mouseDoubleClickEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             obj = self.object_at(event.position().x(), event.position().y())
             if obj is not None:
                 self.select(obj)

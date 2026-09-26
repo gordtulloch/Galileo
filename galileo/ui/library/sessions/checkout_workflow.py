@@ -169,7 +169,7 @@ def checkout_single_session(parent: QWidget, item) -> None:
             progress_label = "Creating symbolic links..."
 
         progress = QProgressDialog(progress_label, "Cancel", 0, 100, parent)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
 
         created_items = 0
         total_items = len(all_files) + (len(master_files) if masters_dir else 0)
@@ -298,7 +298,7 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
         current_session = 0
 
         overall_progress = QProgressDialog("Processing sessions...", "Cancel", 0, total_sessions, parent)
-        overall_progress.setWindowModality(Qt.WindowModal)
+        overall_progress.setWindowModality(Qt.WindowModality.WindowModal)
         overall_progress.setWindowTitle("Checking Out Multiple Sessions")
 
         successful_sessions = 0
@@ -310,7 +310,7 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
                 break
 
             try:
-                session_id = session_item.data(0, Qt.UserRole)
+                session_id = session_item.data(0, Qt.ItemDataRole.UserRole)
                 if not session_id:
                     logger.error("Session item has no session ID, skipping")
                     failed_sessions.append("Session item missing ID")

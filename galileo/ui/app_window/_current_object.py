@@ -106,17 +106,17 @@ class AppWindowCurrentObjectMixin:
         dialog.setWindowTitle(obj.primary_name)
         layout = QVBoxLayout(dialog)
         image_label = QLabel("Loading…")
-        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setMinimumSize(_FULL_IMAGE_SIZE_PX, _FULL_IMAGE_SIZE_PX)
         layout.addWidget(image_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         dialog.show()
         QApplication.processEvents()
 
         import asyncio
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             data = asyncio.run(self._shared_sky_atlas()._fetch_thumbnail(obj, size_px=_FULL_IMAGE_SIZE_PX))
         except Exception:

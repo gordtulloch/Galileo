@@ -76,7 +76,7 @@ class _AltitudeChart(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor("#1a1a1a"))
         fg = QColor("#cccccc")
         font = QFont(painter.font())
@@ -86,7 +86,7 @@ class _AltitudeChart(QWidget):
         plot = QRectF(40, 8, self.width() - 56, self.height() - 32)
         if plot.width() < 20 or plot.height() < 20 or not self.altitudes:
             painter.setPen(fg)
-            painter.drawText(self.rect(), Qt.AlignCenter, "No trajectory data")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No trajectory data")
             painter.end()
             return
 
@@ -95,11 +95,11 @@ class _AltitudeChart(QWidget):
         for alt in (0, 30, 60, 90):
             y = plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height()
             pen = QPen(QColor(90, 90, 90))
-            pen.setStyle(Qt.DotLine)
+            pen.setStyle(Qt.PenStyle.DotLine)
             painter.setPen(pen)
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             painter.setPen(fg)
-            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignRight | Qt.AlignVCenter, f"{alt}°")
+            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{alt}°")
 
         n = len(self.altitudes)
         points = [
@@ -125,7 +125,7 @@ class _AltitudeChart(QWidget):
                 except (ValueError, IndexError):
                     continue
                 painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 3))
-                painter.drawText(QRectF(x - 22, plot.bottom() + 4, 44, 14), Qt.AlignCenter, label)
+                painter.drawText(QRectF(x - 22, plot.bottom() + 4, 44, 14), Qt.AlignmentFlag.AlignCenter, label)
 
         painter.end()
 
@@ -190,7 +190,7 @@ class _EditJobDialog(QDialog):
         self.total_spin.setToolTip("Frames required for this job to complete (SCHED-090).")
         form.addRow("Frames required", self.total_spin)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -252,11 +252,11 @@ class SchedulerPageWidget(QWidget):
 
         self._table = QTableWidget(0, len(self._COLUMNS))
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
-        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.verticalHeader().setVisible(False)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         outer.addWidget(self._table, 1)
 
         buttons = QHBoxLayout()
@@ -298,7 +298,7 @@ class SchedulerPageWidget(QWidget):
         if not rows:
             return None
         item = self._table.item(rows[0].row(), 0)
-        return item.data(Qt.UserRole) if item else None
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     # --- Refresh --------------------------------------------------------------
 
@@ -319,7 +319,7 @@ class SchedulerPageWidget(QWidget):
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 if col == 0:
-                    cell.setData(Qt.UserRole, job)
+                    cell.setData(Qt.ItemDataRole.UserRole, job)
                 self._table.setItem(row, col, cell)
         pier_name = self._active_pier_name()
         if pier_name is None:
@@ -351,7 +351,7 @@ class SchedulerPageWidget(QWidget):
         if job is None:
             return
         dialog = _EditJobDialog(job, self)
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             dialog.apply()
             self._scheduler().save()
         self.reload()
@@ -378,7 +378,7 @@ class SchedulerPageWidget(QWidget):
         chart = _AltitudeChart(dialog)
         chart.set_data(chart_data["times"], chart_data["altitudes"])
         layout.addWidget(chart)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
@@ -390,8 +390,8 @@ class SchedulerPageWidget(QWidget):
             return
         reply = QMessageBox.question(
             self, "Remove Job", f"Remove {job.name!r} from the queue? Its session becomes editable again.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply != QMessageBox.Yes:
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
             return
         region = job.sequence
         if region is not None and hasattr(region, "deschedule"):

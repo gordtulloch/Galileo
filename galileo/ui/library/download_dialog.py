@@ -432,7 +432,7 @@ class SmartTelescopeDownloadDialog(QDialog):
             self,
             "Select Target Directory for Downloads",
             current_dir,
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
 
         if directory:
@@ -476,7 +476,7 @@ class SmartTelescopeDownloadDialog(QDialog):
         # Create progress dialog
         self.progress_dialog = QProgressDialog("Initializing download...", "Cancel", 0, 100, self)
         self.progress_dialog.setWindowTitle("Downloading from Smart Telescope")
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
         self.progress_dialog.show()

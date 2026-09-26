@@ -85,7 +85,7 @@ class FocusImageView(QWidget):
         else:
             data = np.ascontiguousarray(data)
             height, width = data.shape[:2]
-            fmt = QImage.Format_RGB888 if data.ndim == 3 else QImage.Format_Grayscale8
+            fmt = QImage.Format.Format_RGB888 if data.ndim == 3 else QImage.Format.Format_Grayscale8
             self._image = QImage(data.data, width, height, data.strides[0], fmt).copy()
         self.update()
 
@@ -94,12 +94,12 @@ class FocusImageView(QWidget):
         painter.fillRect(self.rect(), QColor("#141414"))
         if self._image is None:
             painter.setPen(QColor("#8a949c"))
-            painter.drawText(self.rect(), Qt.AlignCenter, self.message)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
         else:
-            scaled = self._image.size().scaled(self.size(), Qt.KeepAspectRatio)
+            scaled = self._image.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
             target = QRectF(0, 0, scaled.width(), scaled.height())
             target.moveCenter(QPointF(self.width() / 2, self.height() / 2))
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.drawImage(target, self._image)
         painter.end()
 
@@ -163,18 +163,18 @@ class VCurvePlot(_PlotBase):
             painter.setPen(self._dotted())
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
             painter.setPen(_PLOT_FG)
-            painter.drawText(QRectF(x - 30, plot.bottom() + 2, 60, 16), Qt.AlignCenter, f"{x_lo + k * (x_hi - x_lo) / 5:.0f}")
+            painter.drawText(QRectF(x - 30, plot.bottom() + 2, 60, 16), Qt.AlignmentFlag.AlignCenter, f"{x_lo + k * (x_hi - x_lo) / 5:.0f}")
         step = max(1, math.ceil(y_max / 5))
         for value in range(0, int(y_max) + 1, step):
             y = y_of(value)
             painter.setPen(self._dotted())
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             painter.setPen(_PLOT_FG)
-            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignRight | Qt.AlignVCenter, f"{value}")
+            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{value}")
         painter.save()
         painter.translate(10, plot.center().y())
         painter.rotate(-90)
-        painter.drawText(QRectF(-60, -8, 120, 16), Qt.AlignCenter, "HFR (pix)")
+        painter.drawText(QRectF(-60, -8, 120, 16), Qt.AlignmentFlag.AlignCenter, "HFR (pix)")
         painter.restore()
 
         painter.setClipRect(plot)
@@ -184,9 +184,9 @@ class VCurvePlot(_PlotBase):
             painter.setPen(QPen(_FIT_COLOR, 1.4))
             painter.drawPolyline(QPolygonF([QPointF(x_of(x), y_of(a * x * x + b * x + c)) for x in xs]))
         if self.best_position is not None:
-            painter.setPen(QPen(_BEST_COLOR, 1.2, Qt.DashLine))
+            painter.setPen(QPen(_BEST_COLOR, 1.2, Qt.PenStyle.DashLine))
             painter.drawLine(QPointF(x_of(self.best_position), plot.top()), QPointF(x_of(self.best_position), plot.bottom()))
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(_HFR_COLOR)
         for position, hfr in self.points:
             if math.isfinite(hfr):

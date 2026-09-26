@@ -25,7 +25,7 @@ pip-audit
 | Tool | Result |
 |---|---|
 | ruff | Originally **2,127 findings** under no config (ruff's out-of-the-box defaults). A project-tuned `[tool.ruff]` config was added (Finding 14) and `--fix` run against it: **4,007 of 5,422 auto-fixed**, **1,415 remained** needing manual judgment. Findings 10 (232 `LOG015`) and 12 (all `E722`/`S110`/`S112`) fixed by hand since: **1,114 remain** |
-| mypy | Originally **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76). Finding 8 fixed all 34 in `galileo/core/devices.py` (**623 remained** in 48 files); Finding 9 split `app_window.py` into a package without adding to that count — **620 remain**, now in 69 files (net improvement; see Finding 9 for why the file count went up while the error count went down) |
+| mypy | Originally **665 errors** in 49 of 225 checked files; heavily concentrated in `galileo/ui/app_window.py` (238) and `galileo/library/core/master_manager.py` (76). Finding 8 fixed all 34 in `galileo/core/devices.py` (**623 remained** in 48 files); Finding 9 split `app_window.py` into a package without adding to that count (**620 remained**, now in 69 files); Finding 11 rewrote ~220 flat PySide6 enum references to their nested spelling, which mypy's stubs require — **404 remain**, and the noise no longer buries real findings (counts re-run with `--python-version 3.13` to match this environment's actual venv — see Finding 11's environment note) |
 | bandit | Originally **88 findings** (27 High, 10 Medium, 51 Low); Findings 2, 6, and 7 fixed the 3 real shell-injection sites, the disabled SSH host-key check, and all 15 weak-hash findings: **80 remain** (7 High, 10 Medium, 63 Low — the Low increase is the argument-list `subprocess.run` calls that replaced the `shell=True`/`os.system` sites, themselves lower-severity "partial path"/no-`shell=True` notes, not new injection risk) |
 | pytest | **697 passed, 13 failed** (304s) under the CLAUDE.md-documented fast filter — Findings 1, 3, and 4 fixed since, now **706 passed, 7 failed, 1 skipped, 6 deselected** (the 7 remaining are the pre-existing "unimplemented feature" gaps listed below, not regressions) |
 | coverage | **57%** overall (`--cov=galileo`); domain-core modules (`sequencer`, `core.devices`, `safety`, `meridianflip`) mostly 70–100%, but several `galileo.library.services`/`galileo.ui.library` modules are under 20% |
@@ -402,7 +402,42 @@ independently of the root logger, and their output won't carry the module name o
 the codebase get. Not urgent, but a mechanical fix (`logging.getLogger(__name__)` + a sed-style
 replace) that removes 232 of the 2,127 ruff findings in one pass.
 
-### 11. mypy noise from PySide6's enum re-scoping dwarfs real findings
+### 11. ~~mypy noise from PySide6's enum re-scoping dwarfs real findings~~ — Fixed
+
+**Status: fixed.** Chose the second of the two options this finding proposed — switched to the
+nested enum spellings project-wide — rather than a per-module `attr-defined` override, because
+several of the affected files (`_camera_page.py`, `_imaging_page.py`, `_mount_page.py`,
+`_widgets.py`, `sessions.py`, etc.) mix real `attr-defined` bugs (`DeviceBackend` missing
+`list_available_devices`, `sessions.py`'s `Callable[[], QScreen]` calls) into the exact same files
+as the Qt-enum noise; a blanket per-file override would have hidden those too, defeating the
+finding's own point. Instead, cross-referenced every flagged `(class, member)` pair against
+PySide6's own `.pyi` stubs (`Qt`, `QHeaderView`, `QFrame`, `QAbstractItemView`, `QTableWidget`,
+`QMessageBox`, `QDialogButtonBox`, `QDialog`, `QPainter`, `QSizePolicy`, `QImage`,
+`QGraphicsView`, `QFileDialog`, `QFontDatabase`, `QFormLayout`, `QLineEdit`, `QPlainTextEdit`) to
+get the correct nested enum class for each, then mechanically rewrote all ~220 flat references
+(plus 8 more behind a local `_Qt` import alias in `_widgets.py` the first pass missed) to their
+qualified form across 36 files. Verified: a before/after mypy diff by message text shows **zero**
+new errors introduced and the only errors that disappeared are exactly the targeted Qt-enum
+`attr-defined` lines (220 of them); `ruff check` reports the identical 198 findings on the affected
+files before and after; every changed file still compiles (`py_compile`); and the full fast test
+suite shows the same pre-existing failures as this document's "unimplemented feature" list (see
+below), no new ones. Project-wide `mypy . --ignore-missing-imports` (run with `--python-version
+3.13` to match this environment's actual interpreter — see note below) goes from 623 to **404**
+errors, and every remaining `attr-defined` finding under `galileo/ui/*` is now a real one.
+
+**Environment note, unrelated to this finding but discovered while re-running mypy:** this
+machine's `.venv` is actually Python 3.13 (`pyvenv.cfg` points at the Windows Store 3.13 install),
+not the 3.11 CLAUDE.md documents as the project floor — there is no Python 3.11 install on this
+machine at all (`py -0p` shows only 3.13, 3.12, and a 32-bit 3.10). Running mypy with its
+configured `python_version = "3.11"` pin against a 3.13 venv's installed `numpy` 2.5.3 fails
+outright (`numpy/__init__.pyi:737: error: Type statement is only supported in Python 3.12 and
+greater`) before checking a single project file, because numpy's own stub now uses PEP 695 `type`
+aliases unconditionally. This review worked around it locally with `--python-version 3.13` to get
+a real count, but the underlying environment (a 3.13 venv where CLAUDE.md calls for 3.11) is a
+separate, pre-existing gap worth the project owner's attention — not fixed here since provisioning
+a real Python 3.11 interpreter is an environment change, not a code change.
+
+Original finding, for reference:
 
 A large share of the "attr-defined" category (`Qt.AlignCenter`, `QDialogButtonBox.Ok`,
 `QDialog.Accepted`, etc. — well over 100 occurrences across `app_window.py`, `focus.py`, `solve.py`,
@@ -583,8 +618,9 @@ a naive `pip-audit` in an environment where the install failed silently audits t
    typing (Finding 8)~~, and ~~splitting `app_window.py` into a package (Finding 9)~~ — **done**,
    out of order relative to the rest of this bucket since all six were bounded and (once Finding
    9's mixin/mypy interaction was worked through) low-risk. ~~FTP plaintext (Finding 13)~~ —
-   **reviewed, accepted as unavoidable** given the DWARF 3 hardware constraint. **Finding 11**
-   (PySide6 enum mypy noise across ~100+ sites) remains open by deliberate choice — it's a
-   larger, lower-value structural change than the rest of this list (silencing/reformatting
-   existing mypy noise rather than fixing anything), left for a dedicated future session rather
-   than folded into this pass.)
+   **reviewed, accepted as unavoidable** given the DWARF 3 hardware constraint. ~~PySide6 enum
+   mypy noise (Finding 11)~~ — **done**, rewritten to nested enum spellings project-wide rather
+   than silenced, since several affected files mixed in real bugs that a per-module override
+   would have hidden. With this, every finding in this review is fixed, reviewed-and-accepted,
+   or resolved — the only open item is the Python 3.11-vs-3.13 environment gap noted under
+   Finding 11, which is a provisioning task for the project owner, not a code fix.)

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _device_association_label, QWidget
+from ._common import _device_association_label, _new_form_layout, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class AppWindowOpticsPageMixin:
         to each tube's "Associated:" label picks from the devices already
         saved on the other Equipment pages."""
         from PySide6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel, QComboBox,
+            QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QComboBox,
             QDoubleSpinBox, QPushButton, QCheckBox, QScrollArea, QMessageBox, QInputDialog,
             QLineEdit,
         )
@@ -60,7 +60,7 @@ class AppWindowOpticsPageMixin:
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         panels_container = QWidget()
         panels_layout = QVBoxLayout(panels_container)
         panels_layout.setContentsMargins(0, 0, 0, 0)
@@ -142,7 +142,7 @@ class AppWindowOpticsPageMixin:
                 header.addWidget(remove_btn)
             outer.addLayout(header)
 
-            form = QFormLayout()
+            form = _new_form_layout()
             outer.addLayout(form)
 
             name_edit = QLineEdit()

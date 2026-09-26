@@ -107,8 +107,8 @@ class AppWindowLibraryEquipmentMixin:
         pane.setObjectName("LogPane")
         pane.setReadOnly(True)
         pane.setUndoRedoEnabled(False)
-        pane.setLineWrapMode(QPlainTextEdit.NoWrap)
-        pane.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        pane.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        pane.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         line_height = pane.fontMetrics().lineSpacing()
         pane.setFixedHeight(line_height * 10 + pane.frameWidth() * 2 + 8)
         return pane

@@ -69,7 +69,7 @@ class CloudSyncWidget(QWidget):
         title_font.setPointSize(14)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
 
         # Configuration info
@@ -123,7 +123,7 @@ class CloudSyncWidget(QWidget):
     def create_operation_frame(self, button_text, description, callback):
         """Create a frame for an operation with button and description"""
         frame = QFrame()
-        frame.setFrameStyle(QFrame.Box)
+        frame.setFrameStyle(QFrame.Shape.Box)
         frame.setStyleSheet("QFrame { border: 1px solid gray; border-radius: 5px; padding: 10px; }")
 
         frame_layout = QHBoxLayout(frame)
@@ -139,7 +139,7 @@ class CloudSyncWidget(QWidget):
         # Description label
         desc_label = QLabel(description)
         desc_label.setWordWrap(True)
-        desc_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         frame_layout.addWidget(desc_label, 1)  # Stretch factor of 1
 
         return frame
@@ -179,18 +179,18 @@ class CloudSyncWidget(QWidget):
             f"3. Update cloud URLs for files that exist in both locations\n\n"
             f"This process may take several minutes depending on the number of files.\n\n"
             f"Do you want to continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             try:
                 # First validate bucket access (can take time; show immediate feedback)
                 from PySide6.QtWidgets import QProgressDialog
                 from PySide6.QtCore import Qt
 
                 validate_progress = QProgressDialog("Validating bucket access...", None, 0, 0, self)
-                validate_progress.setWindowModality(Qt.WindowModal)
+                validate_progress.setWindowModality(Qt.WindowModality.WindowModal)
                 validate_progress.setAutoClose(True)
                 validate_progress.setAutoReset(True)
                 validate_progress.setCancelButton(None)
@@ -305,7 +305,7 @@ class CloudSyncWidget(QWidget):
             from PySide6.QtCore import Qt
 
             progress = QProgressDialog("Analyzing cloud storage...", "Cancel", 0, 0, self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.setAutoReset(True)
             progress.show()
@@ -730,11 +730,11 @@ class CloudSyncWidget(QWidget):
                 f"Repository path: {repo_path}\n\n"
                 f"This operation may take several minutes depending on the number of files.\n\n"
                 f"Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
 
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             # Get all FITS files from database (including soft-deleted files for backup)
@@ -753,7 +753,7 @@ class CloudSyncWidget(QWidget):
 
             # Setup progress dialog
             progress = QProgressDialog("Starting backup sync...", "Cancel", 0, len(fits_files), self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.setAutoReset(True)
             progress.show()
@@ -910,16 +910,16 @@ class CloudSyncWidget(QWidget):
                 f"Repository path: {repo_path}\n\n"
                 f"This operation may take considerable time depending on file count and sizes.\n\n"
                 f"Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
 
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             # Setup progress dialog
             progress = QProgressDialog("Starting complete sync...", "Cancel", 0, 100, self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.setAutoReset(True)
             progress.show()
@@ -1205,16 +1205,16 @@ class CloudSyncWidget(QWidget):
                 f"Repository path: {repo_path}\n\n"
                 f"This operation cannot be undone locally (files will only exist in cloud).\n\n"
                 f"Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
 
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             # Setup progress dialog
             progress = QProgressDialog("Starting on-demand sync...", "Cancel", 0, len(soft_deleted_files), self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.setAutoReset(True)
             progress.show()

@@ -60,12 +60,12 @@ class AppWindowRotatorPageMixin:
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.setMaximumHeight(70)
-        table.setSelectionMode(QTableWidget.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
         driver_combo.addItems(["Alpaca", "INDI"])
@@ -133,7 +133,7 @@ class AppWindowRotatorPageMixin:
         # Backlash
         left.addWidget(_heading("Backlash"))
         backlash_row = QHBoxLayout()
-        backlash_slider = QSlider(Qt.Horizontal)
+        backlash_slider = QSlider(Qt.Orientation.Horizontal)
         backlash_slider.setRange(0, 1000)  # tenths of a step: 0.0 – 100.0
         backlash_value = QLabel("0.0")
         backlash_ok = QPushButton("OK")
@@ -147,14 +147,14 @@ class AppWindowRotatorPageMixin:
         # Position
         left.addWidget(_heading("Virtual Mechanical Position"))
         position_value = QLabel("—")
-        position_value.setAlignment(Qt.AlignCenter)
+        position_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         big = position_value.font()
         big.setPointSize(big.pointSize() + 8)
         big.setBold(True)
         position_value.setFont(big)
         left.addWidget(position_value)
         position_detail = QLabel("")
-        position_detail.setAlignment(Qt.AlignCenter)
+        position_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left.addWidget(position_detail)
 
         goto_row = QHBoxLayout()
@@ -168,7 +168,7 @@ class AppWindowRotatorPageMixin:
         goto_row.addWidget(goto_btn)
         left.addLayout(goto_row)
         goto_hint = QLabel("(0 – 359.99)")
-        goto_hint.setAlignment(Qt.AlignCenter)
+        goto_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left.addWidget(goto_hint)
 
         reverse_check = QCheckBox("Reverse")
@@ -185,7 +185,7 @@ class AppWindowRotatorPageMixin:
         # Derotation rate correction
         left.addWidget(_heading("Derotation Rate Correction"))
         correction_row = QHBoxLayout()
-        correction_slider = QSlider(Qt.Horizontal)
+        correction_slider = QSlider(Qt.Orientation.Horizontal)
         correction_slider.setRange(-100, 100)
         correction_label = QLabel("0%")
         correction_ok = QPushButton("OK")
@@ -293,7 +293,7 @@ class AppWindowRotatorPageMixin:
 
         right.addWidget(_heading("Derotation Rate — Degrees/Minute"))
         rate_value = QLabel("—")
-        rate_value.setAlignment(Qt.AlignCenter)
+        rate_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         rate_value.setFont(big)
         right.addWidget(rate_value)
         right.addStretch(1)
@@ -301,7 +301,7 @@ class AppWindowRotatorPageMixin:
 
         main_scroll = QScrollArea()
         main_scroll.setWidgetResizable(True)
-        main_scroll.setFrameShape(QFrame.NoFrame)
+        main_scroll.setFrameShape(QFrame.Shape.NoFrame)
         main_scroll.setWidget(main_content)
         layout.addWidget(main_scroll, 1)
 

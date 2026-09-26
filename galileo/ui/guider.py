@@ -71,7 +71,7 @@ class _PlotBase(QWidget):
 
     def _begin(self) -> QPainter:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), _PLOT_BG)
         font = QFont(painter.font())
         font.setPointSizeF(8.0)
@@ -81,7 +81,7 @@ class _PlotBase(QWidget):
     @staticmethod
     def _dotted(color: QColor | None = None) -> QPen:
         pen = QPen(color or QColor(120, 120, 120))
-        pen.setStyle(Qt.DotLine)
+        pen.setStyle(Qt.PenStyle.DotLine)
         return pen
 
 
@@ -131,18 +131,18 @@ class DriftGraph(_PlotBase):
             painter.setPen(self._dotted() if k else QPen(QColor("#ffffff")))
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             painter.setPen(_PLOT_FG)
-            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignRight | Qt.AlignVCenter, f"{value:g}")
+            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{value:g}")
         for k in range(5):
             x = plot.left() + k * plot.width() / 4
             painter.setPen(self._dotted())
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
             painter.setPen(_PLOT_FG)
-            painter.drawText(QRectF(x - 25, plot.bottom() + 2, 50, 16), Qt.AlignCenter,
+            painter.drawText(QRectF(x - 25, plot.bottom() + 2, 50, 16), Qt.AlignmentFlag.AlignCenter,
                              _format_ago(self.window_s * (4 - k) / 4))
         painter.save()
         painter.translate(10, mid)
         painter.rotate(-90)
-        painter.drawText(QRectF(-60, -8, 120, 16), Qt.AlignCenter, f"Drift ({self.unit})")
+        painter.drawText(QRectF(-60, -8, 120, 16), Qt.AlignmentFlag.AlignCenter, f"Drift ({self.unit})")
         painter.restore()
 
         samples = self.samples
@@ -189,7 +189,7 @@ class DriftGraph(_PlotBase):
                 painter.setPen(_SNR)
                 for k in range(5):
                     painter.drawText(QRectF(plot.right() + 4, plot.bottom() - k * plot.height() / 4 - 8, 40, 16),
-                                     Qt.AlignLeft | Qt.AlignVCenter, f"{snr_max * k / 4:g}")
+                                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{snr_max * k / 4:g}")
             painter.setClipping(False)
 
         # legend
@@ -247,11 +247,11 @@ class DriftScatter(_PlotBase):
         for i, (x, y) in enumerate(self.points):
             dot = QColor("#ffffff")
             dot.setAlpha(60 + int(195 * (i + 1) / n))  # older points fade out
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(dot)
             painter.drawEllipse(to_px(x, y), 2.0, 2.0)
         painter.setPen(_PLOT_FG)
-        painter.drawText(QRectF(plot.left(), plot.bottom() + 4, side, 16), Qt.AlignCenter,
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 4, side, 16), Qt.AlignmentFlag.AlignCenter,
                          f"dRA ({self.unit})   ring = {self.ring:g}")
         painter.end()
 
@@ -280,12 +280,12 @@ class CalibrationPlot(_PlotBase):
         painter.drawLine(QPointF(c.x(), plot.top()), QPointF(c.x(), plot.bottom()))
         painter.setPen(_PLOT_FG)
         if not self.points:
-            painter.drawText(plot, Qt.AlignCenter, "No calibration this session")
+            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, "No calibration this session")
         else:
             extent = max([abs(p.dx) for p in self.points] + [abs(p.dy) for p in self.points] + [1.0]) * 1.1
             k = min(plot.width(), plot.height()) / 2 / extent
             for point in self.points:
-                painter.setPen(Qt.NoPen)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(self._COLORS.get(point.direction, "#ffffff")))
                 painter.drawEllipse(QPointF(c.x() + point.dx * k, c.y() - point.dy * k), 2.5, 2.5)
         cal = self.calibration or {}
@@ -295,7 +295,7 @@ class CalibrationPlot(_PlotBase):
         if "yAngle" in cal:
             lines.append(f"Dec {cal['yAngle']:.1f}°  {cal.get('yRate', 0):.2f} px/s")
         painter.setPen(_PLOT_FG)
-        painter.drawText(QRectF(4, self.height() - 40, self.width() - 8, 36), Qt.AlignCenter, "\n".join(lines))
+        painter.drawText(QRectF(4, self.height() - 40, self.width() - 8, 36), Qt.AlignmentFlag.AlignCenter, "\n".join(lines))
         painter.end()
 
 
@@ -319,7 +319,7 @@ class StarView(QWidget):
             if hi <= lo:
                 hi = lo + 1.0
             grey = np.ascontiguousarray((np.clip((data - lo) / (hi - lo), 0, 1) ** 0.5 * 255).astype(np.uint8))
-            self._image = QImage(grey.data, star.width, star.height, star.width, QImage.Format_Grayscale8).copy()
+            self._image = QImage(grey.data, star.width, star.height, star.width, QImage.Format.Format_Grayscale8).copy()
             self._star, self._size = star.star_pos, (star.width, star.height)
         self.update()
 
@@ -328,7 +328,7 @@ class StarView(QWidget):
         painter.fillRect(self.rect(), QColor("#141414"))
         if self._image is None:
             painter.setPen(QColor("#8a949c"))
-            painter.drawText(self.rect(), Qt.AlignCenter, self.message)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
             painter.end()
             return
         side = min(self.width(), self.height())
@@ -427,7 +427,7 @@ class GuiderPage(QWidget):
         grid.addLayout(self._build_right_column(), 1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
 
@@ -570,7 +570,7 @@ class GuiderPage(QWidget):
         toggles.addWidget(zoom_in, 0, 3)
         toggles.addWidget(zoom_out, 1, 3)
         toggles.addWidget(QLabel("Trace:"), 0, 4)
-        trace = QSlider(Qt.Horizontal)
+        trace = QSlider(Qt.Orientation.Horizontal)
         trace.setRange(30, 600)
         trace.setValue(int(self.graph.window_s))
         trace.setToolTip("How many seconds of history the graph shows.")

@@ -55,7 +55,7 @@ class AppWindowStarAtlasPageMixin:
 
         when_edit = QDateTimeEdit()
         when_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
-        when_edit.setTimeSpec(Qt.UTC)
+        when_edit.setTimeSpec(Qt.TimeSpec.UTC)
         when_edit.setToolTip("Date and time shown, in UTC.")
         # The label sits on its own line so the field has the panel's full
         # width — beside the label it was too narrow to show the whole time.
@@ -263,7 +263,7 @@ class AppWindowStarAtlasPageMixin:
         def sync_time_field() -> None:
             when_edit.blockSignals(True)
             when_edit.setDateTime(QDateTime.fromSecsSinceEpoch(
-                calendar.timegm(view.when.replace(second=0, microsecond=0).timetuple()), Qt.UTC))
+                calendar.timegm(view.when.replace(second=0, microsecond=0).timetuple()), Qt.TimeSpec.UTC))
             when_edit.blockSignals(False)
 
         def set_site() -> None:

@@ -343,17 +343,17 @@ class MappingsWidget(QWidget):
                 self,
                 "Confirm Apply Mapping",
                 message,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
 
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             # Create progress dialog
             progress = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress.setWindowTitle("Applying Mapping")
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _NEW_OBSERVATORY_LABEL, _NEW_PIER_LABEL
+from ._common import _new_form_layout, _NEW_OBSERVATORY_LABEL, _NEW_PIER_LABEL
 from ._threads import _MountPositionThread, _ResumeTrackingThread
 
 logger = logging.getLogger(__name__)
@@ -58,13 +58,13 @@ class AppWindowObservatoryPierMixin:
         layout.addWidget(QLabel(label_text))
         name_edit = QLineEdit()
         layout.addWidget(name_edit)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         name_edit.setFocus()
 
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             name = name_edit.text().strip()
             return name or None
         return None
@@ -72,13 +72,13 @@ class AppWindowObservatoryPierMixin:
     def _prompt_new_observatory(self: AppWindowState) -> dict | None:
         """Modal Name/Lat/Long/Timezone/Physical Address/Owner dialog for New Observatory."""
         from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QFormLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
+            QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
         )
 
         dialog = QDialog(self._window)
         dialog.setWindowTitle("New Observatory")
         outer = QVBoxLayout(dialog)
-        form = QFormLayout()
+        form = _new_form_layout()
         outer.addLayout(form)
 
         name_edit = QLineEdit()
@@ -104,13 +104,13 @@ class AppWindowObservatoryPierMixin:
         owner_edit = QLineEdit()
         form.addRow("Owner", owner_edit)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         outer.addWidget(buttons)
         name_edit.setFocus()
 
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         name = name_edit.text().strip()
         if not name:

@@ -87,7 +87,7 @@ def _show_splash(app):
     splash.setFont(font)
     splash.showMessage(
         FULL_NOTICE,
-        Qt.AlignBottom | Qt.AlignHCenter,
+        Qt.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
         QColor("white"),
     )
     splash.show()

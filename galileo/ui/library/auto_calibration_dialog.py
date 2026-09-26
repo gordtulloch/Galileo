@@ -75,7 +75,7 @@ class AutoCalibrationDialog(QDialog):
         title_font.setPointSize(14)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
 
         desc_label = QLabel("Select which calibration operations to perform:")
@@ -346,10 +346,10 @@ class AutoCalibrationDialog(QDialog):
         if self.worker and self.worker.isRunning():
             reply = QMessageBox.question(self, "Workflow Running",
                                        "Auto-calibration workflow is still running. Cancel it?",
-                                       QMessageBox.Yes | QMessageBox.No,
-                                       QMessageBox.No)
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                       QMessageBox.StandardButton.No)
 
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 self.worker.cancel()
                 event.accept()
             else:

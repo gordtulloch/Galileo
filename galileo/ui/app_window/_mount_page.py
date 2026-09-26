@@ -57,12 +57,12 @@ class AppWindowMountPageMixin:
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.setMaximumHeight(70)
-        table.setSelectionMode(QTableWidget.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
         driver_combo.addItems(["Alpaca", "INDI"])
@@ -263,7 +263,7 @@ class AppWindowMountPageMixin:
 
         main_scroll = QScrollArea()
         main_scroll.setWidgetResizable(True)
-        main_scroll.setFrameShape(QFrame.NoFrame)
+        main_scroll.setFrameShape(QFrame.Shape.NoFrame)
         main_scroll.setWidget(main_content)
         layout.addWidget(main_scroll, 1)
 

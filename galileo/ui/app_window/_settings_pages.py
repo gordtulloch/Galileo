@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _OBSTRUCTED_MESSAGE, QWidget
+from ._common import _new_form_layout, _OBSTRUCTED_MESSAGE, QWidget
 from ._threads import _ThumbnailCacheThread
 
 logger = logging.getLogger(__name__)
@@ -86,10 +86,10 @@ class AppWindowSettingsPagesMixin:
 
         table = QTableWidget(0, 2)
         table.setHorizontalHeaderLabels(["Azimuth (°)", "Altitude (°)"])
-        table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(table, 1)
 
         def refresh(points: list) -> None:
@@ -97,7 +97,7 @@ class AppWindowSettingsPagesMixin:
             for row, (az, alt) in enumerate(points):
                 for col, value in enumerate((az, alt)):
                     item = QTableWidgetItem(f"{value:g}")
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     table.setItem(row, col, item)
             observatory = self._current_observatory
             if observatory is None:
@@ -145,7 +145,7 @@ class AppWindowSettingsPagesMixin:
             table.setRowCount(row + 1)
             for col in (0, 1):
                 item = QTableWidgetItem("0")
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 table.setItem(row, col, item)
             remove_point_btn.setEnabled(True)
             table.editItem(table.item(row, 0))
@@ -269,14 +269,14 @@ class AppWindowSettingsPagesMixin:
             f"This fetches a survey-image thumbnail for every object in the catalog not already "
             f"cached ({total:,} objects total) — one network request each, so it can take hours. "
             f"You can cancel at any time; progress made so far stays cached. Continue?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
-        if confirmed != QMessageBox.Yes:
+        if confirmed != QMessageBox.StandardButton.Yes:
             return
 
         progress_dialog = QProgressDialog("Starting…", "Cancel", 0, max(total, 1), parent)
         progress_dialog.setWindowTitle("Caching Thumbnails")
-        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setMinimumDuration(0)
         progress_dialog.setValue(0)
         progress_dialog.show()
@@ -308,7 +308,7 @@ class AppWindowSettingsPagesMixin:
 
     def _build_imaging_settings_page(self: AppWindowState) -> QWidget:
         """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)."""
-        from PySide6.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
+        from PySide6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
         from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
         from galileo.metadata import BITPIX_AUTO, BITPIX_CHOICES
 
@@ -321,7 +321,7 @@ class AppWindowSettingsPagesMixin:
         heading.setObjectName("PageTitle")
         layout.addWidget(heading)
 
-        form = QFormLayout()
+        form = _new_form_layout()
         form.setSpacing(8)
         layout.addLayout(form)
 

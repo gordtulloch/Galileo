@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _PARKED_MESSAGE, QWidget
+from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
 from ._threads import _PreviewRenderThread, _NudgeThread, _CaptureThread, _MosaicCaptureThread
 from ._widgets import _HistogramWidget
 
@@ -57,8 +57,8 @@ class AppWindowImagingPageMixin:
         settings_scroll = QScrollArea()
         settings_scroll.setFixedWidth(300)
         settings_scroll.setWidgetResizable(True)
-        settings_scroll.setFrameShape(QFrame.NoFrame)
-        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         settings_panel = QFrame()
         settings_panel.setObjectName("ImagingSettingsPanel")
         settings_scroll.setWidget(settings_panel)
@@ -71,7 +71,7 @@ class AppWindowImagingPageMixin:
         settings_layout.addWidget(heading)
 
         capture_group = QGroupBox("Capture Settings")
-        capture_form = QFormLayout(capture_group)
+        capture_form = _new_form_layout(capture_group)
 
         exposure_spin = QDoubleSpinBox()
         exposure_spin.setRange(0.001, 3600.0)
@@ -166,7 +166,7 @@ class AppWindowImagingPageMixin:
         settings_layout.addWidget(auto_save_check)
 
         view_group = QGroupBox("View")
-        view_form = QFormLayout(view_group)
+        view_form = _new_form_layout(view_group)
 
         debayer_check = QCheckBox("Debayer")
         debayer_check.setToolTip(
@@ -232,9 +232,9 @@ class AppWindowImagingPageMixin:
         nudge_grid.addWidget(nudge_stop_btn, 1, 1)
         nudge_grid.addWidget(nudge_east_btn, 1, 2)
         nudge_grid.addWidget(nudge_south_btn, 2, 1)
-        nudge_grid.setAlignment(Qt.AlignHCenter)
+        nudge_grid.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         nudge_layout.addLayout(nudge_grid)
-        nudge_form = QFormLayout()
+        nudge_form = _new_form_layout()
         nudge_rate_combo = QComboBox()
         for name, rate in NUDGE_RATES.items():
             nudge_rate_combo.addItem(f"{name} ({rate:g}°/s)", rate)
@@ -281,8 +281,8 @@ class AppWindowImagingPageMixin:
         scene.addItem(pixmap_item)
         preview_view = QGraphicsView(scene)
         preview_view.setObjectName("ImagingPreview")
-        preview_view.setDragMode(QGraphicsView.ScrollHandDrag)
-        preview_view.setBackgroundBrush(Qt.black)
+        preview_view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        preview_view.setBackgroundBrush(Qt.GlobalColor.black)
         content_layout.addWidget(preview_view, 1)
 
         histogram = _HistogramWidget()
@@ -384,9 +384,9 @@ class AppWindowImagingPageMixin:
             arr = np.ascontiguousarray(data)
             h, w = arr.shape[:2]
             if arr.ndim == 3:
-                image = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                image = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
             else:
-                image = QImage(arr.data, w, h, w, QImage.Format_Grayscale8).copy()
+                image = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
             pixmap_item.setPixmap(QPixmap.fromImage(image))
             scene.setSceneRect(0, 0, w, h)
             preview_view.resetTransform()

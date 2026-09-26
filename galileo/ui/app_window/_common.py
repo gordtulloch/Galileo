@@ -24,11 +24,11 @@ _MANUAL_URL = "https://github.com/gordtulloch/Galileo/tree/main/docs"
 
 try:
     from PySide6.QtCore import QThread, Signal
-    from PySide6.QtWidgets import QLabel, QPlainTextEdit, QWidget
+    from PySide6.QtWidgets import QFormLayout, QLabel, QPlainTextEdit, QWidget
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False
-    QThread = Signal = QLabel = QPlainTextEdit = QWidget = None  # type: ignore[assignment,misc]
+    QThread = Signal = QFormLayout = QLabel = QPlainTextEdit = QWidget = None  # type: ignore[assignment,misc]
 
 _NEW_OBSERVATORY_LABEL = "New Observatory…"
 _NEW_PIER_LABEL = "New Pier…"
@@ -214,6 +214,21 @@ def _format_dms(degrees: float | None) -> str:
     d, rem = divmod(total_seconds, 3600)
     m, s = divmod(rem, 60)
     return f"{sign}{d:02d}° {m:02d}' {s:02d}\""
+
+
+def _new_form_layout(parent: QWidget | None = None) -> QFormLayout:
+    """QFormLayout with its field growth policy pinned to
+    ``AllNonFixedFieldsGrow``. Qt's own default for this policy is
+    style-dependent: on macOS it's ``FieldsStayAtSizeHint``, so a field
+    widget (e.g. an editable device-select QComboBox) stays at its tiny
+    size hint — a few characters wide — instead of filling the row, on
+    Mac only. Every QFormLayout with a field meant to fill the row's width
+    should be built through this rather than ``QFormLayout()``/``QFormLayout(parent)``
+    directly. *parent* matches the ``QFormLayout(parent)`` form used to set a
+    QGroupBox's layout in one call."""
+    form = QFormLayout(parent) if parent is not None else QFormLayout()
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    return form
 
 
 def _when_visible(page, refresh):

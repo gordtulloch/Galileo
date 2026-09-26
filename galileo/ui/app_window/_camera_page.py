@@ -32,10 +32,11 @@ class AppWindowCameraPageMixin:
         the connection above but otherwise a separate device. Panels live in
         a scroll area since the list has no fixed upper bound."""
         from PySide6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel, QTableWidget,
+            QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QTableWidget,
             QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, QHeaderView,
             QScrollArea, QMessageBox,
         )
+        from ._common import _new_form_layout
 
         page = QWidget()
         page.setObjectName("CameraPage")
@@ -62,12 +63,12 @@ class AppWindowCameraPageMixin:
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.setMaximumHeight(70)
-        table.setSelectionMode(QTableWidget.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
         driver_combo.addItems(["Alpaca", "INDI"])
@@ -109,7 +110,7 @@ class AppWindowCameraPageMixin:
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         panels_container = QWidget()
         panels_layout = QVBoxLayout(panels_container)
         panels_layout.setContentsMargins(0, 0, 0, 0)
@@ -136,7 +137,7 @@ class AppWindowCameraPageMixin:
                 header.addWidget(remove_btn)
             outer.addLayout(header)
 
-            form = QFormLayout()
+            form = _new_form_layout()
             outer.addLayout(form)
 
             device_combo = QComboBox()

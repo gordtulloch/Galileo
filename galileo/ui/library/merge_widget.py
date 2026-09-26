@@ -35,7 +35,7 @@ class MergeWidget(QWidget):
         title_font.setPointSize(16)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title_label)
 
         # Instructions
@@ -181,10 +181,10 @@ class MergeWidget(QWidget):
         msg += "\nThis action cannot be undone!"
 
         reply = QMessageBox.question(self, "Confirm Merge", msg,
-                                   QMessageBox.Yes | QMessageBox.No,
-                                   QMessageBox.No)
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                   QMessageBox.StandardButton.No)
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         try:
@@ -205,7 +205,7 @@ class MergeWidget(QWidget):
             total_files = len(files_to_merge)
             progress_dialog = QProgressDialog("Initializing merge operation...", "Cancel", 0, total_files + 2, self)
             progress_dialog.setWindowTitle("Merging Objects")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)
             progress_dialog.setValue(0)
             progress_dialog.show()

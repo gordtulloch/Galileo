@@ -466,7 +466,7 @@ class SessionsScreen:
 #
 # No existing screen in this codebase uses Qt drag-and-drop, so there's no in-repo
 # pattern to extend here. Deliberately kept to QListWidget's built-in drag/drop
-# machinery (Qt.UserRole item data + a custom dropEvent) rather than a QGraphicsView
+# machinery (Qt.ItemDataRole.UserRole item data + a custom dropEvent) rather than a QGraphicsView
 # canvas, as SDD 4.6a suggests — a small fraction of the code, and nothing the tests
 # require calls for one.
 
@@ -476,7 +476,7 @@ _PALETTE_BLOCK_TYPES: tuple[type[SessionBlock], ...] = (
     FlatCaptureBlock, ParkMountBlock, UnparkMountBlock, MeridianFlipBlock,
     DomeOpenBlock, DomeCloseBlock, DomeSyncBlock,
 )
-_BLOCK_ROLE = Qt.UserRole
+_BLOCK_ROLE = Qt.ItemDataRole.UserRole
 
 
 def _block_color(kind_name: str) -> QColor:
@@ -513,8 +513,8 @@ def _build_palette(parent=None) -> QListWidget:
     palette = QListWidget(parent)
     palette.setObjectName("SessionPalette")
     palette.setDragEnabled(True)
-    palette.setDragDropMode(QAbstractItemView.DragOnly)
-    palette.setSelectionMode(QAbstractItemView.SingleSelection)
+    palette.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+    palette.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     palette.setMaximumWidth(180)
     palette.setToolTip("Drag a block into a session below to add it.")
     for cls in _PALETTE_BLOCK_TYPES:
@@ -544,13 +544,13 @@ class BlockListWidget(QListWidget):
         self._region = region
         self._palette = palette
         self._on_changed = on_changed
-        self.setDragDropMode(QAbstractItemView.DragDrop)
-        self.setDefaultDropAction(Qt.MoveAction)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.refresh()
 
     def refresh(self) -> None:
@@ -608,7 +608,7 @@ class _RegionWidget(QFrame):
         self._region = region
         self._on_reload = on_reload
         self.setObjectName("SessionRegion")
-        self.setFrameShape(QFrame.Box)
+        self.setFrameShape(QFrame.Shape.Box)
         layout = QVBoxLayout(self)
 
         header = QHBoxLayout()
@@ -656,7 +656,7 @@ class _RegionWidget(QFrame):
     def _save_as_template(self) -> None:
         name, ok = QInputDialog.getText(
             self, "Save as Template", "Template name:",
-            QLineEdit.Normal, self._region.name)
+            QLineEdit.EchoMode.Normal, self._region.name)
         name = name.strip()
         if ok and name:
             self._region.save_as_template(name)

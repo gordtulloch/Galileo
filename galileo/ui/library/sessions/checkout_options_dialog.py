@@ -60,7 +60,7 @@ def prompt_checkout_options(parent: QWidget, title: str) -> CheckoutOptions | No
     layout.addWidget(decompress_cb)
     layout.addWidget(masters_only_cb)
 
-    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     layout.addWidget(buttons)
 
     def _browse() -> None:
@@ -68,13 +68,13 @@ def prompt_checkout_options(parent: QWidget, title: str) -> CheckoutOptions | No
             parent,
             "Select Target Directory",
             dir_edit.text() or os.path.expanduser("~"),
-            QFileDialog.ShowDirsOnly,
+            QFileDialog.Option.ShowDirsOnly,
         )
         if chosen:
             dir_edit.setText(chosen)
 
     def _update_ok_state() -> None:
-        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok_btn is not None:
             ok_btn.setEnabled(bool(dir_edit.text().strip()))
 
@@ -85,7 +85,7 @@ def prompt_checkout_options(parent: QWidget, title: str) -> CheckoutOptions | No
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
 
-    if dialog.exec() != QDialog.Accepted:
+    if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
 
     dest_dir = dir_edit.text().strip()

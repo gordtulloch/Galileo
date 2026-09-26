@@ -635,7 +635,7 @@ class ImagesWidget(QWidget):
 
         # Show dialog and get result
         result = dialog.exec()
-        confirmed = (result == QDialog.Accepted)
+        confirmed = (result == QDialog.DialogCode.Accepted)
         dont_ask_again = checkbox.isChecked()
 
         return confirmed, dont_ask_again
@@ -682,7 +682,7 @@ class ImagesWidget(QWidget):
 
             # If the download flow completed successfully, refresh Images and
             # create sessions for newly imported (unassigned) files.
-            if result == QDialog.Accepted:
+            if result == QDialog.DialogCode.Accepted:
                 self.load_fits_data()
 
                 self._regenerate_sessions("Download")
@@ -721,7 +721,7 @@ class ImagesWidget(QWidget):
             # Create progress dialog
             progress_dialog = QProgressDialog("Scanning for FITS and XISF files...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Loading Repository")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)  # Show immediately
             progress_dialog.setValue(0)  # Set initial value
             progress_dialog.show()
@@ -923,7 +923,7 @@ class ImagesWidget(QWidget):
             # Create progress dialog
             progress_dialog = QProgressDialog("Initializing...", "Cancel", 0, 100, self)
             progress_dialog.setWindowTitle("Synchronizing Repository")
-            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumDuration(0)  # Show immediately
             progress_dialog.show()
 
@@ -1060,8 +1060,8 @@ class ImagesWidget(QWidget):
         """Clear the file tree and delete all records from the database."""
         reply = QMessageBox.question(self, "Clear Repository",
                                     "Are you sure you want to clear all files from the repository?\n\nThis will remove all database records but not delete physical files.",
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
             try:
                 # Clear the tree widget
                 self.file_tree.clear()
