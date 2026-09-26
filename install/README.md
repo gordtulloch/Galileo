@@ -4,7 +4,7 @@
 |---|---|
 | [`Install-Galileo.bat`](../Install-Galileo.bat) (repo root) | The one file to download for a fresh install. Double-click it; it fetches `install.ps1` from GitHub and runs it. |
 | `install.ps1` | Clones (or updates) the repo, ensures Git and Python 3.11+ are present (installing either if missing), creates `.venv`, installs dependencies, and creates a desktop shortcut. Safe to re-run any time. |
-| `launch_galileo.bat` / `launch_galileo.ps1` | Installed as the desktop shortcut's target. Checks for updates on every launch, then starts Galileo. `.bat` is the actual shortcut target (no PowerShell execution-policy prompt); `.ps1` is the same logic for a PowerShell prompt. |
+| `launch_galileo.bat` / `launch_galileo.ps1` | Installed as the desktop shortcut's target, which opens minimized. Checks for updates on every launch, then starts Galileo. `.bat` is the actual shortcut target (no PowerShell execution-policy prompt); `.ps1` is the same logic for a PowerShell prompt. Errors are appended to `%APPDATA%\Galileo\logs\launcher.log` rather than paused on-screen, since a minimized window's `pause` prompt would never be seen. |
 | `upgrade.ps1` | Manual "update now" script - `git pull` plus a dependency refresh - for updating without starting the app, or after local changes blocked the automatic update. |
 
 ## How a fresh install works
