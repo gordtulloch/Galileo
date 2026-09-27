@@ -4,6 +4,16 @@ REM This is the desktop shortcut's actual target (a .bat needs no PowerShell
 REM execution-policy handling to double-click). See launch_galileo.ps1 for
 REM the same logic from a PowerShell prompt, and install\upgrade.ps1 for a
 REM manual, on-demand update that doesn't also start the app.
+REM
+REM This file must only ever contain the update check below. cmd.exe reads
+REM a running .bat from disk by byte offset as it goes, so if `git reset
+REM --hard` rewrites THIS file while it's mid-execution, further reads can
+REM land on the wrong offset in the new content - which is how this file
+REM previously ended up stuck "modified" relative to git (blocking a later
+REM manual `git pull`) without anyone editing it by hand. Anything that
+REM changes release to release - the venv check, the app launch, error
+REM logging - lives in run_galileo.bat instead, which is only ever opened
+REM *after* this block finishes, so changing it is always safe.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0\.."
 
@@ -36,22 +46,5 @@ if exist ".git" (
     )
 )
 
-set "LOG_DIR=%APPDATA%\Galileo\logs"
-set "LOG_FILE=%LOG_DIR%\launcher.log"
-if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>&1
-
-if not exist ".venv\Scripts\python.exe" (
-    echo Error: Galileo's virtual environment was not found.
-    echo Run install\install.ps1 first.
-    echo %date% %time% - launch_galileo.bat - ERROR - Virtual environment not found. Run install\install.ps1 first. >> "%LOG_FILE%"
-    exit /b 1
-)
-
-echo Starting Galileo...
-".venv\Scripts\python.exe" -m galileo.app
-if errorlevel 1 (
-    set "APP_EXIT_CODE=!errorlevel!"
-    echo Galileo exited with an error (code !APP_EXIT_CODE!). See "%LOG_FILE%".
-    echo %date% %time% - launch_galileo.bat - ERROR - Galileo exited with code !APP_EXIT_CODE!. >> "%LOG_FILE%"
-    exit /b 1
-)
+call "%~dp0run_galileo.bat"
+exit /b %errorlevel%
