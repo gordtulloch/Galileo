@@ -36,13 +36,15 @@ class AppWindowImagingPageMixin:
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
             QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QProgressBar,
-            QFrame, QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu,
+            QFrame, QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu, QSlider,
         )
         from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 
         from galileo.livestack import LIVE_STACK_MIN_FRAMES
         from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
-        from galileo.ui.imaging import DEFAULT_GAIN, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE
+        from galileo.ui.imaging import (
+            DEFAULT_GAIN, DEFAULT_STRETCH_LEVEL, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE,
+        )
 
         page = QWidget()
         page.setObjectName("ImagingPage")
@@ -258,6 +260,23 @@ class AppWindowImagingPageMixin:
         content_layout.addLayout(build_zoom_toolbar(preview_view))
         content_layout.addWidget(preview_view, 1)
 
+        stretch_widget = QWidget()   # a widget, not a bare layout, so it can move with the rest (IMG-120)
+        stretch_row = QHBoxLayout(stretch_widget)
+        stretch_row.setContentsMargins(0, 0, 0, 0)
+        stretch_row.addWidget(QLabel("Stretch"))
+        stretch_slider = QSlider(Qt.Orientation.Horizontal)
+        stretch_slider.setRange(0, 100)
+        stretch_slider.setValue(DEFAULT_STRETCH_LEVEL)
+        stretch_slider.setToolTip(
+            "How hard the preview's auto-stretch clips each end of the pixel data before "
+            "stretching what's left to fill the display range (IMG-190): higher makes the preview "
+            "brighter and higher-contrast (and more washed-out); lower keeps more of the original "
+            "dynamic range. Only the preview changes — the raw frame, its statistics, histogram "
+            "and any saved file are unaffected."
+        )
+        stretch_row.addWidget(stretch_slider, 1)
+        content_layout.addWidget(stretch_widget)
+
         histogram = _HistogramWidget()
         histogram.setFixedHeight(80)
         histogram.set_color(self._theme.accent_color)
@@ -286,7 +305,7 @@ class AppWindowImagingPageMixin:
         # beneath it. Portrait: the preview is a full-height column one third of
         # the page wide, and the nudge pad, histogram, progress and log sit in the
         # column to its left, beside the settings.
-        secondary_widgets = (histogram, progress_widget, log_heading, log_pane)
+        secondary_widgets = (stretch_widget, histogram, progress_widget, log_heading, log_pane)
         nudge_slot = settings_layout.indexOf(nudge_group)   # where the nudge pad sits in landscape
         layout_state = {"orientation": None}
         unlimited_width = 16777215   # QWIDGETSIZE_MAX
@@ -400,6 +419,32 @@ class AppWindowImagingPageMixin:
         self._imaging_preview_renders = preview_renders
         self._imaging_debayer_check = debayer_check
 
+        # Re-render as the slider moves, but debounced (IMG-190): re-stretching a large frame takes
+        # real time, and a slider fires a change per pixel of drag, not once per gesture like the
+        # debayer checkbox. A short idle gap between events is what actually starts the render;
+        # apply_preview's generation check drops any render that finishes after a newer one started.
+        stretch_render_timer = QTimer(page)
+        stretch_render_timer.setSingleShot(True)
+        stretch_render_timer.setInterval(150)
+
+        def _render_stretch_preview() -> None:
+            if service.current_frame is None:
+                return
+            thread = _PreviewRenderThread(service, self._window)
+            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(t, rendered))
+            thread.finished.connect(thread.deleteLater)
+            preview_renders.add(thread)
+            thread.start()
+
+        stretch_render_timer.timeout.connect(_render_stretch_preview)
+
+        def _stretch_slider_changed(value: int) -> None:
+            service.set_stretch(value, rebuild=False)
+            stretch_render_timer.start()
+
+        stretch_slider.valueChanged.connect(_stretch_slider_changed)
+        self._imaging_stretch_slider = stretch_slider
+
         def _orientation_choice_changed(*_args) -> None:
             if orientation_check.isChecked():
                 service.set_manual_orientation(orientation_combo.currentData())
@@ -480,7 +525,7 @@ class AppWindowImagingPageMixin:
         self._imaging_ui = {
             "settings_panel": settings_panel, "dock_panel": dock_panel, "page": page,
             "fit_preview_width": _fit_preview_width, "content": content, "preview": preview_view,
-            "histogram": histogram, "progress": progress_widget, "log": log_pane,
+            "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget, "log": log_pane,
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
             "apply_orientation": _apply_orientation, "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "auto_save": auto_save_check,

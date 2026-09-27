@@ -30,7 +30,7 @@ class AppWindowRotatorPageMixin:
         other Equipment page. Left: backlash, the rotator's live position
         with Goto/Reverse/Set-as-zero (EQP-ROT-010), derotation-rate
         correction and Start/Stop Derotation. Right: the derotation target —
-        site, date/UTC, target RA/Dec (typed, or synced from the
+        site, date/local time, target RA/Dec (typed, or synced from the
         newest FITS file in a folder) — with the resulting Alt/Az and field
         rotation rate from ``galileo.derotation``."""
         from PySide6.QtWidgets import (
@@ -208,15 +208,15 @@ class AppWindowRotatorPageMixin:
 
         clock_row = QHBoxLayout()
         date_value = QLabel("—")
-        utc_value = QLabel("—")
-        for label in (date_value, utc_value):
+        time_value = QLabel("—")
+        for label in (date_value, time_value):
             font = label.font()
             font.setBold(True)
             label.setFont(font)
         clock_row.addWidget(date_value)
         clock_row.addStretch(1)
-        clock_row.addWidget(QLabel("UTC"))
-        clock_row.addWidget(utc_value)
+        clock_row.addWidget(QLabel("Local"))
+        clock_row.addWidget(time_value)
         right.addLayout(clock_row)
 
         site_row = QGridLayout()
@@ -365,9 +365,9 @@ class AppWindowRotatorPageMixin:
             return alt, az, rate
 
         def _recompute() -> None:
-            now = datetime.datetime.now(datetime.UTC)
+            now = datetime.datetime.now()
             date_value.setText(now.strftime("%Y - %m - %d"))
-            utc_value.setText(now.strftime("%H : %M : %S"))
+            time_value.setText(now.strftime("%H : %M : %S"))
             result = _current_rate()
             if result is None:
                 altitude_value.setText("—")

@@ -83,10 +83,13 @@ class AppWindowPlanningPageMixin:
         _TILE_MIN_WIDTH_PX = 420
 
         def _fmt_rise_set_time(iso: str | None) -> str:
+            """*iso* is a naive-UTC ISO string (galileo.planning.visibility);
+            shown converted to local time so it matches the clock on the wall."""
             if iso is None:
                 return "—"
             import datetime as _dt
-            return _dt.datetime.fromisoformat(iso).strftime("%H:%M")
+            when_utc = _dt.datetime.fromisoformat(iso).replace(tzinfo=_dt.UTC)
+            return when_utc.astimezone().strftime("%H:%M")
 
         def _build_result_card(obj, rise_set_text: str, chart: dict | None) -> tuple[QWidget, QLabel]:
             """One result's card: thumbnail slot, name/type/magnitude/size/
@@ -428,7 +431,7 @@ class AppWindowPlanningPageMixin:
                             rise_set_texts[i] = (
                                 f"Rise {_fmt_rise_set_time(rts['rise'])}  "
                                 f"Transit {_fmt_rise_set_time(rts['transit'])}  "
-                                f"Set {_fmt_rise_set_time(rts['set'])} UTC"
+                                f"Set {_fmt_rise_set_time(rts['set'])}"
                             )
                         except Exception:
                             logger.debug("Could not compute rise/transit/set for %s", obj.primary_name, exc_info=True)

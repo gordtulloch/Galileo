@@ -144,6 +144,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-160` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.livestack` | Test | `TC-IMG-160` |
 | `IMG-170` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.metadata` | Test | `TC-IMG-170` |
 | `IMG-180` | MVP | SDD 4.5 `galileo.ui.imaging` / SDD 4.9 `galileo.planning.framing` | Test | `TC-IMG-180` |
+| `IMG-190` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-190` |
 
 ### `SES` — Sessions (formerly `SEQ`/`SEQ-ADV`; SRS Sections 4.5/4.5a/4.6)
 

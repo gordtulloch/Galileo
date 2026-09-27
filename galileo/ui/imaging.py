@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GAIN = 110      # what the Imaging page's Gain field starts at (IMG-150)
 
+# Auto-stretch slider (IMG-190): 0..100, where 0 clips almost nothing of each tail (a flat,
+# close-to-linear preview) and 100 clips the most (the highest-contrast, most "stretched" look).
+# The default reproduces the fixed 0.5%/99.5% clip this preview used before the slider existed,
+# so a user who never touches it sees no change.
+DEFAULT_STRETCH_LEVEL = 10
+
 PORTRAIT = "portrait"
 LANDSCAPE = "landscape"
 
@@ -102,6 +108,9 @@ class ImagingService:
         self.debayer_enabled: bool = False
         self.bayer_pattern: str = DEFAULT_PATTERN  # the camera's mosaic layout, as set on its Equipment page
         self.debayer_note: str = ""                # what the last preview did, for the UI to show
+        # Auto-stretch strength (IMG-190), set by the slider above the histogram. Preview-only —
+        # never affects current_frame, frame_stats, frame_histogram or a saved file.
+        self.stretch_level: int = DEFAULT_STRETCH_LEVEL
         self._preview_generation: int = 0          # bumped by each display-setting change; stale renders are dropped
         # The Pier's current object (IMG-140): names saved frames and is written to their OBJECT keyword.
         self.object_name: str = ""
@@ -534,6 +543,15 @@ class ImagingService:
         self.current_preview, self.debayer_note = preview, note
         return True
 
+    def set_stretch(self, level: int, rebuild: bool = True) -> None:
+        """Set the auto-stretch slider's strength (0..100, IMG-190), re-rendering the current
+        frame at once unless ``rebuild`` is false — the Imaging page passes false and re-renders
+        on a worker thread instead, the same as :meth:`set_debayer`."""
+        self.stretch_level = max(0, min(100, int(level)))
+        self._preview_generation += 1
+        if rebuild:
+            self._rebuild_preview()
+
     def set_bayer_pattern(self, pattern: str | None, rebuild: bool = True) -> None:
         """Set the mosaic layout used to debayer (``RGGB``, ``GRBG``, ``GBRG``
         or ``BGGR``), re-rendering the current frame unless ``rebuild`` is
@@ -556,7 +574,7 @@ class ImagingService:
         shown, note = data, ""
         if self.debayer_enabled:
             shown, note = self._debayered(data)
-        return _auto_stretch(shown), note
+        return _auto_stretch(shown, self.stretch_level), note
 
     async def _analyse_current_frame(self) -> None:
         """Build the preview, statistics and histogram for ``current_frame``, all off the UI thread
@@ -639,19 +657,27 @@ class ImagingService:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _auto_stretch(data):
+def _auto_stretch(data, stretch_level: int = DEFAULT_STRETCH_LEVEL):
     """Return an 8-bit auto-stretched preview array — ``(height, width)`` for
     a single plane, ``(height, width, 3)`` for colour. Each colour plane is
     stretched on its own, which also balances the background: a Bayer sensor
-    has twice as many green pixels, so a common stretch would tint the image."""
+    has twice as many green pixels, so a common stretch would tint the image.
+
+    *stretch_level* (0..100, IMG-190) sets how much of each plane's low/high
+    tail is clipped to black/white before the remainder is stretched to fill
+    the full range — higher clips more, giving a brighter, higher-contrast
+    but more washed-out preview; lower keeps more of the original dynamic
+    range. ``DEFAULT_STRETCH_LEVEL`` reproduces this function's original
+    fixed 0.5%/99.5% clip."""
     try:
         import numpy as np
         if data is None:
             return None
         d = data.astype(np.float32)
         if d.ndim == 3:
-            return np.stack([_auto_stretch(d[..., i]) for i in range(d.shape[2])], axis=-1)
-        lo, hi = float(np.percentile(d, 0.5)), float(np.percentile(d, 99.5))
+            return np.stack([_auto_stretch(d[..., i], stretch_level) for i in range(d.shape[2])], axis=-1)
+        margin = max(0, min(100, stretch_level)) / 20.0   # 0 .. 5.0% clipped from each tail
+        lo, hi = float(np.percentile(d, margin)), float(np.percentile(d, 100.0 - margin))
         stretched = np.clip((d - lo) / (hi - lo + 1e-9), 0, 1)
         return (stretched * 255).astype(np.uint8)
     except Exception:

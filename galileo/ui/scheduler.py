@@ -111,8 +111,9 @@ class _AltitudeChart(QWidget):
         for a, b in zip(points, points[1:]):
             painter.drawLine(a, b)
 
-        # Time-axis ticks — a handful of "HH:MM" labels (UTC, matching this
-        # app's convention everywhere else times are shown) evenly spaced
+        # Time-axis ticks — a handful of "HH:MM" labels, converted from the
+        # underlying naive-UTC chart data (galileo.planning.visibility) to
+        # local time so they match the clock on the wall, evenly spaced
         # along the bottom, in the margin already reserved below the plot.
         if self.times and n > 1:
             num_ticks = min(4, n)
@@ -121,7 +122,8 @@ class _AltitudeChart(QWidget):
             for idx in tick_indices:
                 x = plot.left() + idx / (n - 1) * plot.width()
                 try:
-                    label = datetime.datetime.fromisoformat(self.times[idx]).strftime("%H:%M")
+                    when_utc = datetime.datetime.fromisoformat(self.times[idx]).replace(tzinfo=datetime.UTC)
+                    label = when_utc.astimezone().strftime("%H:%M")
                 except (ValueError, IndexError):
                     continue
                 painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 3))

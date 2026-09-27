@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-180)."""
+"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-190)."""
 
 import pytest
 from types import SimpleNamespace
@@ -1709,3 +1709,114 @@ def test_tc_img_180_dialog_prefills_from_the_current_object(window):
 
     get_current_objects().set(window.pier, CurrentObject(name="M42", ra_deg=83.8221, dec_deg=-5.3911))
     assert window._framing_dialog_initial_target() == ("M42", 83.8221, -5.3911)
+
+
+# ---------------------------------------------------------------------------
+# TC-IMG-190 — auto-stretch slider above the histogram
+# ---------------------------------------------------------------------------
+
+def _skewed_frame():
+    """A background-plus-a-few-saturated-stars frame, like a real sub — as opposed to a uniform
+    ramp, this is what actually makes a fixed percentile clip look "overstretched"."""
+    import numpy as np
+    rng = np.random.default_rng(0)
+    background = rng.normal(1000, 50, size=9900).clip(0, 65535)
+    stars = np.full(100, 60000.0)
+    return np.concatenate([background, stars]).reshape(100, 100).astype(np.uint16)
+
+
+@pytest.mark.requirement("TC-IMG-190")
+@pytest.mark.priority("P2")
+def test_tc_img_190_default_level_matches_the_original_fixed_clip():
+    """IMG-190: DEFAULT_STRETCH_LEVEL reproduces the preview's original fixed 0.5%/99.5% clip, so a
+    user who never touches the slider sees the same preview as before it existed."""
+    import numpy as np
+    from galileo.ui.imaging import _auto_stretch, DEFAULT_STRETCH_LEVEL
+
+    data = _skewed_frame()
+    default_result = _auto_stretch(data, DEFAULT_STRETCH_LEVEL)
+
+    d = data.astype(np.float32)
+    lo, hi = np.percentile(d, 0.5), np.percentile(d, 99.5)
+    expected = np.clip((d - lo) / (hi - lo + 1e-9), 0, 1)
+    expected = (expected * 255).astype(np.uint8)
+
+    assert np.array_equal(default_result, expected)
+
+
+@pytest.mark.requirement("TC-IMG-190")
+@pytest.mark.priority("P2")
+def test_tc_img_190_higher_level_clips_more_and_brightens_the_preview(imaging_service):
+    """IMG-190: a higher stretch level clips more of each tail before normalising, which — for a
+    background-dominated frame — raises the preview's mean brightness. current_frame (the raw data
+    Save Frame and statistics use) is never touched."""
+    import numpy as np
+    raw = _skewed_frame()
+    imaging_service.current_frame = raw
+
+    imaging_service.set_stretch(0)
+    mild = imaging_service.current_preview
+    imaging_service.set_stretch(100)
+    aggressive = imaging_service.current_preview
+
+    assert np.array_equal(imaging_service.current_frame, raw), "the raw frame must be untouched"
+    assert mild is not None and aggressive is not None
+    assert mild.mean() < aggressive.mean()
+
+
+@pytest.mark.requirement("TC-IMG-190")
+@pytest.mark.priority("P2")
+def test_tc_img_190_set_stretch_clamps_and_marks_the_preview_stale(imaging_service):
+    """IMG-190: set_stretch clamps to 0..100 and bumps the render generation the same way
+    set_debayer does, so a render started before the change is dropped by apply_preview."""
+    import numpy as np
+    imaging_service.current_frame = np.arange(10000, dtype=np.uint16).reshape(100, 100)
+
+    stale = imaging_service.render_preview()
+    imaging_service.set_stretch(500, rebuild=False)   # out of range
+    assert imaging_service.stretch_level == 100
+    assert imaging_service.apply_preview(stale) is False
+
+    imaging_service.set_stretch(-5, rebuild=False)
+    assert imaging_service.stretch_level == 0
+
+
+@pytest.mark.requirement("TC-IMG-190")
+@pytest.mark.priority("P2")
+def test_tc_img_190_imaging_page_has_a_stretch_slider_above_the_histogram(window):
+    """IMG-190: the Imaging page offers a 0..100 stretch slider, defaulting to the level that
+    reproduces the preview's original fixed clip, so nothing changes for a user who never touches it."""
+    from galileo.ui.imaging import DEFAULT_STRETCH_LEVEL
+    ui = window._imaging_ui
+    slider = ui["stretch_slider"]
+    assert slider.minimum() == 0 and slider.maximum() == 100
+    assert slider.value() == DEFAULT_STRETCH_LEVEL
+    assert window._imaging_service.stretch_level == DEFAULT_STRETCH_LEVEL
+
+
+def _wait_for_stretch_render(window):
+    """Let the Imaging page's debounce timer fire and its worker thread finish (IMG-190)."""
+    QtTest = pytest.importorskip("PySide6.QtTest")
+    QtTest.QTest.qWait(400)
+    _wait_for_preview_renders(window)
+
+
+@pytest.mark.requirement("TC-IMG-190")
+@pytest.mark.priority("P2")
+def test_tc_img_190_moving_the_slider_updates_the_service_and_re_renders(window):
+    """IMG-190: moving the slider updates ImagingService.stretch_level and re-renders the preview
+    on a worker thread (debounced), without touching the raw frame or its statistics."""
+    raw = _skewed_frame()
+    service = window._imaging_service
+    service.current_frame = raw
+    service.frame_stats = {"mean": 1.0}
+    service._analysed_frame = raw
+
+    slider = window._imaging_ui["stretch_slider"]
+    slider.setValue(90)
+    _wait_for_stretch_render(window)
+
+    assert service.stretch_level == 90
+    assert service.current_frame is raw, "the raw frame must be untouched"
+    assert service.frame_stats == {"mean": 1.0}, "stretching must not recompute statistics"
+    assert service.current_preview is not None and service.current_preview.max() <= 255
