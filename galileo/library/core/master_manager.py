@@ -2,14 +2,11 @@
 Advanced Master Calibration Frame Management Module
 
 This module provides advanced master calibration frame operations including:
-- PySiril integration for high-quality master frame creation
+- Astropy-based sigma-clipped and simple-average master frame creation
 - Intelligent matching of master frames to sessions
 - Validation and quality assessment of master frames
 - Cleanup and maintenance operations
 - Statistics and analytics for master frame management
-
-Note: PySiril requires manual installation from https://gitlab.com/free-astro/pysiril/-/releases
-If PySiril is not available, falls back to astropy-based simple averaging.
 """
 
 import os
@@ -406,7 +403,7 @@ class MasterFrameManager:
                                  progress_callback: Callable | None = None,
                                  verbose: bool = False) -> Masters | None:
         """
-        Create a master calibration frame from a session's files using advanced Siril integration.
+        Create a master calibration frame from a session's files using sigma-clipped stacking.
         
         Args:
             session_id: Session ID to create master from
