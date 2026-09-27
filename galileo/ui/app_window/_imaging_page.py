@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Imaging page: live preview, histogram/stats, manual capture and mosaic capture."""
+"""Imaging page: live preview, histogram, manual capture and mosaic capture."""
 
 from __future__ import annotations
 
@@ -27,22 +27,21 @@ if TYPE_CHECKING:
 class AppWindowImagingPageMixin:
     def _build_imaging_page(self: AppWindowState) -> QWidget:
         """Imaging tab (IMG-010 … IMG-100): a live, pan/zoomable auto-stretch
-        preview with histogram and per-frame statistics, plus manual
-        single-exposure capture — modeled on the classic CCD-capture-tool
+        preview with histogram, plus manual single-exposure capture —
+        modeled on the classic CCD-capture-tool
         split of capture settings on the left against preview/progress/log
         on the right (see assets/samples/ccd.png). Sequencing itself lives
         in the separate Sequence section; this page is for live preview and
         one-off manual shots, not a queue."""
         from PySide6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QGroupBox,
+            QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
             QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QProgressBar,
-            QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame,
-            QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu,
+            QFrame, QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu,
         )
         from PySide6.QtCore import Qt, QTimer, QObject, QEvent
-        from PySide6.QtGui import QPixmap, QImage
 
         from galileo.livestack import LIVE_STACK_MIN_FRAMES
+        from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
         from galileo.ui.imaging import DEFAULT_GAIN, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE
 
         page = QWidget()
@@ -180,16 +179,6 @@ class AppWindowImagingPageMixin:
         star_overlay_check.setToolTip("Overlay stars detected for HFR computation (IMG-050).")
         view_form.addRow(star_overlay_check)
 
-        zoom_spin = QDoubleSpinBox()
-        zoom_spin.setRange(0.1, 8.0)
-        zoom_spin.setSingleStep(0.1)
-        zoom_spin.setValue(1.0)
-        zoom_spin.setSuffix("x")
-        view_form.addRow("Zoom", zoom_spin)
-
-        reset_view_btn = QPushButton("Reset View")
-        view_form.addRow(reset_view_btn)
-
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
             "By default the page lays itself out for the shape of the frame: a portrait frame gets the "
@@ -204,18 +193,6 @@ class AppWindowImagingPageMixin:
         view_form.addRow("Layout", orientation_combo)
 
         settings_layout.addWidget(view_group)
-
-        stats_group = QGroupBox("Statistics")
-        stats_form = QFormLayout(stats_group)
-        stats_labels: dict = {}
-        for key, label_text in (
-            ("mean", "Mean"), ("median", "Median"), ("min", "Min"),
-            ("max", "Max"), ("star_count", "Star count"), ("hfr", "HFR"),
-        ):
-            value_label = QLabel("—")
-            stats_labels[key] = value_label
-            stats_form.addRow(label_text, value_label)
-        settings_layout.addWidget(stats_group)
 
         nudge_group = QGroupBox("Mount Nudge")
         nudge_layout = QVBoxLayout(nudge_group)
@@ -276,13 +253,9 @@ class AppWindowImagingPageMixin:
         content_layout.setContentsMargins(24, 20, 24, 20)
         content_layout.setSpacing(10)
 
-        scene = QGraphicsScene()
-        pixmap_item = QGraphicsPixmapItem()
-        scene.addItem(pixmap_item)
-        preview_view = QGraphicsView(scene)
+        preview_view = ImagePreviewView()
         preview_view.setObjectName("ImagingPreview")
-        preview_view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        preview_view.setBackgroundBrush(Qt.GlobalColor.black)
+        content_layout.addLayout(build_zoom_toolbar(preview_view))
         content_layout.addWidget(preview_view, 1)
 
         histogram = _HistogramWidget()
@@ -377,51 +350,14 @@ class AppWindowImagingPageMixin:
         self._imaging_service = service
 
         def _refresh_preview() -> None:
-            import numpy as np
             data = service.current_preview
             if data is None:
                 return
-            arr = np.ascontiguousarray(data)
-            h, w = arr.shape[:2]
-            if arr.ndim == 3:
-                image = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-            else:
-                image = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
-            pixmap_item.setPixmap(QPixmap.fromImage(image))
-            scene.setSceneRect(0, 0, w, h)
-            preview_view.resetTransform()
-            preview_view.scale(zoom_spin.value(), zoom_spin.value())
-
-        def _refresh_stats() -> None:
-            stats = service.get_frame_stats()
-            for key, value_label in stats_labels.items():
-                value = stats.get(key)
-                if value is None:
-                    value_label.setText("—")
-                elif isinstance(value, float):
-                    value_label.setText(f"{value:.2f}")
-                else:
-                    value_label.setText(str(value))
+            preview_view.show_array(data)
 
         def _refresh_histogram() -> None:
             hist = service.get_histogram()
             histogram.set_data(hist.get("counts", []))
-
-        def apply_zoom(factor: float) -> None:
-            service.set_zoom(factor)
-            preview_view.resetTransform()
-            preview_view.scale(factor, factor)
-
-        zoom_spin.valueChanged.connect(apply_zoom)
-
-        def reset_view() -> None:
-            service.reset_view()
-            zoom_spin.blockSignals(True)
-            zoom_spin.setValue(1.0)
-            zoom_spin.blockSignals(False)
-            preview_view.resetTransform()
-
-        reset_view_btn.clicked.connect(reset_view)
 
         star_overlay_check.toggled.connect(service.set_star_overlay)
 
@@ -578,7 +514,6 @@ class AppWindowImagingPageMixin:
         def on_frame_done(_frame: int, _total: int) -> None:
             # Each frame is shown as it arrives, not only the last one of a series.
             _refresh_preview()
-            _refresh_stats()
             _refresh_histogram()
             _apply_orientation()
             save_frame_btn.setEnabled(service.current_frame is not None)

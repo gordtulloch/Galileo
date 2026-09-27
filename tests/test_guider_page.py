@@ -259,7 +259,7 @@ def test_tc_guide_080_star_image_and_calibration_plot_are_fed(window, phd2):
     service.poll(want_star_image=True)
     assert _pump(window, lambda: service.model.snapshot().star_image is not None)
     page._tick()
-    assert page.star_view._image is not None and page.star_view._image.width() == 4
+    assert page.star_view.has_image and page.star_view._item.pixmap().width() == 4
     assert len(page.calibration_plot.points) == 1
     # painting every plot must not raise, with and without data
     for widget in (page.graph, page.scatter, page.calibration_plot, page.star_view):

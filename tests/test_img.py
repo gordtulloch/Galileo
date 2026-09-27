@@ -470,7 +470,7 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     ui["apply_orientation"]()
     assert all(w.parentWidget() is dock for w in (nudge, *secondary))
     assert ui["preview"].parentWidget() is content
-    assert content.layout().count() == 1, "the preview is all that is left on the right"
+    assert content.layout().count() == 2, "only the preview and its Fit/1:1/+/- toolbar are left on the right"
     assert ui["histogram"].height() > landscape_heights[0] and ui["log"].height() > landscape_heights[1], "the middle column has the height to spare"
 
     page = ui["page"]

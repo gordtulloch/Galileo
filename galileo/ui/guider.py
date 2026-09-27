@@ -25,7 +25,7 @@ from typing import ClassVar
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from galileo.guiding import DEC_GUIDE_MODES, GuideSnapshot, GuidingService
+from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
 
 logger = logging.getLogger(__name__)
 
@@ -299,48 +300,49 @@ class CalibrationPlot(_PlotBase):
         painter.end()
 
 
-class StarView(QWidget):
-    """The guide-star cut-out PHD2 sends, stretched and scaled to fit."""
+class StarView(ImagePreviewView):
+    """The guide-star cut-out PHD2 sends. Fits the window until the user zooms; drag to pan."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("StarView")
         self.setMinimumHeight(160)
-        self._image: QImage | None = None
+        self.setBackgroundBrush(QColor("#141414"))
         self._star: tuple[float, float] | None = None
-        self._size = (1, 1)
         self.message = "No guide star image"
 
     def set_star_image(self, star) -> None:
         if star is None:
-            self._image = None
+            self.clear_image()
+            self._star = None
         else:
             data = np.frombuffer(star.pixels, dtype="<u2").reshape(star.height, star.width).astype(np.float32)
             lo, hi = float(np.median(data)), float(np.percentile(data, 99.8))
             if hi <= lo:
                 hi = lo + 1.0
             grey = np.ascontiguousarray((np.clip((data - lo) / (hi - lo), 0, 1) ** 0.5 * 255).astype(np.uint8))
-            self._image = QImage(grey.data, star.width, star.height, star.width, QImage.Format.Format_Grayscale8).copy()
-            self._star, self._size = star.star_pos, (star.width, star.height)
-        self.update()
+            self.show_array(grey)
+            self._star = star.star_pos
+        self.viewport().update()
 
     def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#141414"))
-        if self._image is None:
+        super().paintEvent(event)
+        if not self.has_image:
+            painter = QPainter(self.viewport())
             painter.setPen(QColor("#8a949c"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.message)
             painter.end()
-            return
-        side = min(self.width(), self.height())
-        target = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        painter.drawImage(target, self._image)
-        if self._star:
-            k = side / max(self._size)
-            cx, cy = target.left() + self._star[0] * k, target.top() + self._star[1] * k
-            painter.setPen(QPen(QColor("#31e04a"), 1.5))
-            box = max(10.0, 12 * k)
+
+    def drawForeground(self, painter, rect) -> None:
+        super().drawForeground(painter, rect)
+        if self.has_image and self._star:
+            pen = QPen(QColor("#31e04a"))
+            pen.setCosmetic(True)
+            pen.setWidthF(1.5)
+            painter.setPen(pen)
+            box = 12.0
+            cx, cy = self._star
             painter.drawRect(QRectF(cx - box / 2, cy - box / 2, box, box))
-        painter.end()
 
 
 class _Lamp(QLabel):
@@ -545,6 +547,7 @@ class GuiderPage(QWidget):
         column = QVBoxLayout()
         column.setSpacing(8)
         self.star_view = StarView()
+        column.addLayout(build_zoom_toolbar(self.star_view))
         column.addWidget(self.star_view, 3)
 
         lower = QHBoxLayout()

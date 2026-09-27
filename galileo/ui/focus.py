@@ -24,7 +24,7 @@ import threading
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from galileo.autofocus import AutofocusParams
 from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
+from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
 from galileo.ui.guider import _PLOT_FG, _PlotBase
 from galileo.ui.imaging import _auto_stretch
 
@@ -65,43 +66,31 @@ def _preview(frame) -> np.ndarray | None:
     return _auto_stretch(arr[::step, ::step])
 
 
-class FocusImageView(QWidget):
-    """The frame being measured, fitted to the widget."""
+class FocusImageView(ImagePreviewView):
+    """The frame being measured. Fits the window until the user zooms; drag to pan."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("FocusImage")
         self.setMinimumSize(320, 240)
-        self._image: QImage | None = None
+        self.setBackgroundBrush(QColor("#141414"))
         self.message = "No focus run yet"
-
-    @property
-    def has_image(self) -> bool:
-        return self._image is not None
 
     def set_image(self, data: np.ndarray | None) -> None:
         """Show *data*, an 8-bit ``(h, w)`` or ``(h, w, 3)`` array (see :func:`_preview`)."""
         if data is None:
-            self._image = None
+            self.clear_image()
         else:
-            data = np.ascontiguousarray(data)
-            height, width = data.shape[:2]
-            fmt = QImage.Format.Format_RGB888 if data.ndim == 3 else QImage.Format.Format_Grayscale8
-            self._image = QImage(data.data, width, height, data.strides[0], fmt).copy()
-        self.update()
+            self.show_array(data)
+        self.viewport().update()
 
     def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#141414"))
-        if self._image is None:
+        super().paintEvent(event)
+        if not self.has_image:
+            painter = QPainter(self.viewport())
             painter.setPen(QColor("#8a949c"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
-        else:
-            scaled = self._image.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
-            target = QRectF(0, 0, scaled.width(), scaled.height())
-            target.moveCenter(QPointF(self.width() / 2, self.height() / 2))
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            painter.drawImage(target, self._image)
-        painter.end()
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.message)
+            painter.end()
 
 
 class VCurvePlot(_PlotBase):
@@ -347,6 +336,7 @@ class FocusPage(QWidget):
         column = QVBoxLayout()
         column.setSpacing(8)
         self.image_view = FocusImageView()
+        column.addLayout(build_zoom_toolbar(self.image_view))
         column.addWidget(self.image_view, 3)
 
         stats = QHBoxLayout()

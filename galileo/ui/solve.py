@@ -30,15 +30,12 @@ from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPen, QPixmap
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGraphicsPixmapItem,
-    QGraphicsScene,
-    QGraphicsView,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -70,6 +67,7 @@ from galileo.platesolve import (
     mount_frame_to_j2000,
     nearest_object_name,
 )
+from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
 from galileo.ui.guider import _PlotBase
 
 logger = logging.getLogger(__name__)
@@ -223,56 +221,12 @@ class SolveErrorPlot(_PlotBase):
         painter.end()
 
 
-class SolveImageView(QGraphicsView):
+class SolveImageView(ImagePreviewView):
     """The frame being solved. Fits the window until the user zooms; drag to pan."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("SolveImage")
-        self._scene = QGraphicsScene(self)
-        self._item = QGraphicsPixmapItem()
-        self._scene.addItem(self._item)
-        self.setScene(self._scene)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setBackgroundBrush(Qt.GlobalColor.black)
-        self.setMinimumHeight(200)
-        self.fit = True
-        self.has_image = False
-
-    def show_array(self, array: np.ndarray) -> None:
-        arr = np.ascontiguousarray(array)
-        h, w = arr.shape[:2]
-        if arr.ndim == 3:
-            image = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-        else:
-            image = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
-        self._item.setPixmap(QPixmap.fromImage(image))
-        self._scene.setSceneRect(0, 0, w, h)
-        self.has_image = True
-        if self.fit:
-            self.fit_to_window()
-
-    def clear_image(self) -> None:
-        self._item.setPixmap(QPixmap())
-        self.has_image = False
-
-    def fit_to_window(self) -> None:
-        self.fit = True
-        if self.has_image:
-            self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
-
-    def actual_size(self) -> None:
-        self.fit = False
-        self.resetTransform()
-
-    def zoom(self, factor: float) -> None:
-        self.fit = False
-        self.scale(factor, factor)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        if self.fit:
-            self.fit_to_window()
 
 
 class SolvePage(QWidget):
@@ -332,8 +286,8 @@ class SolvePage(QWidget):
         right = QVBoxLayout()
         right.setSpacing(8)
         upper = QVBoxLayout()
-        upper.addLayout(self._build_image_tools())
         self.image_view = SolveImageView()
+        upper.addLayout(self._build_image_tools())
         upper.addWidget(self.image_view, 1)
         right.addLayout(upper, 3)
         right.addWidget(self._build_tabs(), 2)
@@ -476,22 +430,8 @@ class SolvePage(QWidget):
         return column
 
     def _build_image_tools(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(4)
         self.frame_label = QLabel("No frame yet")
-        row.addWidget(self.frame_label, 1)
-        for text, tip, slot in (
-            ("Fit", "Fit the whole frame in the window.", lambda: self.image_view.fit_to_window()),
-            ("1:1", "Show the frame at actual size.", lambda: self.image_view.actual_size()),
-            ("+", "Zoom in.", lambda: self.image_view.zoom(1.25)),
-            ("−", "Zoom out.", lambda: self.image_view.zoom(0.8)),
-        ):
-            button = QPushButton(text)
-            button.setToolTip(tip)
-            button.setFixedWidth(40)
-            button.clicked.connect(slot)
-            row.addWidget(button)
-        return row
+        return build_zoom_toolbar(self.image_view, self.frame_label)
 
     def _build_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
