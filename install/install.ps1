@@ -167,10 +167,14 @@ function Resolve-Python {
 
 function Invoke-Py {
     param([string[]]$PyArgs)
-    if ($script:PythonCmd.Length -gt 1) {
-        & $script:PythonCmd[0] $script:PythonCmd[1] @PyArgs
+    # $script:PythonCmd may come back from Resolve-Python as a bare string (single-element
+    # arrays get unwrapped on assignment) - @() forces array semantics so .Length/indexing
+    # doesn't fall through to per-character indexing of a string like "python".
+    $pythonCmd = @($script:PythonCmd)
+    if ($pythonCmd.Length -gt 1) {
+        & $pythonCmd[0] $pythonCmd[1] @PyArgs
     } else {
-        & $script:PythonCmd[0] @PyArgs
+        & $pythonCmd[0] @PyArgs
     }
 }
 
