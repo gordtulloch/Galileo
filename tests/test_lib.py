@@ -744,6 +744,29 @@ def test_library_images_and_sessions_screens_show_the_catalog(window, library):
 
 @pytest.mark.requirement("TC-LIB-010")
 @pytest.mark.priority("MVP")
+def test_library_images_screen_refreshes_when_reopened_after_new_frames(qt_app, window, library):
+    """Frames registered while the Library is hidden (e.g. by a Session run) appear when it is reopened."""
+    from galileo.ui.library.images_widget import ImagesWidget
+
+    window.show()
+    library_menu(window)._secondary_nav.select("images")
+    qt_app.processEvents()
+    images = window._window.findChildren(ImagesWidget)[0]
+    assert images.file_tree.topLevelItemCount() == 0
+
+    window._primary_nav.select("equipment")
+    qt_app.processEvents()
+    write_light_frames(library.incoming)
+    ingest(library)
+    assert images.file_tree.topLevelItemCount() == 0    # hidden: not reloaded behind the user's back
+
+    library_menu(window)
+    qt_app.processEvents()
+    assert images.file_tree.topLevelItemCount() == 1    # one object: M42
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
 def test_library_screens_have_no_tabs_and_merge_is_its_own_menu_item(window):
     """Images and Dedup are single screens; Merge Objects is a menu item of its own beside Dedup."""
     from PySide6 import QtWidgets

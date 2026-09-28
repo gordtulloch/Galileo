@@ -27,6 +27,7 @@ class ImagesWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.search_term = ""
+        self._loaded_signature = None
         # Set by the Library page host so imports can trigger session creation.
         self.sessions_widget = None
 
@@ -36,6 +37,30 @@ class ImagesWidget(QWidget):
         self.init_ui()
         # Load all items on startup
         self.load_fits_data()
+
+    def showEvent(self, event):
+        """Reload when the catalog changed while this screen was hidden.
+
+        Frames can be registered from anywhere (a Session run, another Pier's
+        capture, a download), so re-opening the Library must show them. Only a
+        changed catalog triggers the reload, so switching back and forth keeps
+        the tree's expanded groups.
+        """
+        super().showEvent(event)
+        try:
+            changed = self._catalog_signature() != self._loaded_signature
+        except Exception:
+            logger.exception("Could not check the catalog for new images")
+            return
+        if changed:
+            self.load_fits_data()
+
+    @staticmethod
+    def _catalog_signature():
+        """A cheap fingerprint of the catalog: total and soft-deleted row counts."""
+        total = FitsFileModel.select().count()
+        deleted = FitsFileModel.select().where(FitsFileModel.fitsFileSoftDelete == True).count()
+        return total, deleted
 
     def setup_icons(self):
         """Setup icons for local and cloud file status"""
@@ -161,6 +186,10 @@ class ImagesWidget(QWidget):
     def load_fits_data(self):
         """Load FITS file data from the database."""
         try:
+            try:
+                self._loaded_signature = self._catalog_signature()
+            except Exception:
+                self._loaded_signature = None
             self.file_tree.clear()
 
             # Get sort method from combo box
