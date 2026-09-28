@@ -96,6 +96,18 @@ def _star_atlas(painter, r):
         painter.drawPoint(QPointF(c.x() + r.width() * dx, c.y() + r.height() * dy))
 
 
+def _whats_up(painter, r):
+    """Three ascending bars, rightmost tallest -- a ranked list (What's Up Tonight)."""
+    from PySide6.QtCore import QRectF
+    n = 3
+    gap = r.width() * 0.12
+    bar_w = (r.width() - gap * (n - 1)) / n
+    for i, h in enumerate((0.4, 0.65, 0.95)):
+        x = r.left() + i * (bar_w + gap)
+        bar_h = r.height() * h
+        painter.drawRoundedRect(QRectF(x, r.bottom() - bar_h, bar_w, bar_h), 1, 1)
+
+
 def _framing(painter, r):
     from PySide6.QtCore import QLineF
     seg = r.width() * 0.32
@@ -428,6 +440,7 @@ ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
     "star_atlas": _star_atlas,
     "sky_atlas": _sky_atlas,
+    "whats_up": _whats_up,
     "framing": _framing,
     "flat_wizard": _flat_wizard,
     "sequencer": _sequencer,

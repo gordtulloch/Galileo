@@ -12,6 +12,7 @@ calibration frames are ``galileo.library.core``; the screens are
 from galileo.library.adapters.ftp import SmartTelescopeFtpAdapter
 from galileo.library.adapters.sftp import SftpImageRetriever
 from galileo.library.adapters.smb import SmartTelescopeSmbAdapter
+from galileo.library.integration_time import prior_integration_hours
 from galileo.library.registrar import LibraryRegistrar, SessionContainer
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "SftpImageRetriever",
     "SmartTelescopeFtpAdapter",
     "SmartTelescopeSmbAdapter",
+    "prior_integration_hours",
 ]

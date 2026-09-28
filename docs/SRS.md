@@ -19,7 +19,7 @@ This SRS decomposes the requirement domains identified in the [Project Scope Doc
 
 ### 1.2 Scope
 
-Covers all functional domains (`ARCH`, `EQP`, `PROF`, `OBS`, `IMG`, `SES`, `SKY`, `FRAME`, `SKYMAP`, `SCHED`, `CAL`, `FOC`, `PLT`, `MFLIP`, `GUIDE`, `DOME`, `SAFE`, `HIST`, `META`, `NOTIF`, `PLUG`, `UI`, `LOG`, `LIB`) and non-functional domains (`NFR-PERF`, `NFR-REL`, `NFR-PORT`, `NFR-EXT`, `NFR-USE`, `NFR-I18N`, `NFR-SEC`, `NFR-OFFLINE`, `NFR-INSTALL`) defined in the scope document. Out-of-scope items (Section 5 of the scope document) are not addressed here. **`VST`/`VST-AN`** (variable-star target planning and photometric analysis) are **not** covered here — they are the VSTarget plugin's own requirements, decomposed in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) against this document's `PLUG` domain rather than embedded in it.
+Covers all functional domains (`ARCH`, `EQP`, `PROF`, `OBS`, `IMG`, `SES`, `SKY`, `WUT`, `FRAME`, `SKYMAP`, `SCHED`, `CAL`, `FOC`, `PLT`, `MFLIP`, `GUIDE`, `DOME`, `SAFE`, `HIST`, `META`, `NOTIF`, `PLUG`, `UI`, `LOG`, `LIB`) and non-functional domains (`NFR-PERF`, `NFR-REL`, `NFR-PORT`, `NFR-EXT`, `NFR-USE`, `NFR-I18N`, `NFR-SEC`, `NFR-OFFLINE`, `NFR-INSTALL`) defined in the scope document. Out-of-scope items (Section 5 of the scope document) are not addressed here. **`VST`/`VST-AN`** (variable-star target planning and photometric analysis) are **not** covered here — they are the VSTarget plugin's own requirements, decomposed in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) against this document's `PLUG` domain rather than embedded in it.
 
 ### 1.3 Requirement ID Convention
 
@@ -282,6 +282,23 @@ Presented as the **Targets** screen (Project Scope Document, Section 6.4/6.9), w
 | SKY-100 | The system shall resolve an object-name search primarily via the offline catalog (`SKY-010`), falling back to a live Simbad lookup (traces to `EXT-110`) only when the offline catalog has no match for the searched name and internet is available — **this reverses the previous Simbad-first/catalog-fallback design** so that ordinary object search, not only catalog browse/filter/chart, satisfies `NFR-OFFLINE-010`'s no-internet guarantee. | MVP |
 | SKY-110 | The system shall optionally augment object search with the Telescopius API's target-search/suggestion data (traces to `EXT-150`) when the user has configured their own Telescopius API key, never as a substitute for the offline-first/Simbad-fallback path of `SKY-010`/`SKY-100`. | P2 |
 | SKY-120 | The system shall allow importing a user's existing Telescopius observing list into a Galileo session/target list (traces to `EXT-150`) when a Telescopius API key is configured. | P2 |
+
+### 4.7a `WUT` — What's Up Tonight
+
+A ranked recommendation layer presented as a new **What's Up Tonight** screen, positioned first in the Planning sidebar ahead of Targets (Project Scope Document, Section 8, G18). This is not a second catalog or ephemeris engine: it composes `SKY-010`–`040`'s catalog/altitude/horizon-profile data, `SAFE-050`'s advisory weather forecast (plus, for the selected date where available, `SAFE-090`'s aurora estimate and `SAFE-100`'s smoke/transparency estimate), and `PROF-080`'s per-Pier optical-train capability into a sky-only **Observability Score**, a per-optical-train **Fit Score**, and a combined ranking — consuming those requirements by reference rather than restating them, the same pattern `SCHED` (Section 4.8b) already uses for `SKY-030`. The core ranked-list capability (`WUT-010`–`080`) is MVP, superseding an earlier P2/P3 default considered during drafting; date selection (`WUT-090`) is a P2 refinement of it, and aurora/smoke advisory integration (`WUT-100`) is P3, matching the priority already assigned to `SAFE-090`/`SAFE-100` themselves — neither is part of the MVP cut.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| WUT-010 | The system shall present a ranked list of catalog objects observable tonight from the active Pier's configured location, combining sky observability (`SKY-020`/`SKY-030`) with the active optical train's imaging capability (`PROF-080`). | MVP |
+| WUT-020 | Each ranked entry shall show at least one human-readable reason for its ranking or exclusion (e.g. limiting altitude, equipment mismatch, Moon proximity). | MVP |
+| WUT-030 | The system shall display a data-completeness confidence indicator per entry, separate from the ranking score, degrading rather than silently omitting entries when forecast/horizon data is unavailable. | MVP |
+| WUT-040 | Re-ranking on Pier/optical-train change shall reuse the already-computed sky-observability data for that location/night rather than recomputing it. | MVP |
+| WUT-050 | The system shall show, per ranked entry, prior integration time recorded in the Library for that object, as an informational annotation only — it shall never adjust the entry's score or position in the ranking. | MVP |
+| WUT-060 | Each ranked entry shall offer the same Select / Slew To / Add to Session actions as the Targets screen (`SKY-050`, `SKYMAP-060`, `SES-160`), reusing the existing entry points. | MVP |
+| WUT-070 | The What's Up Tonight screen shall be the first entry in the Planning sidebar section. | MVP |
+| WUT-080 | Where a horizon obstruction profile (`SKY-040`) is defined for the active location, the Observability Score shall exclude altitude/time ranges behind that obstruction; where none is defined, ranking shall proceed on open-horizon altitude alone and reflect the omission via the confidence indicator (`WUT-030`), never blocking the ranked list. | MVP |
+| WUT-090 | The system shall allow the user to set an observing date other than the current date, and shall compute the ranked list (`WUT-010`) against that date's local night rather than tonight's, so the screen can be used to plan a future (or review a past) night as well as tonight. A date outside the range covered by the available weather forecast (`SAFE-050`) shall not block ranking — it shall be reflected via the confidence indicator (`WUT-030`) the same way a missing forecast already is. | P2 |
+| WUT-100 | For the observing date selected (`WUT-090`), the system shall incorporate the aurora-activity estimate (`SAFE-090`) and the smoke/transparency estimate (`SAFE-100`) into the Observability Score, and shall display each to the user when available for that date, on the same advisory-only basis as the weather forecast (`SAFE-050`) — neither shall be required for ranking to proceed, and where either is unavailable for the selected date the confidence indicator (`WUT-030`) shall reflect the omission rather than blocking the ranked list. | P3 |
 
 ### 4.8 `FRAME` — Framing Assistant
 
@@ -599,6 +616,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | IMG | 18 | 9 | 9 | 0 |
 | SES (formerly `SEQ`/`SEQ-ADV`; Sections 4.5–4.6) | 30 | 17 | 10 | 3 |
 | SKY | 12 | 8 | 4 | 0 |
+| WUT | 10 | 8 | 1 | 1 |
 | FRAME | 9 | 4 | 5 | 0 |
 | SKYMAP | 9 | 3 | 6 | 0 |
 | SCHED | 10 | 8 | 2 | 0 |
@@ -625,7 +643,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **258** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **268** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
 
 ---
 

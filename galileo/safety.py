@@ -122,14 +122,21 @@ class SafetyMonitorService:
             return None
         return await self._forecast_client.get_forecast()
 
-    async def get_aurora_advisory(self) -> float:
+    async def get_aurora_advisory(self) -> float | None:
+        """Current Kp index, or ``None`` when no client is configured —
+        distinct from an actual reading of 0 (a quiet night), so a caller
+        such as What's Up Tonight (WUT-100) can tell "no data" apart from
+        "no aurora activity" rather than treating the two the same."""
         if self._kp_client is None:
-            return 0.0
+            return None
         return await self._kp_client.get_kp_index()
 
-    async def get_smoke_advisory(self) -> float:
+    async def get_smoke_advisory(self) -> float | None:
+        """Current smoke/transparency AQI estimate, or ``None`` when no
+        client is configured — same "no data" vs. "measured clear"
+        distinction as :meth:`get_aurora_advisory` (WUT-100)."""
         if self._smoke_client is None:
-            return 0.0
+            return None
         return await self._smoke_client.get_smoke_aqi()
 
 

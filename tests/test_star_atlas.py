@@ -400,12 +400,15 @@ def test_star_atlas_section_sits_above_planning():
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
 def test_planning_and_science_sections_carry_their_own_menus(window):
-    """Planning opens onto Targets (the catalog lookup), Sessions and Scheduler; Science holds Variable Stars;
-    Library holds AstroFiler's screens. None of those is a top-level section any more."""
+    """Planning opens onto What's Up Tonight (first, WUT-070), Targets (the catalog lookup), Sessions and
+    Scheduler; Science holds Variable Stars; Library holds AstroFiler's screens. None of those is a
+    top-level section any more."""
     from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
     assert ids == ["equipment", "star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science"]
-    assert [i[:2] for i in PLANNING_ITEMS] == [("targets", "Targets"), ("sessions", "Sessions"), ("scheduler", "Scheduler")]
+    assert [i[:2] for i in PLANNING_ITEMS] == [
+        ("whats_up", "What's Up Tonight"), ("targets", "Targets"), ("sessions", "Sessions"), ("scheduler", "Scheduler"),
+    ]
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
     assert [i[:2] for i in LIBRARY_ITEMS] == [
         ("images", "Images"), ("sessions", "Sessions"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
@@ -418,7 +421,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert ["Targets", "Sessions", "Scheduler"] in menus and ["Variable Stars"] in menus
+    assert ["What's Up Tonight", "Targets", "Sessions", "Scheduler"] in menus and ["Variable Stars"] in menus
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 

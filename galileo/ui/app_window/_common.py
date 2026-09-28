@@ -63,7 +63,11 @@ OPTIONS_ITEMS = list(PRIMARY_SECTIONS)
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].
+# "whats_up" is deliberately first (WUT-070): a ranked recommendation layer
+# on top of Targets' catalog, not a replacement for it — see
+# galileo.planning.recommend and _whats_up_page.py.
 PLANNING_ITEMS = [
+    ("whats_up", "What's Up Tonight", "whats_up"),
     ("targets", "Targets", "sky_atlas"),
     ("sessions", "Sessions", "sequencer"),
     ("scheduler", "Scheduler", "scheduler"),

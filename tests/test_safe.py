@@ -243,6 +243,16 @@ async def test_tc_safe_090_aurora_advisory_display(safety_service):
     assert safety_service.state != safe_mod.SafetyState.ABORTED
 
 
+@pytest.mark.requirement("TC-SAFE-090")
+@pytest.mark.priority("P3")
+async def test_tc_safe_090_aurora_advisory_is_none_not_zero_when_unconfigured(safety_service):
+    """SAFE-090: with no Kp client configured, the advisory is None ("no data"), not 0.0
+    ("measured calm") — a consumer such as What's Up Tonight (WUT-100) needs to tell the
+    two apart to degrade its confidence indicator correctly rather than assuming a quiet
+    night whenever no client happens to be configured."""
+    assert await safety_service.get_aurora_advisory() is None
+
+
 # ---------------------------------------------------------------------------
 # TC-SAFE-100
 # ---------------------------------------------------------------------------
@@ -259,3 +269,12 @@ async def test_tc_safe_100_smoke_transparency_advisory(safety_service):
     aqi = await safety_service.get_smoke_advisory()
     assert isinstance(aqi, (int, float))
     assert safety_service.state != safe_mod.SafetyState.ABORTED
+
+
+@pytest.mark.requirement("TC-SAFE-100")
+@pytest.mark.priority("P3")
+async def test_tc_safe_100_smoke_advisory_is_none_not_zero_when_unconfigured(safety_service):
+    """SAFE-100: with no smoke client configured, the advisory is None ("no data"), not
+    0.0 ("measured clear") — same "no data" vs. "measured clear" distinction as aurora
+    (SAFE-090), needed by What's Up Tonight (WUT-100) to degrade confidence correctly."""
+    assert await safety_service.get_smoke_advisory() is None

@@ -58,6 +58,7 @@ from ._imaging_page import AppWindowImagingPageMixin
 from ._star_atlas_page import AppWindowStarAtlasPageMixin
 from ._settings_pages import AppWindowSettingsPagesMixin
 from ._planning_page import AppWindowPlanningPageMixin
+from ._whats_up_page import AppWindowWhatsUpPageMixin
 from ._framing import AppWindowFramingMixin
 
 # Re-exported for other galileo.ui modules and tests that import them
@@ -102,6 +103,7 @@ class AppWindow(
     AppWindowStarAtlasPageMixin,
     AppWindowSettingsPagesMixin,
     AppWindowPlanningPageMixin,
+    AppWindowWhatsUpPageMixin,
     AppWindowFramingMixin,
 ):
     """Main Galileo application window."""

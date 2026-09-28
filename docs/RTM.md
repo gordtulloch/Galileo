@@ -18,7 +18,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 272 requirements (258 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+**Coverage:** 282 requirements (268 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+
+**`WUT` added:** this revision adds the `WUT` ("What's Up Tonight") domain (SRS Section 4.7a, 10 requirements — 8 MVP core-ranking, 1 P2 arbitrary-date refinement `WUT-090`, and 1 P3 aurora/smoke-advisory refinement `WUT-100`), tracing to the new SDD Sections 4.8a (`galileo.planning.recommend`) and 4.8b (`galileo.ui.whats_up`).
 
 **`SEQ`/`SEQ-ADV` → `SES`:** this revision replaces the former `SEQ`/`SEQ-ADV` domains with the unified `SES` ("Sessions") domain end to end (SRS Sections 4.5/4.5a/4.6). Every row below uses `SES-*` IDs; there is no `SEQ`/`SEQ-ADV` row remaining in this matrix.
 
@@ -197,6 +199,21 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKY-100` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-100` |
 | `SKY-110` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-110` |
 | `SKY-120` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-120` |
+
+### `WUT` — What's Up Tonight
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `WUT-010` | MVP | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-010` |
+| `WUT-020` | MVP | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-020` |
+| `WUT-030` | MVP | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-030` |
+| `WUT-040` | MVP | SDD 4.8a `galileo.planning.recommend` | Test | `TC-WUT-040` |
+| `WUT-050` | MVP | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up`; SDD 4.8c `galileo.library.integration_time` | Test | `TC-WUT-050` |
+| `WUT-060` | MVP | SDD 4.8b `galileo.ui.whats_up` (reusing SDD 4.8 `galileo.planning.sky_atlas`, 4.9a `galileo.ui.skymap`, 4.6a `galileo.ui.sessions` entry points) | Test | `TC-WUT-060` |
+| `WUT-070` | MVP | SDD 4.8b `galileo.ui.whats_up`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-WUT-070` |
+| `WUT-080` | MVP | SDD 4.8a `galileo.planning.recommend` / `galileo.planning.visibility` (`HorizonProfile`, `SKY-040`) | Test | `TC-WUT-080` |
+| `WUT-090` | P2 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-090` |
+| `WUT-100` | P3 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up`; SDD 4.16 `galileo.safety` | Test | `TC-WUT-100` |
 
 ### `FRAME` — Framing Assistant
 
@@ -488,6 +505,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `IMG` | 18 | 9 | 9 | 0 |
 | `SES` (formerly `SEQ`/`SEQ-ADV`) | 30 | 17 | 10 | 3 |
 | `SKY` | 12 | 8 | 4 | 0 |
+| `WUT` | 10 | 8 | 1 | 1 |
 | `FRAME` | 9 | 4 | 5 | 0 |
 | `SKYMAP` | 9 | 3 | 6 | 0 |
 | `SCHED` | 10 | 8 | 2 | 0 |
@@ -514,4 +532,4 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **272** | **160** | **98** | **14** |
+| **Total** | **282** | **168** | **99** | **15** |
