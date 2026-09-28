@@ -113,6 +113,7 @@ class AppWindowTopbarOpticsCameraMixin:
         wheel's filters, or no wheel, leaves the box as a plain frame label. Runs
         the move on a worker thread; ``_refresh_imaging_filters`` doesn't fire
         this, so re-populating the list never moves the wheel."""
+        from galileo.current_object import pier_key
         combo = getattr(self, "_imaging_filter_combo", None)
         wheel = self._active_filter_wheel()
         if combo is None or wheel is None:
@@ -121,25 +122,26 @@ class AppWindowTopbarOpticsCameraMixin:
         name = combo.currentText().strip()
         if name not in names or getattr(wheel, "position", None) == names.index(name):
             return
-        if self._imaging_filter_thread is not None:
+        key = pier_key(self._current_pier)
+        if self._imaging_filter_threads.get(key) is not None:
             self._window.statusBar().showMessage("The filter wheel is still moving.", 4000)
             return
         index = names.index(name)
 
         def done() -> None:
-            self._imaging_filter_thread = None
+            self._imaging_filter_threads.pop(key, None)
             logger.info("Filter wheel: moved to %r (#%d)", name, index)
             self._window.statusBar().showMessage(f"Filter wheel at {name}.", 4000)
 
         def failed(message: str) -> None:
-            self._imaging_filter_thread = None
+            self._imaging_filter_threads.pop(key, None)
             logger.error("Filter wheel move to %r (#%d) failed: %s", name, index, message)
             self._window.statusBar().showMessage("Filter change failed — see log.", 6000)
 
         thread = _FilterMoveThread(wheel, index, self._window)
         thread.finished_ok.connect(done)
         thread.failed.connect(failed)
-        self._imaging_filter_thread = thread
+        self._imaging_filter_threads[key] = thread
         self._window.statusBar().showMessage(f"Moving filter wheel to {name}…")
         thread.start()
 

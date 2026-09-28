@@ -346,12 +346,17 @@ class _MovableWheel(_FakeWheel):
         self.position = index
 
 
+def _filter_thread(window):
+    from galileo.current_object import pier_key
+    return window._imaging_filter_threads.get(pier_key(window._current_pier))
+
+
 def _pick_filter(window, name):
     """Choose ``name`` in the Imaging Filter box as the user would, then wait for the move to finish."""
     combo = window._imaging_filter_combo
     combo.setCurrentText(name)
     combo.activated.emit(combo.findText(name))
-    thread = window._imaging_filter_thread
+    thread = _filter_thread(window)
     if thread is not None:
         thread.wait(5000)
         window.app.processEvents()      # deliver the queued finished/failed signal
@@ -366,7 +371,7 @@ def test_imaging_filter_change_moves_the_wheel(window):
     _open_section(window, "imaging")
     _pick_filter(window, "G")
     assert wheel.moves == [2]
-    assert window._imaging_filter_thread is None
+    assert _filter_thread(window) is None
 
 
 @pytest.mark.requirement("TC-PROF-110")
@@ -380,7 +385,7 @@ def test_imaging_filter_does_not_move_the_wheel_needlessly(window):
     _pick_filter(window, "")                    # "no filter"
     _pick_filter(window, "Custom label")        # not one of the wheel's filters
     assert wheel.moves == []
-    assert window._imaging_filter_thread is None
+    assert _filter_thread(window) is None
 
 
 @pytest.mark.requirement("TC-PROF-110")
@@ -409,7 +414,7 @@ def test_imaging_filter_move_failure_is_reported_not_raised(window):
     window._device_pages["filter_wheel"]["adapter"] = wheel
     _open_section(window, "imaging")
     _pick_filter(window, "R")
-    assert window._imaging_filter_thread is None
+    assert _filter_thread(window) is None
     assert "failed" in window._window.statusBar().currentMessage()
 
 

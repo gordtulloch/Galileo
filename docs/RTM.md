@@ -56,7 +56,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `ARCH-050` | P2 | SDD 4.1 `galileo.core.devices`; SDD 4.2 `galileo.adapters.indi`; SDD 4.3 `galileo.adapters.alpaca` | Test | `TC-ARCH-050` |
 | `ARCH-060` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-ARCH-060` |
 | `ARCH-070` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-ARCH-070` |
-| `ARCH-080` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-ARCH-080` |
+| `ARCH-080` | MVP | SDD 4.1 `galileo.core.devices`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-ARCH-080` |
 
 ### `EQP` — Equipment Control
 
@@ -77,7 +77,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-MNT-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-MNT-020` |
 | `EQP-MNT-030` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-MNT-030` |
 | `EQP-MNT-040` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-MNT-040` |
-| `EQP-MNT-050` | MVP | SDD 4.1 `galileo.core.devices` / `galileo.tracking` | Test | `TC-EQP-MNT-050` |
+| `EQP-MNT-050` | MVP | SDD 4.1 `galileo.core.devices` / `galileo.tracking`; SDD 4.4b `galileo.ui.app_window` (per-Pier slew guard) | Test | `TC-EQP-MNT-050` |
 | `EQP-FW-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-010` |
 | `EQP-FW-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-020` |
 | `EQP-FOC-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-010` |
@@ -106,20 +106,20 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PROF-090` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-090` |
 | `PROF-100` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-100` |
 | `PROF-110` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-110` |
-| `PROF-120` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-120` |
+| `PROF-120` | MVP | SDD 4.4 `galileo.equipment.profiles`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PROF-120` |
 
 ### `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
 | `OBS-010` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-010` |
-| `OBS-020` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-020` |
+| `OBS-020` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-020` |
 | `OBS-030` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-030` |
 | `OBS-040` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-040` |
 | `OBS-050` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-050` |
 | `OBS-060` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-060` |
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
-| `OBS-080` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-080` |
+| `OBS-080` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-080` |
 | `OBS-090` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-090` |
 
 ### `IMG` — Imaging Tab
@@ -140,7 +140,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-120` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-120` |
 | `IMG-130` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-130` |
 | `IMG-140` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-140` |
-| `IMG-150` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-150` |
+| `IMG-150` | P2 | SDD 4.5 `galileo.ui.imaging`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-IMG-150` |
 | `IMG-160` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.livestack` | Test | `TC-IMG-160` |
 | `IMG-170` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.metadata` | Test | `TC-IMG-170` |
 | `IMG-180` | MVP | SDD 4.5 `galileo.ui.imaging` / SDD 4.9 `galileo.planning.framing` | Test | `TC-IMG-180` |
@@ -264,7 +264,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FOC-060` | P2 | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-060` |
 | `FOC-070` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-070` |
 | `FOC-080` | P2 | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-080` |
-| `FOC-090` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-090` |
+| `FOC-090` | MVP | SDD 4.11 `galileo.autofocus`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-FOC-090` |
 
 ### `PLT` — Plate Solving
 
@@ -276,7 +276,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-040` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-040` |
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
-| `PLT-070` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-070` |
+| `PLT-070` | MVP | SDD 4.12 `galileo.platesolve`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PLT-070` |
 
 ### `MFLIP` — Meridian Flip
 
@@ -296,7 +296,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `GUIDE-030` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-030` |
 | `GUIDE-040` | P2 | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-040` |
 | `GUIDE-050` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-050` |
-| `GUIDE-060` | P2 | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-060` |
+| `GUIDE-060` | P2 | SDD 4.14 `galileo.guiding` (reference precedent for SDD 4.4b `galileo.ui.app_window`) | Test | `TC-GUIDE-060` |
 | `GUIDE-070` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-070` |
 | `GUIDE-080` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-080` |
 | `GUIDE-090` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-090` |

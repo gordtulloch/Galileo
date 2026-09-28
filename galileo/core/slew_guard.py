@@ -59,9 +59,28 @@ class SlewGuard:
         self.check_altaz(float(alt), float(az))
 
 
-_guard = SlewGuard()
+_guards: dict[Any, SlewGuard] = {}
+_enabled_default = False
 
 
-def get_slew_guard() -> SlewGuard:
-    """The process-wide guard the mount adapters consult."""
-    return _guard
+def get_slew_guard(key: Any = None) -> SlewGuard:
+    """The guard for *key* (a Pier key), so two Piers — possibly in different
+    Observatories with different horizons — don't share one obstruction
+    check. *key* defaults to a fallback guard shared by anything with no
+    Pier context of its own (e.g. a mount adapter that hasn't been bound to
+    a Pier yet)."""
+    if key not in _guards:
+        guard = SlewGuard()
+        guard.enabled = _enabled_default
+        _guards[key] = guard
+    return _guards[key]
+
+
+def set_slew_guard_enabled(enabled: bool) -> None:
+    """"Do not slew where obstructed" (Options > Planning) is a single
+    app-wide setting, not per-Observatory — apply it to every Pier's guard
+    that exists yet, and remember it for any Pier connected later."""
+    global _enabled_default
+    _enabled_default = enabled
+    for guard in _guards.values():
+        guard.enabled = enabled

@@ -1155,7 +1155,8 @@ def test_tc_img_150_capture_button_runs_a_series_with_the_screens_settings(windo
     ui["auto_save"].setChecked(False)
 
     ui["capture_button"].click()
-    thread = window._imaging_capture_thread
+    from galileo.current_object import pier_key
+    thread = window._imaging_capture_threads.get(pier_key(window._current_pier))
     assert thread is not None and not ui["capture_button"].isEnabled(), "disabled while the series runs"
     assert ui["stop_button"].isEnabled()
     thread.wait(10000)
@@ -1167,6 +1168,91 @@ def test_tc_img_150_capture_button_runs_a_series_with_the_screens_settings(windo
     assert ui["capture_button"].isEnabled() and not ui["stop_button"].isEnabled()
     assert "2 of 2 frames" in ui["status"].text()
     assert service.frame_context, "the page fills in what it knows about the rig for the header"
+
+
+class _GatedCamera:
+    """A camera whose first exposure blocks until the test releases it, so two Piers'
+    captures can be proven to run genuinely concurrently rather than just sequentially fast."""
+
+    def __init__(self, shape=(20, 30)):
+        import threading
+        import numpy as np
+        self.exposures: list = []
+        self.hold = threading.Event()
+        self.started = threading.Event()
+        self._frame = np.full(shape, 500, dtype=np.uint16)
+
+    async def start_exposure(self, duration, frame_type="Light", **kwargs):
+        self.exposures.append(duration)
+
+    async def get_image_array(self):
+        if len(self.exposures) == 1:
+            self.started.set()
+            self.hold.wait(5)
+        return self._frame
+
+    async def abort_exposure(self):
+        self.hold.set()
+
+
+@pytest.mark.requirement("TC-IMG-150")
+@pytest.mark.priority("P2")
+def test_tc_img_150_two_piers_capture_concurrently(window):
+    """IMG-150: two Piers can each run their own Capture series at the same time — starting one on
+    Pier B does not wait for, stop, or share any state with Pier A's still-running series, and each
+    Pier's own ImagingService/capture thread is independent. Switching between them also repaints the
+    Capture/Stop buttons for whichever Pier is now shown, without disturbing whichever isn't."""
+    from galileo.current_object import pier_key
+    from galileo.observatory import create_pier
+    ui = window._imaging_ui
+    pier_a = window.pier
+    pier_b = create_pier(pier_a.observatory, "Pier B")
+
+    camera_a = _GatedCamera()
+    window._camera_backends["primary camera"] = camera_a
+    ui["auto_save"].setChecked(False)
+    ui["quantity"].setValue(2)
+    ui["capture_button"].click()
+    assert camera_a.started.wait(5), "Pier A's capture must have begun"
+    thread_a = window._imaging_capture_threads.get(pier_key(pier_a))
+    assert thread_a is not None and not ui["capture_button"].isEnabled()
+
+    # Switch to Pier B — its own controls must show idle, even though Pier A is still exposing.
+    window._current_pier = pier_b
+    window._on_pier_changed()
+    assert window._imaging_capture_threads.get(pier_key(pier_b)) is None
+    assert ui["capture_button"].isEnabled() and not ui["stop_button"].isEnabled()
+
+    camera_b = _CountingCamera()
+    window._camera_backends["primary camera"] = camera_b
+    ui["auto_save"].setChecked(False)
+    ui["quantity"].setValue(3)
+    ui["capture_button"].click()
+    thread_b = window._imaging_capture_threads.get(pier_key(pier_b))
+    assert thread_b is not None and thread_b is not thread_a
+    thread_b.wait(10000)
+    window.app.processEvents()
+    assert len(camera_b.exposures) == 3, "Pier B's series completed fully, unblocked by Pier A"
+
+    # Pier A's capture thread is untouched by everything that just happened on Pier B.
+    assert window._imaging_capture_threads.get(pier_key(pier_a)) is thread_a
+    assert len(camera_a.exposures) == 1, "still on its first (held) exposure"
+
+    # Switching back to Pier A shows it as still capturing, not Pier B's now-idle state.
+    window._current_pier = pier_a
+    window._on_pier_changed()
+    assert not ui["capture_button"].isEnabled() and ui["stop_button"].isEnabled()
+
+    camera_a.hold.set()
+    thread_a.wait(10000)
+    window.app.processEvents()
+    assert len(camera_a.exposures) == 2
+    assert window._imaging_capture_threads.get(pier_key(pier_a)) is None
+    assert ui["capture_button"].isEnabled() and not ui["stop_button"].isEnabled()
+
+    service_a = window._imaging_services[pier_key(pier_a)]
+    service_b = window._imaging_services[pier_key(pier_b)]
+    assert service_a is not service_b and service_a._camera is camera_a and service_b._camera is camera_b
 
 
 # ---------------------------------------------------------------------------
@@ -1423,7 +1509,8 @@ def test_tc_img_160_capture_button_honours_the_live_stack_checkbox(window):
     ui["live_stack"].setChecked(True)
 
     ui["capture_button"].click()
-    thread = window._imaging_capture_thread
+    from galileo.current_object import pier_key
+    thread = window._imaging_capture_threads.get(pier_key(window._current_pier))
     thread.wait(20000)
     window.app.processEvents()
 

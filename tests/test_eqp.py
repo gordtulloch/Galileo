@@ -830,7 +830,8 @@ def window(tmp_path):
 
 
 def _wait_for_tracking(window):
-    thread = window._tracking_thread
+    from galileo.current_object import pier_key
+    thread = window._tracking_threads.get(pier_key(window._current_pier))
     if thread is not None:
         thread.wait(10000)
         window.app.processEvents()
@@ -866,7 +867,8 @@ def test_tc_eqp_mnt_050_a_sync_does_not_start_tracking(window):
     _wait_for_tracking(window)
 
     assert mount.calls == []
-    assert window._tracking_thread is None
+    from galileo.current_object import pier_key
+    assert window._tracking_threads.get(pier_key(window._current_pier)) is None
 
 
 async def _async_noop(*args, **kwargs):
@@ -914,6 +916,42 @@ def test_tc_eqp_010_camera_connect_button_connects_the_device(window, monkeypatc
     connect_btn.click()
 
     assert window._camera_backends.get("primary camera") is fake_adapter
+
+
+@pytest.mark.requirement("TC-EQP-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_010_a_connected_camera_survives_switching_to_another_pier_and_back(window, monkeypatch):
+    """EQP-010: a camera connected for one Pier stays connected — not disconnected, not silently
+    reused — when a different Pier is selected and then this one is selected again. Each Pier now
+    gets its own camera-backends dict (galileo/ui/app_window/_core.py's _camera_backends property),
+    which is what makes it possible for two Piers to each keep a live (even mid-capture) camera
+    connection at once, rather than the whole window sharing one dict that a Pier switch used to
+    have to blow away to avoid handing Pier B a stale reference to Pier A's camera."""
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from unittest.mock import AsyncMock
+    from galileo.observatory import create_pier
+
+    fake_adapter = AsyncMock()
+    fake_adapter.get_driver_info = AsyncMock(return_value={"name": "CCD Simulator", "version": "1.0"})
+    monkeypatch.setattr(window, "_connect_device_adapter", lambda *a, **k: fake_adapter)
+
+    pier_a = window._current_pier
+    page = window._build_camera_page()
+    frames = [f for f in page.findChildren(QtWidgets.QFrame) if f.objectName() == "DeviceSlotPanel"]
+    device_combo = frames[0].findChildren(QtWidgets.QComboBox)[0]
+    device_combo.setEditText("CCD Simulator")
+    connect_btn = next(b for b in frames[0].findChildren(QtWidgets.QPushButton) if b.text() == "Connect")
+    connect_btn.click()
+    assert window._camera_backends.get("primary camera") is fake_adapter
+
+    pier_b = create_pier(pier_a.observatory, "Pier B")
+    window._current_pier = pier_b
+    window._on_pier_changed()
+    assert window._camera_backends.get("primary camera") is None, "Pier B has no camera of its own yet"
+
+    window._current_pier = pier_a
+    window._on_pier_changed()
+    assert window._camera_backends.get("primary camera") is fake_adapter, "Pier A's own connection, untouched"
 
 
 @pytest.mark.requirement("TC-EQP-010")

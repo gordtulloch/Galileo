@@ -276,6 +276,10 @@ class AppWindowMountPageMixin:
         layout.addLayout(settings_row)
 
         state: dict = {"adapter": None, "at_park": None}
+        # This Pier's mount adapter persists here across a Pier switch, keyed by
+        # pier_key() — state["adapter"] is just "whichever Pier is displayed right
+        # now"'s adapter, kept in sync with this on every reload (see reload_page()).
+        adapters_by_pier: dict = {}
 
         def _apply_status(status: dict) -> None:
             name_value.setText(status.get("name") or "—")
@@ -317,6 +321,8 @@ class AppWindowMountPageMixin:
 
         def _do_connect(device_name: str) -> None:
             from galileo.core.devices import DeviceCategory
+            from galileo.core.slew_guard import get_slew_guard
+            from galileo.current_object import pier_key
             adapter = self._connect_device_adapter(
                 DeviceCategory.MOUNT, driver_combo.currentText(),
                 server_edit.text().strip() or "localhost", port_spin.value(), device_name,
@@ -324,7 +330,13 @@ class AppWindowMountPageMixin:
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
                 return
+            # Bind this adapter to its own Pier's slew guard (not whichever
+            # Observatory happens to be selected elsewhere), so obstruction
+            # checks stay correct even if a different Pier's horizon is
+            # current by the time this mount actually slews.
+            adapter.slew_guard = get_slew_guard(pier_key(self._current_pier))
             state["adapter"] = adapter
+            adapters_by_pier[pier_key(self._current_pier)] = adapter
             self._window.statusBar().showMessage(f"Connected to Mount {device_name!r}.", 4000)
             _refresh_status()
 
@@ -616,12 +628,18 @@ class AppWindowMountPageMixin:
                 server_edit.blockSignals(False)
                 port_spin.blockSignals(False)
                 device_combo.blockSignals(False)
-            state["adapter"] = None
-            _apply_status({})
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.get(pier_key(self._current_pier))
+            state["adapter"] = adapter
+            if adapter is not None:
+                _refresh_status()
+            else:
+                _apply_status({})
 
         def autoconnect_page() -> None:
+            from galileo.current_object import pier_key
             device_name = device_combo.currentText().strip()
-            if device_name:
+            if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)

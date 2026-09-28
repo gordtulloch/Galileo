@@ -78,11 +78,16 @@ class AutofocusService:
         event_bus=None,
         exposure_s: float = AutofocusParams.exposure_s,
         backlash_compensation: int = AutofocusParams.backlash_compensation,
+        pier_key=None,
     ) -> None:
         self._camera = camera
         self._focuser = focuser
         self._output_dir = Path(output_dir)
         self._event_bus = event_bus
+        # Carried on every published event so a listener subscribed process-wide
+        # (the Focus screen) can tell which Pier's run this is — two Piers can
+        # each have their own AutofocusService running at once.
+        self.pier_key = pier_key
         self.exposure_s = exposure_s
         self.backlash_compensation = backlash_compensation
         self._filter_offsets: dict[str, int] = {}
@@ -110,7 +115,7 @@ class AutofocusService:
         positions = self._sample_positions(initial_position, step_size, num_points)
         self._publish(FocusStartedEvent(
             source="autofocus", positions=positions, initial_position=initial_position,
-            step_size=step_size, num_points=num_points,
+            step_size=step_size, num_points=num_points, pier_key=self.pier_key,
         ))
         logger.info("Autofocus started: %d points, %d steps apart, from position %d.",
                     num_points, step_size, initial_position)
@@ -126,7 +131,7 @@ class AutofocusService:
                 logger.info("Autofocus complete: best focus at position %d.", result.best_position)
             else:
                 logger.warning("Autofocus failed: %s.", result.failure_reason)
-            self._publish(FocusCompleteEvent(source="autofocus", result=result))
+            self._publish(FocusCompleteEvent(source="autofocus", result=result, pier_key=self.pier_key))
 
     async def _sweep(self, initial_position: int, positions: list[int]) -> AutofocusResult:
         hfr_values: list[float] = []
@@ -247,6 +252,7 @@ class AutofocusService:
         self._publish(FocusFrameEvent(
             source="autofocus", position=self._current_position, frame=frame,
             hfr=hfr, fwhm=hfr * _FWHM_PER_HFR, star_count=star_count, confirm=confirm,
+            pier_key=self.pier_key,
         ))
         return hfr
 

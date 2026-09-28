@@ -364,9 +364,9 @@ class AppWindowSettingsPagesMixin:
         def changed(index: int) -> None:
             settings["bitpix"] = bitpix_combo.itemData(index)
             save_imaging_settings(settings)
-            # Take effect on the page already built, not only on the next launch.
-            service = getattr(self, "_imaging_service", None)
-            if service is not None:
+            # Take effect on every Pier's already-built ImagingService, not only on
+            # the next launch — this is a single app-wide setting, not per-Pier.
+            for service in getattr(self, "_imaging_services", {}).values():
                 service.bitpix = settings["bitpix"]
 
         bitpix_combo.currentIndexChanged.connect(changed)

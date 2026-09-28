@@ -82,11 +82,16 @@ class PlateSolver:
         executable: str = "",
         params: SolverParams | None = None,
         event_bus=None,
+        pier_key=None,
     ) -> None:
         self.backend = backend
         self.executable = executable or self._find_executable(backend)
         self.params = params or SolverParams()
         self._bus = event_bus
+        # Carried on every published event so a listener subscribed process-wide
+        # (the Solve screen) can tell which Pier this solve belongs to — two
+        # Piers can each have their own solve running at once.
+        self.pier_key = pier_key
 
     @staticmethod
     def is_offline_capable(backend: str) -> bool:
@@ -121,16 +126,20 @@ class PlateSolver:
         both faster and — on a sparse field — far less likely to return a false match than
         a blind search of the whole sky."""
         path = Path(fits_path)
-        self._publish(SolveStartedEvent(source="platesolve", fits_path=str(path), backend=self.backend))
+        self._publish(SolveStartedEvent(
+            source="platesolve", fits_path=str(path), backend=self.backend, pier_key=self.pier_key,
+        ))
         try:
             result = await self._run_solver(path, hint)
         except asyncio.CancelledError:
             self._publish(SolveCompleteEvent(
                 source="platesolve", fits_path=str(path),
-                result=SolveResult(success=False, failure_reason="Cancelled"),
+                result=SolveResult(success=False, failure_reason="Cancelled"), pier_key=self.pier_key,
             ))
             raise
-        self._publish(SolveCompleteEvent(source="platesolve", fits_path=str(path), result=result))
+        self._publish(SolveCompleteEvent(
+            source="platesolve", fits_path=str(path), result=result, pier_key=self.pier_key,
+        ))
         return result
 
     async def solve_and_sync(self, fits_path: Path | str, mount) -> SolveResult:

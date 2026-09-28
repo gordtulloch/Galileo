@@ -99,6 +99,10 @@ class AppWindowFocuserPageMixin:
 
         # --- N independent focuser panels, sharing the connection above ----
         panels: list[dict] = []
+        # This Pier's connected focusers, by slot (see _slot_for_index below),
+        # persisting across a Pier switch — panel["adapter"] is just "whichever
+        # Pier is displayed right now"'s adapter for that slot.
+        adapters_by_pier: dict = {}
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -274,7 +278,9 @@ class AppWindowFocuserPageMixin:
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to {slot_label} {device_name!r} — see log.", 6000)
                 return
+            from galileo.current_object import pier_key
             panel["adapter"] = adapter
+            adapters_by_pier.setdefault(pier_key(self._current_pier), {})[_slot_for_index(panels.index(panel))] = adapter
             self._window.statusBar().showMessage(f"Connected to {slot_label} {device_name!r}.", 4000)
             import asyncio
             try:
@@ -440,16 +446,21 @@ class AppWindowFocuserPageMixin:
 
         save_btn.clicked.connect(save_focuser_config)
 
-        def _load_panel(panel: dict, cfg) -> None:
+        def _load_panel(panel: dict, cfg, slot: str) -> None:
             combo = panel["device"]
             combo.blockSignals(True)
             if cfg is not None and cfg.device_name and combo.findText(cfg.device_name) < 0:
                 combo.addItem(cfg.device_name)
             combo.setCurrentText(cfg.device_name if cfg is not None and cfg.device_name else "")
             combo.blockSignals(False)
-            panel["adapter"] = None
-            _apply_status(panel, {})
-            panel["apply_driver_info"](None)  # refilled on connect / device pick
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.get(pier_key(self._current_pier), {}).get(slot)
+            panel["adapter"] = adapter
+            if adapter is not None:
+                _refresh_panel_status(panel)
+            else:
+                _apply_status(panel, {})
+                panel["apply_driver_info"](None)  # refilled on connect / device pick
 
         def reload_page() -> None:
             from galileo.observatory import get_device_config, list_device_config_slots
@@ -501,12 +512,14 @@ class AppWindowFocuserPageMixin:
                     get_device_config(self._current_pier, "focuser", slot=_slot_for_index(i))
                     if self._current_pier is not None else None
                 )
-                _load_panel(panel, cfg)
+                _load_panel(panel, cfg, _slot_for_index(i))
 
         def autoconnect_page() -> None:
-            for panel in panels:
+            from galileo.current_object import pier_key
+            connected = adapters_by_pier.get(pier_key(self._current_pier), {})
+            for i, panel in enumerate(panels):
                 device_name = panel["device"].currentText().strip()
-                if device_name:
+                if device_name and connected.get(_slot_for_index(i)) is None:
                     _do_connect(panel, device_name, panel["title_label"].text())
 
         status_timer = QTimer(page)

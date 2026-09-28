@@ -463,16 +463,12 @@ class AppWindowCameraPageMixin:
         def reload_page() -> None:
             from galileo.observatory import get_device_config, list_device_config_slots
 
-            # Drop any backend connected for the previous Pier — unlike the
-            # Mount/Focuser pages' single `state["adapter"] = None`,
-            # autoconnect_page() below treats a slot already present in
-            # self._camera_backends as "still valid" (needed so Save can
-            # re-call it without disrupting a live connection). Without this,
-            # switching Piers left the old Pier's camera adapter under the
-            # same "primary camera"/"camera N" key, so captures kept using
-            # the previous Pier's camera even after this page's fields (and
-            # autoconnect_page(), skipped by that guard) showed the new one.
-            self._camera_backends.clear()
+            # self._camera_backends is now the CURRENT Pier's own dict (see the
+            # property in _core.py) — switching Piers means it's simply a
+            # different dict, so there's nothing to drop here: a Pier's camera
+            # (even one mid-capture) stays connected under its own dict when
+            # another Pier is selected, and reappears untouched on switching back.
+            # autoconnect_page() below only connects a slot that isn't in it yet.
 
             saved_slots: list[str] = []
             if self._current_pier is not None:

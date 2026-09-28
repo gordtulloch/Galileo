@@ -37,12 +37,7 @@ if TYPE_CHECKING:
     # doesn't ALSO report "Name not defined", on top of the original site.
     from galileo.planning.sky_atlas import DeepSkyObject, SkyAtlas
     from galileo.scheduler import ObservatoryScheduler
-    from ._threads import (
-        _FilterMoveThread,
-        _MountPositionThread,
-        _ResumeTrackingThread,
-        _ThumbnailCacheThread,
-    )
+    from ._threads import _ThumbnailCacheThread
 
 
 class AppWindowState(Protocol):
@@ -50,6 +45,7 @@ class AppWindowState(Protocol):
     _active_camera_slot: str
     _active_optics_position: int
     _camera_backends: Any
+    _camera_backends_by_pier: Any
     _camera_combo: Any
     _camera_label: Any
     _current_object_label: Any
@@ -59,12 +55,13 @@ class AppWindowState(Protocol):
     _device_pages: Any
     _focus_settings_refresh: Any
     _horizon_table_refresh: Any
-    _imaging_capture_thread: Any
+    _imaging_capture_threads: Any
     _imaging_debayer_check: Any
     _imaging_filter_combo: Any
-    _imaging_filter_thread: _FilterMoveThread | None
+    _imaging_filter_threads: Any
     _imaging_preview_renders: Any
     _imaging_service: Any
+    _imaging_services: Any
     _imaging_ui: Any
     _library_screens: Any
     _log_panes: Any
@@ -77,7 +74,7 @@ class AppWindowState(Protocol):
     _pier_combo: Any
     _pier_label: Any
     _pier_pointing: Any
-    _pier_poll_thread: _MountPositionThread | None
+    _pier_poll_threads: Any
     _primary_nav: Any
     _schedulers: Any
     _sky_atlas: SkyAtlas | None
@@ -87,7 +84,7 @@ class AppWindowState(Protocol):
     _star_atlas_set_horizon: Any
     _theme: Any
     _thumbnail_cache_worker: _ThumbnailCacheThread | None
-    _tracking_thread: _ResumeTrackingThread | None
+    _tracking_threads: Any
     _window: Any
 
     # --- methods --------------------------------------------------------
@@ -182,7 +179,7 @@ class AppWindowState(Protocol):
     def _apply_horizon(self) -> None: ...
     def pier_markers(self) -> list: ...
     def _poll_pier_pointing(self, on_done: Any = ...) -> None: ...
-    def _track_when_slew_finishes(self, mount: Any, target: Any = ...) -> None: ...
+    def _track_when_slew_finishes(self, mount: Any, target: Any = ..., pier: Any = ...) -> None: ...
 
     # _optics_page.py
     def _build_optics_page(self) -> QWidget: ...

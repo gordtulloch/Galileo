@@ -18,12 +18,7 @@ if TYPE_CHECKING:
     # actual base stays plain `object`.
     from ._state import AppWindowState
     from galileo.planning.sky_atlas import SkyAtlas
-    from ._threads import (
-        _FilterMoveThread,
-        _MountPositionThread,
-        _ResumeTrackingThread,
-        _ThumbnailCacheThread,
-    )
+    from ._threads import _ThumbnailCacheThread
 
 
 class AppWindowCoreMixin:
@@ -42,17 +37,26 @@ class AppWindowCoreMixin:
         # One ObservatoryScheduler per Pier, shared by Planning > Sessions (Schedule/Deschedule)
         # and Planning > Scheduler (the job-queue view) — both must see the same jobs.
         self._schedulers: dict[str, object] = {}
-        self._camera_backends: dict[str, object] = {}
-        self._imaging_capture_thread = None
-        self._imaging_filter_thread: _FilterMoveThread | None = None
+        # Camera connections, keyed by Pier so two Piers can each have their own
+        # connected (and possibly capturing) camera at once — see _camera_backends
+        # property below. Slot label ("primary camera", "camera 2", ...) -> adapter,
+        # per Pier key.
+        self._camera_backends_by_pier: dict = {}
+        # Per-Pier ImagingService instances and their in-flight capture threads —
+        # see _imaging_page.py's _current_service()/_current_capture_thread(). One
+        # ImagingService per Pier so two Piers can capture at once without their
+        # mutable state (stop_requested, library_ids, current_frame, ...) colliding.
+        self._imaging_services: dict = {}
+        self._imaging_capture_threads: dict = {}
+        self._imaging_filter_threads: dict = {}
         self._thumbnail_cache_worker: _ThumbnailCacheThread | None = None
         # A single persistent SkyAtlas instance, lazily created — see _shared_sky_atlas().
         self._sky_atlas: SkyAtlas | None = None
         # Where each Pier's telescope is pointing, for the Star Atlas reticles (SKYMAP-090):
         # {pier key: {"ra_deg", "dec_deg", "slewing"}}, refreshed by polling the connected mount.
         self._pier_pointing: dict = {}
-        self._pier_poll_thread: _MountPositionThread | None = None
-        self._tracking_thread: _ResumeTrackingThread | None = None     # waits for a slew to end, then starts tracking (EQP-MNT-050)
+        self._pier_poll_threads: dict = {}
+        self._tracking_threads: dict = {}     # per-Pier: waits for a slew to end, then starts tracking (EQP-MNT-050)
         self._current_primary_section = "equipment"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
@@ -92,6 +96,33 @@ class AppWindowCoreMixin:
         self._window.setCentralWidget(central)
 
         self._theme.set_theme(self._theme.current_theme)  # applies the stylesheet
+
+    @property
+    def _camera_backends(self: AppWindowState) -> dict:
+        """The currently-selected Pier's own camera-adapter dict (slot label ->
+        adapter), created on first use. Every reader/writer elsewhere just treats
+        this as "the" dict, but each Pier gets its own — so connecting Pier B's
+        camera never disturbs Pier A's, and switching back to a Pier with a live
+        (possibly capturing) camera finds it exactly as it left it."""
+        from galileo.current_object import pier_key
+        return self._camera_backends_by_pier.setdefault(pier_key(self._current_pier), {})
+
+    @property
+    def _imaging_service(self: AppWindowState):
+        """The currently-selected Pier's own ImagingService, created (with no
+        camera set yet) on first use — so this is always available, including
+        for a Pier selected by setting self._current_pier directly rather than
+        through a full Pier switch. The real per-Pier storage is
+        self._imaging_services; see _imaging_page.py's _current_service(), which
+        also fills in the currently selected camera backend when it creates one
+        during page-build or a real Pier switch."""
+        from galileo.current_object import pier_key
+        from galileo.ui.imaging import ImagingService
+        key = pier_key(self._current_pier)
+        svc = self._imaging_services.get(key)
+        if svc is None:
+            svc = self._imaging_services[key] = ImagingService()
+        return svc
 
     def show(self: AppWindowState) -> None:
         if _HAS_QT and hasattr(self, "_window"):

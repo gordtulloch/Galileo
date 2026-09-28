@@ -193,23 +193,29 @@ class FocusPage(QWidget):
     """The Focus section."""
 
     # Emitted from the event-bus handlers (which run on the autofocus thread)
-    # and received on the UI thread.
-    _started = Signal(object)
-    _frame = Signal(object)
-    _complete = Signal(object)
-    _run_finished = Signal()
+    # and received on the UI thread. Each carries the Pier key the run belongs
+    # to, alongside the same payload as before, so two Piers running autofocus
+    # at once never cross-contaminate each other's display.
+    _started = Signal(object, object)
+    _frame = Signal(object, object)
+    _complete = Signal(object, object)
+    _run_finished = Signal(object)
 
     def __init__(self, window) -> None:
         super().__init__()
         self.setObjectName("FocusPage")
         self._window = window
-        # A focus run is in progress, from anywhere. ``_receiving`` is set and
-        # cleared on the run's own thread as its events arrive, so no frame is
-        # missed while the UI thread catches up; ``_active`` follows on the UI
-        # thread and drives the widgets.
-        self._receiving = False
-        self._active = False
-        self._service = None             # the AutofocusService this page started, if any
+        # A focus run is in progress, from anywhere, keyed by Pier — two Piers
+        # can each have their own AutofocusService running at once. ``_receiving``
+        # is set and cleared on the run's own thread as its events arrive, so no
+        # frame is missed while the UI thread catches up; ``_active`` follows on
+        # the UI thread and drives the widgets. ``_last_run`` is what a Pier's own
+        # widgets get repainted from when switching back to it, whether that
+        # Pier is idle, mid-run or just finished.
+        self._receiving: dict = {}
+        self._active: dict = {}
+        self._services: dict = {}        # pier key -> the AutofocusService running there, if any
+        self._last_run: dict = {}
         self._build()
         self._sync_buttons()
         self.reload()   # seed from the already-selected Pier's saved defaults, if any
@@ -358,53 +364,82 @@ class FocusPage(QWidget):
     # --- Bus handlers (any thread) -----------------------------------------
 
     def _on_started_event(self, event) -> None:
-        self._receiving = True
-        self._started.emit(dict(event.payload))
+        key = event.payload.get("pier_key")
+        self._receiving[key] = True
+        self._started.emit(key, dict(event.payload))
 
     def _on_frame_event(self, event) -> None:
-        if not self._receiving:
+        key = event.payload.get("pier_key")
+        if not self._receiving.get(key):
             return  # a frame outside a run entirely (nothing is displaying it) is not shown
         payload = event.payload
-        self._frame.emit({
+        self._frame.emit(key, {
             "position": payload["position"], "hfr": payload["hfr"], "fwhm": payload["fwhm"],
             "star_count": payload["star_count"], "preview": _preview(payload["frame"]),
             "confirm": payload.get("confirm", False),
         })
 
     def _on_complete_event(self, event) -> None:
-        self._receiving = False
-        self._complete.emit(event.payload["result"])
+        key = event.payload.get("pier_key")
+        self._receiving[key] = False
+        self._complete.emit(key, event.payload["result"])
 
     # --- Run display (UI thread) --------------------------------------------
 
-    def _on_started(self, payload: dict) -> None:
-        self._active = True
-        self._reset_display()
-        self.status_label.setText(
-            f"Focusing — {payload['num_points']} exposures, {payload['step_size']} steps apart…")
+    def _pier_key(self):
+        from galileo.current_object import pier_key
+        return pier_key(self._window._current_pier)
+
+    def _on_started(self, key, payload: dict) -> None:
+        self._active[key] = True
+        self._last_run[key] = {
+            "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None,
+            "status": f"Focusing — {payload['num_points']} exposures, {payload['step_size']} steps apart…",
+        }
+        if key == self._pier_key():
+            self._reset_display()
+            self.status_label.setText(self._last_run[key]["status"])
         self._sync_buttons()
 
-    def _on_frame(self, payload: dict) -> None:
+    def _on_frame(self, key, payload: dict) -> None:
+        run = self._last_run.setdefault(key, {
+            "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
+        })
         if payload["preview"] is not None:
-            self.image_view.set_image(payload["preview"])
-        self.stats_label.setText(
-            f"Stars: {payload['star_count']}  HFR: {payload['hfr']:.2f}  FWHM: {payload['fwhm']:.2f}")
-        self.position_label.setText(str(payload["position"]))
+            run["preview"] = payload["preview"]
+        run["stats"] = f"Stars: {payload['star_count']}  HFR: {payload['hfr']:.2f}  FWHM: {payload['fwhm']:.2f}"
+        run["position"] = payload["position"]
         if payload["confirm"]:
             # The post-move confirmation exposure at the computed best position: shown
             # so focus can be checked visually, but it isn't a sweep sample for the curve.
-            self.status_label.setText(f"Focus complete — confirming at position {payload['position']}…")
+            run["status"] = f"Focus complete — confirming at position {payload['position']}…"
         else:
+            run["points"].append((payload["position"], payload["hfr"]))
+            run["status"] = f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…"
+        if key != self._pier_key():
+            return
+        if payload["preview"] is not None:
+            self.image_view.set_image(payload["preview"])
+        self.stats_label.setText(run["stats"])
+        self.position_label.setText(str(payload["position"]))
+        if not payload["confirm"]:
             self.plot.add_point(payload["position"], payload["hfr"])
-            self.status_label.setText(f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…")
+        self.status_label.setText(run["status"])
 
-    def _on_complete(self, result) -> None:
-        self._active = False
+    def _on_complete(self, key, result) -> None:
+        self._active[key] = False
+        run = self._last_run.setdefault(key, {
+            "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
+        })
         if result.success:
-            self.plot.set_fit(result.curve_coefficients, result.best_position)
-            self.status_label.setText(f"Focus complete — best position {result.best_position}.")
+            run["fit"] = (result.curve_coefficients, result.best_position)
+            run["status"] = f"Focus complete — best position {result.best_position}."
         else:
-            self.status_label.setText(f"Focus failed — {result.failure_reason}.")
+            run["status"] = f"Focus failed — {result.failure_reason}."
+        if key == self._pier_key():
+            if result.success:
+                self.plot.set_fit(*run["fit"])
+            self.status_label.setText(run["status"])
         self._sync_buttons()
 
     def _reset_display(self) -> None:
@@ -412,17 +447,39 @@ class FocusPage(QWidget):
         self.plot.clear()
         self.stats_label.setText(_NO_STATS)
 
+    def _redraw_from_last(self, key) -> None:
+        """Repaint the frame/plot/stats/status from *key*'s own stored run state
+        (or the idle display if it has none) — used when switching Piers."""
+        run = self._last_run.get(key)
+        if run is None:
+            self._reset_display()
+            self.status_label.setText(_IDLE_STATUS)
+            return
+        self.image_view.set_image(run["preview"])
+        self.plot.clear()
+        for position, hfr in run["points"]:
+            self.plot.add_point(position, hfr)
+        if run["fit"] is not None:
+            self.plot.set_fit(*run["fit"])
+        self.stats_label.setText(run["stats"])
+        self.position_label.setText(str(run["position"]) if run["position"] is not None else "—")
+        self.status_label.setText(run["status"] or _IDLE_STATUS)
+
     def clear(self) -> None:
         """Forget the last run's frame, statistics and curve. A run in progress is left alone."""
-        if self._active:
+        key = self._pier_key()
+        if self._active.get(key):
             return
+        self._last_run.pop(key, None)
         self._reset_display()
         self.status_label.setText(_IDLE_STATUS)
 
     def _sync_buttons(self) -> None:
-        self.autofocus_btn.setEnabled(not self._active and self._service is None)
-        self.stop_btn.setEnabled(self._service is not None)
-        self.clear_btn.setEnabled(not self._active)
+        key = self._pier_key()
+        active = self._active.get(key, False)
+        self.autofocus_btn.setEnabled(not active and self._services.get(key) is None)
+        self.stop_btn.setEnabled(self._services.get(key) is not None)
+        self.clear_btn.setEnabled(not active)
 
     # --- Starting and stopping a run -----------------------------------------
 
@@ -435,6 +492,13 @@ class FocusPage(QWidget):
         return get_adapter() if get_adapter is not None else None
 
     def start_autofocus(self) -> None:
+        key = self._pier_key()
+        if self._services.get(key) is not None:
+            QMessageBox.information(
+                self._window._window, "Autofocus already running",
+                "An autofocus run is already in progress on this Pier.",
+            )
+            return
         camera, focuser = self._camera(), self._focuser()
         missing = [name for name, device in (("camera", camera), ("focuser", focuser)) if device is None]
         if missing:
@@ -444,32 +508,35 @@ class FocusPage(QWidget):
             )
             return
         from galileo.autofocus import AutofocusService
-        service = self._service = AutofocusService(
+        service = self._services[key] = AutofocusService(
             camera=camera, focuser=focuser, exposure_s=self.exposure_spin.value(),
-            backlash_compensation=self.backlash_spin.value(),
+            backlash_compensation=self.backlash_spin.value(), pier_key=key,
         )
         self._sync_buttons()
         threading.Thread(
-            target=self._run_worker, args=(service, self.step_spin.value(), self.points_spin.value()),
+            target=self._run_worker, args=(service, key, self.step_spin.value(), self.points_spin.value()),
             name="autofocus", daemon=True,
         ).start()
 
-    def _run_worker(self, service, step_size: int, num_points: int) -> None:
+    def _run_worker(self, service, key, step_size: int, num_points: int) -> None:
         import asyncio
         try:
             asyncio.run(service.run(step_size=step_size, num_points=num_points))
         except Exception:
             logger.exception("Autofocus run failed")
         finally:
-            self._run_finished.emit()
+            self._run_finished.emit(key)
 
     def stop_autofocus(self) -> None:
-        if self._service is not None:
-            self._service.cancel()
+        # Stops whichever Pier is currently displayed's own run — a different
+        # Pier's in-flight autofocus is untouched.
+        service = self._services.get(self._pier_key())
+        if service is not None:
+            service.cancel()
             self.status_label.setText("Stopping — waiting for the current exposure to finish…")
 
-    def _on_run_finished(self) -> None:
-        self._service = None
+    def _on_run_finished(self, key) -> None:
+        self._services.pop(key, None)
         self._sync_buttons()
 
     # --- Device readout ------------------------------------------------------
@@ -486,7 +553,7 @@ class FocusPage(QWidget):
             self.position_label.setText("—")
             self.temperature_label.setText("—")
             return
-        if not self._active:
+        if not self._active.get(self._pier_key(), False):
             self.position_label.setText(str(getattr(focuser, "position", "—")))
         temperature = getattr(focuser, "temperature", None)
         self.temperature_label.setText(f"{temperature:.1f} °C" if isinstance(temperature, (int, float)) else "—")
@@ -499,12 +566,15 @@ class FocusPage(QWidget):
 
     def reload(self) -> None:
         """Re-seed the run controls from the newly selected Pier's saved autofocus
-        defaults (Options > Focus). Left alone while a run is in progress."""
-        if self._active:
-            return
-        from galileo.observatory import get_autofocus_params
-        params = get_autofocus_params(self._window._current_pier)
-        self.step_spin.setValue(params.step_size)
-        self.points_spin.setValue(params.num_points)
-        self.exposure_spin.setValue(params.exposure_s)
-        self.backlash_spin.setValue(params.backlash_compensation)
+        defaults (Options > Focus), and repaint the frame/plot/stats/status/buttons
+        for whichever Pier is now selected — idle, mid-run, or just finished."""
+        key = self._pier_key()
+        if not self._active.get(key, False):
+            from galileo.observatory import get_autofocus_params
+            params = get_autofocus_params(self._window._current_pier)
+            self.step_spin.setValue(params.step_size)
+            self.points_spin.setValue(params.num_points)
+            self.exposure_spin.setValue(params.exposure_s)
+            self.backlash_spin.setValue(params.backlash_compensation)
+        self._redraw_from_last(key)
+        self._sync_buttons()

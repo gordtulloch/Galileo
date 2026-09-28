@@ -194,7 +194,7 @@ def test_tc_foc_090_auto_focus_needs_a_camera_and_a_focuser(window, page):
     """FOC-090: Auto Focus without connected equipment says what is missing and starts nothing."""
     page.autofocus_btn.click()
     assert window.boxes == ["Equipment not connected"]
-    assert page._service is None and page.autofocus_btn.isEnabled()
+    assert page._services.get(page._pier_key()) is None and page.autofocus_btn.isEnabled()
 
 
 class _FakeFocuser:
@@ -240,7 +240,7 @@ def test_tc_foc_090_auto_focus_button_runs_a_sweep_and_shows_it(window, page, ri
     page.autofocus_btn.click()
     assert not page.autofocus_btn.isEnabled() and page.stop_btn.isEnabled()
 
-    assert _pump(window, lambda: page._service is None and page.status_label.text().startswith("Focus complete"))
+    assert _pump(window, lambda: page._services.get(page._pier_key()) is None and page.status_label.text().startswith("Focus complete"))
     assert [p for p, _ in page.plot.points] == [4700, 4800, 4900, 5000, 5100, 5200, 5300]
     # 7 sweep exposures plus 1 confirmation exposure at the computed best position (FOC-020)
     assert camera.exposures == [1.5] * 8
@@ -271,7 +271,7 @@ def test_tc_foc_090_stop_ends_the_run_and_restores_the_focuser(window, page, rig
     page.stop_btn.click()
     assert page.status_label.text().startswith("Stopping")
     release.set()
-    assert _pump(window, lambda: page._service is None and page.status_label.text().startswith("Focus failed"))
+    assert _pump(window, lambda: page._services.get(page._pier_key()) is None and page.status_label.text().startswith("Focus failed"))
     assert page.status_label.text() == "Focus failed — Cancelled."
     assert focuser.position == 5000
     assert len(page.plot.points) < 9
@@ -289,7 +289,55 @@ def test_tc_foc_090_a_run_started_elsewhere_is_followed(window, page, rig):
     asyncio.run(AutofocusService(camera=camera, focuser=focuser, exposure_s=0.5).run(step_size=100, num_points=5))
     assert [p for p, _ in page.plot.points] == [4800, 4900, 5000, 5100, 5200]
     assert page.status_label.text().startswith("Focus complete")
-    assert page._service is None and page.autofocus_btn.isEnabled()
+    assert page._services.get(page._pier_key()) is None and page.autofocus_btn.isEnabled()
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_two_piers_run_autofocus_concurrently(window, page, rig):
+    """FOC-090: two Piers can each run their own autofocus at once. Starting a run on Pier B is not
+    blocked by Pier A's still-running (held) exposure, Pier B's controls show idle the moment it's
+    selected even though Pier A is mid-run, and finishing Pier B's run doesn't touch Pier A's."""
+    import threading
+    from galileo.current_object import pier_key
+    from galileo.observatory import create_observatory, create_pier
+
+    camera_a, _focuser_a = rig
+    exposing_a, release_a = threading.Event(), threading.Event()
+    original_a = camera_a.get_image_array
+
+    async def held_a():
+        exposing_a.set()
+        release_a.wait(5)
+        return await original_a()
+    camera_a.get_image_array = held_a
+
+    page.points_spin.setValue(3)
+    page.autofocus_btn.click()
+    assert exposing_a.wait(5)
+    key_a = page._pier_key()
+    assert page._services.get(key_a) is not None
+
+    pier_b = create_pier(create_observatory("Foc Concurrency"), "Pier B")
+    window._current_pier = pier_b
+    window._on_pier_changed()
+    assert page._services.get(pier_key(pier_b)) is None, "idle, even though Pier A is mid-run"
+    assert page.autofocus_btn.isEnabled() and not page.stop_btn.isEnabled()
+
+    focuser_b = _FakeFocuser()
+    camera_b = _FakeCamera(focuser_b)
+    window._camera_backends["primary camera"] = camera_b
+    window._device_pages["focuser"]["get_adapter"] = lambda: focuser_b
+    page.points_spin.setValue(5)
+    page.step_spin.setValue(100)
+    page.autofocus_btn.click()
+
+    assert _pump(window, lambda: page._services.get(pier_key(pier_b)) is None)
+    assert camera_b.exposures, "Pier B's run completed independently of Pier A's still-held one"
+    assert page._services.get(key_a) is not None, "Pier A's run is untouched and still going"
+
+    release_a.set()
+    assert _pump(window, lambda: page._services.get(key_a) is None)
 
 
 @pytest.mark.requirement("TC-FOC-090")

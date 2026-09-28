@@ -236,22 +236,28 @@ class SolvePage(QWidget):
     solve_started = Signal(object)
     solve_finished = Signal(object)
     preview_ready = Signal(object)
-    mount_position = Signal(object)
-    run_finished = Signal()
+    mount_position = Signal(object, object)
+    run_finished = Signal(object)
 
     def __init__(self, window) -> None:
         super().__init__()
         self.setObjectName("SolvePage")
         self._window = window
+        # The results log and live preview are deliberately shared/global — this
+        # page "shows every solve... not only the ones started from its own
+        # buttons" (see the module docstring), and that doesn't change with two
+        # Piers able to run concurrently. What DOES need to be per-Pier is which
+        # Pier "owns" a run in progress, so starting one on a different Pier
+        # doesn't stomp this Pier's own workflow/buttons, and vice versa.
         self._rows: list[SolveRow] = []
-        self._workflow: SolveWorkflow | None = None
-        self._running = False
-        self._run_target_active = False          # a workflow of ours owns the current solves' target
+        self._workflows: dict = {}               # pier key -> the SolveWorkflow running there, if any
+        self._running: dict = {}
+        self._run_target_active: dict = {}       # pier key -> a workflow of ours owns that Pier's current target
         self._in_focus = False                   # read by worker threads; set only from showEvent/hideEvent
         self._latest_path: str | None = None
         self._shown_path: str | None = None
         self._loading_path: str | None = None
-        self._mount_busy = False
+        self._mount_busy: dict = {}
         self.make_solver = self._default_solver  # replaced by tests
 
         self._build()
@@ -514,6 +520,10 @@ class SolvePage(QWidget):
         self._mount_timer.stop()
         self._log_timer.stop()
 
+    def _pier_key(self):
+        from galileo.current_object import pier_key
+        return pier_key(self._window._current_pier)
+
     def current_object(self):
         """The selected Pier's current object (IMG-140), or ``None``."""
         return get_current_objects().get(self._window._current_pier)
@@ -526,10 +536,14 @@ class SolvePage(QWidget):
             else "Target: where the mount points when a run begins (pick an object in the Star Atlas to choose one)")
 
     def reload(self) -> None:
-        """A different Pier was selected: its mount is not the one on show."""
+        """A different Pier was selected: its mount is not the one on show, and the
+        Capture/Load/Stop buttons must reflect whether THIS Pier has its own run
+        in progress — a different Pier's in-flight solve is untouched either way."""
+        key = self._pier_key()
         self.refresh_target()
         self.scope_ra.clear()
         self.scope_dec.clear()
+        self._set_running(self._running.get(key, False), key)
         if self.isVisible():
             self.refresh_view()
             self.poll_mount()
@@ -555,7 +569,10 @@ class SolvePage(QWidget):
 
     def _on_bus_complete(self, event) -> None:
         result = event.result
-        payload = {"path": event.fits_path, "result": result, "size": frame_size(event.fits_path), "name": ""}
+        payload = {
+            "path": event.fits_path, "result": result, "size": frame_size(event.fits_path), "name": "",
+            "pier_key": getattr(event, "pier_key", None),
+        }
         if result.success:
             payload["name"] = nearest_object_name(result.ra_deg, result.dec_deg)
         self._emit("solve_finished", payload)
@@ -590,8 +607,13 @@ class SolvePage(QWidget):
             row.ra_deg, row.dec_deg = result.ra_deg, result.dec_deg
             row.rotation_deg, row.scale_arcsec_px = result.rotation_deg, result.scale_arcsec_px
             row.name = payload["name"]
-            workflow = self._workflow
-            if self._run_target_active and workflow is not None and workflow.target is not None:
+            # Attributed by the *originating* Pier's own workflow, not whichever Pier
+            # happens to be displayed — a backgrounded Pier's run still gets its
+            # target/error-offset filled in correctly even while another Pier's own
+            # run (or none) is what the Solve screen currently shows.
+            origin = payload.get("pier_key")
+            workflow = self._workflows.get(origin)
+            if self._run_target_active.get(origin) and workflow is not None and workflow.target is not None:
                 row.target = workflow.target
                 row.d_ra_arcsec, row.d_dec_arcsec = angular_offset_arcsec(row.ra_deg, row.dec_deg, *row.target)
         else:
@@ -608,10 +630,12 @@ class SolvePage(QWidget):
             self._shown_path = payload["path"]
             self._update_frame_label()
 
-    def _on_mount_position(self, payload) -> None:
-        """*payload* is the mount's position, or empty if there is no mount or it couldn't be read."""
-        self._mount_busy = False
-        if not self.isVisible():
+    def _on_mount_position(self, key, payload) -> None:
+        """*payload* is the mount's position, or empty if there is no mount or it couldn't be read.
+        *key* is the Pier that was current when the read started — a read for a Pier that
+        isn't the one displayed any more is dropped rather than overwriting these fields."""
+        self._mount_busy[key] = False
+        if key != self._pier_key() or not self.isVisible():
             return
         if not payload:
             self.scope_ra.clear()
@@ -622,9 +646,9 @@ class SolvePage(QWidget):
         self.scope_ra.setText(_format_hms(ra / 15.0))
         self.scope_dec.setText(_format_dms(dec))
 
-    def _on_run_finished(self) -> None:
-        self._set_running(False)
-        self._run_target_active = False
+    def _on_run_finished(self, key) -> None:
+        self._set_running(False, key)
+        self._run_target_active[key] = False
 
     # --- Rendering (only while visible) -----------------------------------
 
@@ -771,13 +795,14 @@ class SolvePage(QWidget):
 
     def poll_mount(self) -> None:
         """Read the mount's position on a worker thread (a blocking device call must never run on the UI thread)."""
+        key = self._pier_key()
         mount = self._mount()
         if mount is None:
-            self._on_mount_position({})
+            self._on_mount_position(key, {})
             return
-        if self._mount_busy or self._running:      # a running workflow reads the mount itself
+        if self._mount_busy.get(key) or self._running.get(key):      # a running workflow reads the mount itself
             return
-        self._mount_busy = True
+        self._mount_busy[key] = True
 
         def work() -> None:
             payload = None
@@ -788,7 +813,7 @@ class SolvePage(QWidget):
                                "system": status.get("equatorial_system")}
             except Exception:
                 logger.debug("Could not read the mount position for the Solve screen", exc_info=True)
-            self._emit("mount_position", payload or {})
+            self._emit("mount_position", key, payload or {})
 
         threading.Thread(target=work, name="solve-mount", daemon=True).start()
 
@@ -797,7 +822,7 @@ class SolvePage(QWidget):
     def _default_solver(self) -> PlateSolver | None:
         from galileo.observatory import get_solver_settings
         executable, params = get_solver_settings(self._window._current_pier)
-        solver = PlateSolver(backend="astap", executable=executable, params=params)
+        solver = PlateSolver(backend="astap", executable=executable, params=params, pier_key=self._pier_key())
         if not solver.executable:
             QMessageBox.information(
                 self._window._window, "ASTAP not found",
@@ -806,8 +831,11 @@ class SolvePage(QWidget):
             return None
         return solver
 
-    def _set_running(self, running: bool) -> None:
-        self._running = running
+    def _set_running(self, running: bool, key=None) -> None:
+        key = key if key is not None else self._pier_key()
+        self._running[key] = running
+        if key != self._pier_key():
+            return
         self.capture_btn.setEnabled(not running)
         self.load_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
@@ -822,28 +850,33 @@ class SolvePage(QWidget):
         logger.info("%s", message)
 
     def _begin(self, run, use_current_object: bool = False) -> None:
+        # Re-entrancy is enforced by capture_and_solve()/load_and_slew() (the
+        # only production entry points), not here — matching the original
+        # single-Pier code, where _begin() itself never checked _running either.
+        key = self._pier_key()
         solver = self.make_solver()
         if solver is None:
             return
-        self._workflow = SolveWorkflow(solver, camera=self._camera(), mount=self._mount(), log=self._post,
-                                       frame_metadata=self._frame_metadata())
+        workflow = self._workflows[key] = SolveWorkflow(
+            solver, camera=self._camera(), mount=self._mount(), log=self._post,
+            frame_metadata=self._frame_metadata())
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
-            self._workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)
-        self._run_target_active = True
-        self._set_running(True)
+            workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)
+        self._run_target_active[key] = True
+        self._set_running(True, key)
 
         def work() -> None:
             try:
-                asyncio.run(run(self._workflow))
+                asyncio.run(run(workflow))
             except Exception:
                 logger.exception("Plate-solve run failed")
             finally:
-                self._emit("run_finished")
+                self._emit("run_finished", key)
         threading.Thread(target=work, name="solve-run", daemon=True).start()
 
     def capture_and_solve(self) -> None:
-        if self._running:
+        if self._running.get(self._pier_key()):
             return
         if self._camera() is None:
             QMessageBox.information(self._window._window, "No camera connected",
@@ -857,7 +890,7 @@ class SolvePage(QWidget):
         self._begin(lambda workflow: workflow.capture_and_solve(settings), use_current_object=True)
 
     def load_and_slew(self) -> None:
-        if self._running:
+        if self._running.get(self._pier_key()):
             return
         path, _ = QFileDialog.getOpenFileName(self._window._window, "Load & Slew", "", "FITS files (*.fits *.fit *.fts)")
         if not path:
@@ -865,8 +898,11 @@ class SolvePage(QWidget):
         self._begin(lambda workflow: workflow.solve_file(path, slew=True))
 
     def stop(self) -> None:
-        if self._workflow is not None:
-            self._workflow.stop()
+        # Stops whichever Pier is currently displayed's own run — a different
+        # Pier's in-flight solve is untouched.
+        workflow = self._workflows.get(self._pier_key())
+        if workflow is not None:
+            workflow.stop()
 
     # --- Results ----------------------------------------------------------
 

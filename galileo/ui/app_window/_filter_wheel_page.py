@@ -161,6 +161,7 @@ class AppWindowFilterWheelPageMixin:
         layout.addWidget(QLabel("None"))
 
         state: dict = {"adapter": None}
+        adapters_by_pier: dict = {}
 
         def _apply_status(status: dict) -> None:
             name_value.setText(status.get("name") or "—")
@@ -209,7 +210,9 @@ class AppWindowFilterWheelPageMixin:
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to Filter Wheel {device_name!r} — see log.", 6000)
                 return
+            from galileo.current_object import pier_key
             state["adapter"] = adapter
+            adapters_by_pier[pier_key(self._current_pier)] = adapter
             self._window.statusBar().showMessage(f"Connected to Filter Wheel {device_name!r}.", 4000)
             _refresh_status()
 
@@ -366,12 +369,18 @@ class AppWindowFilterWheelPageMixin:
                 server_edit.blockSignals(False)
                 port_spin.blockSignals(False)
                 device_combo.blockSignals(False)
-            state["adapter"] = None
-            _apply_status({})
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.get(pier_key(self._current_pier))
+            state["adapter"] = adapter
+            if adapter is not None:
+                _refresh_status()
+            else:
+                _apply_status({})
 
         def autoconnect_page() -> None:
+            from galileo.current_object import pier_key
             device_name = device_combo.currentText().strip()
-            if device_name:
+            if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)

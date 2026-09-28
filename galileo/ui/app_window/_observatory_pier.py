@@ -269,7 +269,8 @@ class AppWindowObservatoryPierMixin:
         everything that uses it: the Star Atlas shading, the Options > Star Atlas
         table, and the slew guard the mount adapters consult (together with the
         site, and the Options > Planning switch)."""
-        from galileo.core.slew_guard import get_slew_guard
+        from galileo.core.slew_guard import get_slew_guard, set_slew_guard_enabled
+        from galileo.current_object import pier_key
         from galileo.observatory import list_horizon_points
         from galileo.planning.settings import load_planning_settings
         from galileo.planning.visibility import HorizonProfile
@@ -283,8 +284,12 @@ class AppWindowObservatoryPierMixin:
                 logger.exception("Could not load the horizon obstructions for Observatory %r", observatory.name)
         horizon = HorizonProfile(points) if points else None
 
-        guard = get_slew_guard()
-        guard.enabled = bool(load_planning_settings()["block_obstructed_slews"])
+        # Per-Pier: this Observatory's horizon/site belongs to whichever Pier is
+        # current, not to every mount adapter everywhere — two Piers in different
+        # Observatories must not share one guard. "Do not slew where obstructed"
+        # is a single app-wide setting though, so it applies to every Pier's guard.
+        set_slew_guard_enabled(bool(load_planning_settings()["block_obstructed_slews"]))
+        guard = get_slew_guard(pier_key(self._current_pier))
         guard.horizon = horizon
         guard.latitude = getattr(observatory, "latitude", None)
         guard.longitude = getattr(observatory, "longitude", None)
@@ -345,11 +350,11 @@ class AppWindowObservatoryPierMixin:
             if self._pier_pointing.pop(key, None) is not None and on_done is not None:
                 on_done()
             return
-        if self._pier_poll_thread is not None:
+        if self._pier_poll_threads.get(key) is not None:
             return
 
         def done(status) -> None:
-            self._pier_poll_thread = None
+            self._pier_poll_threads.pop(key, None)
             pointing = None
             if status:
                 ra_hours, dec = status.get("right_ascension"), status.get("declination")
@@ -366,34 +371,40 @@ class AppWindowObservatoryPierMixin:
 
         thread = _MountPositionThread(mount, self._window)
         thread.position.connect(done)
-        self._pier_poll_thread = thread
+        self._pier_poll_threads[key] = thread
         thread.start()
 
-    def _track_when_slew_finishes(self: AppWindowState, mount, target=None) -> None:
+    def _track_when_slew_finishes(self: AppWindowState, mount, target=None, pier=None) -> None:
         """Once the slew that was just started finishes, track at the rate the target needs
         (EQP-MNT-050) — solar for the Sun, lunar for the Moon, sidereal for everything else.
 
         Waiting for a slew can take minutes, so it happens on a worker thread. With no *target*
         given (the Mount page's own coordinate slews, which name nothing) the Pier's current
-        object stands in, since that is what the user last said they were working on."""
+        object stands in, since that is what the user last said they were working on. *pier*
+        identifies which Pier this slew belongs to (defaults to whichever is current when
+        called) so a second Pier's slew doesn't have to wait for this one's tracking-resume."""
+        from galileo.current_object import pier_key
+
         if mount is None:
             return
-        if self._tracking_thread is not None:
-            return          # a slew already has one waiting; the later one wins by finishing later
+        pier = pier if pier is not None else self._current_pier
+        key = pier_key(pier)
+        if self._tracking_threads.get(key) is not None:
+            return          # this Pier's slew already has one waiting; the later one wins by finishing later
         target = target if target is not None else self.current_object()
 
         def done(rate: str) -> None:
-            self._tracking_thread = None
+            self._tracking_threads.pop(key, None)
             if rate:
                 self._window.statusBar().showMessage(f"Slew finished — tracking at the {rate} rate.", 5000)
 
         def failed(message: str) -> None:
-            self._tracking_thread = None
+            self._tracking_threads.pop(key, None)
             logger.error("Could not start tracking after the slew: %s", message)
             self._window.statusBar().showMessage("Slew finished, but tracking could not be started — see log.", 8000)
 
         thread = _ResumeTrackingThread(mount, target, self._window)
         thread.done.connect(done)
         thread.failed.connect(failed)
-        self._tracking_thread = thread
+        self._tracking_threads[key] = thread
         thread.start()

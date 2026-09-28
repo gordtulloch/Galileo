@@ -918,6 +918,46 @@ def test_mount_adapters_refuse_obstructed_slews_before_moving(horizon_env):
     assert sent                                                       # went out
 
 
+@pytest.mark.requirement("TC-SKYMAP-080")
+@pytest.mark.priority("P2")
+def test_slew_guard_is_scoped_per_pier(window, tmp_path, monkeypatch):
+    """SKYMAP-080: two Piers in different Observatories, each with its own horizon, must not share
+    one obstruction guard — a single process-wide guard used to mean whichever Observatory was
+    switched to last silently owned the horizon/site every mount's obstruction check used, even for
+    a different, concurrently-connected Pier in another Observatory. get_slew_guard() is now keyed
+    per Pier (galileo/core/slew_guard.py), and each Mount page connection binds its adapter to its
+    own Pier's guard rather than the bare process-wide fallback."""
+    from galileo.core.slew_guard import get_slew_guard
+    from galileo.current_object import pier_key
+    from galileo.exceptions import SlewObstructedError
+    from galileo.observatory import create_observatory, create_pier, save_horizon_points
+    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
+
+    home = create_observatory("Slew Home", 40.0, 0.0)
+    away = create_observatory("Slew Away", -10.0, 0.0)
+    save_horizon_points(home, [(90.0, 60.0)])   # obstructed due east, high up
+    save_horizon_points(away, [])               # nothing obstructed
+    pier_home, pier_away = create_pier(home, "Pier Home"), create_pier(away, "Pier Away")
+
+    box = _checkbox(window, "Do not slew where obstructed (see Star Atlas)")
+    box.setChecked(True)
+
+    window._select_observatory(home)
+    assert window._current_pier.name == pier_home.name
+    window._select_observatory(away)
+    assert window._current_pier.name == pier_away.name
+
+    guard_home, guard_away = get_slew_guard(pier_key(pier_home)), get_slew_guard(pier_key(pier_away))
+    assert guard_home is not guard_away
+    assert guard_home.horizon is not None and guard_home.latitude == 40.0
+    assert guard_away.horizon is None and guard_away.latitude == -10.0
+    assert guard_home.enabled is True and guard_away.enabled is True   # one app-wide setting, applied to both
+
+    with pytest.raises(SlewObstructedError):
+        guard_home.check_altaz(50.0, 90.0)   # below the 60° obstruction at that azimuth
+    guard_away.check_altaz(50.0, 90.0)       # same direction, but Away has no horizon at all — never blocked
+
+
 def _checkbox(window, text: str):
     from PySide6.QtWidgets import QCheckBox
     return next(box for box in window._window.findChildren(QCheckBox) if box.text() == text)
@@ -1021,13 +1061,16 @@ def test_options_planning_switch_turns_the_slew_guard_on(horizon_env, window):
     home = create_observatory("Home", 40.0, 0.0)
     save_horizon_points(home, [(0.0, 30.0)])
     window._select_observatory(home)
+    from galileo.core.slew_guard import get_slew_guard
+    from galileo.current_object import pier_key
+    guard = get_slew_guard(pier_key(window._current_pier))    # this Pier's own guard, not the bare fallback
     box = _checkbox(window, "Do not slew where obstructed (see Star Atlas)")
-    assert box.isChecked() is False and horizon_env.enabled is False
-    assert horizon_env.horizon is not None and horizon_env.latitude == 40.0    # the guard has the site and horizon
+    assert box.isChecked() is False and guard.enabled is False
+    assert guard.horizon is not None and guard.latitude == 40.0    # the guard has the site and horizon
     box.setChecked(True)
-    assert horizon_env.enabled is True and load_planning_settings()["block_obstructed_slews"] is True
+    assert guard.enabled is True and load_planning_settings()["block_obstructed_slews"] is True
     box.setChecked(False)
-    assert horizon_env.enabled is False and load_planning_settings()["block_obstructed_slews"] is False
+    assert guard.enabled is False and load_planning_settings()["block_obstructed_slews"] is False
 
 
 @pytest.mark.requirement("TC-SKYMAP-080")
@@ -1080,9 +1123,10 @@ class _SilentMount:
 
 def _poll(window):
     """Poll the mount as the page's timer does, then wait for the worker thread and its signal."""
+    from galileo.current_object import pier_key
     done = []
     window._poll_pier_pointing(on_done=lambda: done.append(True))
-    thread = window._pier_poll_thread
+    thread = window._pier_poll_threads.get(pier_key(window._current_pier))
     if thread is not None:
         thread.wait(5000)
         window.app.processEvents()
@@ -1198,7 +1242,8 @@ def test_tc_skymap_090_the_mount_is_read_off_the_ui_thread(window):
     window._device_pages["mount"]["adapter"] = _ThreadRecordingMount()
     _poll(window)
     assert seen["thread"] != threading.current_thread().ident
-    assert window._pier_poll_thread is None, "the thread is released once it reports"
+    from galileo.current_object import pier_key
+    assert window._pier_poll_threads.get(pier_key(window._current_pier)) is None, "the thread is released once it reports"
 
 
 @pytest.mark.requirement("TC-SKYMAP-090")

@@ -309,6 +309,7 @@ class AppWindowRotatorPageMixin:
             "adapter": None, "target": None, "correction": 0.0,
             "derotator": None, "position": None,
         }
+        adapters_by_pier: dict = {}
         device_controls = (backlash_slider, backlash_ok, goto_spin, goto_btn, reverse_check, zero_btn)
 
         # --- target / derotation maths ----------------------------------
@@ -579,7 +580,9 @@ class AppWindowRotatorPageMixin:
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to Rotator {device_name!r} — see log.", 6000)
                 return
+            from galileo.current_object import pier_key
             state["adapter"] = adapter
+            adapters_by_pier[pier_key(self._current_pier)] = adapter
             self._window.statusBar().showMessage(f"Connected to Rotator {device_name!r}.", 4000)
             status = _refresh_status()
             if status and status.get("position") is not None:
@@ -734,13 +737,19 @@ class AppWindowRotatorPageMixin:
                     logger.exception("Could not read the Observatory's site coordinates")
 
             _stop_derotation("Pier changed")
-            state["adapter"] = None
-            _apply_status({})
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.get(pier_key(self._current_pier))
+            state["adapter"] = adapter
+            if adapter is not None:
+                _refresh_status()
+            else:
+                _apply_status({})
             _recompute()
 
         def autoconnect_page() -> None:
+            from galileo.current_object import pier_key
             device_name = device_combo.currentText().strip()
-            if device_name:
+            if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
                 _do_connect(device_name)
 
         status_timer = QTimer(page)

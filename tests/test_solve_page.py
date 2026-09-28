@@ -157,7 +157,8 @@ class _Devices:
         self.mount.abort_slew = AsyncMock()
         window._camera_backends["primary camera"] = self.camera
         window._device_pages["mount"]["adapter"] = self.mount
-        self.solver = PlateSolver(backend="astap", executable="unused")
+        from galileo.current_object import pier_key
+        self.solver = PlateSolver(backend="astap", executable="unused", pier_key=pier_key(window._current_pier))
         self.solver._run_solver = AsyncMock(side_effect=solutions) if isinstance(solutions, list) else AsyncMock(return_value=solutions)
         page.make_solver = lambda: self.solver
 
@@ -370,8 +371,8 @@ def test_tc_plt_070_capture_and_solve_fills_the_screen(window, page):
     assert _pump(window, lambda: page.scope_ra.text() != "")                 # the mount's position is on show
     page.exposure_spin.setValue(2.0)
     page.capture_btn.click()
-    assert page._running and not page.capture_btn.isEnabled() and page.stop_btn.isEnabled()
-    assert _pump(window, lambda: not page._running and page.table.rowCount() == 1 and page._rows[0].status == "solved")
+    assert page._running.get(page._pier_key()) and not page.capture_btn.isEnabled() and page.stop_btn.isEnabled()
+    assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1 and page._rows[0].status == "solved")
 
     devices.camera.start_exposure.assert_awaited_once()
     assert devices.camera.start_exposure.await_args.kwargs["duration"] == 2.0
@@ -390,6 +391,48 @@ def test_tc_plt_070_capture_and_solve_fills_the_screen(window, page):
     assert joined.index("Setting target") < joined.index("Capturing image") < joined.index("Solver completed")
 
 
+def test_tc_plt_070_two_piers_solve_concurrently(window, page):
+    """PLT-070: two Piers can each run their own Capture & Solve at once — starting one on Pier B
+    is not blocked by Pier A's still-running (held) solve, and Pier B's own buttons/busy-state follow
+    only that Pier. The shared results table still shows both Piers' solves interleaved — by design,
+    this screen "shows every solve... not only the ones started from its own buttons" (module docstring),
+    which does not change with two Piers now able to solve concurrently."""
+    import threading
+    from galileo.current_object import pier_key
+    from galileo.observatory import create_observatory, create_pier
+
+    _open(window)
+    pier_a = window._current_pier
+    solving_a, release_a = threading.Event(), threading.Event()
+
+    async def held_solver(path, hint=None):
+        solving_a.set()
+        release_a.wait(5)
+        return GOOD
+
+    devices_a = _Devices(window, page, GOOD)
+    devices_a.solver._run_solver = held_solver
+    page.capture_btn.click()
+    assert solving_a.wait(5)
+    assert page._running.get(pier_key(pier_a))
+
+    pier_b = create_pier(create_observatory("Solve Concurrency"), "Pier B")
+    window._current_pier = pier_b
+    window._on_pier_changed()
+    assert not page._running.get(pier_key(pier_b), False), "idle, even though Pier A is mid-solve"
+    assert page.capture_btn.isEnabled() and not page.stop_btn.isEnabled()
+
+    devices_b = _Devices(window, page, GOOD)
+    page.capture_btn.click()
+    assert _pump(window, lambda: not page._running.get(pier_key(pier_b), False))
+    devices_b.camera.start_exposure.assert_awaited()
+    assert page._running.get(pier_key(pier_a)) is True, "Pier A's solve is untouched and still going"
+
+    release_a.set()
+    assert _pump(window, lambda: not page._running.get(pier_key(pier_a), False))
+    assert page.table.rowCount() == 2, "the shared results log shows both Piers' solves"
+
+
 def test_tc_plt_070_the_chosen_action_is_carried_out(window, page):
     """PLT-070: The Solver Action radio decides whether the solved position is synced to the mount."""
     from galileo.platesolve import SolveAction
@@ -397,7 +440,7 @@ def test_tc_plt_070_the_chosen_action_is_carried_out(window, page):
     devices = _Devices(window, page, _Devices.near_mount(d_ra_deg=0.01))
     page.action_radios[SolveAction.SYNC].setChecked(True)
     page.capture_btn.click()
-    assert _pump(window, lambda: not page._running)
+    assert _pump(window, lambda: not page._running.get(page._pier_key()))
     assert [c[0] for c in devices.calls] == ["sync"]
     ra, dec = devices.calls[0][1:]         # sent in the mount's own frame: 0.01° east of where it pointed
     assert ra == pytest.approx(MOUNT_JNOW[0] + 0.01, abs=1e-3) and dec == pytest.approx(MOUNT_JNOW[1], abs=1e-3)
@@ -416,7 +459,7 @@ def test_tc_plt_070_stop_ends_a_run_in_progress(window, page):
     page.capture_btn.click()
     assert _pump(window, started.is_set) and page.stop_btn.isEnabled()
     page.stop_btn.click()
-    assert _pump(window, lambda: not page._running)
+    assert _pump(window, lambda: not page._running.get(page._pier_key()))
     devices.camera.abort_exposure.assert_awaited()
     page._refresh_log()
     assert "Stopped." in page.log_pane.toPlainText()
@@ -429,7 +472,7 @@ def test_tc_plt_070_capture_without_a_camera_asks_for_one(window, page):
     _open(window)
     window._camera_backends.clear()
     page.capture_btn.click()
-    assert window.boxes == ["No camera connected"] and not page._running
+    assert window.boxes == ["No camera connected"] and not page._running.get(page._pier_key())
 
 
 def test_tc_plt_070_solving_without_astap_says_where_to_get_it(window, page, monkeypatch):
@@ -439,7 +482,7 @@ def test_tc_plt_070_solving_without_astap_says_where_to_get_it(window, page, mon
     monkeypatch.setattr(PlateSolver, "_find_executable", staticmethod(lambda backend: ""))
     page.make_solver = page._default_solver
     page.capture_btn.click()
-    assert window.boxes == ["ASTAP not found"] and not page._running
+    assert window.boxes == ["ASTAP not found"] and not page._running.get(page._pier_key())
 
 
 @pytest.mark.requirement("TC-PLT-060")
@@ -468,7 +511,7 @@ def test_tc_plt_070_load_and_slew_solves_the_chosen_file(window, page, tmp_path,
     devices = _Devices(window, page, GOOD)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(frame), "")))
     page.load_btn.click()
-    assert _pump(window, lambda: not page._running and page.table.rowCount() == 1)
+    assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
     assert [c[0] for c in devices.calls] == ["slew"]
     assert page._rows[0].status == "solved"
 
@@ -478,7 +521,7 @@ def test_tc_plt_070_cancelling_the_file_dialog_does_nothing(window, page, monkey
     _open(window)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
     page.load_btn.click()
-    assert not page._running and page.table.rowCount() == 0
+    assert not page._running.get(page._pier_key()) and page.table.rowCount() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -488,10 +531,10 @@ def test_tc_plt_070_cancelling_the_file_dialog_does_nothing(window, page, monkey
 def _add_result(page, path: str, result: SolveResult, target=None) -> None:
     page._on_solve_started({"path": path})
     if target is not None:
-        page._workflow = type("W", (), {"target": target})()
-        page._run_target_active = True
+        page._workflows[None] = type("W", (), {"target": target})()
+        page._run_target_active[None] = True
     page._on_solve_finished({"path": path, "result": result, "size": (80, 60), "name": "Polaris"})
-    page._run_target_active = False
+    page._run_target_active[None] = False
 
 
 def test_tc_plt_070_results_can_be_cleared_removed_and_saved(window, page, tmp_path, monkeypatch):

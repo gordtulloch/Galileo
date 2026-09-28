@@ -321,7 +321,7 @@ class AppWindowImagingPageMixin:
                 content.setMinimumWidth(0)
                 content.setMaximumWidth(unlimited_width)
 
-        def _apply_orientation() -> None:
+        def _apply_orientation(service) -> None:
             orientation = service.orientation
             if orientation == layout_state["orientation"]:
                 return
@@ -365,22 +365,33 @@ class AppWindowImagingPageMixin:
             key = _camera_backend_key_for_slot(self._active_camera_slot)
             return self._camera_backends.get(key)
 
-        service = ImagingService(camera=_selected_camera_backend())
-        self._imaging_service = service
+        def _current_service() -> ImagingService:
+            """The currently-selected Pier's own ImagingService, created on first
+            use — one per Pier (not one for the whole window) so two Piers can
+            each have their own capture in flight without sharing mutable state
+            like stop_requested, library_ids or current_frame."""
+            from galileo.current_object import pier_key
+            key = pier_key(self._current_pier)
+            svc = self._imaging_services.get(key)
+            if svc is None:
+                svc = self._imaging_services[key] = ImagingService(camera=_selected_camera_backend())
+            return svc
 
-        def _refresh_preview() -> None:
+        _current_service()   # create the initially-selected Pier's service right away, as before
+
+        def _refresh_preview(service) -> None:
             data = service.current_preview
             if data is None:
                 return
             preview_view.show_array(data)
 
-        def _refresh_histogram() -> None:
+        def _refresh_histogram(service) -> None:
             hist = service.get_histogram()
             histogram.set_data(hist.get("counts", []))
 
-        star_overlay_check.toggled.connect(service.set_star_overlay)
+        star_overlay_check.toggled.connect(lambda checked: _current_service().set_star_overlay(checked))
 
-        def _use_camera_bayer_pattern(rebuild: bool) -> None:
+        def _use_camera_bayer_pattern(service, rebuild: bool) -> None:
             # The pattern saved for the selected camera on Equipment > Camera (RGGB until changed).
             from galileo.observatory import get_device_config
             pattern = None
@@ -397,20 +408,21 @@ class AppWindowImagingPageMixin:
         # new render; the service drops any that finish after a newer toggle.
         preview_renders: set = set()
 
-        def _preview_rendered(thread, rendered) -> None:
+        def _preview_rendered(service, thread, rendered) -> None:
             preview_renders.discard(thread)
             if service.apply_preview(rendered):
-                _refresh_preview()
+                _refresh_preview(service)
                 status_label.setText(service.debayer_note or "Debayer off.")
 
         def _debayer_toggled(checked: bool) -> None:
-            _use_camera_bayer_pattern(rebuild=False)
+            service = _current_service()
+            _use_camera_bayer_pattern(service, rebuild=False)
             service.set_debayer(checked, rebuild=False)
             if service.current_frame is None:
                 return
             status_label.setText("Debayering…" if checked else "Removing debayer…")
             thread = _PreviewRenderThread(service, self._window)
-            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(t, rendered))
+            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(service, t, rendered))
             thread.finished.connect(thread.deleteLater)
             preview_renders.add(thread)
             thread.start()
@@ -428,10 +440,11 @@ class AppWindowImagingPageMixin:
         stretch_render_timer.setInterval(150)
 
         def _render_stretch_preview() -> None:
+            service = _current_service()
             if service.current_frame is None:
                 return
             thread = _PreviewRenderThread(service, self._window)
-            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(t, rendered))
+            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(service, t, rendered))
             thread.finished.connect(thread.deleteLater)
             preview_renders.add(thread)
             thread.start()
@@ -439,25 +452,26 @@ class AppWindowImagingPageMixin:
         stretch_render_timer.timeout.connect(_render_stretch_preview)
 
         def _stretch_slider_changed(value: int) -> None:
-            service.set_stretch(value, rebuild=False)
+            _current_service().set_stretch(value, rebuild=False)
             stretch_render_timer.start()
 
         stretch_slider.valueChanged.connect(_stretch_slider_changed)
         self._imaging_stretch_slider = stretch_slider
 
         def _orientation_choice_changed(*_args) -> None:
+            service = _current_service()
             if orientation_check.isChecked():
                 service.set_manual_orientation(orientation_combo.currentData())
             else:
                 service.set_manual_orientation(None)
-            _apply_orientation()
+            _apply_orientation(service)
 
         def _manual_orientation_toggled(checked: bool) -> None:
             orientation_combo.setEnabled(checked)
             if checked:
                 # Start from what the page is showing now, so ticking the box doesn't move anything.
                 orientation_combo.blockSignals(True)
-                orientation_combo.setCurrentIndex(orientation_combo.findData(service.orientation))
+                orientation_combo.setCurrentIndex(orientation_combo.findData(_current_service().orientation))
                 orientation_combo.blockSignals(False)
             _orientation_choice_changed()
 
@@ -527,7 +541,7 @@ class AppWindowImagingPageMixin:
             "fit_preview_width": _fit_preview_width, "content": content, "preview": preview_view,
             "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget, "log": log_pane,
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
-            "apply_orientation": _apply_orientation, "layout_state": layout_state,
+            "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "auto_save": auto_save_check,
             "capture_button": capture_btn, "stop_button": stop_capture_btn, "status": status_label,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
@@ -535,34 +549,9 @@ class AppWindowImagingPageMixin:
             "nudge_state": nudge_state,
         }
 
-        countdown = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
-
-        def _tick_countdown() -> None:
-            import time
-            elapsed = time.monotonic() - countdown["start"]
-            remaining = max(0.0, countdown["duration"] - elapsed)
-            fraction = min(1.0, elapsed / countdown["duration"]) if countdown["duration"] else 1.0
-            frame, total = countdown["frame"], countdown["total"]
-            progress_bar.setValue(int((frame - 1 + fraction) / total * 1000))
-            prefix = f"Frame {frame} of {total} — " if total > 1 else ""
-            status_label.setText(f"{prefix}Exposing… {remaining:0.1f}s left" if remaining > 0 else f"{prefix}Downloading…")
-
-        def on_slew_started(index: int, total: int) -> None:
-            # Mosaic capture only (IMG-180): the re-slew to each pane can take as long as an
-            # exposure, so it gets its own status text rather than looking like a stall.
-            status_label.setText(f"Slewing to pane {index} of {total}…")
-
-        def on_frame_started(frame: int, total: int) -> None:
-            import time
-            countdown["start"], countdown["frame"], countdown["total"] = time.monotonic(), frame, total
-
-        def on_frame_done(_frame: int, _total: int) -> None:
-            # Each frame is shown as it arrives, not only the last one of a series.
-            _refresh_preview()
-            _refresh_histogram()
-            _apply_orientation()
-            save_frame_btn.setEnabled(service.current_frame is not None)
-            save_stack_btn.setEnabled(service.stack_frame_count > 0)
+        def _is_displayed(key) -> bool:
+            from galileo.current_object import pier_key
+            return key == pier_key(self._current_pier)
 
         def _refresh_library_images() -> None:
             images = getattr(getattr(self, "_library_screens", None), "images", None)
@@ -573,15 +562,7 @@ class AppWindowImagingPageMixin:
             except Exception:
                 logger.exception("Could not refresh Library > Images")
 
-        def _end_capture() -> None:
-            timer = countdown["timer"]
-            if timer is not None:
-                timer.stop()
-            capture_btn.setEnabled(True)
-            stop_capture_btn.setEnabled(False)
-            self._imaging_capture_thread = None
-
-        def _series_summary() -> str:
+        def _series_summary(service) -> str:
             done, total = service.series_done, service.series_total
             text = ("Stopped" if service.stop_requested else "Complete") + (f" — {done} of {total} frames" if total > 1 or service.stop_requested else "")
             if service.debayer_note:
@@ -595,31 +576,34 @@ class AppWindowImagingPageMixin:
                 text += f" — {service.active_stacker.summary}"
             return text
 
-        def on_capture_finished() -> None:
-            _end_capture()
-            progress_bar.setValue(1000)
+        def _paint_capture_state(service, key) -> None:
+            """Repaint this page's preview/histogram/buttons from *service*'s own
+            stored state — used both when a Pier's live capture-thread signal
+            fires while it's the one displayed, and when switching TO a Pier
+            (running or idle) so its controls catch up immediately."""
+            if not _is_displayed(key):
+                return
+            _refresh_preview(service)
+            _refresh_histogram(service)
+            _apply_orientation(service)
+            save_frame_btn.setEnabled(service.current_frame is not None)
             save_stack_btn.setEnabled(service.stack_frame_count > 0)
-            summary = _series_summary()
-            status_label.setText(summary)
-            status_label.setToolTip(summary)
-            on_frame_done(0, 0)
-            if service.library_ids:
-                _refresh_library_images()
-            self._window.statusBar().showMessage(summary, 6000)
-
-        def on_capture_failed(message: str) -> None:
-            _end_capture()
-            status_label.setText("Idle")
-            progress_bar.setValue(0)
-            logger.error("Manual capture failed: %s", message)
-            if service.library_ids:
-                _refresh_library_images()
-            self._window.statusBar().showMessage("Capture failed — see log.", 6000)
+            running = self._imaging_capture_threads.get(key) is not None
+            capture_btn.setEnabled(not running)
+            stop_capture_btn.setEnabled(running)
+            if running:
+                total, done = service.series_total, service.series_done
+                progress_bar.setValue(int(done / total * 1000) if total else 0)
+                status_label.setText(f"Frame {done + 1} of {total} — capturing…" if total > 1 else "Capturing…")
+            else:
+                progress_bar.setValue(1000 if service.series_done else 0)
+                status_label.setText(_series_summary(service) if service.series_done or service.stop_requested else "Idle")
 
         def _refresh_mosaic_indicator() -> None:
             # IMG-180: makes it visible, before Capture is pressed, that a mosaic is active and
             # Capture will run the whole thing rather than a single frame (reported as missing —
             # a plain "Capture" button gave no hint a mosaic was about to be shot pane by pane).
+            service = _current_service()
             mosaic = service.active_mosaic
             active = mosaic is not None
             mosaic_indicator.setVisible(active)
@@ -645,7 +629,7 @@ class AppWindowImagingPageMixin:
                     "How many frames Capture takes, one after another, with these settings (IMG-150).")
 
         def _clear_mosaic() -> None:
-            service.active_mosaic = None
+            _current_service().active_mosaic = None
             _refresh_mosaic_indicator()
             self._window.statusBar().showMessage("Mosaic cleared — Capture will take a single frame.", 4000)
 
@@ -653,14 +637,20 @@ class AppWindowImagingPageMixin:
         _refresh_mosaic_indicator()
 
         def do_capture() -> None:
+            from galileo.current_object import pier_key
+            service = _current_service()
+            key = pier_key(self._current_pier)
             service._camera = _selected_camera_backend()
             if service._camera is None:
                 QMessageBox.information(
                     self._window, "No camera connected", self.camera_not_connected_message(),
                 )
                 return
-            if self._imaging_filter_thread is not None:
+            if self._imaging_filter_threads.get(key) is not None:
                 self._window.statusBar().showMessage("Wait for the filter wheel to finish moving.", 4000)
+                return
+            if self._imaging_capture_threads.get(key) is not None:
+                self._window.statusBar().showMessage("A capture is already running on this Pier.", 4000)
                 return
 
             mosaic_mode = service.active_mosaic is not None
@@ -684,15 +674,89 @@ class AppWindowImagingPageMixin:
             service.auto_save_to_library = auto_save_check.isChecked()
             service.live_stack_enabled = live_stack_check.isChecked()
             service.frame_context = self._imaging_frame_context()
-            _use_camera_bayer_pattern(rebuild=False)
+            _use_camera_bayer_pattern(service, rebuild=False)
 
-            import time
-            countdown.update(start=time.monotonic(), duration=duration, frame=1, total=quantity)
-            capture_btn.setEnabled(False)
-            stop_capture_btn.setEnabled(True)
-            progress_bar.setValue(0)
-            status_label.setToolTip("")
-            _tick_countdown()
+            # Everything below is scoped to THIS capture (service/key fixed above) —
+            # so a second capture started on a different Pier gets its own countdown,
+            # its own QTimer and its own signal handlers, none of it shared with this
+            # one. Each handler only paints the shared widgets if this Pier is still
+            # the one displayed; either way it always updates *service*'s own state,
+            # which is what a later switch back to this Pier repaints from.
+            countdown = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
+
+            def _tick_countdown() -> None:
+                if not _is_displayed(key):
+                    return
+                import time
+                elapsed = time.monotonic() - countdown["start"]
+                remaining = max(0.0, countdown["duration"] - elapsed)
+                fraction = min(1.0, elapsed / countdown["duration"]) if countdown["duration"] else 1.0
+                frame, total = countdown["frame"], countdown["total"]
+                progress_bar.setValue(int((frame - 1 + fraction) / total * 1000))
+                prefix = f"Frame {frame} of {total} — " if total > 1 else ""
+                status_label.setText(f"{prefix}Exposing… {remaining:0.1f}s left" if remaining > 0 else f"{prefix}Downloading…")
+
+            def on_slew_started(index: int, total: int) -> None:
+                # Mosaic capture only (IMG-180): the re-slew to each pane can take as long as an
+                # exposure, so it gets its own status text rather than looking like a stall.
+                if _is_displayed(key):
+                    status_label.setText(f"Slewing to pane {index} of {total}…")
+
+            def on_frame_started(frame: int, total: int) -> None:
+                import time
+                countdown["start"], countdown["frame"], countdown["total"] = time.monotonic(), frame, total
+
+            def on_frame_done(_frame: int, _total: int) -> None:
+                # Each frame is shown as it arrives, not only the last one of a series.
+                if not _is_displayed(key):
+                    return
+                _refresh_preview(service)
+                _refresh_histogram(service)
+                _apply_orientation(service)
+                save_frame_btn.setEnabled(service.current_frame is not None)
+                save_stack_btn.setEnabled(service.stack_frame_count > 0)
+
+            def _end_capture() -> None:
+                self._imaging_capture_threads.pop(key, None)
+                if not _is_displayed(key):
+                    return
+                timer = countdown["timer"]
+                if timer is not None:
+                    timer.stop()
+                capture_btn.setEnabled(True)
+                stop_capture_btn.setEnabled(False)
+
+            def on_capture_finished() -> None:
+                _end_capture()
+                summary = _series_summary(service)
+                if service.library_ids:
+                    _refresh_library_images()
+                if _is_displayed(key):
+                    progress_bar.setValue(1000)
+                    save_stack_btn.setEnabled(service.stack_frame_count > 0)
+                    status_label.setText(summary)
+                    status_label.setToolTip(summary)
+                    on_frame_done(0, 0)
+                self._window.statusBar().showMessage(summary, 6000)
+
+            def on_capture_failed(message: str) -> None:
+                _end_capture()
+                logger.error("Manual capture failed: %s", message)
+                if service.library_ids:
+                    _refresh_library_images()
+                if _is_displayed(key):
+                    status_label.setText("Idle")
+                    progress_bar.setValue(0)
+                self._window.statusBar().showMessage("Capture failed — see log.", 6000)
+
+            if _is_displayed(key):
+                import time
+                countdown.update(start=time.monotonic(), duration=duration, frame=1, total=quantity)
+                capture_btn.setEnabled(False)
+                stop_capture_btn.setEnabled(True)
+                progress_bar.setValue(0)
+                status_label.setToolTip("")
+                _tick_countdown()
 
             timer = QTimer(page)
             timer.timeout.connect(_tick_countdown)
@@ -708,12 +772,15 @@ class AppWindowImagingPageMixin:
             thread.frame_done.connect(on_frame_done)
             thread.finished_ok.connect(on_capture_finished)
             thread.failed.connect(on_capture_failed)
-            self._imaging_capture_thread = thread
+            self._imaging_capture_threads[key] = thread
             thread.start()
 
         capture_btn.clicked.connect(do_capture)
 
         def stop_capture() -> None:
+            # Stops whichever Pier is currently displayed's own capture — a
+            # different Pier's in-flight capture is untouched.
+            service = _current_service()
             service.request_stop()
             status_label.setText("Stopping…")
             camera = service._camera
@@ -727,12 +794,13 @@ class AppWindowImagingPageMixin:
         stop_capture_btn.clicked.connect(stop_capture)
 
         def _open_framing() -> None:
-            self._open_framing_dialog(service)
+            self._open_framing_dialog(_current_service())
             _refresh_mosaic_indicator()
 
         framing_btn.clicked.connect(_open_framing)
 
         def save_frame() -> None:
+            service = _current_service()
             if service.current_frame is None:
                 return
             current = self.current_object()
@@ -754,6 +822,7 @@ class AppWindowImagingPageMixin:
         save_frame_btn.clicked.connect(save_frame)
 
         def save_stack_to_file() -> None:
+            service = _current_service()
             path, _ = QFileDialog.getSaveFileName(
                 self._window, "Save Stack", service.stack_filename(), "FITS files (*.fits *.fit)",
             )
@@ -769,6 +838,7 @@ class AppWindowImagingPageMixin:
             self._window.statusBar().showMessage(f"Saved the stack to {path}.", 4000)
 
         def save_stack_to_library() -> None:
+            service = _current_service()
             current = self.current_object()
             service.object_name = current.name if current is not None else ""
             try:
@@ -790,7 +860,7 @@ class AppWindowImagingPageMixin:
         def save_stack() -> None:
             """Ask where the stack should go — the Library files it in the repository, a file
             puts it wherever the user says."""
-            if service.stack_frame_count == 0:
+            if _current_service().stack_frame_count == 0:
                 return
             menu = QMenu(page)
             to_library = menu.addAction("Save to Library")
@@ -805,5 +875,19 @@ class AppWindowImagingPageMixin:
             "save_stack_to_library": save_stack_to_library, "save_stack_to_file": save_stack_to_file,
         })
 
-        _apply_orientation()
+        def _reload_for_pier() -> None:
+            """Repaint this page for the newly-current Pier (registered below into
+            self._device_pages, so a Pier switch's existing reload fan-out in
+            _observatory_pier.py picks it up automatically) — whether it's idle,
+            mid-capture, or just finished, without disturbing any other Pier's
+            own in-flight capture."""
+            from galileo.current_object import pier_key
+            service = _current_service()
+            key = pier_key(self._current_pier)
+            _refresh_mosaic_indicator()
+            _paint_capture_state(service, key)
+
+        self._device_pages["imaging"] = {"reload": _reload_for_pier}
+
+        _apply_orientation(_current_service())
         return page
