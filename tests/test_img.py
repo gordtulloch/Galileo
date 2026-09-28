@@ -1660,6 +1660,181 @@ async def test_tc_img_180_mosaic_capture_stop_ends_it_after_the_current_pane(moc
     assert mock_indi_camera.start_exposure.await_count == 1
 
 
+# ---------------------------------------------------------------------------
+# TC-IMG-180 — live-stacking a mosaic composites panes onto one canvas
+# ---------------------------------------------------------------------------
+
+def test_tc_img_180_mosaic_stacker_places_each_pane_at_its_grid_position():
+    """IMG-160/IMG-180: MosaicStacker composites each pane's frame onto a canvas sized to the
+    whole mosaic, at the row-major grid position its pane index implies."""
+    import asyncio
+    import numpy as np
+    from galileo.livestack import MosaicStacker
+
+    stacker = MosaicStacker(cols=2, rows=2, overlap_pct=0.0)
+    assert stacker.result is None and stacker.frames == 0 and stacker.summary == ""
+
+    for pane_index in (0, 1, 2, 3):
+        frame = np.full((10, 10), float((pane_index + 1) * 10), dtype=np.float32)
+        asyncio.run(stacker.add_async(pane_index, frame, exposure_s=5.0))
+
+    canvas = stacker.result
+    assert canvas.shape == (20, 20)
+    assert canvas[0:10, 0:10].mean() == pytest.approx(10.0)    # pane 0: top-left
+    assert canvas[0:10, 10:20].mean() == pytest.approx(20.0)   # pane 1: top-right
+    assert canvas[10:20, 0:10].mean() == pytest.approx(30.0)   # pane 2: bottom-left
+    assert canvas[10:20, 10:20].mean() == pytest.approx(40.0)  # pane 3: bottom-right
+    assert stacker.frames == 4 and stacker.panes_started == 4
+    assert stacker.total_exposure_s == pytest.approx(20.0)
+    assert "4 of 4 panes" in stacker.summary
+
+
+def test_tc_img_180_mosaic_stacker_overlap_shrinks_the_pane_spacing():
+    """IMG-180: overlapping panes are spaced closer than their own size, so the canvas is smaller
+    than the panes laid edge to edge — the same spacing FramingAssistant.create_mosaic used in
+    degrees, applied here in pixels."""
+    import asyncio
+    import numpy as np
+    from galileo.livestack import MosaicStacker
+
+    stacker = MosaicStacker(cols=2, rows=1, overlap_pct=50.0)
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 1.0, dtype=np.float32)))
+    asyncio.run(stacker.add_async(1, np.full((10, 10), 2.0, dtype=np.float32)))
+
+    # 50% overlap: pane 1 starts halfway across pane 0, so the canvas is 15 wide, not 20.
+    assert stacker.result.shape == (10, 15)
+
+
+def test_tc_img_180_mosaic_stacker_repeat_exposures_of_a_pane_average_together():
+    """IMG-160/IMG-180: a second exposure of the same pane registers onto that pane's own stack
+    and averages in, rather than replacing it or being composited as a separate pane."""
+    import asyncio
+    import numpy as np
+    from galileo.livestack import MosaicStacker
+
+    stacker = MosaicStacker(cols=1, rows=1, overlap_pct=0.0)
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 100.0, dtype=np.float32), exposure_s=5.0))
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 200.0, dtype=np.float32), exposure_s=5.0))
+
+    assert stacker.frames == 2 and stacker.panes_started == 1
+    assert stacker.result.mean() == pytest.approx(150.0)
+
+
+def test_tc_img_180_mosaic_stacker_rejects_a_pane_of_the_wrong_shape():
+    """IMG-180: a pane whose frame doesn't match the mosaic's established pane size (camera binning
+    or ROI changed mid-run) is logged and skipped rather than corrupting the canvas."""
+    import asyncio
+    import numpy as np
+    from galileo.livestack import MosaicStacker
+
+    stacker = MosaicStacker(cols=2, rows=1, overlap_pct=0.0)
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 1.0, dtype=np.float32)))
+    asyncio.run(stacker.add_async(1, np.zeros((5, 5), dtype=np.float32)))
+
+    assert stacker.result.shape == (10, 20)
+    assert stacker.result[0:10, 10:20].mean() == 0.0, "the mismatched pane was not composited"
+
+
+class _PaneValueCamera:
+    """Each exposure returns a frame filled with a value identifying which capture this is, so a
+    composited mosaic canvas can be checked against which pane's value ended up where."""
+
+    def __init__(self, shape=(10, 10)) -> None:
+        self.shape = shape
+        self.calls = 0
+
+    async def start_exposure(self, duration, frame_type="Light", **kwargs) -> None:
+        pass
+
+    async def get_image_array(self):
+        import numpy as np
+        self.calls += 1
+        return np.full(self.shape, float(self.calls * 10), dtype=np.float32)
+
+    def get_temperature(self):
+        return -10.0
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_live_stacked_mosaic_composites_panes_into_one_canvas(imaging_service):
+    """IMG-160/IMG-180: capturing a mosaic with Live Stack on shows the whole mosaic's extent as a
+    single composited canvas, each pane's own frame at its own grid position — not just the one
+    pane most recently exposed, which is what a mosaic capture showed before this."""
+    imaging_service._camera = _PaneValueCamera(shape=(10, 10))
+    imaging_service.auto_save_to_library = False
+    imaging_service.live_stack_enabled = True
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=2, overlap_pct=0.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01)
+
+    canvas = imaging_service.current_frame
+    assert canvas.shape == (20, 20)
+    assert canvas[0:10, 0:10].mean() == pytest.approx(10.0)
+    assert canvas[0:10, 10:20].mean() == pytest.approx(20.0)
+    assert canvas[10:20, 0:10].mean() == pytest.approx(30.0)
+    assert canvas[10:20, 10:20].mean() == pytest.approx(40.0)
+    assert imaging_service.current_preview is not None
+    assert imaging_service.mosaic_stacker.frames == 4
+    assert imaging_service.stack_frame_count == 4
+    assert imaging_service.active_stacker is imaging_service.mosaic_stacker
+    assert "Mosaic 4 of 4 panes" in imaging_service.active_stacker.summary
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_mosaic_capture_without_live_stack_shows_each_pane_alone(mock_indi_camera, imaging_service):
+    """IMG-180: with Live Stack off, a mosaic capture behaves as before — each pane's own frame is
+    shown and analysed on its own, with no mosaic composite built."""
+    import numpy as np
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.full((10, 10), 42.0, dtype=np.float32))
+    imaging_service.auto_save_to_library = False
+    imaging_service.live_stack_enabled = False
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=2, overlap_pct=0.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01)
+
+    assert imaging_service.current_frame.shape == (10, 10)
+    assert imaging_service.mosaic_stacker is None
+    assert imaging_service.stack_frame_count == 0
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_save_stack_saves_the_mosaic_composite_after_a_mosaic_run(imaging_service, tmp_path):
+    """IMG-160/IMG-180: after a live-stacked mosaic capture, Save Stack (active_stacker) saves the
+    mosaic composite rather than the unrelated single-pointing stack."""
+    imaging_service._camera = _PaneValueCamera(shape=(10, 10))
+    imaging_service.auto_save_to_library = False
+    imaging_service.live_stack_enabled = True
+
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=1, overlap_pct=0.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01)
+
+    path = tmp_path / "mosaic.fits"
+    imaging_service.save_stack(path)
+    assert path.exists()
+    from astropy.io import fits
+    with fits.open(path) as hdul:
+        assert hdul[0].data.shape == (10, 20)
+        assert hdul[0].header["NCOMBINE"] == 2
+
+
 @pytest.mark.requirement("TC-IMG-180")
 @pytest.mark.priority("MVP")
 def test_tc_img_180_capture_button_shows_a_mosaic_is_active(window):
@@ -1727,21 +1902,26 @@ def _skewed_frame():
 
 @pytest.mark.requirement("TC-IMG-190")
 @pytest.mark.priority("P2")
-def test_tc_img_190_default_level_matches_the_original_fixed_clip():
-    """IMG-190: DEFAULT_STRETCH_LEVEL reproduces the preview's original fixed 0.5%/99.5% clip, so a
-    user who never touches the slider sees the same preview as before it existed."""
+def test_tc_img_190_stretch_level_maps_to_a_half_percent_wide_clip_range():
+    """IMG-190: the slider's full 0..100 range spans 0..2.5% clipped from each tail — halved from
+    the 0..5% first tried, which testing found too coarse (every useful setting sat within the
+    first couple of clicks). DEFAULT_STRETCH_LEVEL is a couple of clicks in on that finer scale."""
     import numpy as np
     from galileo.ui.imaging import _auto_stretch, DEFAULT_STRETCH_LEVEL
+
+    assert DEFAULT_STRETCH_LEVEL == 2
 
     data = _skewed_frame()
     default_result = _auto_stretch(data, DEFAULT_STRETCH_LEVEL)
 
     d = data.astype(np.float32)
-    lo, hi = np.percentile(d, 0.5), np.percentile(d, 99.5)
+    margin = DEFAULT_STRETCH_LEVEL / 40.0
+    lo, hi = np.percentile(d, margin), np.percentile(d, 100.0 - margin)
     expected = np.clip((d - lo) / (hi - lo + 1e-9), 0, 1)
     expected = (expected * 255).astype(np.uint8)
 
     assert np.array_equal(default_result, expected)
+    assert not np.array_equal(_auto_stretch(data, 0), _auto_stretch(data, 100))
 
 
 @pytest.mark.requirement("TC-IMG-190")

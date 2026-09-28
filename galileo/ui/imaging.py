@@ -14,7 +14,7 @@ from pathlib import Path
 from galileo.core.compute import run_cpu
 from galileo.current_object import safe_file_stem
 from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN, debayer
-from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker
+from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker, MosaicStacker
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,10 @@ DEFAULT_GAIN = 110      # what the Imaging page's Gain field starts at (IMG-150)
 
 # Auto-stretch slider (IMG-190): 0..100, where 0 clips almost nothing of each tail (a flat,
 # close-to-linear preview) and 100 clips the most (the highest-contrast, most "stretched" look).
-# The default reproduces the fixed 0.5%/99.5% clip this preview used before the slider existed,
-# so a user who never touches it sees no change.
-DEFAULT_STRETCH_LEVEL = 10
+# The full range was found by testing to be too coarse — useful settings all sat within the first
+# few clicks — so _auto_stretch's percentile margin only spans half of what it first did, and the
+# default sits at what testing found to be a good, natural-looking setting on that halved scale.
+DEFAULT_STRETCH_LEVEL = 2
 
 PORTRAIT = "portrait"
 LANDSCAPE = "landscape"
@@ -133,6 +134,9 @@ class ImagingService:
         # mean, so the displayed image builds up instead of each exposure replacing the last.
         self.live_stack_enabled: bool = False
         self.stacker = LiveStacker()
+        # A mosaic capture's stack (IMG-180): each pane's own running stack composited onto one
+        # canvas at its grid position, fresh per mosaic capture — None until the first one runs.
+        self.mosaic_stacker: MosaicStacker | None = None
         self.stack_started = None              # when the stack's first sub began, for its DATE-OBS
         # The FITS sample format saved frames are written in (IMG-170, Options > Imaging).
         # "auto" (the default) is the pre-existing behaviour; loaded fresh per instance so a
@@ -297,7 +301,16 @@ class ImagingService:
         ``(index, count)`` before each re-slew, mirroring *on_frame_start*/*on_frame_done*
         around each exposure. Returns the catalog ids of the frames added, across every pane —
         stopping (``request_stop``) ends the series after the exposure in progress, same as
-        ``capture_series``."""
+        ``capture_series``.
+
+        With live stacking on (IMG-160/IMG-180), each pane's frame is registered onto that pane's
+        own running stack and composited into a mosaic-sized canvas at its grid position, which
+        becomes the displayed frame — so the preview (and its statistics/histogram) show the whole
+        mosaic's extent filling in pane by pane, rather than one pane's own frame at a time. Unlike
+        :meth:`capture_series`, this has no minimum-frame-count gate: a mosaic's point is the
+        panes' geometry, not building signal-to-noise on one pointing, so it composites from the
+        very first exposure. Each individual sub still goes to the Library; the mosaic composite
+        is saved separately with Save Stack, same as a single-pointing stack."""
         if self.active_mosaic is None:
             raise ValueError("No mosaic is defined — define one from the Framing Assistant first.")
         if self._mount is None:
@@ -308,12 +321,18 @@ class ImagingService:
         from galileo.tracking import wait_for_slew
         import datetime as _dt
 
-        panels = {p.pane_index: p for p in self.active_mosaic.panels}
-        steps = mosaic_capture_order(self.active_mosaic, max(1, int(exposures_per_pane)))
+        mosaic = self.active_mosaic
+        panels = {p.pane_index: p for p in mosaic.panels}
+        steps = mosaic_capture_order(mosaic, max(1, int(exposures_per_pane)))
         count = len(steps)
         self.stop_requested = False
         self.series_total, self.series_done = count, 0
         self.library_ids, self.library_note = [], ""
+
+        stacking = self.live_stack_enabled
+        if stacking:
+            self.mosaic_stacker = MosaicStacker(mosaic.cols, mosaic.rows, mosaic.overlap_pct)
+            self.stack_started = None
 
         for index, step in enumerate(steps, start=1):
             if self.stop_requested:
@@ -331,17 +350,35 @@ class ImagingService:
             if on_frame_start is not None:
                 on_frame_start(index, count)
             try:
-                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None)
+                # When stacking, it's the mosaic composite that gets shown and measured, not each pane's sub.
+                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
+                                               analyse=not stacking)
             except Exception:
                 if self.stop_requested:
                     break
                 raise
             self.series_done = index
+            # The sub is what goes to the Library; the mosaic composite is kept separately.
             if self.auto_save_to_library:
                 self._auto_save_to_library(index)
+            if stacking:
+                await self._stack_current_mosaic_pane(step.pane_index)
             if on_frame_done is not None:
                 on_frame_done(index, count)
         return list(self.library_ids)
+
+    async def _stack_current_mosaic_pane(self, pane_index: int) -> None:
+        """Add the frame just captured to pane *pane_index*'s own running stack within the active
+        mosaic composite, and show the whole composited canvas in the frame's place — so the
+        preview, statistics and histogram track the growing mosaic rather than just that pane."""
+        assert self.mosaic_stacker is not None
+        if self.stack_started is None:
+            self.stack_started = self.last_shot.get("started")
+        canvas = await self.mosaic_stacker.add_async(pane_index, self.current_frame,
+                                                      self.last_shot.get("duration", 0.0))
+        if canvas is not None:
+            self.current_frame = canvas
+            await self._analyse_current_frame()
 
     async def _stack_current_frame(self) -> None:
         """Add the frame just captured to the live stack and show the stack in its place."""
@@ -353,40 +390,51 @@ class ImagingService:
             self.current_frame = stacked
             await self._analyse_current_frame()
 
-    # --- The stack (IMG-160) ----------------------------------------------
+    # --- The stack (IMG-160, IMG-180) --------------------------------------
+
+    @property
+    def active_stacker(self) -> LiveStacker | MosaicStacker:
+        """Whichever stack currently holds frames: the mosaic composite from the most recent
+        mosaic capture, or the single-pointing stack from ``capture_series``, whichever has data.
+        A mosaic capture always takes priority once it has started one, since ``capture_series``
+        and ``capture_mosaic`` are never run at once and the mosaic composite is what a mosaic's
+        Save Stack should mean."""
+        if self.mosaic_stacker is not None and self.mosaic_stacker.frames:
+            return self.mosaic_stacker
+        return self.stacker
 
     @property
     def stack_frame_count(self) -> int:
-        return self.stacker.frames
+        return self.active_stacker.frames
 
     def stack_metadata(self) -> dict:
         """The header for the stack: the last sub's, with the exposure cards describing the stack —
         ``EXPTIME`` stays the single-sub exposure (which is what the Library files by), with the
         integration time in ``EXPTOTAL`` and the number of frames in ``NCOMBINE``."""
         meta = self.frame_metadata()
-        meta["frames_combined"] = self.stacker.frames
-        meta["total_exposure_s"] = self.stacker.total_exposure_s
+        meta["frames_combined"] = self.active_stacker.frames
+        meta["total_exposure_s"] = self.active_stacker.total_exposure_s
         if self.stack_started is not None:
             meta["date_obs_utc"] = _fits_time(self.stack_started)      # the stack covers from the first sub
         return meta
 
     def save_stack(self, path: Path | str) -> None:
         """Write the stack to *path* as FITS, with the stack's own header (IMG-160)."""
-        if self.stacker.result is None:
+        if self.active_stacker.result is None:
             raise ValueError("There is no stack to save.")
-        _save_fits(self.stacker.result, Path(path), self.object_name, self.stack_metadata(), self.bitpix)
+        _save_fits(self.active_stacker.result, Path(path), self.object_name, self.stack_metadata(), self.bitpix)
 
     def stack_filename(self) -> str:
         """A name for the stack, e.g. ``M_31_stack_12x30s_20260921T213045.fits``."""
         exposure = self.last_shot.get("duration", 0.0)
-        return (f"{self.file_stem}_stack_{self.stacker.frames}x{exposure:g}s_"
+        return (f"{self.file_stem}_stack_{self.active_stacker.frames}x{exposure:g}s_"
                 f"{datetime.datetime.now():%Y%m%dT%H%M%S}.fits")
 
     def save_stack_to_library(self) -> str | None:
         """Write the stack to the scratch folder and register it in the Library, which files it in
         the repository. Returns its catalog id, or ``None`` if it was not registered (the reason is
         in ``library_note``)."""
-        if self.stacker.result is None:
+        if self.active_stacker.result is None:
             raise ValueError("There is no stack to save.")
         self.library_note = ""
         meta = self.stack_metadata()
@@ -394,7 +442,7 @@ class ImagingService:
             meta["object"] = "Unknown"
             self.library_note = "No current object, so the stack was filed under 'Unknown'."
         path = self._scratch_folder() / self.stack_filename()
-        _save_fits(self.stacker.result, path, self.object_name, meta, self.bitpix)
+        _save_fits(self.active_stacker.result, path, self.object_name, meta, self.bitpix)
         if not path.exists():
             self.library_note = "The stack could not be written to the scratch folder — see the log."
             return None
@@ -667,8 +715,7 @@ def _auto_stretch(data, stretch_level: int = DEFAULT_STRETCH_LEVEL):
     tail is clipped to black/white before the remainder is stretched to fill
     the full range — higher clips more, giving a brighter, higher-contrast
     but more washed-out preview; lower keeps more of the original dynamic
-    range. ``DEFAULT_STRETCH_LEVEL`` reproduces this function's original
-    fixed 0.5%/99.5% clip."""
+    range."""
     try:
         import numpy as np
         if data is None:
@@ -676,7 +723,7 @@ def _auto_stretch(data, stretch_level: int = DEFAULT_STRETCH_LEVEL):
         d = data.astype(np.float32)
         if d.ndim == 3:
             return np.stack([_auto_stretch(d[..., i], stretch_level) for i in range(d.shape[2])], axis=-1)
-        margin = max(0, min(100, stretch_level)) / 20.0   # 0 .. 5.0% clipped from each tail
+        margin = max(0, min(100, stretch_level)) / 40.0   # 0 .. 2.5% clipped from each tail
         lo, hi = float(np.percentile(d, margin)), float(np.percentile(d, 100.0 - margin))
         stretched = np.clip((d - lo) / (hi - lo + 1e-9), 0, 1)
         return (stretched * 255).astype(np.uint8)

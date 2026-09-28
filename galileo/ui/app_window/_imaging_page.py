@@ -591,8 +591,8 @@ class AppWindowImagingPageMixin:
                 text += f" — {added} added to the Library" if added else " — none added to the Library"
                 if service.library_note:
                     text += f". {service.library_note}"
-            if service.stacker.summary:
-                text += f" — {service.stacker.summary}"
+            if service.active_stacker.summary:
+                text += f" — {service.active_stacker.summary}"
             return text
 
         def on_capture_finished() -> None:

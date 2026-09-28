@@ -13,6 +13,11 @@ and so copes with field rotation. Where it is not installed, or cannot find a tr
 particular frame, the stacker falls back to whole-pixel translation measured by phase correlation
 — enough for the guiding drift that dominates a short run, but not for rotation. Which one was
 used is recorded in :attr:`LiveStacker.method` rather than left for the user to guess.
+
+:class:`MosaicStacker` (IMG-180) extends this to a mosaic capture: one :class:`LiveStacker` per
+pane, each pane's result composited onto a canvas sized to the whole mosaic, at the grid position
+its pane index implies — so live-stacking a mosaic shows the whole mosaic's extent building up
+pane by pane, rather than one pane's own frame at a time.
 """
 
 from __future__ import annotations
@@ -201,3 +206,98 @@ class LiveStacker:
         if self.rejected:
             text += f"; {self.rejected} not stacked"
         return text
+
+
+class MosaicStacker:
+    """Live-stacks a mosaic capture (IMG-160, IMG-180): each pane gets its own :class:`LiveStacker`
+    — so repeat exposures of the same pane still register onto each other and average down noise —
+    and each pane's running result is composited onto one canvas sized to the whole mosaic's
+    footprint, at the grid position its pane index implies. The result is what the Imaging tab
+    shows as the capture runs: the full mosaic's extent from the first exposure on, filling in
+    pane by pane, rather than one pane's frame at a time replacing the last.
+
+    Panels are placed edge-to-edge at ``pane size * (1 - overlap_pct / 100)`` spacing — the same
+    spacing :func:`galileo.planning.framing.FramingAssistant.create_mosaic` used to lay out the
+    panes' sky positions in the first place, assuming pane pixels and sky degrees scale the same
+    way (true whenever every pane comes from the optical train the mosaic was planned against,
+    which is the only case this drives). Pane index increases in the same row-major, left-to-right
+    order ``create_mosaic`` assigns increasing RA to; this does not correct for a camera train
+    that mirrors or rotates that sense on-sky, matching this codebase's existing, unvalidated
+    caveat on framing-overlay orientation (``galileo.ui.app_window._widgets._FramingCanvas``). The
+    overlap band itself is not blended: the most recently written pane's pixels win there, since
+    this composite is a live-capture preview, not the final stacked product — blending overlaps
+    for a deliverable mosaic is a separate, later job over the completed subs, not this class's."""
+
+    def __init__(self, cols: int, rows: int, overlap_pct: float) -> None:
+        self.cols = max(1, int(cols))
+        self.rows = max(1, int(rows))
+        self.overlap_pct = overlap_pct
+        self._panes: dict[int, LiveStacker] = {}
+        self._pane_shape: tuple[int, ...] | None = None
+        self._step: tuple[int, int] | None = None
+        self._canvas: np.ndarray | None = None
+
+    def reset(self) -> None:
+        """Forget every pane's stack and the canvas, so the next frame starts a new mosaic."""
+        self.__init__(self.cols, self.rows, self.overlap_pct)
+
+    async def add_async(self, pane_index: int, frame: np.ndarray | None, exposure_s: float = 0.0) -> np.ndarray | None:
+        """Register *frame* onto pane *pane_index*'s own running stack (off the calling thread's
+        GIL via ``LiveStacker.add_async``) and composite that pane's updated result onto the
+        canvas. Returns the canvas, or ``None`` if nothing has been added yet."""
+        stacker = self._panes.setdefault(pane_index, LiveStacker())
+        added = await stacker.add_async(frame, exposure_s)
+        if added and stacker.result is not None:
+            self._composite(pane_index, stacker.result)
+        return self._canvas
+
+    def _composite(self, pane_index: int, pane_image: np.ndarray) -> None:
+        """Place *pane_image* — pane *pane_index*'s own stacked result — into the canvas at its
+        grid position, allocating the canvas from the first pane's shape if this is the first."""
+        if self._pane_shape is None:
+            self._pane_shape = pane_image.shape
+            height, width = self._pane_shape[:2]
+            step_y = max(1, round(height * (1.0 - self.overlap_pct / 100.0)))
+            step_x = max(1, round(width * (1.0 - self.overlap_pct / 100.0)))
+            self._step = (step_y, step_x)
+            canvas_h = height + (self.rows - 1) * step_y
+            canvas_w = width + (self.cols - 1) * step_x
+            shape = (canvas_h, canvas_w) if pane_image.ndim == 2 else (canvas_h, canvas_w, pane_image.shape[2])
+            self._canvas = np.zeros(shape, dtype=np.float32)
+        elif pane_image.shape != self._pane_shape:
+            logger.warning("Mosaic stack: pane %d is %s, not the mosaic's %s panes; not composited.",
+                           pane_index, pane_image.shape, self._pane_shape)
+            return
+        assert self._canvas is not None and self._step is not None
+        row, col = divmod(pane_index, self.cols)
+        height, width = self._pane_shape[:2]
+        y0, x0 = row * self._step[0], col * self._step[1]
+        self._canvas[y0:y0 + height, x0:x0 + width] = pane_image
+
+    @property
+    def result(self) -> np.ndarray | None:
+        """The mosaic canvas so far, or ``None`` before the first pane has a result."""
+        return self._canvas
+
+    @property
+    def frames(self) -> int:
+        """Frames stacked across every pane."""
+        return sum(stacker.frames for stacker in self._panes.values())
+
+    @property
+    def total_exposure_s(self) -> float:
+        """Integration time across every pane."""
+        return sum(stacker.total_exposure_s for stacker in self._panes.values())
+
+    @property
+    def panes_started(self) -> int:
+        """How many of the mosaic's panes have at least one frame stacked."""
+        return sum(1 for stacker in self._panes.values() if stacker.frames)
+
+    @property
+    def summary(self) -> str:
+        """One line on what the mosaic composite holds, for the page to show."""
+        if not self._panes:
+            return ""
+        return (f"Mosaic {self.panes_started} of {self.cols * self.rows} panes, "
+                f"{self.frames} frames, {self.total_exposure_s:g}s total")
