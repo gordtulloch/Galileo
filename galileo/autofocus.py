@@ -321,6 +321,15 @@ def _to_2d(frame):
 def _measure_stars(frame) -> tuple[float, int]:
     """``(hfr, star_count)`` for *frame*, detecting stars with SEP if available.
 
+    HFR is the classic autofocus "half flux radius" — the flux-weighted mean
+    distance of background-subtracted pixels from the star's centroid, out to
+    an outer aperture (see lost-infinity.com's HFD write-up: HFR = Σ(Vᵢ·dᵢ)/ΣVᵢ,
+    HFD = 2·HFR) — not ``sep.flux_radius``'s curve-of-growth radius. The two
+    aren't the same size for a defocused, near-uniform "donut" star profile,
+    and ``sep.flux_radius`` was coming out roughly an order of magnitude
+    smaller than the values focusing software conventionally reports (and
+    than the V-curve plot is scaled for).
+
     The HFR falls back to 2.0 when no stars are found and to a crude contrast
     estimate when SEP is unavailable or fails; the star count is 0 in both cases."""
     import numpy as np
@@ -333,14 +342,20 @@ def _measure_stars(frame) -> tuple[float, int]:
         objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
         if len(objects) == 0:
             return 2.0, 0
-        # True half-flux radius (the radius enclosing 50% of each object's flux),
-        # not the "a"/"b" shape-fit axes — those are ~1-2px even for a defocused
-        # star and were producing sub-pixel "HFR" values an order of magnitude
-        # too small.
-        radii, _flags = sep.flux_radius(
-            data_sub, objects["x"], objects["y"], 6.0 * objects["a"], 0.5,
-            normflux=objects["flux"], subpix=5,
-        )
+        height, width = data_sub.shape
+        radii = []
+        for x, y, a in zip(objects["x"], objects["y"], objects["a"]):
+            r_outer = min(max(6.0 * float(a), 6.0), 40.0)
+            x0, x1 = max(0, int(x - r_outer)), min(width, int(x + r_outer) + 1)
+            y0, y1 = max(0, int(y - r_outer)), min(height, int(y + r_outer) + 1)
+            yy, xx = np.mgrid[y0:y1, x0:x1]
+            dist = np.hypot(xx - x, yy - y)
+            values = np.clip(data_sub[y0:y1, x0:x1][dist <= r_outer], 0.0, None)
+            total = values.sum()
+            if total > 0:
+                radii.append(float((values * dist[dist <= r_outer]).sum() / total))
+        if not radii:
+            return 2.0, len(objects)
         return float(np.median(radii)), len(objects)
     except Exception:
         logger.exception("Star detection failed; falling back to a contrast-based HFR estimate.")
