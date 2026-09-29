@@ -348,7 +348,7 @@ class SolvePage(QWidget):
             "Pier's current object (picked in the Star Atlas); with none, it is where the mount was "
             "pointing when Capture & Solve began.")
         self.action_radios[SolveAction.NOTHING].setToolTip("Only solve; leave the mount alone.")
-        self.action_radios[SolveAction.NOTHING].setChecked(True)
+        self.action_radios[SolveAction.SLEW_TO_TARGET].setChecked(True)
         for radio in self.action_radios.values():
             layout.addWidget(radio)
         self.target_label = QLabel()

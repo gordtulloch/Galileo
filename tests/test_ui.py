@@ -37,11 +37,56 @@ def test_tc_ui_010_stylesheet_font_sizes_are_in_points_not_pixels():
 
     theme_mod = pytest.importorskip("galileo.ui.theme")
     mgr = theme_mod.ThemeManager()
-    for theme in (theme_mod.Theme.DARK, theme_mod.Theme.LIGHT):
+    for theme in (theme_mod.Theme.DARK, theme_mod.Theme.LIGHT, theme_mod.Theme.RED):
         mgr.set_theme(theme)
         sheet = mgr.stylesheet()
         assert re.search(r"font-size:\s*[\d.]+pt", sheet), "expected the theme to size fonts in points"
         assert not re.search(r"font-size:\s*[\d.]+px", sheet)
+
+
+# ---------------------------------------------------------------------------
+# TC-UI-011
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-UI-011")
+@pytest.mark.priority("P2")
+def test_tc_ui_011_red_night_vision_theme_selectable():
+    """UI-011: Provide a red night-vision color theme, selectable by the user."""
+    theme_mod = pytest.importorskip("galileo.ui.theme")
+    mgr = theme_mod.ThemeManager()
+
+    assert theme_mod.Theme.RED in mgr.available_themes()
+
+    mgr.set_theme(theme_mod.Theme.RED)
+    assert mgr.current_theme == theme_mod.Theme.RED
+
+
+@pytest.mark.requirement("TC-UI-011")
+@pytest.mark.priority("P2")
+def test_tc_ui_011_red_theme_has_no_green_or_blue_channel():
+    """UI-011: The red theme's tokens (and its accent) carry no green/blue component,
+    so nothing rendered under it can reset a dark-adapted eye."""
+    import re
+
+    theme_mod = pytest.importorskip("galileo.ui.theme")
+    mgr = theme_mod.ThemeManager()
+    mgr.set_accent_color("#1E90FF")  # a deliberately non-red accent preference
+    mgr.set_theme(theme_mod.Theme.RED)
+
+    for token, value in mgr.palette().items():
+        m = re.fullmatch(r"#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})", value)
+        assert m, f"palette token {token!r} is not a hex color: {value!r}"
+        assert m.group(2) == "00" and m.group(3) == "00", (
+            f"palette token {token!r} = {value!r} has a non-zero green/blue component"
+        )
+
+    accent = mgr.accent_color
+    m = re.fullmatch(r"#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})", accent)
+    assert m, f"accent is not a hex color: {accent!r}"
+    assert m.group(2) == "00" and m.group(3) == "00", (
+        f"red theme accent {accent!r} has a non-zero green/blue component "
+        "-- the user's saved accent preference must not leak through"
+    )
 
 
 # ---------------------------------------------------------------------------

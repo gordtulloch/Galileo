@@ -200,6 +200,7 @@ class FocusPage(QWidget):
     _frame = Signal(object, object)
     _complete = Signal(object, object)
     _run_finished = Signal(object)
+    _manual_frame = Signal(object, object)
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -216,6 +217,16 @@ class FocusPage(QWidget):
         self._active: dict = {}
         self._services: dict = {}        # pier key -> the AutofocusService running there, if any
         self._last_run: dict = {}
+        # Manual-focus capture/loop, independent of an autofocus sweep. ``_manual_active``
+        # is set on the worker thread for the duration of a single Capture or a running
+        # Loop; ``_manual_stop`` is the Loop's own stop flag, checked between exposures.
+        self._manual_active: dict = {}
+        self._manual_stop: dict = {}
+        # True while ``reload()`` is setting the step/points/exposure/backlash spin boxes from a
+        # saved Pier's settings, so those set-calls' own ``valueChanged`` signals don't immediately
+        # save the just-loaded values right back (and, for a Pier with none saved yet, don't create
+        # a settings row out of the defaults just by looking at it).
+        self._loading_settings = False
         self._build()
         self._sync_buttons()
         self.reload()   # seed from the already-selected Pier's saved defaults, if any
@@ -224,6 +235,7 @@ class FocusPage(QWidget):
         self._frame.connect(self._on_frame)
         self._complete.connect(self._on_complete)
         self._run_finished.connect(self._on_run_finished)
+        self._manual_frame.connect(self._on_manual_frame)
         bus = get_bus()
         handlers = (
             (FocusStartedEvent, self._on_started_event),
@@ -284,12 +296,14 @@ class FocusPage(QWidget):
         self.step_spin.setValue(AutofocusParams.step_size)
         self.step_spin.setSuffix(" steps")
         self.step_spin.setToolTip("Focuser steps between successive exposures.")
+        self.step_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.step_spin, 1, 1)
         grid.addWidget(QLabel("Points:"), 1, 2)
         self.points_spin = QSpinBox()
         self.points_spin.setRange(3, 41)
         self.points_spin.setValue(AutofocusParams.num_points)
         self.points_spin.setToolTip("Number of exposures across the sweep, centred on the current position.")
+        self.points_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.points_spin, 1, 3)
         grid.addWidget(QLabel("Backlash:"), 2, 0)
         self.backlash_spin = QSpinBox()
@@ -300,6 +314,7 @@ class FocusPage(QWidget):
             "Overshoot then return by this many steps before every focuser move during a run, so "
             "mechanical backlash is taken up the same way each time (0 disables compensation)."
         )
+        self.backlash_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.backlash_spin, 2, 1)
         self.autofocus_btn = QPushButton("Auto Focus")
         self.autofocus_btn.setObjectName("AccentButton")
@@ -323,17 +338,35 @@ class FocusPage(QWidget):
         self.exposure_spin.setValue(AutofocusParams.exposure_s)
         self.exposure_spin.setSuffix(" s")
         self.exposure_spin.setToolTip("Exposure time of each frame measured during the sweep.")
+        self.exposure_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.exposure_spin, 1, 1)
         box.addWidget(camera)
 
-        tools = QGroupBox("Tools")
-        row = QHBoxLayout(tools)
-        for text in ("Aberration Inspector", "CFZ", "Advisor"):
-            button = QPushButton(text)
-            button.setEnabled(False)
-            button.setToolTip("Not implemented yet.")
-            row.addWidget(button)
-        box.addWidget(tools)
+        manual = QGroupBox("Manual Focus")
+        grid = QGridLayout(manual)
+        grid.addWidget(QLabel("Position:"), 0, 0)
+        self.manual_position_spin = QSpinBox()
+        self.manual_position_spin.setRange(0, 1_000_000)
+        self.manual_position_spin.setToolTip("Focuser position to move to.")
+        grid.addWidget(self.manual_position_spin, 0, 1)
+        self.manual_move_btn = QPushButton("Move")
+        self.manual_move_btn.setToolTip("Move the focuser to the position above.")
+        self.manual_move_btn.clicked.connect(self.manual_move)
+        grid.addWidget(self.manual_move_btn, 0, 2)
+        self.capture_btn = QPushButton("Capture")
+        self.capture_btn.setToolTip("Take a single exposure and measure its HFR.")
+        self.capture_btn.clicked.connect(self.manual_capture)
+        grid.addWidget(self.capture_btn, 1, 0)
+        self.loop_btn = QPushButton("Loop")
+        self.loop_btn.setToolTip("Repeat exposures so focus can be fine-tuned by eye.")
+        self.loop_btn.clicked.connect(self.start_loop)
+        grid.addWidget(self.loop_btn, 1, 1)
+        self.manual_stop_btn = QPushButton("Stop")
+        self.manual_stop_btn.setToolTip("Stop the exposure loop.")
+        self.manual_stop_btn.setEnabled(False)
+        self.manual_stop_btn.clicked.connect(self.stop_loop)
+        grid.addWidget(self.manual_stop_btn, 1, 2)
+        box.addWidget(manual)
 
         box.addStretch(1)
         return column
@@ -468,18 +501,30 @@ class FocusPage(QWidget):
     def clear(self) -> None:
         """Forget the last run's frame, statistics and curve. A run in progress is left alone."""
         key = self._pier_key()
-        if self._active.get(key):
+        if self._busy(key):
             return
         self._last_run.pop(key, None)
         self._reset_display()
         self.status_label.setText(_IDLE_STATUS)
 
+    def _busy(self, key) -> bool:
+        """Whether *key*'s Pier has an autofocus sweep or a manual capture/loop in progress."""
+        return (
+            self._active.get(key, False)
+            or self._services.get(key) is not None
+            or self._manual_active.get(key, False)
+        )
+
     def _sync_buttons(self) -> None:
         key = self._pier_key()
-        active = self._active.get(key, False)
-        self.autofocus_btn.setEnabled(not active and self._services.get(key) is None)
+        busy = self._busy(key)
+        self.autofocus_btn.setEnabled(not busy)
         self.stop_btn.setEnabled(self._services.get(key) is not None)
-        self.clear_btn.setEnabled(not active)
+        self.clear_btn.setEnabled(not busy)
+        self.manual_move_btn.setEnabled(not busy)
+        self.capture_btn.setEnabled(not busy)
+        self.loop_btn.setEnabled(not busy)
+        self.manual_stop_btn.setEnabled(self._manual_active.get(key, False))
 
     # --- Starting and stopping a run -----------------------------------------
 
@@ -539,6 +584,108 @@ class FocusPage(QWidget):
         self._services.pop(key, None)
         self._sync_buttons()
 
+    # --- Manual focus (Move / Capture / Loop) --------------------------------
+
+    def manual_move(self) -> None:
+        key = self._pier_key()
+        focuser = self._focuser()
+        if focuser is None:
+            QMessageBox.information(
+                self._window._window, "Focuser not connected",
+                "Connect a focuser on the Equipment page first.",
+            )
+            return
+        if self._busy(key):
+            return
+        position = self.manual_position_spin.value()
+        from galileo.autofocus import AutofocusService
+        service = AutofocusService(focuser=focuser, backlash_compensation=self.backlash_spin.value(), pier_key=key)
+        logger.info("Manual focus: move requested to position %d.", position)
+        import asyncio
+        try:
+            asyncio.run(service.move_to(position))
+        except Exception:
+            logger.exception("Manual focus move failed")
+            self.status_label.setText("Move failed — see log.")
+            return
+        self.status_label.setText(f"Moved to position {position}.")
+        self.position_label.setText(str(position))
+
+    def manual_capture(self) -> None:
+        self._start_manual(loop=False)
+
+    def start_loop(self) -> None:
+        self._start_manual(loop=True)
+
+    def _start_manual(self, loop: bool) -> None:
+        key = self._pier_key()
+        camera = self._camera()
+        if camera is None:
+            QMessageBox.information(
+                self._window._window, "Camera not connected",
+                "Connect a camera on the Equipment page first.",
+            )
+            return
+        if self._busy(key):
+            return
+        focuser = self._focuser()
+        from galileo.autofocus import AutofocusService
+        service = AutofocusService(camera=camera, exposure_s=self.exposure_spin.value(), pier_key=key)
+        self._manual_stop[key] = threading.Event()
+        self._manual_active[key] = True
+        self._sync_buttons()
+        threading.Thread(
+            target=self._manual_worker, args=(service, key, focuser, loop),
+            name="manual-focus", daemon=True,
+        ).start()
+
+    def _manual_worker(self, service, key, focuser, loop: bool) -> None:
+        import asyncio
+        stop_event = self._manual_stop[key]
+        try:
+            while True:
+                try:
+                    result = asyncio.run(service.measure_once())
+                except Exception:
+                    logger.exception("Manual focus capture failed")
+                    break
+                if result is not None:
+                    frame, hfr, fwhm, star_count = result
+                    position = getattr(focuser, "position", None) if focuser is not None else None
+                    self._manual_frame.emit(key, {
+                        "position": position, "hfr": hfr, "fwhm": fwhm,
+                        "star_count": star_count, "preview": _preview(frame),
+                    })
+                if not loop or stop_event.is_set():
+                    break
+        finally:
+            self._manual_active[key] = False
+            self._run_finished.emit(key)
+
+    def stop_loop(self) -> None:
+        stop_event = self._manual_stop.get(self._pier_key())
+        if stop_event is not None:
+            stop_event.set()
+            self.status_label.setText("Stopping — waiting for the current exposure to finish…")
+
+    def _on_manual_frame(self, key, payload: dict) -> None:
+        run = self._last_run.setdefault(key, {
+            "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
+        })
+        if payload["preview"] is not None:
+            run["preview"] = payload["preview"]
+        run["stats"] = f"Stars: {payload['star_count']}  HFR: {payload['hfr']:.2f}  FWHM: {payload['fwhm']:.2f}"
+        run["position"] = payload["position"]
+        position_text = "—" if payload["position"] is None else str(payload["position"])
+        run["status"] = f"Manual focus — position {position_text}, HFR {payload['hfr']:.2f}."
+        if key != self._pier_key():
+            return
+        if payload["preview"] is not None:
+            self.image_view.set_image(payload["preview"])
+        self.stats_label.setText(run["stats"])
+        self.position_label.setText(position_text)
+        self.status_label.setText(run["status"])
+
     # --- Device readout ------------------------------------------------------
 
     def _refresh_devices(self) -> None:
@@ -554,7 +701,12 @@ class FocusPage(QWidget):
             self.temperature_label.setText("—")
             return
         if not self._active.get(self._pier_key(), False):
-            self.position_label.setText(str(getattr(focuser, "position", "—")))
+            position = getattr(focuser, "position", None)
+            self.position_label.setText("—" if position is None else str(position))
+            if position is not None and not self.manual_position_spin.hasFocus():
+                self.manual_position_spin.blockSignals(True)
+                self.manual_position_spin.setValue(int(position))
+                self.manual_position_spin.blockSignals(False)
         temperature = getattr(focuser, "temperature", None)
         self.temperature_label.setText(f"{temperature:.1f} °C" if isinstance(temperature, (int, float)) else "—")
 
@@ -562,19 +714,44 @@ class FocusPage(QWidget):
         super().showEvent(event)
         self._refresh_devices()
 
-    # --- Per-Pier settings (Options > Focus, FOC-070) -------------------------
+    # --- Per-Pier settings (FOC-070) -----------------------------------------
 
     def reload(self) -> None:
         """Re-seed the run controls from the newly selected Pier's saved autofocus
-        defaults (Options > Focus), and repaint the frame/plot/stats/status/buttons
-        for whichever Pier is now selected — idle, mid-run, or just finished."""
+        defaults (edited here or on Options > Focus — the two stay in sync), and
+        repaint the frame/plot/stats/status/buttons for whichever Pier is now
+        selected — idle, mid-run, or just finished."""
         key = self._pier_key()
         if not self._active.get(key, False):
             from galileo.observatory import get_autofocus_params
             params = get_autofocus_params(self._window._current_pier)
-            self.step_spin.setValue(params.step_size)
-            self.points_spin.setValue(params.num_points)
-            self.exposure_spin.setValue(params.exposure_s)
-            self.backlash_spin.setValue(params.backlash_compensation)
+            self._loading_settings = True
+            try:
+                self.step_spin.setValue(params.step_size)
+                self.points_spin.setValue(params.num_points)
+                self.exposure_spin.setValue(params.exposure_s)
+                self.backlash_spin.setValue(params.backlash_compensation)
+            finally:
+                self._loading_settings = False
         self._redraw_from_last(key)
         self._sync_buttons()
+
+    def _save_autofocus_params(self) -> None:
+        """Persist the step/points/exposure/backlash controls as this Pier's saved
+        autofocus defaults as soon as the user changes one, so they're there again
+        next time the screen (or Options > Focus, which reads the same record) loads —
+        not only when explicitly saved from Options > Focus."""
+        if self._loading_settings:
+            return
+        pier = self._window._current_pier
+        if pier is None:
+            return
+        from galileo.autofocus import AutofocusParams
+        from galileo.observatory import save_autofocus_params
+        save_autofocus_params(pier, AutofocusParams(
+            step_size=self.step_spin.value(), num_points=self.points_spin.value(),
+            exposure_s=self.exposure_spin.value(), backlash_compensation=self.backlash_spin.value(),
+        ))
+        refresh = getattr(self._window, "_focus_settings_refresh", None)
+        if refresh is not None:
+            refresh()

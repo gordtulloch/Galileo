@@ -405,7 +405,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     top-level section any more."""
     from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
-    assert ids == ["equipment", "star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science"]
+    assert ids == ["star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science", "equipment"]
     assert [i[:2] for i in PLANNING_ITEMS] == [
         ("whats_up", "What's Up Tonight"), ("targets", "Targets"), ("sessions", "Sessions"), ("scheduler", "Scheduler"),
     ]

@@ -191,13 +191,14 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 
 ### 4.4 `IMG` — Imaging Tab
 
+`IMG-050` (star-overlay toggle) is removed: the checkbox never had a corresponding on-preview overlay renderer behind it, and the Imaging tab's View panel no longer carries a control for it. The ID is retired, not reused.
+
 | ID | Requirement | Priority |
 |---|---|---|
 | IMG-010 | The system shall display a newly captured frame in a live preview within a bounded time after camera readout completes. | MVP |
 | IMG-020 | The system shall compute and display an auto-stretch preview of the displayed frame without altering the saved file's raw pixel data. | MVP |
 | IMG-030 | The system shall display a histogram of the current frame, updated per capture. | MVP |
 | IMG-040 | The system shall compute per-frame statistics (mean, median, min/max, star count, HFR) and display them alongside the preview. | MVP |
-| IMG-050 | The system shall overlay detected stars used for HFR computation on the frame preview, toggleable by the user. | P2 |
 | IMG-060 | The system shall allow the user to pan and zoom the displayed frame. | MVP |
 | IMG-070 | The system shall support a manual single-exposure capture independent of any running sequence. | MVP |
 | IMG-080 | The system shall allow the user to configure the imaging-tab panel layout (traces to `UI-020`). | P2 |
@@ -493,8 +494,9 @@ Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo — the 
 | ID | Requirement | Priority |
 |---|---|---|
 | UI-010 | The system shall provide at least a light and a dark color theme, selectable by the user. | P2 |
+| UI-011 | The system shall provide a red night-vision color theme, selectable by the user, that uses only red-channel colors (no green/blue component in any theme token, including the accent color) so it does not degrade dark-adapted night vision. | P2 |
 | UI-020 | The system shall allow the imaging-tab panel arrangement to be customized (e.g. dockable/resizable panels) and persisted across restarts. | P2 |
-| UI-030 | The system shall allow accent-color customization within a theme. | P3 |
+| UI-030 | The system shall allow accent-color customization within a theme, except the night-vision theme (UI-011), whose accent is fixed to preserve UI-011's no-green/blue guarantee. | P3 |
 
 ### 4.21 `LOG` — Diagnostics & Logging
 
@@ -613,7 +615,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | OBS | 9 | 0 | 9 | 0 |
 | EQP (generic + device) | 27 | 19 | 8 | 0 |
 | PROF | 12 | 11 | 1 | 0 |
-| IMG | 18 | 9 | 9 | 0 |
+| IMG | 17 | 9 | 8 | 0 |
 | SES (formerly `SEQ`/`SEQ-ADV`; Sections 4.5–4.6) | 30 | 17 | 10 | 3 |
 | SKY | 12 | 8 | 4 | 0 |
 | WUT | 10 | 8 | 1 | 1 |
@@ -643,7 +645,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **268** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **267** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
 
 ---
 

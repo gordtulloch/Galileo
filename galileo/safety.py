@@ -117,10 +117,10 @@ class SafetyMonitorService:
 
     # --- Advisory data sources (SAFE-050, SAFE-090, SAFE-100) -----------
 
-    async def get_forecast_advisory(self) -> dict | None:
+    async def get_forecast_advisory(self, latitude: float = 0.0, longitude: float = 0.0) -> dict | None:
         if self._forecast_client is None:
             return None
-        return await self._forecast_client.get_forecast()
+        return await self._forecast_client.get_forecast(latitude, longitude)
 
     async def get_aurora_advisory(self) -> float | None:
         """Current Kp index, or ``None`` when no client is configured —

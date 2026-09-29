@@ -242,10 +242,10 @@ def test_tc_plt_070_screen_has_the_reference_elements(page):
 
 
 def test_tc_plt_070_controls_offer_only_what_can_act(page):
-    """PLT-070: Idle, Stop is off; Nothing is the default action (the mount isn't moved unless asked); ASTAP is selected."""
+    """PLT-070: Idle, Stop is off; Slew to Target is the default action; ASTAP is selected."""
     from galileo.platesolve import SolveAction
     assert page.capture_btn.isEnabled() and page.load_btn.isEnabled() and not page.stop_btn.isEnabled()
-    assert page.action_radios[SolveAction.NOTHING].isChecked()
+    assert page.action_radios[SolveAction.SLEW_TO_TARGET].isChecked()
     assert page.astap_radio.isChecked()
 
 
@@ -365,18 +365,20 @@ def test_tc_plt_070_screen_updates_through_a_solve_in_progress(window, page, tmp
 def test_tc_plt_070_capture_and_solve_fills_the_screen(window, page):
     """PLT-070: Capture & Solve takes a frame, solves it, and shows the frame, the solution, its error against
     the target (where the mount pointed), and a timestamped log with the newest line first."""
+    from galileo.platesolve import SolveAction
     _open(window)
     devices = _Devices(window, page, _Devices.near_mount(d_ra_deg=0.01))     # ~34″ east of the mount's pointing
     page.poll_mount()                                                        # (the screen polls on a timer; don't wait for it)
     assert _pump(window, lambda: page.scope_ra.text() != "")                 # the mount's position is on show
     page.exposure_spin.setValue(2.0)
+    page.action_radios[SolveAction.NOTHING].setChecked(True)                 # isolate this test from the Action radio
     page.capture_btn.click()
     assert page._running.get(page._pier_key()) and not page.capture_btn.isEnabled() and page.stop_btn.isEnabled()
     assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1 and page._rows[0].status == "solved")
 
     devices.camera.start_exposure.assert_awaited_once()
     assert devices.camera.start_exposure.await_args.kwargs["duration"] == 2.0
-    assert devices.calls == []                                               # default action: leave the mount alone
+    assert devices.calls == []                                               # action set to Nothing: leave the mount alone
     row = page._rows[0]
     assert row.d_ra_arcsec == pytest.approx(0.01 * np.cos(np.radians(20.0)) * 3600, rel=0.02)
     assert row.d_dec_arcsec == pytest.approx(0.0, abs=0.1)
@@ -400,8 +402,10 @@ def test_tc_plt_070_two_piers_solve_concurrently(window, page):
     import threading
     from galileo.current_object import pier_key
     from galileo.observatory import create_observatory, create_pier
+    from galileo.platesolve import SolveAction
 
     _open(window)
+    page.action_radios[SolveAction.NOTHING].setChecked(True)                 # isolate this test from the Action radio
     pier_a = window._current_pier
     solving_a, release_a = threading.Event(), threading.Event()
 

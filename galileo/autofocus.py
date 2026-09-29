@@ -202,6 +202,25 @@ class AutofocusService:
         """Trigger-initiated autofocus run (FOC-050)."""
         return await self.run()
 
+    async def move_to(self, position: int) -> None:
+        """Move the focuser directly to *position*, applying the same backlash
+        compensation as a sweep move — used for a manual (non-sweep) focus move."""
+        await self._move_to(position)
+
+    async def measure_once(self) -> tuple | None:
+        """Take one exposure at the current focuser position and return
+        ``(frame, hfr, fwhm, star_count)``, or ``None`` if the camera returned
+        no frame — used for a manual focus capture/loop, outside of a sweep
+        and without publishing a ``FocusFrameEvent``."""
+        if self._camera is None:
+            return None
+        await self._camera.start_exposure(duration=self.exposure_s)
+        frame = await self._camera.get_image_array()
+        if frame is None:
+            return None
+        hfr, star_count = await run_cpu(_measure_stars, frame)
+        return frame, hfr, hfr * _FWHM_PER_HFR, star_count
+
     async def apply_filter_offset(self, from_filter: str, to_filter: str) -> None:
         """Move the focuser by the delta between filter offsets (FOC-060)."""
         from_offset = self._filter_offsets.get(from_filter, 0)

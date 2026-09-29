@@ -96,8 +96,10 @@ def test_tc_foc_090_focus_is_a_primary_section_with_the_reference_controls(windo
     from galileo.ui.app_window import PRIMARY_SECTIONS
     assert {s[0]: s[1] for s in PRIMARY_SECTIONS}["focus"] == "Focus"
     texts = {b.title() for b in page.findChildren(QtWidgets.QGroupBox)}
-    assert {"Focuser", "Camera", "Tools"} <= texts
+    assert {"Focuser", "Camera", "Manual Focus"} <= texts
     assert page.autofocus_btn.text() == "Auto Focus" and page.stop_btn.text() == "Stop"
+    assert page.manual_move_btn.text() == "Move" and page.capture_btn.text() == "Capture"
+    assert page.loop_btn.text() == "Loop" and page.manual_stop_btn.text() == "Stop"
     assert page.stats_label.text() == NO_STATS
     assert not _drawn(page) and page.plot.points == []
     assert len(page.findChildren(QtWidgets.QPlainTextEdit)) == 1        # the log
@@ -342,6 +344,93 @@ def test_tc_foc_090_two_piers_run_autofocus_concurrently(window, page, rig):
 
 @pytest.mark.requirement("TC-FOC-090")
 @pytest.mark.priority("MVP")
+def test_tc_foc_090_manual_move_moves_the_focuser(window, page, rig):
+    """FOC-090: the Manual Focus Move button moves the focuser to the entered position."""
+    _camera, focuser = rig
+    page.manual_position_spin.setValue(5123)
+    page.manual_move_btn.click()
+    assert focuser.position == 5123
+    assert page.status_label.text() == "Moved to position 5123."
+    assert page.position_label.text() == "5123"
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+def test_tc_foc_090_manual_capture_takes_one_exposure_and_updates_hfr(window, page, rig):
+    """FOC-090: Capture takes a single exposure, and the frame's HFR/star-count/image are shown."""
+    camera, focuser = rig
+    focuser.position = 5020                # the rig's fake HFR-vs-position curve is centred here
+    page.exposure_spin.setValue(2.5)
+    page.capture_btn.click()
+    assert not page.capture_btn.isEnabled() and not page.loop_btn.isEnabled()
+
+    assert _pump(window, lambda: page.capture_btn.isEnabled())
+    assert camera.exposures == [2.5]
+    assert page.stats_label.text() == "Stars: 11  HFR: 1.00  FWHM: 1.50"
+    assert page.position_label.text() == "5020"
+    assert _drawn(page)
+    assert page.status_label.text() == "Manual focus — position 5020, HFR 1.00."
+    assert page.autofocus_btn.isEnabled() and page.manual_move_btn.isEnabled()
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+def test_tc_foc_090_loop_repeats_exposures_until_stopped(window, page, rig):
+    """FOC-090: Loop keeps exposing until Stop is pressed, each frame updating the HFR display."""
+    camera, _focuser = rig
+    page.exposure_spin.setValue(0.1)
+    page.loop_btn.click()
+    assert not page.loop_btn.isEnabled() and not page.capture_btn.isEnabled() and not page.autofocus_btn.isEnabled()
+    assert page.manual_stop_btn.isEnabled()
+
+    assert _pump(window, lambda: len(camera.exposures) >= 3)
+    page.manual_stop_btn.click()
+    assert page.status_label.text().startswith("Stopping")
+
+    assert _pump(window, lambda: page.loop_btn.isEnabled())
+    assert not page.manual_stop_btn.isEnabled()
+    count_after_stop = len(camera.exposures)
+    window.app.processEvents()
+    assert len(camera.exposures) == count_after_stop, "no further exposures once stopped"
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+def test_tc_foc_090_manual_focus_needs_a_camera(window, page):
+    """FOC-090: Capture/Loop without a connected camera says so and starts nothing."""
+    page.capture_btn.click()
+    assert window.boxes == ["Camera not connected"]
+    assert page.capture_btn.isEnabled()
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
+def test_tc_foc_090_manual_controls_disabled_during_an_autofocus_sweep(window, page, rig):
+    """FOC-090: Move/Capture/Loop are unavailable while an autofocus sweep is running on this Pier."""
+    import threading
+    camera, _focuser = rig
+    exposing, release = threading.Event(), threading.Event()
+    original = camera.get_image_array
+
+    async def held_image():
+        exposing.set()
+        release.wait(5)
+        return await original()
+
+    camera.get_image_array = held_image
+    page.points_spin.setValue(3)
+    page.autofocus_btn.click()
+    assert exposing.wait(5)
+
+    assert not page.manual_move_btn.isEnabled()
+    assert not page.capture_btn.isEnabled() and not page.loop_btn.isEnabled()
+
+    release.set()
+    assert _pump(window, lambda: page._services.get(page._pier_key()) is None)
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("MVP")
 def test_tc_foc_090_a_deleted_page_stops_listening(window):
     """FOC-090: a page that has been deleted leaves no handlers behind on the process-wide bus."""
     from galileo.ui.focus import FocusPage
@@ -400,3 +489,73 @@ def test_tc_foc_070_options_focus_save_button_persists_and_reloads_the_live_scre
 
     assert get_autofocus_params(pier).step_size == 555
     assert page.step_spin.value() == 555
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_editing_the_focus_screen_directly_persists_without_a_save_button(window, page):
+    """FOC-070: changing step/points/exposure/backlash right on the Focus screen saves to the
+    DB immediately — no Save button on this screen — and reloads back on a Pier switch."""
+    from galileo.observatory import create_observatory, create_pier, get_autofocus_params
+
+    pier = create_pier(create_observatory("Obs FOC-070 Direct"), "Pier FOC-070 Direct")
+    window._current_pier = pier
+    window._on_pier_changed()
+
+    page.step_spin.setValue(444)
+    page.points_spin.setValue(13)
+    page.exposure_spin.setValue(6.5)
+    page.backlash_spin.setValue(88)
+
+    saved = get_autofocus_params(pier)
+    assert (saved.step_size, saved.num_points, saved.exposure_s, saved.backlash_compensation) == (444, 13, 6.5, 88)
+
+    # Switch away and back — the screen reloads what was just typed, not the old defaults.
+    other_pier = create_pier(create_observatory("Obs FOC-070 Direct Other"), "Other Pier")
+    window._current_pier = other_pier
+    window._on_pier_changed()
+    assert page.step_spin.value() != 444           # a fresh Pier, nothing saved for it yet
+
+    window._current_pier = pier
+    window._on_pier_changed()
+    assert page.step_spin.value() == 444
+    assert page.points_spin.value() == 13
+    assert page.exposure_spin.value() == 6.5
+    assert page.backlash_spin.value() == 88
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_editing_the_focus_screen_keeps_options_focus_in_sync(window, page):
+    """FOC-070: a value changed on the Focus screen is reflected immediately on Options >
+    Focus too, without needing to reopen that page — the two screens share one saved record."""
+    from galileo.observatory import create_observatory, create_pier
+
+    pier = create_pier(create_observatory("Obs FOC-070 Sync"), "Pier FOC-070 Sync")
+    window._current_pier = pier
+    window._on_pier_changed()
+
+    from PySide6.QtWidgets import QSpinBox
+    options_step_spin = next(w for w in window._options_page.findChildren(QSpinBox)
+                             if w.toolTip().startswith("Focuser steps between"))
+
+    page.step_spin.setValue(777)
+    assert options_step_spin.value() == 777
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_switching_to_a_pier_with_no_saved_settings_does_not_write_defaults(window, page):
+    """FOC-070: merely reloading the screen for a Pier that has never been saved (a Pier
+    switch, or opening the app) must not itself create a settings row of default values —
+    only an actual edit should, else every Pier would silently get a row it never asked for."""
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
+
+    pier = create_pier(create_observatory("Obs FOC-070 No Write"), "Pier FOC-070 No Write")
+    window._current_pier = pier
+    window._on_pier_changed()
+    window._current_pier = pier
+    window._on_pier_changed()          # reload a second time for good measure
+
+    assert AutofocusSettingsRecord.get_or_none(AutofocusSettingsRecord.pier == pier) is None

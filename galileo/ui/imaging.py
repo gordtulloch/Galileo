@@ -101,7 +101,6 @@ class ImagingService:
         self.last_saved_path: Path | None = None
         self.zoom_factor: float = 1.0
         self.pan_offset: tuple[int, int] = (0, 0)
-        self.star_overlay_enabled: bool = False
         self.capture_status: str = "idle"
         self._panel_layout: dict = {}
         self._capture_status: str = "idle"
@@ -681,11 +680,6 @@ class ImagingService:
     def reset_view(self) -> None:
         self.zoom_factor = 1.0
         self.pan_offset = (0, 0)
-
-    # --- Star overlay (IMG-050) -------------------------------------------
-
-    def set_star_overlay(self, enabled: bool) -> None:
-        self.star_overlay_enabled = enabled
 
     # --- Panel layout (IMG-080) ------------------------------------------
 

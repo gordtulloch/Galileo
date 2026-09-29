@@ -16,12 +16,20 @@ logger = logging.getLogger(__name__)
 class Theme(str, Enum):
     LIGHT = "light"
     DARK = "dark"
+    RED = "red"
     SYSTEM = "system"
 
 
 # Palette tokens for the light and dark themes, kept in one place so Galileo's
 # shell reads consistently across every page (UI-010). Accent is
 # user-customizable (UI-030); everything else is fixed per theme.
+#
+# Theme.RED is a night-vision theme for use at the eyepiece/laptop under a dark
+# sky: every token below uses only the red channel (green/blue held at 0x00),
+# since red light doesn't reset eyes that have dark-adapted, while any stray
+# white/blue/green pixel would (UI-011). Keep every hex value in this palette
+# in "#RR0000" form for that reason -- don't add a token here with a non-zero
+# green or blue component.
 _PALETTE = {
     Theme.DARK: {
         "bg": "#263238",
@@ -41,7 +49,22 @@ _PALETTE = {
         "text_dim": "#5b656b",
         "text_bright": "#000000",
     },
+    Theme.RED: {
+        "bg": "#0a0000",
+        "surface": "#140000",
+        "surface_alt": "#050000",
+        "border": "#400000",
+        "text": "#a30000",
+        "text_dim": "#600000",
+        "text_bright": "#ff0000",
+    },
 }
+
+# Fixed accent for Theme.RED -- forced regardless of the user's saved accent
+# preference (UI-030), since a user-picked accent (e.g. the default teal) is
+# very likely to contain green/blue and would defeat the night-vision theme's
+# purpose. Same "#RR0000" constraint as the palette above.
+_NIGHT_VISION_ACCENT = "#c00000"
 
 
 class ThemeManager:
@@ -52,7 +75,7 @@ class ThemeManager:
         self._accent_color = "#12877b"  # default teal
 
     def available_themes(self) -> list[Theme]:
-        return [Theme.LIGHT, Theme.DARK]
+        return [Theme.LIGHT, Theme.DARK, Theme.RED]
 
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme
@@ -68,6 +91,15 @@ class ThemeManager:
 
     @property
     def accent_color(self) -> str:
+        """Effective accent colour for the current theme.
+
+        Theme.RED forces `_NIGHT_VISION_ACCENT` here regardless of the saved
+        preference; every caller (stylesheet, sidebar icons, histogram accent)
+        reads this property rather than the raw preference, so nothing on
+        screen can show a non-red accent while night-vision mode is active.
+        """
+        if self._theme == Theme.RED:
+            return _NIGHT_VISION_ACCENT
         return self._accent_color
 
     def palette(self) -> dict:
@@ -77,7 +109,7 @@ class ThemeManager:
     def stylesheet(self) -> str:
         """Build the Qt stylesheet for the current theme + accent colour."""
         p = self.palette()
-        accent = self._accent_color
+        accent = self.accent_color
         return f"""
         QWidget {{
             background: {p['bg']};

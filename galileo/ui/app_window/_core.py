@@ -57,7 +57,7 @@ class AppWindowCoreMixin:
         self._pier_pointing: dict = {}
         self._pier_poll_threads: dict = {}
         self._tracking_threads: dict = {}     # per-Pier: waits for a slew to end, then starts tracking (EQP-MNT-050)
-        self._current_primary_section = "equipment"
+        self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
@@ -249,11 +249,17 @@ class AppWindowCoreMixin:
             self._refresh_camera_combo()
             self._refresh_imaging_filters()
 
+        # Equipment is a one-time-per-session setup step rather than a screen
+        # you switch to and from while working, so it's pinned at the bottom
+        # of the sidebar next to Options instead of sitting among the
+        # screens above the stretch.
+        equipment_section = next(s for s in PRIMARY_SECTIONS if s[0] == "equipment")
+        sidebar_items = [s for s in PRIMARY_SECTIONS if s[0] != "equipment"]
         sidebar = _NavColumn(
             object_name="Sidebar",
             button_object_name="NavButton",
-            items=PRIMARY_SECTIONS,
-            bottom_items=[OPTIONS_SECTION],
+            items=sidebar_items,
+            bottom_items=[equipment_section, OPTIONS_SECTION],
             icon_size=26,
             button_min_height=64,
             accent=self._theme.accent_color,
@@ -261,13 +267,14 @@ class AppWindowCoreMixin:
             on_select=_on_section_selected,
             power_action=self._request_quit,
             utility_actions=[
-                ("theme", "Toggle dark/light theme", self._toggle_theme),
+                ("theme", "Cycle theme (light / dark / red night-vision)", self._toggle_theme),
                 ("manual", "Open online manual", self._open_manual),
                 ("about", "About Galileo", self._show_about),
             ],
+            initial_selection="star_atlas",
         )
         self._nav_columns.append(sidebar)
-        stack.setCurrentIndex(pages["equipment"])
+        stack.setCurrentIndex(pages["star_atlas"])
         return stack, sidebar
 
     def _request_quit(self: AppWindowState) -> None:
@@ -276,7 +283,8 @@ class AppWindowCoreMixin:
 
     def _toggle_theme(self: AppWindowState) -> None:
         from galileo.ui.theme import Theme
-        new_theme = Theme.LIGHT if self._theme.current_theme == Theme.DARK else Theme.DARK
+        _CYCLE = {Theme.LIGHT: Theme.DARK, Theme.DARK: Theme.RED, Theme.RED: Theme.LIGHT}
+        new_theme = _CYCLE.get(self._theme.current_theme, Theme.LIGHT)
         self._theme.set_theme(new_theme)
         p = self._theme.palette()
         for column in self._nav_columns:

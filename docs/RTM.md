@@ -18,7 +18,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 282 requirements (268 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+**Coverage:** 281 requirements (267 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+
+**`IMG-050` removed:** the star-overlay toggle had no on-preview overlay renderer behind it; the checkbox and `ImagingService.set_star_overlay`/`star_overlay_enabled` were removed together, and the row below no longer appears.
 
 **`WUT` added:** this revision adds the `WUT` ("What's Up Tonight") domain (SRS Section 4.7a, 10 requirements — 8 MVP core-ranking, 1 P2 arbitrary-date refinement `WUT-090`, and 1 P3 aurora/smoke-advisory refinement `WUT-100`), tracing to the new SDD Sections 4.8a (`galileo.planning.recommend`) and 4.8b (`galileo.ui.whats_up`).
 
@@ -132,7 +134,6 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-020` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-020` |
 | `IMG-030` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-030` |
 | `IMG-040` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-040` |
-| `IMG-050` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-050` |
 | `IMG-060` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-060` |
 | `IMG-070` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-070` |
 | `IMG-080` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-080` |
@@ -387,6 +388,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
 | `UI-010` | P2 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-010` |
+| `UI-011` | P2 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-011` |
 | `UI-020` | P2 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-020` |
 | `UI-030` | P3 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-030` |
 
@@ -502,7 +504,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `EQP` | 27 | 19 | 8 | 0 |
 | `PROF` | 12 | 11 | 1 | 0 |
 | `OBS` | 9 | 0 | 9 | 0 |
-| `IMG` | 18 | 9 | 9 | 0 |
+| `IMG` | 17 | 9 | 8 | 0 |
 | `SES` (formerly `SEQ`/`SEQ-ADV`) | 30 | 17 | 10 | 3 |
 | `SKY` | 12 | 8 | 4 | 0 |
 | `WUT` | 10 | 8 | 1 | 1 |
@@ -532,4 +534,4 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **282** | **168** | **99** | **15** |
+| **Total** | **281** | **168** | **98** | **15** |

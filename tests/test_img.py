@@ -89,25 +89,6 @@ async def test_tc_img_040_per_frame_statistics(mock_indi_camera, imaging_service
 
 
 # ---------------------------------------------------------------------------
-# TC-IMG-050
-# ---------------------------------------------------------------------------
-
-@pytest.mark.requirement("TC-IMG-050")
-@pytest.mark.priority("P2")
-async def test_tc_img_050_star_overlay_toggleable(mock_indi_camera, imaging_service):
-    """IMG-050: Overlay detected stars for HFR on the frame preview, toggleable by the user."""
-    import numpy as np
-    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((100, 100), dtype=np.float32))
-    await imaging_service.capture_and_preview(duration=1.0)
-
-    imaging_service.set_star_overlay(enabled=True)
-    assert imaging_service.star_overlay_enabled is True
-
-    imaging_service.set_star_overlay(enabled=False)
-    assert imaging_service.star_overlay_enabled is False
-
-
-# ---------------------------------------------------------------------------
 # TC-IMG-060
 # ---------------------------------------------------------------------------
 
@@ -454,24 +435,28 @@ def test_tc_img_120_service_follows_the_frame_unless_the_user_chooses(imaging_se
 @pytest.mark.requirement("TC-IMG-120")
 @pytest.mark.priority("P2")
 def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_the_rest_left(window):
-    """IMG-120: for a portrait frame the preview becomes a column one third of the page wide and the nudge pad, histogram, progress and log (taller than in landscape) sit to its left."""
+    """IMG-120: for a portrait frame the preview becomes a full-height column one third of the page wide, the nudge pad/stretch slider/histogram/progress sit to its left, and the log drops to a full-width bar under the settings and dock columns."""
     import numpy as np
     ui, service = window._imaging_ui, window._imaging_service
-    dock, content = ui["dock_panel"], ui["content"]
+    dock, content, log_bar = ui["dock_panel"], ui["content"], ui["log_bar"]
+    left_column = ui["left_column"]
     nudge, settings = ui["nudge_group"], ui["settings_panel"]
-    secondary = (ui["histogram"], ui["progress"], ui["log"])
+    secondary = (ui["histogram"], ui["progress"])
 
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary), "landscape keeps them under the preview"
+    assert ui["log"].parentWidget() is content, "and the log beneath them"
     assert nudge.parentWidget() is settings, "and the nudge pad in the settings panel"
-    landscape_heights = ui["histogram"].height(), ui["log"].height()
+    assert log_bar.isHidden()
+    landscape_log_height = ui["log"].height()
 
     service.current_frame = np.zeros((300, 200), dtype=np.uint16)
     ui["apply_orientation"]()
     assert all(w.parentWidget() is dock for w in (nudge, *secondary))
     assert ui["preview"].parentWidget() is content
     assert content.layout().count() == 2, "only the preview and its Fit/1:1/+/- toolbar are left on the right"
-    assert ui["histogram"].height() > landscape_heights[0] and ui["log"].height() > landscape_heights[1], "the middle column has the height to spare"
+    assert ui["log"].parentWidget() is log_bar, "the log moves to the full-width bar, not the narrow dock column"
+    assert not log_bar.isHidden()
 
     page = ui["page"]
     window._window.show()   # a hidden page gets its resize events only once it is shown
@@ -481,6 +466,8 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     window._window.resize(1500, 900)
     window.app.processEvents()
     assert content.minimumWidth() == content.maximumWidth() == page.width() // 3, "the preview column is a third of the page"
+    assert content.height() == page.height(), "the preview keeps the full height of the page"
+    assert log_bar.width() == left_column.width() > dock.width(), "the log bar spans the settings and dock columns"
     before = content.maximumWidth()
     window._window.resize(1900, 900)
     window.app.processEvents()
@@ -489,8 +476,10 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     service.current_frame = np.zeros((200, 300), dtype=np.uint16)
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary)
+    assert ui["log"].parentWidget() is content, "the log goes back under the preview"
     assert nudge.parentWidget() is settings, "the nudge pad goes back to the settings panel"
-    assert (ui["histogram"].height(), ui["log"].height()) == landscape_heights
+    assert not log_bar.isVisible()
+    assert ui["log"].height() == landscape_log_height
     assert content.maximumWidth() > 10000, "landscape lets the preview take the whole right side again"
 
 

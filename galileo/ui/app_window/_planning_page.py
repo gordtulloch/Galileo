@@ -214,8 +214,15 @@ class AppWindowPlanningPageMixin:
             pass
         form.addRow("Object type", type_combo)
 
+        # Stacked, not side by side (QVBoxLayout, not QHBoxLayout): the fixed
+        # 260px-wide criteria panel doesn't leave enough field-column room for
+        # three checkboxes abreast (each needs its indicator plus label text,
+        # e.g. "Caldwell") once AllNonFixedFieldsGrow forces this field widget
+        # to the panel's own narrow width — they used to run past the panel's
+        # edge and overlap the row below instead of wrapping.
         catalog_checks: dict = {}
-        catalog_row = QHBoxLayout()
+        catalog_row = QVBoxLayout()
+        catalog_row.setSpacing(2)
         try:
             from galileo.planning.sky_atlas import DSO_CATALOGS
             for cat in DSO_CATALOGS:

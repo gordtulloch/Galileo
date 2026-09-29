@@ -32,6 +32,12 @@ if TYPE_CHECKING:
 # ranking (unlike a plain search) always touches every pre-filtered object.
 _MAX_CANDIDATES = 300
 _MAX_SHOWN = 50
+# Same bound as the Targets page's own auto-thumbnail fill-in
+# (_planning_page.py) — here it's only ever a disk-cache read (never a
+# network fetch, see the "No thumbnails" note this overrides below), but the
+# same small cap avoids reading/decoding/scaling a JPEG per row for a
+# 50-tile result list.
+_MAX_AUTO_THUMBNAILS = 12
 
 
 class AppWindowWhatsUpPageMixin:
@@ -117,6 +123,24 @@ class AppWindowWhatsUpPageMixin:
                 camera=camera_dict,
             )
 
+        def _imager_fov_arcmin(train) -> tuple[float, float] | None:
+            """The active train's imaged field of view (width, height, arcmin)
+            from the same plate-scale/sensor-geometry inputs
+            ``recommend._fit_for_train`` already uses for its field-of-view
+            fit check (WUT-010) — display only, not fed back into ranking.
+            ``None`` with no train, or no camera pixel-size/sensor-geometry
+            configured for it, so the caller can show a clear "not
+            configured" message instead of a bogus 0′ × 0′."""
+            if train is None:
+                return None
+            plate_scale = getattr(train, "plate_scale_arcsec_px", 0.0)
+            camera = getattr(train, "camera", None) or {}
+            width_px = camera.get("sensor_width_px", 0)
+            height_px = camera.get("sensor_height_px", 0)
+            if not (plate_scale and width_px and height_px):
+                return None
+            return (width_px * plate_scale / 60.0, height_px * plate_scale / 60.0)
+
         def _fetch_advisories(night_date: str) -> tuple[dict | None, float | None, float | None]:
             """Weather forecast / aurora Kp / smoke AQI for *night_date*
             (WUT-100), each ``None`` when unavailable. Only fetched for
@@ -129,7 +153,11 @@ class AppWindowWhatsUpPageMixin:
             special case. Reuses ``galileo.safety.SafetyMonitorService``
             (not a second weather/aurora/smoke path) so this starts
             returning real aurora/smoke data the moment those clients are
-            wired up elsewhere, with no change needed here."""
+            wired up elsewhere, with no change needed here. Passes this
+            page's own Observatory location into ``get_forecast_advisory``
+            (fixed alongside this docstring — it previously called the
+            client with no coordinates at all, silently fetching the
+            Gulf-of-Guinea forecast, lat/lon 0,0, for every Observatory)."""
             import datetime as _dt
             if night_date != _dt.date.today().isoformat():
                 return None, None, None
@@ -141,7 +169,7 @@ class AppWindowWhatsUpPageMixin:
             service = SafetyMonitorService()
             service.set_forecast_client(OpenMeteoClient())
             try:
-                forecast = asyncio.run(service.get_forecast_advisory())
+                forecast = asyncio.run(service.get_forecast_advisory(location.latitude, location.longitude))
             except Exception:
                 logger.debug("Weather forecast advisory unavailable", exc_info=True)
                 forecast = None
@@ -156,6 +184,68 @@ class AppWindowWhatsUpPageMixin:
                 logger.debug("Smoke advisory unavailable", exc_info=True)
                 smoke = None
             return forecast, aurora, smoke
+
+        def _weather_summary_text(forecast: dict | None) -> str:
+            """A short cloud-cover/precipitation/wind summary from the raw
+            Open-Meteo forecast blob (``OpenMeteoClient.get_forecast``'s
+            hourly arrays over the ``forecast_days=1`` window), instead of
+            just "available" — a planning aid only (`SAFE-050`), so this
+            never affects ranking, only what the advisory line says. Degrades
+            to "no data"/"no usable detail" on anything missing or malformed
+            rather than raising, matching this whole advisory path's
+            never-block-ranking contract."""
+            if not forecast:
+                return "Weather: no data for this date"
+            try:
+                hourly = forecast.get("hourly") or {}
+                cloud = [v for v in (hourly.get("cloudcover") or []) if v is not None]
+                precip = [v for v in (hourly.get("precipitation") or []) if v is not None]
+                wind = [v for v in (hourly.get("windspeed_10m") or []) if v is not None]
+            except Exception:
+                logger.debug("Could not parse weather forecast for summary", exc_info=True)
+                return "Weather: available (no usable detail)"
+            if not (cloud or precip or wind):
+                return "Weather: available (no usable detail)"
+            bits = []
+            if cloud:
+                bits.append(f"cloud cover avg {sum(cloud) / len(cloud):.0f}% (peak {max(cloud):.0f}%)")
+            if precip:
+                bits.append(f"precip total {sum(precip):.1f}mm")
+            if wind:
+                bits.append(f"wind up to {max(wind):.0f} km/h")
+            return "Weather: " + ", ".join(bits)
+
+        def _aurora_summary_text(kp: float | None) -> str:
+            """Kp index plus its standard activity-level band (0-9 scale:
+            quiet below 3, unsettled/active 3-5, storm at/above 5) — a fixed
+            reference table, not a Galileo-specific judgment call."""
+            if kp is None:
+                return "Aurora: no data for this date"
+            if kp < 3.0:
+                level = "quiet"
+            elif kp < 5.0:
+                level = "unsettled/active"
+            else:
+                level = "storm"
+            return f"Aurora Kp {kp:.1f} ({level})"
+
+        def _smoke_summary_text(aqi: float | None) -> str:
+            """Smoke/transparency AQI plus its standard EPA category band."""
+            if aqi is None:
+                return "Smoke: no data for this date"
+            if aqi <= 50:
+                level = "good"
+            elif aqi <= 100:
+                level = "moderate"
+            elif aqi <= 150:
+                level = "unhealthy for sensitive groups"
+            elif aqi <= 200:
+                level = "unhealthy"
+            elif aqi <= 300:
+                level = "very unhealthy"
+            else:
+                level = "hazardous"
+            return f"Smoke AQI {aqi:.0f} ({level})"
 
         def _confidence_tooltip(rec) -> str:
             o = rec.observability
@@ -229,7 +319,8 @@ class AppWindowWhatsUpPageMixin:
             left_col.addLayout(top_row)
 
             mag_text = f"mag {obj.magnitude:.1f}" if obj.magnitude < 90.0 else "mag unknown"
-            subtitle = QLabel(f"{mag_text}  ·  best {rec.observability.max_altitude_deg:.0f}° tonight")
+            size_text = f"  ·  {obj.size_arcmin:.1f}′" if obj.size_arcmin > 0 else ""
+            subtitle = QLabel(f"{mag_text}{size_text}  ·  best {rec.observability.max_altitude_deg:.0f}° tonight")
             subtitle.setObjectName("StatusHint")
             subtitle.setWordWrap(True)
             left_col.addWidget(subtitle)
@@ -306,8 +397,12 @@ class AppWindowWhatsUpPageMixin:
         min_altitude.setSuffix(" °")
         form.addRow("Min. altitude", min_altitude)
 
+        # Stacked, not side by side — see _planning_page.py's identical fix:
+        # three checkboxes abreast don't fit this panel's fixed 260px width
+        # once AllNonFixedFieldsGrow forces this field widget that narrow.
         catalog_checks: dict = {}
-        catalog_row = QHBoxLayout()
+        catalog_row = QVBoxLayout()
+        catalog_row.setSpacing(2)
         try:
             from galileo.planning.sky_atlas import DSO_CATALOGS
             for cat in DSO_CATALOGS:
@@ -333,6 +428,11 @@ class AppWindowWhatsUpPageMixin:
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
+        fov_label = QLabel("")
+        fov_label.setObjectName("StatusHint")
+        fov_label.setWordWrap(True)
+        content_layout.addWidget(fov_label)
+
         advisory_label = QLabel("")
         advisory_label.setObjectName("StatusHint")
         advisory_label.setWordWrap(True)
@@ -356,6 +456,7 @@ class AppWindowWhatsUpPageMixin:
 
         def run_rank() -> None:
             results.clear()
+            fov_label.setText("")
             advisory_label.setText("")
             self._window.statusBar().showMessage("Ranking…")
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -379,16 +480,27 @@ class AppWindowWhatsUpPageMixin:
 
                 forecast, aurora, smoke = _fetch_advisories(night_date)
                 if forecast or aurora is not None or smoke is not None:
-                    parts = []
-                    parts.append("Weather forecast: available" if forecast else "Weather forecast: no data for this date")
-                    parts.append(f"Aurora Kp: {aurora:.1f}" if aurora is not None else "Aurora: no data for this date")
-                    parts.append(f"Smoke AQI: {smoke:.0f}" if smoke is not None else "Smoke: no data for this date")
+                    parts = [
+                        _weather_summary_text(forecast),
+                        _aurora_summary_text(aurora),
+                        _smoke_summary_text(smoke),
+                    ]
                     advisory_label.setText("  ·  ".join(parts))
                 else:
                     advisory_label.setText(
                         "Weather/aurora/smoke advisories are only available for today's date.")
 
                 train = _optical_train_for_fit()
+                fov = _imager_fov_arcmin(train)
+                if fov is not None:
+                    train_name = getattr(train, "name", "") or "active train"
+                    fov_label.setText(f"Ranking for {train_name}'s field of view: {fov[0]:.1f}′ × {fov[1]:.1f}′")
+                elif train is not None:
+                    fov_label.setText(
+                        f"{getattr(train, 'name', '') or 'Active train'}: no camera pixel size/sensor "
+                        "geometry configured — field-of-view fit not evaluated.")
+                else:
+                    fov_label.setText("No active optical train — field-of-view fit not evaluated.")
                 recommendations = rank_tonight(
                     location, train, candidates, forecast=forecast, night_date=night_date,
                     aurora_estimate=aurora, smoke_estimate=smoke,
@@ -421,14 +533,39 @@ class AppWindowWhatsUpPageMixin:
             finally:
                 QApplication.restoreOverrideCursor()
 
+            thumb_labels = []
             for rank, (rec, chart) in enumerate(zip(shown, charts, strict=True), start=1):
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, rec.obj)
-                card, _thumb = _build_tile(rank, rec, chart)
+                card, thumb_label = _build_tile(rank, rec, chart)
                 row_container, size_hint = _tile_row(card)
                 item.setSizeHint(size_hint)
                 results.addItem(item)
                 results.setItemWidget(item, row_container)
+                thumb_labels.append(thumb_label)
+
+            # Fill in the first few cards' thumbnails from the on-disk cache
+            # only (bounded — see _MAX_AUTO_THUMBNAILS above) — a plain file
+            # read, never a hips2fits request, so this preserves ranking's
+            # documented no-network-dependency property (SDD.md Section
+            # 4.8b's "No thumbnails" note): an object already thumbnailed via
+            # the Targets/Planning page shows its cached image immediately;
+            # anything not yet cached stays blank rather than fetching it
+            # here, exactly as before this change.
+            from galileo.planning.sky_atlas import _cached_thumbnail, _thumbnail_field_arcmin
+            from PySide6.QtGui import QPixmap
+            for rec, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels):
+                obj = rec.obj
+                field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
+                data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)
+                if not data:
+                    continue
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data) and not pixmap.isNull():
+                    thumb_label.setPixmap(pixmap.scaled(
+                        _CARD_THUMB_PX, _CARD_THUMB_PX,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
+                    ))
 
         rank_btn.clicked.connect(run_rank)
 

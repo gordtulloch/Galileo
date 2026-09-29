@@ -45,7 +45,6 @@ _DEFAULT_PORTS = {"Alpaca": 32323, "INDI": 7624}
 
 # (section_id, label, icon_name)
 PRIMARY_SECTIONS = [
-    ("equipment", "Equipment", "equipment"),
     ("star_atlas", "Star Atlas", "star_atlas"),
     ("planning", "Planning", "sky_atlas"),
     ("imaging", "Imaging", "imaging"),
@@ -54,6 +53,7 @@ PRIMARY_SECTIONS = [
     ("solve", "Solve", "solve"),
     ("library", "Library", "library"),
     ("science", "Science", "variable_stars"),
+    ("equipment", "Equipment", "equipment"),
 ]
 
 OPTIONS_SECTION = ("options", "Options", "options")

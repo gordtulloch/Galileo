@@ -93,15 +93,6 @@ class AppWindowImagingPageMixin:
         gain_spin.setToolTip("Camera gain for each exposure. 0 leaves the camera as it is configured (IMG-150).")
         capture_form.addRow("Gain", gain_spin)
 
-        live_stack_check = QCheckBox("Live Stack")
-        live_stack_check.setToolTip(
-            f"Build the frames of one Capture into a single image instead of each replacing the last "
-            f"(IMG-160): every frame is aligned to the first and added to a running mean, so the preview, "
-            f"statistics and histogram improve as the run goes on. Applies to runs of "
-            f"{LIVE_STACK_MIN_FRAMES} frames or more. Each frame still goes to the Library on its own; "
-            f"use Save Stack for the stacked image.")
-        capture_form.addRow(live_stack_check)
-
         frame_type_combo = QComboBox()
         frame_type_combo.addItems(["Light", "Dark", "Flat", "Bias"])
         capture_form.addRow("Type", frame_type_combo)
@@ -177,9 +168,14 @@ class AppWindowImagingPageMixin:
         )
         view_form.addRow(debayer_check)
 
-        star_overlay_check = QCheckBox("Star overlay")
-        star_overlay_check.setToolTip("Overlay stars detected for HFR computation (IMG-050).")
-        view_form.addRow(star_overlay_check)
+        live_stack_check = QCheckBox("Live Stack")
+        live_stack_check.setToolTip(
+            f"Build the frames of one Capture into a single image instead of each replacing the last "
+            f"(IMG-160): every frame is aligned to the first and added to a running mean, so the preview, "
+            f"statistics and histogram improve as the run goes on. Applies to runs of "
+            f"{LIVE_STACK_MIN_FRAMES} frames or more. Each frame still goes to the Library on its own; "
+            f"use Save Stack for the stacked image.")
+        view_form.addRow(live_stack_check)
 
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
@@ -236,20 +232,20 @@ class AppWindowImagingPageMixin:
         settings_layout.addWidget(nudge_group)
 
         settings_layout.addStretch(1)
-        root.addWidget(settings_scroll)
 
         # A column between the settings and the preview, used only for a portrait
         # frame (IMG-120): it takes the width the narrow preview leaves free and
-        # holds the histogram, progress bar and log.
+        # holds the nudge pad, stretch slider, histogram and progress bar — the log
+        # moves to its own full-width bar under the settings and this column (below),
+        # so the preview keeps the full height of the page.
         dock_panel = QWidget()
         dock_layout = QVBoxLayout(dock_panel)
         dock_layout.setContentsMargins(8, 16, 8, 16)
         dock_layout.setSpacing(6)
         dock_layout.addStretch(1)
         dock_panel.setVisible(False)
-        root.addWidget(dock_panel, 1)
 
-        # --- right: live preview, histogram, progress, log ------------------
+        # --- right: live preview, histogram, progress ------------------------
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 20, 24, 20)
@@ -298,14 +294,41 @@ class AppWindowImagingPageMixin:
         log_pane = self._build_log_pane()
         self._log_panes.append(log_pane)
 
+        # Portrait only (IMG-120): a full-width bar under the settings and dock
+        # columns holding the log, so it spans both of them without taking any
+        # height away from the preview, which stays a full-height column of its own.
+        log_bar = QWidget()
+        log_bar_layout = QVBoxLayout(log_bar)
+        log_bar_layout.setContentsMargins(8, 0, 8, 8)
+        log_bar_layout.setSpacing(4)
+        log_bar.setVisible(False)
+
+        settings_dock_row = QWidget()
+        settings_dock_row_layout = QHBoxLayout(settings_dock_row)
+        settings_dock_row_layout.setContentsMargins(0, 0, 0, 0)
+        settings_dock_row_layout.setSpacing(0)
+        settings_dock_row_layout.addWidget(settings_scroll)
+        settings_dock_row_layout.addWidget(dock_panel, 1)
+
+        left_column = QWidget()
+        left_column_layout = QVBoxLayout(left_column)
+        left_column_layout.setContentsMargins(0, 0, 0, 0)
+        left_column_layout.setSpacing(0)
+        left_column_layout.addWidget(settings_dock_row, 1)
+        left_column_layout.addWidget(log_bar)
+        root.addWidget(left_column)
+        left_column_index = root.indexOf(left_column)
         root.addWidget(content, 1)
 
         # --- landscape / portrait layout (IMG-120) -----------------------------
         # Landscape: preview on top of the right side, histogram/progress/log
         # beneath it. Portrait: the preview is a full-height column one third of
-        # the page wide, and the nudge pad, histogram, progress and log sit in the
-        # column to its left, beside the settings.
-        secondary_widgets = (stretch_widget, histogram, progress_widget, log_heading, log_pane)
+        # the page wide, with the nudge pad, stretch slider, histogram and progress
+        # in the column to its left, beside the settings; the log drops to a
+        # full-width bar beneath both of those columns instead of squeezing into
+        # the narrow one.
+        secondary_widgets = (stretch_widget, histogram, progress_widget)
+        log_widgets = (log_heading, log_pane)
         nudge_slot = settings_layout.indexOf(nudge_group)   # where the nudge pad sits in landscape
         layout_state = {"orientation": None}
         unlimited_width = 16777215   # QWIDGETSIZE_MAX
@@ -327,24 +350,35 @@ class AppWindowImagingPageMixin:
                 return
             layout_state["orientation"] = orientation
             portrait = orientation == PORTRAIT
-            for widget in (*secondary_widgets, nudge_group):
+            for widget in (*secondary_widgets, *log_widgets, nudge_group):
                 content_layout.removeWidget(widget)
                 dock_layout.removeWidget(widget)
+                log_bar_layout.removeWidget(widget)
                 settings_layout.removeWidget(widget)
             if portrait:
                 # The nudge pad leads the middle column; the rest follow, above its trailing stretch.
                 for i, widget in enumerate((nudge_group, *secondary_widgets)):
                     dock_layout.insertWidget(i, widget)
                     widget.setVisible(True)
+                # The log spans the settings and dock columns beside it, not just the dock's width.
+                for widget in log_widgets:
+                    log_bar_layout.addWidget(widget)
+                    widget.setVisible(True)
             else:
                 settings_layout.insertWidget(nudge_slot, nudge_group)
                 nudge_group.setVisible(True)
-                for widget in secondary_widgets:
+                for widget in (*secondary_widgets, *log_widgets):
                     content_layout.addWidget(widget)
                     widget.setVisible(True)
             dock_panel.setVisible(portrait)
+            log_bar.setVisible(portrait)
+            # Landscape: dock/log are hidden, so left_column collapses to just Settings'
+            # fixed width and content (stretch 1) takes the rest. Portrait: content is
+            # pinned to a fixed width below (_fit_preview_width), so giving left_column
+            # a stretch too makes it — not empty space — absorb everything left over.
+            root.setStretch(left_column_index, 1 if portrait else 0)
             histogram.setFixedHeight(120 if portrait else 80)
-            log_pane.setFixedHeight(_log_height(12 if portrait else 10))
+            log_pane.setFixedHeight(_log_height(8 if portrait else 10))
             content_layout.setContentsMargins(*((8, 8, 8, 8) if portrait else (24, 20, 24, 20)))
             _fit_preview_width()
 
@@ -388,8 +422,6 @@ class AppWindowImagingPageMixin:
         def _refresh_histogram(service) -> None:
             hist = service.get_histogram()
             histogram.set_data(hist.get("counts", []))
-
-        star_overlay_check.toggled.connect(lambda checked: _current_service().set_star_overlay(checked))
 
         def _use_camera_bayer_pattern(service, rebuild: bool) -> None:
             # The pattern saved for the selected camera on Equipment > Camera (RGGB until changed).
@@ -537,7 +569,8 @@ class AppWindowImagingPageMixin:
         nudge_stop_btn.clicked.connect(_nudge_stop)
 
         self._imaging_ui = {
-            "settings_panel": settings_panel, "dock_panel": dock_panel, "page": page,
+            "settings_panel": settings_panel, "dock_panel": dock_panel, "log_bar": log_bar,
+            "left_column": left_column, "page": page,
             "fit_preview_width": _fit_preview_width, "content": content, "preview": preview_view,
             "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget, "log": log_pane,
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,

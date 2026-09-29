@@ -245,6 +245,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
         on_select,
         power_action=None,
         utility_actions: list[tuple[str, str, object]] | None = None,
+        initial_selection: str | None = None,
     ) -> None:
         super().__init__()
         from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QToolButton, QButtonGroup, QSizePolicy
@@ -295,13 +296,20 @@ class _NavColumn(QWidget if _HAS_QT else object):
 
         for section_id, label, icon_name in items:
             add_button(section_id, label, icon_name)
-        if self._first_button(group) is not None:
-            self._first_button(group).setChecked(True)
 
         layout.addStretch(1)
 
         for section_id, label, icon_name in bottom_items:
             add_button(section_id, label, icon_name)
+
+        # Defaults to the first button (whichever list it's in) unless the
+        # caller wants a different one checked on startup — e.g. the primary
+        # sidebar starts on Equipment even though it now sits in bottom_items.
+        initial_button = self._buttons.get(initial_selection) if initial_selection else None
+        if initial_button is None:
+            initial_button = self._first_button(group)
+        if initial_button is not None:
+            initial_button.setChecked(True)
 
         if power_action is not None:
             power_btn = QToolButton()
