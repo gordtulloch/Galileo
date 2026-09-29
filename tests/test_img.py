@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-190)."""
+"""IMG — Imaging Tab (TC-IMG-010 … TC-IMG-220)."""
 
 import pytest
 from types import SimpleNamespace
@@ -2076,3 +2076,256 @@ def test_tc_img_190_moving_the_slider_updates_the_service_and_re_renders(window)
     assert service.current_frame is raw, "the raw frame must be untouched"
     assert service.frame_stats == {"mean": 1.0}, "stretching must not recompute statistics"
     assert service.current_preview is not None and service.current_preview.max() <= 255
+
+
+# ---------------------------------------------------------------------------
+# TC-IMG-200 / TC-IMG-210 / TC-IMG-220 — Annotate overlay
+# ---------------------------------------------------------------------------
+
+class _FakeStarCatalog:
+    """Mimics ``galileo.planning.star_atlas.StarCatalog``'s column-oriented shape."""
+
+    def __init__(self, ra, dec, labels):
+        import numpy as np
+        self.ra, self.dec = np.array(ra), np.array(dec)
+        self._labels = labels
+
+    def __len__(self):
+        return len(self.ra)
+
+    def label(self, i):
+        return self._labels[i]
+
+
+class _FakeDso:
+    def __init__(self, primary_name, ra_deg, dec_deg, magnitude=8.0, size_arcmin=0.0):
+        self.primary_name = primary_name
+        self.ra_deg, self.dec_deg = ra_deg, dec_deg
+        self.magnitude, self.size_arcmin = magnitude, size_arcmin
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+def test_tc_img_200_imaging_page_has_an_annotate_button_above_the_preview(window):
+    """IMG-200: the Imaging page offers an Annotate toggle above the preview, off and disabled
+    until there is a frame to annotate."""
+    ui = window._imaging_ui
+    assert ui["annotate_button"].text() == "Annotate"
+    assert ui["annotate_button"].isCheckable()
+    assert not ui["annotate_button"].isChecked()
+    assert not ui["annotate_button"].isEnabled(), "nothing captured yet"
+    zoom_row_index = ui["content"].layout().indexOf(ui["preview"])
+    assert zoom_row_index > 0, "the toolbar row (holding Annotate) must come before the preview"
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+def test_tc_img_200_find_annotations_keeps_only_objects_within_the_frame():
+    """IMG-200: only catalogued objects whose projected position falls in the frame, and within
+    its field of view on the sky, are returned — a named star far outside the solved field, and
+    an unnamed one inside it, are both left out."""
+    from galileo.annotate import find_annotations
+
+    solve = _solved_result(ra_deg=180.0, dec_deg=0.0, scale_arcsec_px=2.0)   # ~0.033°/px, small FOV
+    stars = _FakeStarCatalog(
+        ra=[180.0, 250.0], dec=[0.0, 0.0], labels=["Polaris-ish", "Star"],
+    )
+    dsos = [_FakeDso("M 31", 180.0005, 0.0)]
+
+    found = find_annotations(solve, width=100, height=100, star_catalog=stars, dso_catalog=dsos)
+
+    names = {a.name for a in found}
+    assert "Polaris-ish" in names, "a named star near the centre must be labelled"
+    assert "M 31" in names, "a DSO near the centre must be labelled"
+    assert not any("250" in n for n in names)
+    assert len(found) == 2, "the far-away star and the unnamed one must both be excluded"
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+def test_tc_img_200_find_annotations_needs_a_successful_solve():
+    """IMG-200: no solve, or a failed one, yields no annotations rather than guessing."""
+    from galileo.annotate import find_annotations
+    from galileo.platesolve import SolveResult
+
+    assert find_annotations(None, 100, 100) == []
+    assert find_annotations(SolveResult(success=False), 100, 100) == []
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+def test_tc_img_200_render_annotations_draws_onto_a_copy():
+    """IMG-200: rendering returns a new RGB array with the overlay drawn on it — the array
+    passed in is not modified in place, so it can still be reused elsewhere (e.g. re-annotated)."""
+    import numpy as np
+    from galileo.annotate import Annotation, render_annotations
+
+    preview = np.full((40, 40), 50, dtype=np.uint8)
+    original = preview.copy()
+    overlay = render_annotations(preview, [Annotation(name="M 31", x=20.0, y=20.0, radius=10.0)])
+
+    assert overlay.shape == (40, 40, 3)
+    assert np.array_equal(preview, original), "the input array must not be mutated"
+    assert not np.array_equal(overlay[..., 0], preview), "something was actually drawn"
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+def test_tc_img_200_annotate_preview_reports_why_nothing_was_drawn(monkeypatch):
+    """IMG-200: a solved frame with nothing catalogued in it says so, distinctly from a failed solve."""
+    import numpy as np
+    from galileo.annotate import annotate_preview
+
+    monkeypatch.setattr("galileo.annotate.find_annotations", lambda *a, **k: [])
+    preview = np.zeros((30, 30), dtype=np.uint8)
+    overlay, note = annotate_preview(preview, _solved_result())
+    assert overlay is None
+    assert "no catalogued objects" in note.lower()
+
+    overlay, note = annotate_preview(preview, None)
+    assert overlay is None
+    assert "could not annotate" in note.lower()
+
+
+def _solved_result(ra_deg=180.0, dec_deg=20.0, rotation_deg=0.0, scale_arcsec_px=2.0):
+    from galileo.platesolve import SolveResult
+    return SolveResult(success=True, ra_deg=ra_deg, dec_deg=dec_deg,
+                        rotation_deg=rotation_deg, scale_arcsec_px=scale_arcsec_px)
+
+
+class _FakeSolver:
+    """A stand-in for ``PlateSolver`` that returns a fixed result without touching a disk file."""
+
+    def __init__(self, result):
+        self._result = result
+        self.solved_paths: list = []
+
+    async def solve(self, path, hint=None):
+        self.solved_paths.append(path)
+        return self._result
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+async def test_tc_img_200_annotate_solves_and_labels_the_current_frame(imaging_service, monkeypatch):
+    """IMG-200: Annotate plate-solves current_frame and builds a labelled overlay from the
+    solution, without altering current_frame or current_preview."""
+    import numpy as np
+    from galileo.annotate import Annotation
+
+    frame = np.full((50, 60), 400, dtype=np.uint16)
+    imaging_service.current_frame = frame
+    imaging_service.current_preview = np.zeros((50, 60), dtype=np.uint8)
+    result = _solved_result()
+    solver = _FakeSolver(result)
+
+    monkeypatch.setattr(
+        "galileo.annotate.find_annotations",
+        lambda solve, w, h, **k: [Annotation(name="M 31", x=10.0, y=10.0, radius=15.0)],
+    )
+
+    await imaging_service.annotate_current_frame(solver)
+
+    assert imaging_service.last_solve is result
+    assert imaging_service.annotated_preview is not None
+    assert imaging_service.annotated_preview.shape == (50, 60, 3)
+    assert "1 object labelled" in imaging_service.annotate_note
+    assert imaging_service.current_frame is frame, "the raw frame must be untouched"
+    assert imaging_service.current_preview is not None and imaging_service.current_preview.shape == (50, 60)
+
+
+@pytest.mark.requirement("TC-IMG-200")
+@pytest.mark.priority("P2")
+async def test_tc_img_200_a_failed_solve_leaves_no_overlay(imaging_service):
+    """IMG-200: a solve that fails (no solver installed, no solution) leaves annotated_preview
+    unset and explains why, rather than showing a stale or blank overlay."""
+    import numpy as np
+    from galileo.platesolve import SolveResult
+
+    imaging_service.current_frame = np.zeros((20, 20), dtype=np.uint16)
+    imaging_service.current_preview = np.zeros((20, 20), dtype=np.uint8)
+    solver = _FakeSolver(SolveResult(success=False, failure_reason="ASTAP executable not found"))
+
+    await imaging_service.annotate_current_frame(solver)
+
+    assert imaging_service.annotated_preview is None
+    assert imaging_service.save_preview is None
+    assert "ASTAP executable not found" in imaging_service.annotate_note
+
+
+@pytest.mark.requirement("TC-IMG-210")
+@pytest.mark.priority("P2")
+async def test_tc_img_210_save_frame_writes_the_annotated_png_when_on(imaging_service, tmp_path, monkeypatch):
+    """IMG-210: with Annotate on and current, Save Frame writes the annotated view as PNG
+    instead of the raw FITS the button otherwise saves."""
+    import numpy as np
+    from galileo.annotate import Annotation
+
+    frame = np.full((20, 30), 300, dtype=np.uint16)
+    imaging_service.current_frame = frame
+    imaging_service.current_preview = np.zeros((20, 30), dtype=np.uint8)
+    monkeypatch.setattr(
+        "galileo.annotate.find_annotations",
+        lambda solve, w, h, **k: [Annotation(name="Star", x=5.0, y=5.0, radius=15.0)],
+    )
+    await imaging_service.annotate_current_frame(_FakeSolver(_solved_result()))
+    imaging_service.set_annotate_enabled(True)
+    assert imaging_service.save_preview is not None
+
+    path = tmp_path / "frame.fits"      # even a FITS-suffixed path is redirected to PNG
+    imaging_service.save_current_frame(path)
+
+    from PIL import Image
+    saved = path.with_suffix(".png")
+    assert saved.exists() and not path.exists()
+    with Image.open(saved) as img:
+        assert img.size == (30, 20)
+
+
+@pytest.mark.requirement("TC-IMG-210")
+@pytest.mark.priority("P2")
+def test_tc_img_210_save_frame_is_plain_fits_when_annotate_is_off(imaging_service, tmp_path):
+    """IMG-210: with Annotate off, Save Frame writes the ordinary raw FITS, unchanged."""
+    import numpy as np
+    imaging_service.current_frame = np.full((10, 10), 100, dtype=np.uint16)
+    assert imaging_service.annotate_enabled is False
+
+    path = tmp_path / "frame.fits"
+    imaging_service.save_current_frame(path)
+
+    assert path.exists()
+    assert imaging_service.suggested_filename().endswith(".fits")
+
+
+@pytest.mark.requirement("TC-IMG-220")
+@pytest.mark.priority("MVP")
+async def test_tc_img_220_annotated_frames_never_reach_the_library(library_repo, monkeypatch):
+    """IMG-220: whether a frame reaches the Library through auto-save during a series or through
+    Save Stack > Save to Library, it is always the raw frame/stack — Annotate being on must not
+    change what gets registered, and no PNG overlay is ever written into the repository."""
+    from galileo.annotate import Annotation
+    from galileo.library.models import fitsFile
+    from galileo.ui.imaging import ImagingService
+
+    service = ImagingService(camera=_DriftingCamera())
+    service.auto_save_to_library = True
+    service.live_stack_enabled = True
+    service.object_name = "M 31"
+    monkeypatch.setattr(
+        "galileo.annotate.find_annotations",
+        lambda solve, w, h, **k: [Annotation(name="Star", x=1.0, y=1.0, radius=15.0)],
+    )
+
+    await service.capture_series(3, 5.0, frame_type="Light")
+    await service.annotate_current_frame(_FakeSolver(_solved_result()))
+    service.set_annotate_enabled(True)
+    assert service.save_preview is not None, "the overlay must be valid for the just-built stack"
+
+    file_id = service.save_stack_to_library()
+
+    assert fitsFile.select().count() == 4, "3 subs (auto-save) + 1 stack, all raw"
+    assert file_id
+    for row in fitsFile.select():
+        assert row.fitsFileName.lower().endswith((".fits", ".fit")), \
+            f"{row.fitsFileName} reached the Library despite Annotate being on"
+    assert not list(library_repo.repo.rglob("*.png")), "no annotated image was ever written into the repository"

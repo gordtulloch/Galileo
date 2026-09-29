@@ -104,6 +104,28 @@ class _PreviewRenderThread(QThread if _HAS_QT else object):
         self.rendered.emit(result)
 
 
+class _AnnotateThread(QThread if _HAS_QT else object):
+    """Runs one Annotate solve+render (IMG-200) off the Qt UI thread: plate-solving is an
+    external process that can take tens of seconds, and the Imaging page must stay responsive
+    while it runs, same as every other blocking device/solver call in this window."""
+
+    done = Signal() if _HAS_QT else None
+
+    def __init__(self, service, solver, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._solver = solver
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            asyncio.run(self._service.annotate_current_frame(self._solver))
+        except Exception as exc:
+            logger.exception("Annotate failed")
+            self._service.annotate_note = f"Annotate failed: {exc}"
+        self.done.emit()
+
+
 class _FilterMoveThread(QThread if _HAS_QT else object):
     """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
     several seconds to settle (INDI waits up to a minute), which would otherwise

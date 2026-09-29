@@ -25,7 +25,11 @@ application's internal class names):
    and (when available for the selected date) weather/aurora/smoke
    advisories; equipment-independent. Produces :class:`ObservabilityScore`.
 3. **Equipment Envelope** — per optical train: realistic imaging limiting
-   magnitude and field-of-view fit; sky-independent. Produces
+   magnitude and field-of-view fit; sky-independent. Field-of-view fit is
+   two-sided — an object larger than the frame is still a legitimate mosaic
+   target, but one much smaller than the frame is penalized, since a target
+   that technically clears the horizon but fills only a speck of the field
+   isn't a reasonable single-frame recommendation. Produces
    :class:`FitScore`, computed independently per train (WUT-010/PROF-080).
 4. **Recommendation** — ``ObservabilityScore.value * FitScore.value`` plus a
    human-readable ``reasons`` list (WUT-020).
@@ -75,6 +79,14 @@ _AURORA_KP_SEVERE = 9.0           # Kp index (max on the scale) at which the aur
 _SMOKE_AQI_THRESHOLD = 50.0       # AQI ("good") below which smoke is not considered a factor
 _SMOKE_AQI_SEVERE = 200.0         # AQI at which the smoke factor bottoms out
 
+# Target fraction of the frame's shorter dimension a well-matched object should
+# fill (WUT-010's "imaging capability" fit): below this, the object reads as a
+# speck in an oversized field even though it technically "fits". An object
+# *larger* than the frame is not penalized this way — mosaicking already
+# covers that case (fits_field/mosaic_required below) — this factor only ramps
+# down objects that are too small to be a reasonable single-frame target.
+_TARGET_FIELD_FILL_FRACTION = 0.30
+
 
 class Confidence(str, Enum):
     """How complete an entry's sky-state inputs were (WUT-030) — a parallel
@@ -107,6 +119,7 @@ class FitScore:
     limiting_magnitude: float
     fits_field: bool            # False when the object is larger than this train's field of view
     mosaic_required: bool = False
+    fill_fraction: float | None = None   # object size / frame's shorter dimension; None when unknown
 
 
 @dataclass
@@ -296,6 +309,8 @@ def _fit_for_train(obj: DeepSkyObject, train: OpticalTrain | None) -> FitScore:
         magnitude_value = min(1.0, max(0.0, (limiting_magnitude - obj.magnitude) / 5.0))
 
     fits_field = True
+    size_fit = 1.0
+    fill_fraction: float | None = None
     plate_scale = getattr(train, "plate_scale_arcsec_px", 0.0)
     camera = getattr(train, "camera", None) or {}
     width_px = camera.get("sensor_width_px", 0)
@@ -303,13 +318,22 @@ def _fit_for_train(obj: DeepSkyObject, train: OpticalTrain | None) -> FitScore:
     if plate_scale and width_px and height_px and obj.size_arcmin > 0:
         field_arcmin = (min(width_px, height_px) * plate_scale) / 60.0
         fits_field = obj.size_arcmin <= field_arcmin
+        fill_fraction = obj.size_arcmin / field_arcmin
+        # An object larger than the frame is not penalized here — it's still a
+        # worthwhile mosaic target (the 0.5x fits_field penalty below already
+        # covers that tradeoff). Only ramp down objects too small to be a
+        # reasonable single-frame target: linear from 0 at 0% fill up to full
+        # value at the target fill fraction.
+        if fill_fraction < _TARGET_FIELD_FILL_FRACTION:
+            size_fit = fill_fraction / _TARGET_FIELD_FILL_FRACTION
 
-    value = magnitude_value * (1.0 if fits_field else 0.5)
+    value = magnitude_value * size_fit * (1.0 if fits_field else 0.5)
     return FitScore(
         value=value,
         limiting_magnitude=limiting_magnitude,
         fits_field=fits_field,
         mosaic_required=not fits_field,
+        fill_fraction=fill_fraction,
     )
 
 
@@ -340,6 +364,11 @@ def rank_for_train(
             )
         elif fit.mosaic_required:
             reasons.append("Larger than this train's field of view — mosaic required")
+        elif fit.fill_fraction is not None and fit.fill_fraction < _TARGET_FIELD_FILL_FRACTION:
+            reasons.append(
+                f"Small in this train's field of view — fills only "
+                f"~{fit.fill_fraction * 100:.0f}% of the frame"
+            )
         if not reasons:
             reasons.append("Good altitude and clear of the Moon")
 

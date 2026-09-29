@@ -148,6 +148,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `IMG-170` | P2 | SDD 4.5 `galileo.ui.imaging` / `galileo.metadata` | Test | `TC-IMG-170` |
 | `IMG-180` | MVP | SDD 4.5 `galileo.ui.imaging` / SDD 4.9 `galileo.planning.framing` | Test | `TC-IMG-180` |
 | `IMG-190` | P2 | SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-190` |
+| `IMG-200` | P2 | SDD 4.5a `galileo.annotate` / SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-200` |
+| `IMG-210` | P2 | SDD 4.5a `galileo.annotate` / SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-210` |
+| `IMG-220` | MVP | SDD 4.5a `galileo.annotate` / SDD 4.5 `galileo.ui.imaging` | Test | `TC-IMG-220` |
 
 ### `SES` — Sessions (formerly `SEQ`/`SEQ-ADV`; SRS Sections 4.5/4.5a/4.6)
 
@@ -504,7 +507,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `EQP` | 27 | 19 | 8 | 0 |
 | `PROF` | 12 | 11 | 1 | 0 |
 | `OBS` | 9 | 0 | 9 | 0 |
-| `IMG` | 17 | 9 | 8 | 0 |
+| `IMG` | 20 | 10 | 10 | 0 |
 | `SES` (formerly `SEQ`/`SEQ-ADV`) | 30 | 17 | 10 | 3 |
 | `SKY` | 12 | 8 | 4 | 0 |
 | `WUT` | 10 | 8 | 1 | 1 |
@@ -534,4 +537,4 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **281** | **168** | **98** | **15** |
+| **Total** | **284** | **169** | **100** | **15** |

@@ -213,6 +213,9 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | IMG-170 | An Imaging settings screen shall let the user set a desired FITS sample format (BITPIX) for frames the imaging tab saves, offered as "Auto" (the smallest portable format that fits each frame without losing data) or a fixed 8, 16, 32 or -32; the fixed choices shall clip out-of-range values and round a float to the nearest integer rather than wrapping or raising. No frame the application writes, under any setting, shall use a 64-bit sample format, which common solving and analysis tools cannot read (traces to `META-010`). | P2 |
 | IMG-180 | The imaging tab shall provide a Framing… control that opens the Framing Assistant (`FRAME-070`) against the currently selected camera/optical train for immediate-imaging use, including defining and, where a mosaic grid is defined, running a mosaic capture directly from the tab (mosaic execution traces to `FRAME-090`). Where live stacking (`IMG-160`) is enabled for such a capture, each pane's frames shall register onto that pane's own running stack, composited into a single canvas sized to the whole mosaic at each pane's grid position, so the displayed preview shows the mosaic's full extent filling in pane by pane rather than one pane's frame at a time. | MVP |
 | IMG-190 | The imaging tab shall provide a slider above the histogram letting the user adjust the strength of the displayed frame's auto-stretch preview, re-rendering the preview as it changes. Adjusting it shall not alter the raw frame, its statistics, its histogram or any saved file (traces to `IMG-020`, `IMG-030`). | P2 |
+| IMG-200 | The imaging tab shall provide an Annotate control above the preview that, when turned on, plate-solves the displayed frame (traces to `PLT-010`) and overlays a circle and label at the position of each catalogued star or deep-sky object found within it, using Galileo's own bundled catalogs. Turning it off, or the displayed frame changing (a new capture), shall return the preview to the ordinary auto-stretch view without altering the raw frame, its statistics or its histogram (traces to `IMG-010`, `IMG-020`). | P2 |
+| IMG-210 | While Annotate (`IMG-200`) is on and a labelled overlay is current for the displayed frame, Save Frame and Save Stack shall write that annotated view, rendered as an image, in place of the raw FITS file they otherwise save (traces to `IMG-100`, `IMG-160`). | P2 |
+| IMG-220 | The Library — both the imaging tab's automatic per-frame registration and its Save Stack to Library control — shall register only the raw captured frame or stack, never an annotated overlay (`IMG-200`), regardless of the Annotate control's state (traces to `IMG-150`, `IMG-160`). | MVP |
 
 ### 4.5 `SES` — Sessions (Execution Engine, formerly `SEQ`)
 
@@ -615,7 +618,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | OBS | 9 | 0 | 9 | 0 |
 | EQP (generic + device) | 27 | 19 | 8 | 0 |
 | PROF | 12 | 11 | 1 | 0 |
-| IMG | 17 | 9 | 8 | 0 |
+| IMG | 20 | 10 | 10 | 0 |
 | SES (formerly `SEQ`/`SEQ-ADV`; Sections 4.5–4.6) | 30 | 17 | 10 | 3 |
 | SKY | 12 | 8 | 4 | 0 |
 | WUT | 10 | 8 | 1 | 1 |
@@ -645,7 +648,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **267** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **270** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
 
 ---
 

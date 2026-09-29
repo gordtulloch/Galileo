@@ -146,6 +146,68 @@ class ImagingService:
         self.active_mosaic = None
         self._mount = None      # set by the page (Equipment > Mount's adapter) before a mosaic capture
 
+        # Annotation overlay (IMG-200 … IMG-220): labels catalogued stars/DSOs on the preview from
+        # a plate solve of ``current_frame``. Never touches current_frame/current_preview, frame_stats
+        # or the Library paths (_auto_save_to_library, save_stack_to_library) — those always take the
+        # raw frame/stack directly, regardless of annotate_enabled (IMG-220).
+        self.annotate_enabled: bool = False
+        self.last_solve = None                  # the platesolve.SolveResult behind annotated_preview
+        self.annotated_preview = None            # RGB uint8 overlay, or None if none/stale
+        self._annotated_frame = None             # identity of current_frame annotated_preview was built for
+        self.annotate_note: str = ""             # status text for the Imaging page's Annotate hint
+
+    # --- Annotation (IMG-200 … IMG-220) ------------------------------------
+
+    async def annotate_current_frame(self, solver) -> None:
+        """Plate-solve ``current_frame`` with *solver* and build the labelled overlay from the
+        solution and Galileo's bundled star/DSO catalogs (`galileo.annotate`). Solving happens
+        here — not reused from the Solve screen — so Annotate works on whatever is on screen
+        without a separate solve step first. Sets ``annotated_preview``/``last_solve``/
+        ``annotate_note``; ``current_frame`` and ``current_preview`` are never touched."""
+        from galileo.annotate import annotate_preview
+        frame, preview = self.current_frame, self.current_preview
+        if frame is None or preview is None:
+            self.annotate_note = "Capture or load a frame first."
+            return
+        import tempfile
+        from pathlib import Path
+
+        from galileo.platesolve import _write_frame
+        path = Path(tempfile.gettempdir()) / "galileo_annotate.fits"
+        await asyncio.to_thread(_write_frame, frame, path, self.frame_metadata())
+        self.last_solve = await solver.solve(path)
+        overlay, note = annotate_preview(preview, self.last_solve)
+        self.annotated_preview, self._annotated_frame, self.annotate_note = overlay, frame, note
+
+    def set_annotate_enabled(self, enabled: bool) -> None:
+        """Turn the Annotate overlay on or off. Turning it on does not itself solve or render —
+        the page starts that (off the UI thread, since solving is an external process) via
+        :meth:`annotate_current_frame` when there is no current overlay to show yet."""
+        self.annotate_enabled = enabled
+
+    @property
+    def display_preview(self):
+        """What the Imaging page should show: the annotated overlay when Annotate is on and
+        still valid for ``current_frame``, else the plain auto-stretch preview."""
+        if self.annotate_enabled and self._annotated_frame is self.current_frame and self.annotated_preview is not None:
+            return self.annotated_preview
+        return self.current_preview
+
+    @property
+    def save_preview(self):
+        """The annotated overlay Save Frame/Save Stack should write instead of raw FITS, or
+        ``None`` when Annotate is off or stale for ``current_frame`` (IMG-210) — never read by
+        the Library paths, which always save the raw frame/stack regardless (IMG-220)."""
+        if self.annotate_enabled and self._annotated_frame is self.current_frame:
+            return self.annotated_preview
+        return None
+
+    @property
+    def save_file_filter(self) -> str:
+        """The Save Frame/Save Stack file dialog's filter: PNG while an annotated overlay is
+        what will actually be written (IMG-210), else the ordinary FITS filter."""
+        return "PNG files (*.png)" if self.save_preview is not None else "FITS files (*.fits *.fit)"
+
     # --- Framing Assistant (IMG-180, FRAME-070) ---------------------------
 
     def open_framing_assistant(self, profile=None):
@@ -169,8 +231,10 @@ class ImagingService:
         return safe_file_stem(self.object_name) or "frame"
 
     def suggested_filename(self) -> str:
-        """A name for the frame being saved, e.g. ``M_31_20260921T213045.fits``."""
-        return f"{self.file_stem}_{datetime.datetime.now():%Y%m%dT%H%M%S}.fits"
+        """A name for the frame being saved, e.g. ``M_31_20260921T213045.fits`` — ``.png`` while
+        Annotate will save the labelled overlay instead of the raw frame (IMG-210)."""
+        ext = "png" if self.save_preview is not None else "fits"
+        return f"{self.file_stem}_{datetime.datetime.now():%Y%m%dT%H%M%S}.{ext}"
 
     # --- FITS header (IMG-150) --------------------------------------------
 
@@ -418,21 +482,32 @@ class ImagingService:
         return meta
 
     def save_stack(self, path: Path | str) -> None:
-        """Write the stack to *path* as FITS, with the stack's own header (IMG-160)."""
+        """Write the stack to *path*: the annotated overlay as PNG while Annotate has one current
+        for it (IMG-210), else plain FITS with the stack's own header (IMG-160)."""
         if self.active_stacker.result is None:
             raise ValueError("There is no stack to save.")
+        overlay = self.save_preview
+        if overlay is not None:
+            _save_png(overlay, Path(path))
+            return
         _save_fits(self.active_stacker.result, Path(path), self.object_name, self.stack_metadata(), self.bitpix)
 
     def stack_filename(self) -> str:
-        """A name for the stack, e.g. ``M_31_stack_12x30s_20260921T213045.fits``."""
+        """A name for the stack, e.g. ``M_31_stack_12x30s_20260921T213045.fits`` — ``.png`` while
+        Annotate will save the labelled overlay instead (IMG-210). Only for Save Stack's own file
+        dialog — the Library always uses :meth:`_stack_fits_filename` (IMG-220)."""
+        ext = "png" if self.save_preview is not None else "fits"
+        return self._stack_fits_filename(ext)
+
+    def _stack_fits_filename(self, ext: str = "fits") -> str:
         exposure = self.last_shot.get("duration", 0.0)
         return (f"{self.file_stem}_stack_{self.active_stacker.frames}x{exposure:g}s_"
-                f"{datetime.datetime.now():%Y%m%dT%H%M%S}.fits")
+                f"{datetime.datetime.now():%Y%m%dT%H%M%S}.{ext}")
 
     def save_stack_to_library(self) -> str | None:
         """Write the stack to the scratch folder and register it in the Library, which files it in
-        the repository. Returns its catalog id, or ``None`` if it was not registered (the reason is
-        in ``library_note``)."""
+        the repository. Always the raw stack as FITS, regardless of Annotate (IMG-220) — returns
+        its catalog id, or ``None`` if it was not registered (the reason is in ``library_note``)."""
         if self.active_stacker.result is None:
             raise ValueError("There is no stack to save.")
         self.library_note = ""
@@ -440,7 +515,7 @@ class ImagingService:
         if not meta.get("object"):
             meta["object"] = "Unknown"
             self.library_note = "No current object, so the stack was filed under 'Unknown'."
-        path = self._scratch_folder() / self.stack_filename()
+        path = self._scratch_folder() / self._stack_fits_filename()
         _save_fits(self.active_stacker.result, path, self.object_name, meta, self.bitpix)
         if not path.exists():
             self.library_note = "The stack could not be written to the scratch folder — see the log."
@@ -692,6 +767,12 @@ class ImagingService:
     # --- Save current frame (IMG-100) ------------------------------------
 
     def save_current_frame(self, path: Path | str) -> None:
+        """Write ``current_frame`` to *path*: the annotated overlay as PNG while Annotate has one
+        current for it (IMG-210), else plain FITS as before."""
+        overlay = self.save_preview
+        if overlay is not None:
+            _save_png(overlay, Path(path))
+            return
         _save_fits(self.current_frame, Path(path), self.object_name, self.frame_metadata(), self.bitpix)
 
 
@@ -771,3 +852,21 @@ def _save_fits(data, path: Path, object_name: str = "", metadata: dict | None = 
         FitsMetadataWriter(output_dir=path.parent).write(data, meta, filename=path.name, bitpix=bitpix)
     except Exception:
         logger.exception("Failed to save FITS frame to %s", path)
+
+
+def _save_png(data, path: Path) -> None:
+    """Write *data* — an annotated RGB ``uint8`` overlay (IMG-210) — as PNG. An annotated view is
+    a rendered picture, not scientific pixel data, so it never goes through the FITS pipeline the
+    raw frame/stack use: a colour FITS cube is legal but inconsistently read across tools (see
+    ``galileo.platesolve.frame_for_solver``), which is exactly the kind of file this must not
+    produce. *path* is redirected to a ``.png`` name if it wasn't already one — the Save Frame/
+    Save Stack dialogs already default to one (``ImagingService.save_file_filter``), but a path
+    typed in by hand may not be. Failures are logged, not raised, so callers check the file exists."""
+    try:
+        import numpy as np
+        from PIL import Image
+        if path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            path = path.with_suffix(".png")
+        Image.fromarray(np.asarray(data).astype(np.uint8), mode="RGB").save(path)
+    except Exception:
+        logger.exception("Failed to save annotated image to %s", path)

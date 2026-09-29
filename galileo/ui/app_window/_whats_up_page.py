@@ -33,10 +33,10 @@ if TYPE_CHECKING:
 _MAX_CANDIDATES = 300
 _MAX_SHOWN = 50
 # Same bound as the Targets page's own auto-thumbnail fill-in
-# (_planning_page.py) — here it's only ever a disk-cache read (never a
-# network fetch, see the "No thumbnails" note this overrides below), but the
-# same small cap avoids reading/decoding/scaling a JPEG per row for a
-# 50-tile result list.
+# (_planning_page.py). Unlike a plain disk-cache read (applied to every shown
+# tile, unbounded — see run_rank() below), a genuine network fetch is a real
+# hips2fits request per uncached object, so only *that* part of the fill-in
+# is capped, to keep a ranking run from firing up to _MAX_SHOWN (50) requests.
 _MAX_AUTO_THUMBNAILS = 12
 
 
@@ -544,28 +544,47 @@ class AppWindowWhatsUpPageMixin:
                 results.setItemWidget(item, row_container)
                 thumb_labels.append(thumb_label)
 
-            # Fill in the first few cards' thumbnails from the on-disk cache
-            # only (bounded — see _MAX_AUTO_THUMBNAILS above) — a plain file
-            # read, never a hips2fits request, so this preserves ranking's
-            # documented no-network-dependency property (SDD.md Section
-            # 4.8b's "No thumbnails" note): an object already thumbnailed via
-            # the Targets/Planning page shows its cached image immediately;
-            # anything not yet cached stays blank rather than fetching it
-            # here, exactly as before this change.
+            # Fill in every cached thumbnail unconditionally (a plain disk
+            # read, cheap regardless of how many tiles are shown) — an object
+            # already thumbnailed via the Targets/Planning page shows its
+            # cached image immediately, however far down the ranked list it
+            # sits. Only a genuine network fetch (an object not yet cached
+            # anywhere) is bounded, at _MAX_AUTO_THUMBNAILS, to keep a ranking
+            # run from firing an unbounded number of hips2fits requests.
+            import asyncio
             from galileo.planning.sky_atlas import _cached_thumbnail, _thumbnail_field_arcmin
             from PySide6.QtGui import QPixmap
-            for rec, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels):
-                obj = rec.obj
-                field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
-                data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)
-                if not data:
-                    continue
+
+            def _set_thumb(thumb_label, data: bytes) -> None:
                 pixmap = QPixmap()
-                if pixmap.loadFromData(data) and not pixmap.isNull():
+                if data and pixmap.loadFromData(data) and not pixmap.isNull():
                     thumb_label.setPixmap(pixmap.scaled(
                         _CARD_THUMB_PX, _CARD_THUMB_PX,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
                     ))
+
+            uncached: list[tuple] = []
+            for rec, thumb_label in zip(shown, thumb_labels):
+                obj = rec.obj
+                field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
+                data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)
+                if data:
+                    _set_thumb(thumb_label, data)
+                else:
+                    uncached.append((obj, thumb_label))
+
+            if uncached:
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                try:
+                    for obj, thumb_label in uncached[:_MAX_AUTO_THUMBNAILS]:
+                        try:
+                            data = asyncio.run(atlas._fetch_thumbnail(obj))
+                        except Exception:
+                            logger.debug("Could not fetch card thumbnail for %s", obj.primary_name, exc_info=True)
+                            continue
+                        _set_thumb(thumb_label, data)
+                finally:
+                    QApplication.restoreOverrideCursor()
 
         rank_btn.clicked.connect(run_rank)
 

@@ -98,6 +98,31 @@ def test_tc_wut_010_fit_score_is_independent_per_optical_train(
     assert large_recs[0].fit.limiting_magnitude > small_recs[0].fit.limiting_magnitude
 
 
+@pytest.mark.requirement("TC-WUT-010")
+@pytest.mark.priority("MVP")
+def test_tc_wut_010_fit_score_penalizes_object_too_small_for_frame(
+    recommend_mod, observing_location, train,
+):
+    """WUT-010: a tiny object that technically clears the horizon but would occupy
+    only a speck of the frame should rank below one that reasonably fills the field
+    of view — filling the frame is part of "imaging capability" (PROF-080), not
+    just clearing the aperture's limiting magnitude. A larger object needing a
+    mosaic is not penalized this way (mosaicking is a legitimate option)."""
+    tiny = _obj("Tiny", ra_deg=180.0, dec_deg=75.0, magnitude=8.0, size_arcmin=4.0)
+    well_fit = _obj("WellFit", ra_deg=180.0, dec_deg=75.0, magnitude=8.0, size_arcmin=20.0)
+    oversized = _obj("Oversized", ra_deg=180.0, dec_deg=75.0, magnitude=8.0, size_arcmin=200.0)
+
+    recs = recommend_mod.rank_tonight(observing_location, train, [tiny, well_fit, oversized], night_date="2026-06-15")
+    by_name = {r.obj.primary_name: r for r in recs}
+
+    assert by_name["Tiny"].fit.value < by_name["WellFit"].fit.value
+    assert any("fills only" in reason for reason in by_name["Tiny"].reasons)
+    # Oversized (mosaic-required) is not penalized by the fill-fraction factor —
+    # only the existing fits_field/mosaic 0.5x factor applies to it.
+    assert not by_name["Oversized"].fit.fits_field
+    assert by_name["Oversized"].fit.value > 0.0
+
+
 # ---------------------------------------------------------------------------
 # TC-WUT-020
 # ---------------------------------------------------------------------------
@@ -301,12 +326,18 @@ def test_tc_wut_060_select_reuses_the_same_entry_point_as_targets(tmp_path, monk
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    pytest.importorskip("galileo.planning.sky_atlas")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     from galileo.library.database import db, init_db
     init_db(tmp_path / "wut_select_test.db")
     from galileo.observatory import create_observatory, create_pier
     from galileo.ui.app_window import AppWindow
+
+    # No live network dependency: with no thumbnails cached, ranking now fetches
+    # thumbnails for the uncached results (bounded at _MAX_AUTO_THUMBNAILS) via a
+    # real hips2fits request unless this is stubbed out, same as other UI tests
+    # in this suite that exercise a real ranking/search run.
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", lambda *a, **k: b"fake-thumbnail-bytes")
 
     win = AppWindow()
     try:
@@ -341,6 +372,120 @@ def test_tc_wut_060_select_reuses_the_same_entry_point_as_targets(tmp_path, monk
     finally:
         win._window.close()
         db.close()
+
+
+def _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, db_name: str):
+    """Shared setup for the two thumbnail-loading tests below: an AppWindow
+    with a bare Pier/Observatory, ranking against every synthetic catalog
+    object (max magnitude 99) a year out (so the today-only advisory fetch,
+    WUT-100, never fires a network call of its own)."""
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import init_db
+    init_db(tmp_path / db_name)
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.app_window import AppWindow
+
+    win = AppWindow()
+    win.app, win.QtWidgets = app, QtWidgets
+    observatory = create_observatory("Test Obs", latitude=51.5, longitude=-1.0)
+    win.pier = create_pier(observatory, "Pier A")
+    win._current_pier = win.pier
+    win._current_observatory = observatory
+
+    page = win._build_whats_up_page()
+    date_edit = next(w for w in page.findChildren(QtWidgets.QDateEdit))
+    date_edit.setDate(QtWidgets.QDateEdit().date().addYears(1))
+    max_mag = next(w for w in page.findChildren(QtWidgets.QDoubleSpinBox))
+    max_mag.setValue(99.0)
+    return win, page
+
+
+@pytest.mark.requirement("TC-WUT-060")
+@pytest.mark.priority("MVP")
+def test_tc_wut_060_every_cached_thumbnail_loads_regardless_of_position(tmp_path, monkeypatch):
+    """A tile's thumbnail loads from the on-disk cache (SKY-080) whenever one exists, for
+    every shown tile — not only the first _MAX_AUTO_THUMBNAILS — since a cache hit is a
+    plain file read, never a network request, so bounding it buys nothing and would only
+    leave an already-thumbnailed object blank purely because of where it landed."""
+    import io
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    Image = pytest.importorskip("PIL.Image")
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), color=(255, 0, 0)).save(buf, format="JPEG")
+    fake_thumb = buf.getvalue()
+
+    # Every object is already cached: every fill-in should be a disk read, and the
+    # network path must never be touched at all.
+    monkeypatch.setattr(sky_mod, "_cached_thumbnail", lambda *a, **k: fake_thumb)
+
+    def _fail_on_network(*a, **k):
+        raise AssertionError("must not fetch over the network when everything is cached")
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", _fail_on_network)
+
+    win, page = _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, "wut_thumb_all_cached_test.db")
+    try:
+        from galileo.ui.app_window._whats_up_page import _MAX_AUTO_THUMBNAILS as _max_auto
+        rank_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Rank Tonight")
+        rank_btn.click()
+
+        results = page.findChildren(QtWidgets.QListWidget)[0]
+        assert results.count() > _max_auto, (
+            "test needs more shown tiles than _MAX_AUTO_THUMBNAILS to prove the cap doesn't apply to cache hits"
+        )
+
+        thumb_mod = pytest.importorskip("galileo.ui.app_window._widgets")
+        for i in range(results.count()):
+            row = results.itemWidget(results.item(i))
+            thumb = next(w for w in row.findChildren(thumb_mod._ClickableThumbnail))
+            assert not thumb.pixmap().isNull(), f"tile {i} has a cached thumbnail and should show it"
+    finally:
+        win._window.close()
+        from galileo.library.database import db as _db
+        _db.close()
+
+
+@pytest.mark.requirement("TC-WUT-060")
+@pytest.mark.priority("MVP")
+def test_tc_wut_060_thumbnail_network_fetch_is_bounded(tmp_path, monkeypatch):
+    """With nothing cached, every shown tile needs a real hips2fits fetch — that part
+    (and only that part) stays bounded at _MAX_AUTO_THUMBNAILS, so ranking a long list
+    never fires an unbounded number of network requests."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+
+    # Nothing is ever cached.
+    monkeypatch.setattr(sky_mod, "_cached_thumbnail", lambda *a, **k: b"")
+
+    fetch_calls = []
+    def _count_fetch(*a, **k):
+        fetch_calls.append(a)
+        return b""
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", _count_fetch)
+
+    win, page = _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, "wut_thumb_bounded_test.db")
+    try:
+        from galileo.ui.app_window._whats_up_page import _MAX_AUTO_THUMBNAILS as _max_auto
+        rank_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Rank Tonight")
+        rank_btn.click()
+
+        results = page.findChildren(QtWidgets.QListWidget)[0]
+        assert results.count() > _max_auto, (
+            "test needs more shown tiles than _MAX_AUTO_THUMBNAILS to prove the network fetch is capped"
+        )
+        assert len(fetch_calls) == _max_auto, (
+            f"expected exactly {_max_auto} network fetches (one per uncached tile up to the cap), "
+            f"got {len(fetch_calls)}"
+        )
+    finally:
+        win._window.close()
+        from galileo.library.database import db as _db
+        _db.close()
 
 
 # ---------------------------------------------------------------------------

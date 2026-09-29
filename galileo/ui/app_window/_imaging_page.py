@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
-from ._threads import _PreviewRenderThread, _NudgeThread, _CaptureThread, _MosaicCaptureThread
+from ._threads import _PreviewRenderThread, _NudgeThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
 from ._widgets import _HistogramWidget
 
 logger = logging.getLogger(__name__)
@@ -253,7 +253,22 @@ class AppWindowImagingPageMixin:
 
         preview_view = ImagePreviewView()
         preview_view.setObjectName("ImagingPreview")
-        content_layout.addLayout(build_zoom_toolbar(preview_view))
+        annotate_btn = QPushButton("Annotate")
+        annotate_btn.setCheckable(True)
+        annotate_btn.setEnabled(False)
+        annotate_btn.setToolTip(
+            "Label catalogued stars and deep-sky objects on the preview (IMG-200): plate-solves "
+            "the displayed frame and overlays a circle and name at each one found, from Galileo's "
+            "bundled star/DSO catalogs — needs a solver configured (Options > Solver), same as "
+            "the Solve screen. While on, Save Frame and Save Stack write the annotated view as a "
+            "PNG in place of the raw FITS (IMG-210); annotated frames are never added to the "
+            "Library, whichever way a frame reaches it (IMG-220)."
+        )
+        annotate_status = QLabel("")
+        annotate_status.setObjectName("StatusHint")
+        zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
+        zoom_toolbar.insertWidget(0, annotate_btn)
+        content_layout.addLayout(zoom_toolbar)
         content_layout.addWidget(preview_view, 1)
 
         stretch_widget = QWidget()   # a widget, not a bare layout, so it can move with the rest (IMG-120)
@@ -414,10 +429,21 @@ class AppWindowImagingPageMixin:
         _current_service()   # create the initially-selected Pier's service right away, as before
 
         def _refresh_preview(service) -> None:
-            data = service.current_preview
+            data = service.display_preview
             if data is None:
                 return
             preview_view.show_array(data)
+            _refresh_annotate_status(service)
+
+        def _refresh_annotate_status(service) -> None:
+            if not service.annotate_enabled:
+                annotate_status.setText("")
+            elif service._annotated_frame is service.current_frame and service.annotated_preview is not None:
+                annotate_status.setText(service.annotate_note)
+            elif service._annotated_frame is service.current_frame:
+                annotate_status.setText(service.annotate_note or "No catalogued objects found.")
+            else:
+                annotate_status.setText("Frame changed — click Annotate again to re-solve.")
 
         def _refresh_histogram(service) -> None:
             hist = service.get_histogram()
@@ -462,6 +488,56 @@ class AppWindowImagingPageMixin:
         debayer_check.toggled.connect(_debayer_toggled)
         self._imaging_preview_renders = preview_renders
         self._imaging_debayer_check = debayer_check
+
+        # Annotate (IMG-200): a fresh plate solve is only started when there is no valid overlay
+        # already cached for the frame on screen, so re-checking the box after a capture that
+        # hasn't changed anything doesn't re-solve for nothing.
+        annotate_threads: set = set()
+        self._imaging_annotate_threads = annotate_threads
+
+        def _start_annotate(service) -> None:
+            from galileo.observatory import get_solver_settings
+            from galileo.platesolve import PlateSolver
+            executable, params = get_solver_settings(self._current_pier)
+            solver = PlateSolver(backend="astap", executable=executable, params=params)
+            annotate_status.setText("Solving…")
+            annotate_btn.setEnabled(False)
+            thread = _AnnotateThread(service, solver, page)
+
+            def _on_done() -> None:
+                annotate_btn.setEnabled(service.current_frame is not None)
+                if service is _current_service():
+                    _refresh_preview(service)
+                    if service.save_preview is None:
+                        # Nothing to show or save — don't leave the toggle on for a dead overlay
+                        # (the IMG-050 mistake this feature must not repeat).
+                        annotate_btn.setChecked(False)
+                        service.set_annotate_enabled(False)
+                        _refresh_annotate_status(service)
+
+            thread.done.connect(_on_done)
+            thread.finished.connect(lambda: annotate_threads.discard(thread))
+            thread.finished.connect(thread.deleteLater)
+            annotate_threads.add(thread)
+            thread.start()
+
+        def _annotate_toggled(checked: bool) -> None:
+            service = _current_service()
+            service.set_annotate_enabled(checked)
+            if not checked:
+                _refresh_preview(service)
+                return
+            if service.current_frame is None:
+                annotate_status.setText("Capture or load a frame first.")
+                annotate_btn.setChecked(False)
+                service.set_annotate_enabled(False)
+                return
+            if service._annotated_frame is service.current_frame and service.annotated_preview is not None:
+                _refresh_preview(service)   # already solved for this frame — nothing to redo
+                return
+            _start_annotate(service)
+
+        annotate_btn.toggled.connect(_annotate_toggled)
 
         # Re-render as the slider moves, but debounced (IMG-190): re-stretching a large frame takes
         # real time, and a slider fires a change per pixel of drag, not once per gesture like the
@@ -577,6 +653,7 @@ class AppWindowImagingPageMixin:
             "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "auto_save": auto_save_check,
             "capture_button": capture_btn, "stop_button": stop_capture_btn, "status": status_label,
+            "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
             "nudge_rate": nudge_rate_combo, "nudge_duration": nudge_duration_spin,
             "nudge_state": nudge_state,
@@ -621,6 +698,10 @@ class AppWindowImagingPageMixin:
             _apply_orientation(service)
             save_frame_btn.setEnabled(service.current_frame is not None)
             save_stack_btn.setEnabled(service.stack_frame_count > 0)
+            annotate_btn.blockSignals(True)
+            annotate_btn.setChecked(service.annotate_enabled)
+            annotate_btn.blockSignals(False)
+            annotate_btn.setEnabled(service.current_frame is not None)
             running = self._imaging_capture_threads.get(key) is not None
             capture_btn.setEnabled(not running)
             stop_capture_btn.setEnabled(running)
@@ -748,6 +829,7 @@ class AppWindowImagingPageMixin:
                 _apply_orientation(service)
                 save_frame_btn.setEnabled(service.current_frame is not None)
                 save_stack_btn.setEnabled(service.stack_frame_count > 0)
+                annotate_btn.setEnabled(service.current_frame is not None)
 
             def _end_capture() -> None:
                 self._imaging_capture_threads.pop(key, None)
@@ -839,7 +921,7 @@ class AppWindowImagingPageMixin:
             current = self.current_object()
             service.object_name = current.name if current is not None else ""
             path, _ = QFileDialog.getSaveFileName(
-                self._window, "Save Frame", service.suggested_filename(), "FITS files (*.fits *.fit)",
+                self._window, "Save Frame", service.suggested_filename(), service.save_file_filter,
             )
             if not path:
                 return
@@ -857,7 +939,7 @@ class AppWindowImagingPageMixin:
         def save_stack_to_file() -> None:
             service = _current_service()
             path, _ = QFileDialog.getSaveFileName(
-                self._window, "Save Stack", service.stack_filename(), "FITS files (*.fits *.fit)",
+                self._window, "Save Stack", service.stack_filename(), service.save_file_filter,
             )
             if not path:
                 return
