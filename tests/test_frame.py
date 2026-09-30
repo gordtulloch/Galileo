@@ -359,3 +359,67 @@ def test_tc_frame_090_reslew_between_passes_is_the_dither_mechanism(framing_assi
     for step in order:
         assert step.requires_guider_dither is False
         assert step.requires_reslew is True
+
+
+# ---------------------------------------------------------------------------
+# TC-FRAME-100
+# ---------------------------------------------------------------------------
+
+class _FakeFrameSolver:
+    """A stand-in for ``PlateSolver`` that returns a fixed result without touching a disk file
+    or an external solver process — mirrors test_img.py's own ``_FakeSolver``."""
+
+    def __init__(self, result):
+        self._result = result
+        self.solved_paths: list = []
+
+    async def solve(self, path, hint=None):
+        self.solved_paths.append(path)
+        return self._result
+
+
+@pytest.fixture
+def imaging_service_for_framing(mock_indi_camera):
+    """An ``ImagingService`` with a frame already loaded, as the Framing Assistant's Determine
+    Rotation control expects (FRAME-100) — the Imaging tab's own current frame, not a fresh
+    capture."""
+    import numpy as np
+    imaging = pytest.importorskip("galileo.ui.imaging")
+    svc = imaging.ImagingService(camera=mock_indi_camera)
+    svc.current_frame = np.full((50, 60), 400, dtype=np.uint16)
+    return svc
+
+
+@pytest.mark.requirement("TC-FRAME-100")
+@pytest.mark.priority("P2")
+async def test_tc_frame_100_determine_rotation_solves_current_frame(imaging_service_for_framing):
+    """FRAME-100: Determine Rotation plate-solves the Imaging tab's current frame and the
+    resulting position angle becomes available as last_solve.rotation_deg for the Framing
+    Assistant dialog to read the rotation field from."""
+    from galileo.platesolve import SolveResult
+    result = SolveResult(success=True, ra_deg=83.8, dec_deg=-5.4, rotation_deg=42.5, scale_arcsec_px=2.0)
+    solver = _FakeFrameSolver(result)
+
+    solved = await imaging_service_for_framing.solve_current_frame(solver)
+
+    assert solved is result
+    assert imaging_service_for_framing.last_solve is result
+    assert imaging_service_for_framing.last_solve.rotation_deg == pytest.approx(42.5)
+    assert len(solver.solved_paths) == 1
+
+
+@pytest.mark.requirement("TC-FRAME-100")
+@pytest.mark.priority("P2")
+async def test_tc_frame_100_a_failed_solve_still_updates_last_solve_with_the_failure(imaging_service_for_framing):
+    """FRAME-100: A failed Determine Rotation solve is reflected in last_solve (success False, no
+    rotation_deg) rather than silently leaving stale state — the dialog reads this to show why
+    rotation could not be determined."""
+    from galileo.platesolve import SolveResult
+    result = SolveResult(success=False, failure_reason="No solution found")
+    solver = _FakeFrameSolver(result)
+
+    solved = await imaging_service_for_framing.solve_current_frame(solver)
+
+    assert solved.success is False
+    assert imaging_service_for_framing.last_solve.rotation_deg is None
+    assert imaging_service_for_framing.last_solve.failure_reason == "No solution found"

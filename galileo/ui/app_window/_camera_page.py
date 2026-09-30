@@ -179,6 +179,17 @@ class AppWindowCameraPageMixin:
             )
             form.addRow("Bayer pattern", bayer_combo)
 
+            max_well_depth = QSpinBox()
+            max_well_depth.setRange(0, 1_000_000)
+            max_well_depth.setSuffix(" e-")
+            max_well_depth.setSpecialValueText("—")
+            max_well_depth.setToolTip(
+                "This sensor's full-well capacity in electrons, from its datasheet. "
+                "Used by the Flat Assistant to compute a safe target ADU level; "
+                "leave at 0 if unknown."
+            )
+            form.addRow("Max well depth", max_well_depth)
+
             download_btn = QPushButton("Download Info")
             download_btn.setToolTip(
                 "Live-query this device's pixel size and sensor dimensions "
@@ -193,7 +204,7 @@ class AppWindowCameraPageMixin:
                 "device": device_combo, "apply_driver_info": apply_driver_info,
                 "pixel_size": pixel_size,
                 "sensor_w": sensor_w, "sensor_h": sensor_h, "sensor_name": sensor_name,
-                "bayer": bayer_combo, "download": download_btn,
+                "bayer": bayer_combo, "max_well_depth": max_well_depth, "download": download_btn,
             }
 
         def _renumber_panels() -> None:
@@ -418,6 +429,7 @@ class AppWindowCameraPageMixin:
                     sensor_height_px=panel["sensor_h"].value() or None,
                     sensor_name=panel["sensor_name"].text().strip() or None,
                     bayer_pattern=panel["bayer"].currentText(),
+                    max_well_depth=panel["max_well_depth"].value() or None,
                 )
 
             # Prune slots from cameras that were since removed from the page.
@@ -456,6 +468,9 @@ class AppWindowCameraPageMixin:
             from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN
             saved_pattern = cfg.bayer_pattern if cfg is not None else DEFAULT_PATTERN
             panel["bayer"].setCurrentText(saved_pattern if saved_pattern in BAYER_PATTERNS else DEFAULT_PATTERN)
+            panel["max_well_depth"].setValue(
+                cfg.max_well_depth if cfg is not None and cfg.max_well_depth else 0
+            )
             # Filled by autoconnect (below) or when a device is next picked —
             # not looked up here, so a Pier switch never waits on the network.
             panel["apply_driver_info"](None)

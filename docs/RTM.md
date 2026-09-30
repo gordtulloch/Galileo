@@ -232,6 +232,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FRAME-070` | MVP | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-070` |
 | `FRAME-080` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-080` |
 | `FRAME-090` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-090` |
+| `FRAME-100` | P2 | SDD 4.9 `galileo.planning.framing` | Test | `TC-FRAME-100` |
 
 ### `SKYMAP` — Interactive Star Map / Planetarium (KStars/EKOS-informed)
 

@@ -260,10 +260,12 @@ def save_device_config(
     sensor_height_px: int | None = None,
     sensor_name: str | None = None,
     bayer_pattern: str | None = None,
+    max_well_depth: int | None = None,
 ) -> DeviceConfigRecord:
     """Create or update the saved device configuration for *category*/*slot*
     on *pier* (the Equipment page's per-device Save button). *bayer_pattern*
-    (cameras only) is left as it was when omitted, and starts as ``RGGB``."""
+    (cameras only) is left as it was when omitted, and starts as ``RGGB``.
+    *max_well_depth* (cameras only, electrons) feeds the Flat Assistant."""
     from galileo.library.models.device_config import DeviceConfigRecord
     record = DeviceConfigRecord.get_or_none(
         (DeviceConfigRecord.pier == pier)
@@ -277,6 +279,7 @@ def save_device_config(
     )
     if bayer_pattern is not None:
         fields["bayer_pattern"] = bayer_pattern
+    fields["max_well_depth"] = max_well_depth
     if record is None:
         return DeviceConfigRecord.create(pier=pier, category=category, slot=slot, **fields)
     for key, value in fields.items():

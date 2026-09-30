@@ -126,6 +126,34 @@ class _AnnotateThread(QThread if _HAS_QT else object):
         self.done.emit()
 
 
+class _DetermineRotationThread(QThread if _HAS_QT else object):
+    """Runs one Determine Rotation solve (FRAME-100) off the Qt UI thread for the Framing
+    Assistant dialog: plate-solves the Imaging tab's current frame via
+    ``ImagingService.solve_current_frame`` (the same solve plumbing Annotate uses) and reports
+    success/failure, mirroring ``_AnnotateThread`` but without building the annotate overlay."""
+
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, service, solver, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._solver = solver
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            result = asyncio.run(self._service.solve_current_frame(self._solver))
+        except Exception as exc:
+            logger.exception("Determine Rotation solve failed")
+            self.failed.emit(str(exc))
+            return
+        if result.success and result.rotation_deg is not None:
+            self.finished_ok.emit()
+        else:
+            self.failed.emit(result.failure_reason or "The solver found no solution.")
+
+
 class _FilterMoveThread(QThread if _HAS_QT else object):
     """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
     several seconds to settle (INDI waits up to a minute), which would otherwise

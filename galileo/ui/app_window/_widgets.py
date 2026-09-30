@@ -95,14 +95,19 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         # own footprint — with a little margin so the border/rectangle isn't
         # flush against the widget's edge (FRAME-020/040: the field must stay
         # fully visible even when the survey source couldn't cover all of it).
+        # One shared degrees-to-pixels scale (not a separate one per axis) keeps
+        # the survey image and the FOV/mosaic rectangles at their true relative
+        # proportions as the dialog is resized, rather than stretching whichever
+        # axis the widget grew in — sky images and square-pixel sensors both have
+        # a real aspect ratio that resizing must not distort.
         target = self.rect().adjusted(4, 4, -4, -4)
         world_w_deg = max(ext_w_deg, fp_w_deg) * 1.1
         world_h_deg = max(ext_h_deg, fp_h_deg) * 1.1
-        px_per_deg_x = target.width() / world_w_deg
-        px_per_deg_y = target.height() / world_h_deg
+        px_per_deg = min(target.width() / world_w_deg, target.height() / world_h_deg)
+        px_per_deg_x = px_per_deg_y = px_per_deg
 
-        img_w_px = max(1, round(ext_w_deg * px_per_deg_x))
-        img_h_px = max(1, round(ext_h_deg * px_per_deg_y))
+        img_w_px = max(1, round(ext_w_deg * px_per_deg))
+        img_h_px = max(1, round(ext_h_deg * px_per_deg))
         scaled = self._pixmap.scaled(img_w_px, img_h_px, _Qt.AspectRatioMode.IgnoreAspectRatio, _Qt.TransformationMode.SmoothTransformation)
         origin_x = target.x() + (target.width() - scaled.width()) / 2
         origin_y = target.y() + (target.height() - scaled.height()) / 2

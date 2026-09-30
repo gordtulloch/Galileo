@@ -158,6 +158,22 @@ class ImagingService:
 
     # --- Annotation (IMG-200 … IMG-220) ------------------------------------
 
+    async def solve_current_frame(self, solver):
+        """Plate-solve ``current_frame`` with *solver*, updating ``last_solve`` — the plumbing
+        shared between Annotate (IMG-200, via :meth:`annotate_current_frame`) and the Framing
+        Assistant's Determine Rotation control (FRAME-100), which reads back
+        ``last_solve.rotation_deg`` when neither a rotator nor an earlier solve already gives it
+        the frame's position angle. Caller is responsible for checking ``current_frame`` is set
+        first — this assumes it is."""
+        import tempfile
+        from pathlib import Path
+
+        from galileo.platesolve import _write_frame
+        path = Path(tempfile.gettempdir()) / "galileo_solve_current.fits"
+        await asyncio.to_thread(_write_frame, self.current_frame, path, self.frame_metadata())
+        self.last_solve = await solver.solve(path)
+        return self.last_solve
+
     async def annotate_current_frame(self, solver) -> None:
         """Plate-solve ``current_frame`` with *solver* and build the labelled overlay from the
         solution and Galileo's bundled star/DSO catalogs (`galileo.annotate`). Solving happens
@@ -169,13 +185,7 @@ class ImagingService:
         if frame is None or preview is None:
             self.annotate_note = "Capture or load a frame first."
             return
-        import tempfile
-        from pathlib import Path
-
-        from galileo.platesolve import _write_frame
-        path = Path(tempfile.gettempdir()) / "galileo_annotate.fits"
-        await asyncio.to_thread(_write_frame, frame, path, self.frame_metadata())
-        self.last_solve = await solver.solve(path)
+        await self.solve_current_frame(solver)
         overlay, note = annotate_preview(preview, self.last_solve)
         self.annotated_preview, self._annotated_frame, self.annotate_note = overlay, frame, note
 

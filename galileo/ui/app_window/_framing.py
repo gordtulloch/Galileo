@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _new_form_layout
+from ._threads import _DetermineRotationThread
 from ._widgets import _FramingCanvas
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,12 @@ class AppWindowFramingMixin:
         (un-rotated) panels — an explicit mosaic grid the user set themselves takes
         priority over that fallback.
 
+        The rotation field is pre-filled, where already known, from the connected
+        rotator's live position or from the Imaging tab's last plate solve
+        (FRAME-100) — Determine Rotation only needs a click when neither applies:
+        it plate-solves the Imaging tab's current frame and reads the position
+        angle back out of the solution.
+
         A "Show mosaic overlay" checkbox controls only what the canvas *draws* —
         the mosaic panel grid, or a single (possibly tilted) frame rectangle when
         unchecked — never what's actually captured on accept: an explicit or
@@ -135,10 +142,40 @@ class AppWindowFramingMixin:
         rotation_spin.setSuffix(" °")
         form.addRow("Rotation", rotation_spin)
 
-        rotator_status = QLabel(
-            "Rotator detected — OK will move it to this angle." if rotator_connected else
-            "No rotator detected — rotation will be captured as a mosaic covering the tilted field."
-        )
+        # Rotation (FRAME-100) is pre-filled wherever it's already known — the connected
+        # rotator's live position takes priority (it's the current physical truth), falling
+        # back to the Imaging tab's last plate solve — so Determine Rotation is only ever
+        # needed when neither is available.
+        known_rotation: float | None = None
+        known_rotation_source = ""
+        if rotator_connected:
+            try:
+                status = asyncio.run(rotator_adapter.get_status())
+                position = status.get("position")
+            except Exception:
+                logger.exception("Could not read the rotator's current position for Framing")
+                position = None
+            if position is not None:
+                known_rotation, known_rotation_source = float(position) % 360.0, "the rotator"
+        if known_rotation is None:
+            last_solve = getattr(service, "last_solve", None)
+            if last_solve is not None and getattr(last_solve, "success", False) and last_solve.rotation_deg is not None:
+                known_rotation = float(last_solve.rotation_deg) % 360.0
+                known_rotation_source = "the last plate solve"
+        if known_rotation is not None:
+            rotation_spin.setValue(known_rotation)
+
+        def _rotator_status_text() -> str:
+            if known_rotation is not None:
+                suffix = " — OK will move it to this angle." if rotator_connected else ""
+                return f"Rotation known from {known_rotation_source}: {known_rotation:.1f}°.{suffix}"
+            if rotator_connected:
+                return "Rotator detected — OK will move it to this angle."
+            return ("Rotation unknown — click Determine Rotation to plate-solve the current frame, "
+                    "or set it manually. No rotator detected, so a nonzero rotation is captured as "
+                    "a mosaic covering the tilted field.")
+
+        rotator_status = QLabel(_rotator_status_text())
         rotator_status.setObjectName("StatusHint")
         rotator_status.setWordWrap(True)
         form.addRow(rotator_status)
@@ -170,10 +207,13 @@ class AppWindowFramingMixin:
         )
         form.addRow(show_mosaic_check)
 
-        load_image_btn = QPushButton("Load Sky Image")
-        load_image_btn.setToolTip("Fetch a survey image for this RA/Dec (FRAME-020) — not refetched "
-                                  "automatically as RA/Dec change, to avoid a network call per keystroke.")
-        form.addRow(load_image_btn)
+        determine_rotation_btn = QPushButton("Determine Rotation")
+        determine_rotation_btn.setToolTip(
+            "Plate-solve the Imaging tab's current frame to read back the sensor's actual rotation "
+            "(FRAME-100) — only needed when it isn't already known from a connected rotator or an "
+            "earlier plate solve."
+        )
+        form.addRow(determine_rotation_btn)
 
         fov_label = QLabel("")
         fov_label.setObjectName("StatusHint")
@@ -241,12 +281,51 @@ class AppWindowFramingMixin:
                 data = b""
             canvas.set_image(data, extent)
 
+        # Keeps the running Determine Rotation thread alive for the dialog's lifetime (a local
+        # PySide6 QThread can otherwise be garbage-collected mid-run once nothing else references
+        # it) — mirrors the Imaging page's own annotate_threads set (_imaging_page.py).
+        rotation_threads: set = set()
+
+        def determine_rotation() -> None:
+            if service.current_frame is None:
+                rotator_status.setText("Determine Rotation needs a captured frame on the Imaging tab first.")
+                return
+            from galileo.observatory import get_solver_settings
+            from galileo.platesolve import PlateSolver
+            executable, params = get_solver_settings(self._current_pier)
+            solver = PlateSolver(backend="astap", executable=executable, params=params)
+            determine_rotation_btn.setEnabled(False)
+            rotator_status.setText("Solving the current frame for its rotation…")
+
+            def _succeeded() -> None:
+                determine_rotation_btn.setEnabled(True)
+                result = service.last_solve
+                rotation_spin.setValue(result.rotation_deg % 360.0)
+                rotator_status.setText(f"Rotation determined by plate solve: {result.rotation_deg:.1f}°.")
+                refresh_overlay()
+
+            def _failed(reason: str) -> None:
+                determine_rotation_btn.setEnabled(True)
+                rotator_status.setText(f"Could not determine rotation: {reason}")
+
+            thread = _DetermineRotationThread(service, solver, dialog)
+            thread.finished_ok.connect(_succeeded)
+            thread.failed.connect(_failed)
+            thread.finished.connect(lambda: rotation_threads.discard(thread))
+            thread.finished.connect(thread.deleteLater)
+            rotation_threads.add(thread)
+            thread.start()
+
         rotation_spin.valueChanged.connect(lambda _: refresh_overlay())
         cols_spin.valueChanged.connect(lambda _: refresh_overlay())
         rows_spin.valueChanged.connect(lambda _: refresh_overlay())
         overlap_spin.valueChanged.connect(lambda _: refresh_overlay())
         show_mosaic_check.toggled.connect(lambda _: refresh_overlay())
-        load_image_btn.clicked.connect(load_sky_image)
+        # Not refetched on every RA/Dec keystroke (FRAME-020) — only once editing settles
+        # (editingFinished), to avoid a network call per digit typed.
+        ra_spin.editingFinished.connect(load_sky_image)
+        dec_spin.editingFinished.connect(load_sky_image)
+        determine_rotation_btn.clicked.connect(determine_rotation)
         refresh_overlay()
         if initial_target is not None:
             load_sky_image()
@@ -255,6 +334,13 @@ class AppWindowFramingMixin:
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         left.addWidget(buttons)
+
+        # Opens at double its natural (layout-driven) size — the form-plus-canvas sizeHint is
+        # comfortable for the form alone but leaves the survey image cramped; doubling both
+        # dimensions keeps the canvas's own aspect-ratio-preserving paint (_FramingCanvas) from
+        # starting out squeezed into a sliver.
+        natural_size = dialog.sizeHint()
+        dialog.resize(natural_size.width() * 2, natural_size.height() * 2)
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             assistant.close()

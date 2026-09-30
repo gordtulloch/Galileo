@@ -50,6 +50,9 @@ class DeviceConfigRecord(BaseModel):
     # Layout of a one-shot-colour sensor's 2x2 colour-filter mosaic, used to
     # debayer the Imaging preview (IMG-110). Set by hand on the Camera page.
     bayer_pattern = pw.TextField(default="RGGB")
+    # Full-well capacity in electrons, set by hand on the Camera page. Feeds
+    # the Flat Assistant's target-ADU calculation (CAL-010).
+    max_well_depth = pw.IntegerField(null=True)
 
     class Meta:
         table_name = "device_configs"
