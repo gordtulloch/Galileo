@@ -71,6 +71,7 @@ PLANNING_ITEMS = [
     ("targets", "Targets", "sky_atlas"),
     ("sessions", "Sessions", "sequencer"),
     ("scheduler", "Scheduler", "scheduler"),
+    ("schedule", "Schedule", "schedule"),
 ]
 SCIENCE_ITEMS = [
     ("variable_stars", "Variable Stars", "variable_stars"),

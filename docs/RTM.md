@@ -265,6 +265,13 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SCHED-080` | P2 | SDD 4.9b `galileo.scheduler` | Test | `TC-SCHED-080` |
 | `SCHED-090` | MVP | SDD 4.9b `galileo.scheduler` | Test | `TC-SCHED-090` |
 | `SCHED-100` | MVP | SDD 4.9b `galileo.scheduler` | Test | `TC-SCHED-100` |
+| `SCHED-110` | MVP | SDD 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-110` |
+| `SCHED-120` | MVP | SDD 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-120` |
+| `SCHED-130` | MVP | SDD 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-130` |
+| `SCHED-140` | MVP | SDD 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-140` |
+| `SCHED-150` | MVP | SDD 4.6a `galileo.ui.sessions` / 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-150` |
+| `SCHED-160` | P3 | SDD 4.9c `galileo.ui.schedule` | Test | `TC-SCHED-160` |
+| `SCHED-100` | MVP | SDD 4.9b `galileo.scheduler` | Test | `TC-SCHED-100` |
 
 ### `CAL` — Calibration / Flat Wizard
 

@@ -114,6 +114,23 @@ class ImageBlock(SessionBlock):
         self._mosaic: Any = None
 
     @property
+    def display_text(self) -> str:
+        bits = [f"{self.count}×{self.exposure:g}s"]
+        if self.filter:
+            bits.append(self.filter)
+        bits.append(f"bin{self.binning}")
+        if self.frame_type != "Light":
+            bits.append(self.frame_type)
+        if self.gain is not None:
+            bits.append(f"gain {self.gain}")
+        if self.offset is not None:
+            bits.append(f"offset {self.offset}")
+        if self.has_mosaic:
+            m = self.mosaic
+            bits.append(f"{m.cols}×{m.rows} mosaic")
+        return f"{self.label}: {' '.join(bits)}"
+
+    @property
     def has_mosaic(self) -> bool:
         return self._mosaic is not None
 
@@ -141,11 +158,19 @@ class FilterChangeBlock(SessionBlock):
     label: ClassVar[str] = "Filter Change"
     filter: str = ""
 
+    @property
+    def display_text(self) -> str:
+        return f"{self.label}: {self.filter}" if self.filter else self.label
+
 
 @dataclass
 class CoolCameraBlock(SessionBlock):
     label: ClassVar[str] = "Cool Camera"
     setpoint_c: float = -10.0
+
+    @property
+    def display_text(self) -> str:
+        return f"{self.label}: {self.setpoint_c:g}°C"
 
 
 @dataclass
@@ -158,6 +183,10 @@ class AutofocusBlock(SessionBlock):
     label: ClassVar[str] = "Autofocus"
     filter: str | None = None  # None = focus on the current filter
 
+    @property
+    def display_text(self) -> str:
+        return f"{self.label}: {self.filter}" if self.filter else self.label
+
 
 @dataclass
 class PlateSolveBlock(SessionBlock):
@@ -168,6 +197,10 @@ class PlateSolveBlock(SessionBlock):
 class GuideStartBlock(SessionBlock):
     label: ClassVar[str] = "Guide Start"
     calibrate: bool = False
+
+    @property
+    def display_text(self) -> str:
+        return f"{self.label} + Calibrate" if self.calibrate else self.label
 
 
 @dataclass
@@ -185,6 +218,13 @@ class FlatCaptureBlock(SessionBlock):
     label: ClassVar[str] = "Flat Capture"
     count: int = 1
     target_adu: float = 0.0
+
+    @property
+    def display_text(self) -> str:
+        bits = [f"{self.count}×"]
+        if self.target_adu:
+            bits.append(f"target {self.target_adu:g} ADU")
+        return f"{self.label}: {' '.join(bits)}"
 
 
 @dataclass
@@ -221,6 +261,13 @@ class DomeSyncBlock(SessionBlock):
 class NotificationBlock(SessionBlock):
     label: ClassVar[str] = "Notification"
     message: str = ""
+
+    @property
+    def display_text(self) -> str:
+        if not self.message:
+            return self.label
+        msg = self.message if len(self.message) <= 40 else self.message[:37] + "…"
+        return f"{self.label}: {msg}"
 
     async def execute(self, context: Any) -> None:
         """Send this block's message via the owning Observatory's configured contact
@@ -419,6 +466,21 @@ class SessionRegion:
             self._scheduler.remove_job(self._job)
         self._job = None
         self.is_scheduled = False
+
+    def run_now(self) -> list[Any]:
+        """Run control (SCHED-150): schedule this session (if not already) and
+        position its job to start immediately on the Schedule timeline, rather
+        than leaving it unpositioned for the autoscheduler. Returns any other
+        timeline entries on this Pier whose window now overlaps it, for the
+        caller to report — conflicts are surfaced, not auto-resolved."""
+        import datetime
+        if not self.is_scheduled:
+            self.schedule()
+        self._job.scheduled_start_utc = datetime.datetime.now(datetime.UTC).isoformat()
+        if self._scheduler is None:
+            return []
+        self._scheduler.save()
+        return self._scheduler.overlapping_jobs(self._job)
 
     # --- Deletion (SES-220) --------------------------------------------------
 
@@ -743,10 +805,13 @@ class _RegionWidget(QFrame):
         self._load_btn.clicked.connect(self._load_from_template)
         self._schedule_btn = QPushButton("Schedule")
         self._schedule_btn.clicked.connect(self._toggle_schedule)
+        self._run_btn = QPushButton("Run")
+        self._run_btn.setToolTip("Schedule this session to start now (SCHED-150).")
+        self._run_btn.clicked.connect(self._run_now)
         self._delete_btn = QPushButton("Delete")
         self._delete_btn.clicked.connect(self._delete)
         for btn in (self._save_btn, self._template_btn, self._load_btn,
-                    self._schedule_btn, self._delete_btn):
+                    self._schedule_btn, self._run_btn, self._delete_btn):
             header.addWidget(btn)
         layout.addLayout(header)
 
@@ -802,6 +867,15 @@ class _RegionWidget(QFrame):
         else:
             self._region.schedule()
         self._apply_boundary_style()
+
+    def _run_now(self) -> None:
+        conflicts = self._region.run_now()
+        self._apply_boundary_style()
+        if conflicts:
+            names = ", ".join(c.name for c in conflicts)
+            QMessageBox.warning(
+                self, "Run", f"{self._region.name!r} is scheduled to start now, but overlaps: {names}. "
+                              "Resolve the conflict on the Schedule screen.")
 
     def _delete(self) -> None:
         self._region.delete()

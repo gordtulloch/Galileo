@@ -957,6 +957,25 @@ async def test_tc_img_150_gain_is_sent_only_when_set():
 
 @pytest.mark.requirement("TC-IMG-150")
 @pytest.mark.priority("P2")
+async def test_tc_img_150_offset_is_sent_only_when_set():
+    """IMG-150: the Offset field is passed to the camera; offset 0 means "leave the camera as configured"."""
+    from galileo.ui.imaging import DEFAULT_OFFSET, ImagingService
+    assert DEFAULT_OFFSET == 0, "the Imaging page's Offset field starts at 0"
+    camera = _CountingCamera()
+    service = ImagingService(camera=camera)
+    service.auto_save_to_library = False
+
+    service.offset = 0
+    await service.capture_series(1, 1.0)
+    assert "offset" not in camera.exposures[0]
+
+    service.offset = 50
+    await service.capture_series(1, 1.0)
+    assert camera.exposures[1]["offset"] == 50
+
+
+@pytest.mark.requirement("TC-IMG-150")
+@pytest.mark.priority("P2")
 async def test_tc_img_150_a_series_can_be_stopped_part_way():
     """IMG-150: Stop ends a series; no further exposures are started."""
     from galileo.ui.imaging import ImagingService
@@ -1128,6 +1147,7 @@ def test_tc_img_150_imaging_page_has_quantity_gain_and_auto_save(window):
     ui = window._imaging_ui
     assert ui["quantity"].value() == 1 and ui["quantity"].minimum() == 1
     assert ui["gain"].value() == 110
+    assert ui["offset"].value() == 0
     assert ui["auto_save"].text() == "Auto-Save to Library" and ui["auto_save"].isChecked()
     assert ui["capture_button"].isEnabled() and not ui["stop_button"].isEnabled()
 
@@ -1141,6 +1161,7 @@ def test_tc_img_150_capture_button_runs_a_series_with_the_screens_settings(windo
     window._camera_backends["primary camera"] = camera
     ui["quantity"].setValue(2)
     ui["gain"].setValue(120)
+    ui["offset"].setValue(30)
     ui["auto_save"].setChecked(False)
 
     ui["capture_button"].click()
@@ -1152,8 +1173,8 @@ def test_tc_img_150_capture_button_runs_a_series_with_the_screens_settings(windo
     window.app.processEvents()
 
     assert len(camera.exposures) == 2
-    assert all(e["gain"] == 120 for e in camera.exposures)
-    assert service.gain == 120 and service.auto_save_to_library is False
+    assert all(e["gain"] == 120 and e["offset"] == 30 for e in camera.exposures)
+    assert service.gain == 120 and service.offset == 30 and service.auto_save_to_library is False
     assert ui["capture_button"].isEnabled() and not ui["stop_button"].isEnabled()
     assert "2 of 2 frames" in ui["status"].text()
     assert service.frame_context, "the page fills in what it knows about the rig for the header"

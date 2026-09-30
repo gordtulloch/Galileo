@@ -10,12 +10,21 @@ conditions to decide which job runs next.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_utc(text: str) -> datetime.datetime:
+    """Parse a timeline timestamp (SCHED-110 … SCHED-150), treating a naive
+    string as UTC — ``galileo.ui.schedule`` always writes an aware one, but a
+    test or other caller may set the field directly."""
+    dt = datetime.datetime.fromisoformat(text)
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=datetime.UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +113,21 @@ class JobConstraints:
 # ---------------------------------------------------------------------------
 
 class SchedulerJob:
-    """One entry in the observatory scheduler queue."""
+    """One entry in the observatory scheduler queue.
+
+    ``scheduled_start_utc``/``scheduled_end_utc``/``duration_minutes`` and
+    ``run_state``/``run_log`` (SCHED-110 … SCHED-150) give a job its Schedule
+    timeline placement and execution-outcome display — orthogonal to the
+    priority/constraint/completion fields above, which govern the *order* and
+    *conditions* under which the job queue runs a job, not *when on the clock*
+    it's placed. ``kind`` distinguishes a session-backed job (``"session"``,
+    ``sequence`` is a ``SessionRegion``) from a standalone pier-level
+    operation dragged onto the Schedule timeline (``"pier_op"``, ``sequence``
+    is ``None`` and ``pier_op_kind`` names the ``galileo.ui.sessions``
+    action-block class it represents, e.g. ``"DomeOpenBlock"`` — kept as a
+    name rather than an instance so this domain-core module never imports
+    the UI-layer block classes; ``galileo.ui.schedule`` resolves the name
+    back to a block/label for display."""
 
     def __init__(
         self,
@@ -114,6 +137,8 @@ class SchedulerJob:
         target_ra: float = 0.0,
         target_dec: float = 0.0,
         priority: int = 5,
+        kind: str = "session",
+        pier_op_kind: str | None = None,
     ) -> None:
         self.name = name
         self.sequence = sequence
@@ -127,6 +152,13 @@ class SchedulerJob:
         self.total_required: int = 0
         self._frames_captured: int = 0
         self._state = "pending"
+        self.kind = kind
+        self.pier_op_kind = pier_op_kind
+        self.scheduled_start_utc: str | None = None
+        self.scheduled_end_utc: str | None = None
+        self.duration_minutes: float | None = None
+        self.run_state: str = "pending"  # pending | running | completed | error
+        self.run_log: list[str] = []
 
     @property
     def frames_captured(self) -> int:
@@ -149,6 +181,24 @@ class SchedulerJob:
 
     def __repr__(self) -> str:
         return f"SchedulerJob({self.name!r}, pier={self.pier_name!r})"
+
+    # --- Timeline placement (SCHED-110 … SCHED-150) --------------------------
+
+    DEFAULT_DURATION_MINUTES = 60.0
+
+    def effective_window(self) -> tuple[datetime.datetime, datetime.datetime] | None:
+        """This job's (start, end) on the Schedule timeline, resolving a missing
+        end from ``duration_minutes`` (or the default) — ``None`` when it has no
+        start at all, i.e. it's unpositioned (SCHED-120)."""
+        if not self.scheduled_start_utc:
+            return None
+        start = _parse_utc(self.scheduled_start_utc)
+        if self.scheduled_end_utc:
+            end = _parse_utc(self.scheduled_end_utc)
+        else:
+            minutes = self.duration_minutes or self.DEFAULT_DURATION_MINUTES
+            end = start + datetime.timedelta(minutes=minutes)
+        return start, end
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +240,39 @@ class ObservatoryScheduler:
 
     def get_ordered_jobs(self) -> list[SchedulerJob]:
         return sorted(self.jobs, key=lambda j: j.priority)
+
+    # --- Timeline (SCHED-110 … SCHED-150) ------------------------------------
+
+    def overlapping_jobs(self, job: SchedulerJob) -> list[SchedulerJob]:
+        """Every other job on *job*'s own Pier whose timeline window overlaps it
+        (SCHED-150) — a same-Pier, same-time-window check only; arbitrating a
+        collision between two different Piers' shared resources (e.g. a shared
+        dome) is real-time execution logic and out of scope here (SDD 4.9c)."""
+        window = job.effective_window()
+        if window is None:
+            return []
+        start, end = window
+        conflicts = []
+        for other in self.jobs:
+            if other is job or other.pier_name != job.pier_name:
+                continue
+            other_window = other.effective_window()
+            if other_window is None:
+                continue
+            other_start, other_end = other_window
+            if start < other_end and other_start < end:
+                conflicts.append(other)
+        return conflicts
+
+    def add_pier_operation(self, kind_name: str, label: str, pier_name: str) -> SchedulerJob:
+        """Add a standalone pier-level operation (Open Dome, Close Dome, Dome
+        Sync, Park Mount, Unpark Mount) dropped onto the Schedule timeline
+        (SCHED-110) — no session, no target, just the named operation.
+        *kind_name* is the ``galileo.ui.sessions`` action-block class name
+        (e.g. ``"DomeOpenBlock"``); *label* is its display text."""
+        job = SchedulerJob(name=label, pier_name=pier_name, kind="pier_op", pier_op_kind=kind_name)
+        self.add_job(job)
+        return job
 
     def reap_completed_jobs(self) -> list[SchedulerJob]:
         """Remove every job that has completed successfully (SCHED-050) and delete
@@ -286,6 +369,13 @@ class ObservatoryScheduler:
                     constraints_json=json.dumps(asdict(j.constraints)),
                     startup_json=json.dumps(_startup_to_dict(j.startup_condition)),
                     completion_json=json.dumps(_completion_to_dict(j.completion_condition)),
+                    kind=j.kind,
+                    pier_op_kind=j.pier_op_kind or "",
+                    scheduled_start_utc=j.scheduled_start_utc or "",
+                    scheduled_end_utc=j.scheduled_end_utc or "",
+                    duration_minutes=j.duration_minutes,
+                    run_state=j.run_state,
+                    run_log_json=json.dumps(j.run_log),
                 )
 
     def load(self) -> None:
@@ -306,5 +396,12 @@ class ObservatoryScheduler:
             job.constraints = JobConstraints(**json.loads(rec.constraints_json))
             job.startup_condition = _startup_from_dict(json.loads(rec.startup_json))
             job.completion_condition = _completion_from_dict(json.loads(rec.completion_json))
+            job.kind = rec.kind or "session"
+            job.pier_op_kind = rec.pier_op_kind or None
+            job.scheduled_start_utc = rec.scheduled_start_utc or None
+            job.scheduled_end_utc = rec.scheduled_end_utc or None
+            job.duration_minutes = rec.duration_minutes
+            job.run_state = rec.run_state or "pending"
+            job.run_log = json.loads(rec.run_log_json) if rec.run_log_json else []
             self.jobs.append(job)
         self._sort_jobs()

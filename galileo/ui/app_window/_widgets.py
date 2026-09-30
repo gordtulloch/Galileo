@@ -183,8 +183,8 @@ class _DayNightBandChart(QWidget if _HAS_QT else object):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(360, 54)
-        self.setMaximumHeight(54)
+        self.setMinimumSize(360, 34)
+        self.setMaximumHeight(34)
         self._segments: list[dict] = []
         self._window_start = None
         self._window_end = None
@@ -219,7 +219,7 @@ class _DayNightBandChart(QWidget if _HAS_QT else object):
         font.setPointSizeF(7.5)
         painter.setFont(font)
 
-        band = QRectF(4, 16, self.width() - 8, 22)
+        band = QRectF(4, 13, self.width() - 8, 18)
         if not self._segments or self._window_start is None or self._window_end is None:
             painter.setPen(fg)
             painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter, "No day/night data for this date/location.")
@@ -238,7 +238,7 @@ class _DayNightBandChart(QWidget if _HAS_QT else object):
             tick_time = self._window_start.replace(hour=0, minute=0, second=0, microsecond=0) + \
                 _dt.timedelta(hours=hour)
             x = x_at(tick_time)
-            painter.drawText(QRectF(x - 14, 0, 28, 14), _Qt.AlignmentFlag.AlignCenter, f"{hour:02d}")
+            painter.drawText(QRectF(x - 14, 0, 28, 12), _Qt.AlignmentFlag.AlignCenter, f"{hour:02d}")
 
         # Band segments, with a thin surface-colored gap between adjacent
         # fills so a boundary is always visible even between two close

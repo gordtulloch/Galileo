@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""SCHED — Observatory Scheduler (TC-SCHED-010 … TC-SCHED-100)."""
+"""SCHED — Observatory Scheduler (TC-SCHED-010 … TC-SCHED-100) and the
+Schedule timeline screen, galileo.ui.schedule (TC-SCHED-110 … TC-SCHED-160)."""
 
 import pytest
 
@@ -383,3 +384,165 @@ def test_scheduler_page_remove_deschedules_session_rather_than_deleting_it(windo
     sessions.reload()
     assert region in sessions.screen.visible_sessions   # still there
     assert region.is_editable is True and region.is_scheduled is False   # just unlocked
+
+
+# ---------------------------------------------------------------------------
+# Planning > Schedule screen (galileo.ui.schedule) — TC-SCHED-110 … TC-SCHED-160
+# ---------------------------------------------------------------------------
+
+def _schedule_page(window):
+    from galileo.ui.schedule import SchedulePageWidget
+    return window._window.findChildren(SchedulePageWidget)[0]
+
+
+@pytest.mark.requirement("TC-SCHED-110")
+@pytest.mark.priority("MVP")
+def test_tc_sched_110_pier_op_dropped_onto_timeline_becomes_one_sized_block(window):
+    """SCHED-110: the Schedule screen's palette holds the five pier-level operations
+    (reusing galileo.ui.sessions' own SES-140 block classes), and dropping one onto
+    the timeline creates a single timeline block sized to its duration."""
+    from galileo.ui.sessions import DomeOpenBlock
+    _sessions_and_scheduler_pages(window)  # builds the Sessions/Scheduler/Schedule pages
+    page = _schedule_page(window)
+
+    assert page.palette.count() == 5
+    palette_labels = {page.palette.item(i).text() for i in range(page.palette.count())}
+    assert palette_labels == {"Open Dome", "Close Dome", "Unpark Scope", "Park Scope", "Dome Sync"}
+
+    import datetime
+    start = page.displayed_day_start_local() + datetime.timedelta(hours=10)
+    page.add_pier_operation(DomeOpenBlock, "Open Dome", start)
+
+    jobs = page._scheduler().jobs
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.kind == "pier_op"
+    assert job.pier_op_kind == "DomeOpenBlock"
+    assert job.name == "Open Dome"
+    assert job.duration_minutes is not None
+
+    page._canvas.refresh()
+    assert len(page._canvas._blocks) == 1
+    block = page._canvas._blocks[0]
+    expected_width = max(24, int(job.duration_minutes / 60.0 * 48))
+    assert block.width() == expected_width
+
+
+@pytest.mark.requirement("TC-SCHED-120")
+@pytest.mark.priority("MVP")
+def test_tc_sched_120_right_click_sets_start_end_duration(window):
+    """SCHED-120: a right-click dialog sets/clears a block's start, end, and
+    duration; leaving start unset keeps the job unpositioned."""
+    from galileo.ui.schedule import _EditTimeDialog
+    sessions, _ = _sessions_and_scheduler_pages(window)
+    page = _schedule_page(window)
+
+    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region._scheduler = sessions._scheduler_for(region._pier_name)
+    region.schedule()
+    job = region._job
+    assert job.scheduled_start_utc is None
+    assert job in page.untimed_jobs()
+
+    dialog = _EditTimeDialog(job, page)
+    dialog.start_check.setChecked(True)
+    dialog.duration_spin.setValue(45)
+    dialog.apply()
+
+    assert job.scheduled_start_utc is not None
+    assert job.duration_minutes == 45
+    assert job.scheduled_end_utc is None
+    assert job in page.timed_jobs()
+
+    # Clearing the start again leaves it unpositioned for the autoscheduler.
+    dialog2 = _EditTimeDialog(job, page)
+    dialog2.start_check.setChecked(False)
+    dialog2.apply()
+    assert job.scheduled_start_utc is None
+
+
+@pytest.mark.requirement("TC-SCHED-130")
+@pytest.mark.priority("MVP")
+def test_tc_sched_130_day_navigation_clamped_to_seven_days_back(window):
+    """SCHED-130: the timeline can scroll back up to 7 days and forward without limit."""
+    import datetime
+    page = _schedule_page(window)
+    today = page.displayed_day_start_local()
+
+    for _ in range(10):
+        page._shift_day(-1)
+    assert page.displayed_day_start_local() == today - datetime.timedelta(days=7)
+    assert page._back_btn.isEnabled() is False
+
+    page._shift_day(1)
+    assert page.displayed_day_start_local() == today - datetime.timedelta(days=6)
+    assert page._back_btn.isEnabled() is True
+
+    page._go_today()
+    assert page.displayed_day_start_local() == today
+    page._shift_day(1)
+    page._shift_day(1)
+    assert page.displayed_day_start_local() == today + datetime.timedelta(days=2)
+
+
+@pytest.mark.requirement("TC-SCHED-140")
+@pytest.mark.priority("MVP")
+def test_tc_sched_140_completed_and_error_borders_and_log_dialog(window):
+    """SCHED-140: a completed entry gets a green border, an errored one a red
+    border, and its Log control shows the run_log."""
+    from PySide6.QtWidgets import QPlainTextEdit
+    from galileo.ui.schedule import _LogDialog, _ScheduleBlockWidget
+    sessions, _ = _sessions_and_scheduler_pages(window)
+    page = _schedule_page(window)
+
+    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region._scheduler = sessions._scheduler_for(region._pier_name)
+    region.schedule()
+    job = region._job
+
+    job.run_state = "completed"
+    widget = _ScheduleBlockWidget(job, page._canvas, window)
+    assert "#2e9e3f" in widget.styleSheet()
+
+    job.run_state = "error"
+    job.run_log = ["Slew failed."]
+    widget2 = _ScheduleBlockWidget(job, page._canvas, window)
+    assert "#cc3333" in widget2.styleSheet()
+
+    dialog = _LogDialog(job, page)
+    assert "Slew failed." in dialog.findChild(QPlainTextEdit).toPlainText()
+
+
+@pytest.mark.requirement("TC-SCHED-150")
+@pytest.mark.priority("MVP")
+def test_tc_sched_150_run_now_positions_immediately_and_reports_conflicts(window):
+    """SCHED-150: the Sessions screen's Run control schedules a session to start
+    now and reports (without blocking) any overlap with existing entries."""
+    sessions, _ = _sessions_and_scheduler_pages(window)
+
+    region1 = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region1._scheduler = sessions._scheduler_for(region1._pier_name)
+    conflicts = region1.run_now()
+    assert conflicts == []
+    assert region1.is_scheduled is True
+    assert region1._job.scheduled_start_utc is not None
+
+    region2 = sessions.screen.create_session_for_target("M42", 83.8, -5.4)
+    region2._scheduler = sessions._scheduler_for(region2._pier_name)
+    conflicts2 = region2.run_now()
+    assert region1._job in conflicts2   # both "now", so their default-duration windows overlap
+
+
+@pytest.mark.requirement("TC-SCHED-160")
+@pytest.mark.priority("P3")
+def test_tc_sched_160_autoschedule_control_present_but_unimplemented(window, monkeypatch):
+    """SCHED-160: an Autoschedule control exists on the Schedule screen; automatic
+    placement logic is deferred (same scope boundary as SCHED-070)."""
+    from PySide6.QtWidgets import QMessageBox
+    page = _schedule_page(window)
+    calls = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: calls.append(a))
+
+    assert page._autoschedule_btn.text() == "Autoschedule"
+    page._autoschedule_btn.click()
+    assert len(calls) == 1

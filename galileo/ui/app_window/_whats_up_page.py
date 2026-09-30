@@ -428,15 +428,21 @@ class AppWindowWhatsUpPageMixin:
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
+        band_col = QVBoxLayout()
+        band_col.setSpacing(2)
+
         day_night_chart = _DayNightBandChart()
-        content_layout.addWidget(day_night_chart)
+        band_col.addWidget(day_night_chart)
 
         legend_grid = QGridLayout()
-        legend_grid.setContentsMargins(4, 6, 4, 10)
+        legend_grid.setContentsMargins(4, 2, 4, 4)
         legend_grid.setHorizontalSpacing(18)
+        legend_grid.setVerticalSpacing(1)
         legend_widget = QWidget()
         legend_widget.setLayout(legend_grid)
-        content_layout.addWidget(legend_widget)
+        band_col.addWidget(legend_widget)
+
+        content_layout.addLayout(band_col)
 
         def _refresh_day_night_band() -> None:
             """Recomputed independently of Rank Tonight (WUT-110) — this graphic

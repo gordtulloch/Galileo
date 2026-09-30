@@ -73,6 +73,14 @@ class AppWindowMiscDevicePagesMixin:
         self._device_pages["scheduler"] = {"reload": page.reload}
         return page
 
+    def _build_schedule_page(self: AppWindowState) -> QWidget:
+        """Planning > Schedule (SCHED-110 … SCHED-160): the per-Pier visual
+        timeline over the same job queue — see ``galileo.ui.schedule``."""
+        from galileo.ui.schedule import SchedulePageWidget
+        page = SchedulePageWidget(self)
+        self._device_pages["schedule"] = {"reload": page.reload}
+        return page
+
     def _build_solve_page(self: AppWindowState) -> QWidget:
         """Solve page (a primary sidebar section): plate solving, with the frame
         being solved and its results on show (PLT-070) — see ``galileo.ui.solve``.

@@ -31,6 +31,7 @@ Out of scope for v1 (see PSD §5): post-processing/stacking beyond calibration a
 - [ ] Session history review (`HIST`).
 - [ ] Notifications configuration (`NOTIF`).
 - [ ] Multi-Pier status dashboard (`OBS`).
+- [ ] `SCHED` Autoschedule (`SCHED-160`) — the new Planning > Schedule screen's Autoschedule button exists with no placement algorithm behind it yet, same deferred-scope boundary as `SCHED-070`'s replanning. Cross-Pier shared-resource arbitration (e.g. one Pier's dome request losing to another Pier's active imaging, per `docs/PSD.md`) is also unbuilt — `ObservatoryScheduler.overlapping_jobs()` only checks time-overlap within one Pier's own timeline.
 
 ## Known gaps
 

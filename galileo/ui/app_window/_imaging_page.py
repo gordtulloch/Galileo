@@ -43,7 +43,7 @@ class AppWindowImagingPageMixin:
         from galileo.livestack import LIVE_STACK_MIN_FRAMES
         from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
         from galileo.ui.imaging import (
-            DEFAULT_GAIN, DEFAULT_STRETCH_LEVEL, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE,
+            DEFAULT_GAIN, DEFAULT_OFFSET, DEFAULT_STRETCH_LEVEL, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE,
         )
 
         page = QWidget()
@@ -92,6 +92,12 @@ class AppWindowImagingPageMixin:
         gain_spin.setValue(DEFAULT_GAIN)
         gain_spin.setToolTip("Camera gain for each exposure. 0 leaves the camera as it is configured (IMG-150).")
         capture_form.addRow("Gain", gain_spin)
+
+        offset_spin = QSpinBox()
+        offset_spin.setRange(0, 100000)
+        offset_spin.setValue(DEFAULT_OFFSET)
+        offset_spin.setToolTip("Camera offset for each exposure. 0 leaves the camera as it is configured (IMG-150).")
+        capture_form.addRow("Offset", offset_spin)
 
         frame_type_combo = QComboBox()
         frame_type_combo.addItems(["Light", "Dark", "Flat", "Bias"])
@@ -656,7 +662,7 @@ class AppWindowImagingPageMixin:
             "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget, "log": log_pane,
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
             "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
-            "quantity": quantity_spin, "gain": gain_spin, "auto_save": auto_save_check,
+            "quantity": quantity_spin, "gain": gain_spin, "offset": offset_spin, "auto_save": auto_save_check,
             "capture_button": capture_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
@@ -790,6 +796,7 @@ class AppWindowImagingPageMixin:
             frame_type = frame_type_combo.currentText()
             filter_name = filter_combo.currentText().strip()
             service.gain = gain_spin.value()
+            service.offset = offset_spin.value()
             service.auto_save_to_library = auto_save_check.isChecked()
             service.live_stack_enabled = live_stack_check.isChecked()
             service.frame_context = self._imaging_frame_context()

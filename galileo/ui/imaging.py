@@ -19,6 +19,7 @@ from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker, MosaicStacker
 logger = logging.getLogger(__name__)
 
 DEFAULT_GAIN = 110      # what the Imaging page's Gain field starts at (IMG-150)
+DEFAULT_OFFSET = 0      # what the Imaging page's Offset field starts at (IMG-150)
 
 # Auto-stretch slider (IMG-190): 0..100, where 0 clips almost nothing of each tail (a flat,
 # close-to-linear preview) and 100 clips the most (the highest-contrast, most "stretched" look).
@@ -116,8 +117,10 @@ class ImagingService:
         self.object_name: str = ""
         # Page layout (IMG-120): follows the frame's shape unless the user picks one.
         self.manual_orientation: str | None = None
-        # Capture settings and header context (IMG-150). Gain 0 means "leave the camera as configured".
+        # Capture settings and header context (IMG-150). Gain/offset 0 means "leave the camera
+        # as configured".
         self.gain: int = 0
+        self.offset: int = 0
         self.frame_context: dict = {}          # what the page knows about the rig: telescope, site, ...
         self.last_shot: dict = {}              # when and how the frame in ``current_frame`` was taken
         # Series capture and Library auto-save (IMG-150).
@@ -267,6 +270,8 @@ class ImagingService:
                         date_obs_utc=_fits_time(shot["started"]), date_end_utc=_fits_time(shot["ended"]))
             if shot.get("gain"):
                 meta["gain"] = shot["gain"]
+            if shot.get("offset"):
+                meta["offset"] = shot["offset"]
             meta.setdefault("binning_x", 1)
             meta.setdefault("binning_y", 1)
             # Only light frames are of the object; the Library files calibration frames under their type.
@@ -338,7 +343,7 @@ class ImagingService:
             try:
                 # When stacking, it's the stack that gets shown and measured, not each sub.
                 await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
-                                               analyse=not stacking)
+                                               offset=self.offset or None, analyse=not stacking)
             except Exception:
                 if self.stop_requested:
                     break
@@ -425,7 +430,7 @@ class ImagingService:
             try:
                 # When stacking, it's the mosaic composite that gets shown and measured, not each pane's sub.
                 await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
-                                               analyse=not stacking)
+                                               offset=self.offset or None, analyse=not stacking)
             except Exception:
                 if self.stop_requested:
                     break
@@ -599,6 +604,7 @@ class ImagingService:
         frame_type: str = "Light",
         save_dir: Path | str | None = None,
         gain: int | None = None,
+        offset: int | None = None,
         analyse: bool = True,
     ) -> None:
         """Expose, download, stretch, and cache the current frame (IMG-010 … IMG-030).
@@ -610,12 +616,17 @@ class ImagingService:
         self.capture_status = "exposing"
 
         started = datetime.datetime.now(datetime.UTC)
-        options = {"gain": int(gain)} if gain else {}
+        options = {}
+        if gain:
+            options["gain"] = int(gain)
+        if offset:
+            options["offset"] = int(offset)
         await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)
         data = await self._camera.get_image_array()
         self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.UTC),
                           "duration": float(duration), "frame_type": frame_type,
-                          "filter": filter_name, "gain": int(gain) if gain else None}
+                          "filter": filter_name, "gain": int(gain) if gain else None,
+                          "offset": int(offset) if offset else None}
 
         self.current_frame = data
         self.last_saved_array = data

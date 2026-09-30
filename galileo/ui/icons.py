@@ -170,6 +170,17 @@ def _scheduler(painter, r):
     painter.drawLine(QLineF(c.x(), c.y(), r.left() + r.width() * 0.7, c.y()))
 
 
+def _schedule(painter, r):
+    from PySide6.QtCore import QLineF
+    n = 3
+    gap = r.height() * 0.16
+    h = (r.height() - gap * (n - 1)) / n
+    widths = (0.95, 0.65, 0.8)
+    for i in range(n):
+        y = r.top() + i * (h + gap) + h / 2
+        painter.drawLine(QLineF(r.left(), y, r.left() + r.width() * widths[i], y))
+
+
 def _library(painter, r):
     from PySide6.QtCore import QRectF
     n = 3
@@ -447,6 +458,7 @@ ICONS: dict[str, DrawFn] = {
     "imaging": _imaging,
     "solve": _solve,
     "scheduler": _scheduler,
+    "schedule": _schedule,
     "library": _library,
     "variable_stars": _variable_stars,
     "options": _options,

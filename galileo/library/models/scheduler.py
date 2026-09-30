@@ -31,6 +31,14 @@ class SchedulerJobRecord(BaseModel):
     constraints_json = pw.TextField(default="{}")
     startup_json = pw.TextField(default="{}")
     completion_json = pw.TextField(default="{}")
+    # Schedule timeline fields (SCHED-110 … SCHED-150) — see migration 019.
+    kind = pw.TextField(default="session")
+    pier_op_kind = pw.TextField(default="")
+    scheduled_start_utc = pw.TextField(default="")
+    scheduled_end_utc = pw.TextField(default="")
+    duration_minutes = pw.FloatField(null=True)
+    run_state = pw.TextField(default="pending")
+    run_log_json = pw.TextField(default="[]")
 
     class Meta:
         table_name = "scheduler_jobs"
