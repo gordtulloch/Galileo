@@ -34,8 +34,8 @@ class AppWindowCoreMixin:
         self._current_pier = None
         self._log_panes: list = []
         self._device_pages: dict[str, dict] = {}
-        # One ObservatoryScheduler per Pier, shared by Planning > Sessions (Schedule/Deschedule)
-        # and Planning > Scheduler (the job-queue view) — both must see the same jobs.
+        # One ObservatoryScheduler per Pier, shared by Planning > Sessions (Schedule/Run/Deschedule)
+        # and Planning > Schedule (the timeline view) — both must see the same jobs.
         self._schedulers: dict[str, object] = {}
         # Camera connections, keyed by Pier so two Piers can each have their own
         # connected (and possibly capturing) camera at once — see _camera_backends
@@ -212,7 +212,6 @@ class AppWindowCoreMixin:
                 PLANNING_ITEMS, {"whats_up": self._build_whats_up_page,
                                   "targets": self._build_sky_atlas_page,
                                   "sessions": self._build_sessions_page,
-                                  "scheduler": self._build_scheduler_page,
                                   "schedule": self._build_schedule_page}),
             "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
             "library": self._build_library_page,

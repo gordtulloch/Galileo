@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _new_form_layout, QLabel, QWidget
-from ._widgets import _ClickableThumbnail
+from ._widgets import _AltitudeChart, _ClickableThumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,6 @@ class AppWindowPlanningPageMixin:
         )
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QPixmap
-        from galileo.ui.scheduler import _AltitudeChart
 
         # Auto-fetched result-card thumbnails (below) are capped at this many —
         # each one is a real network request (hips2fits), and a filtered search

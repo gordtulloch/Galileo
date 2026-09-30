@@ -33,7 +33,7 @@ echo
 # ---------------------------------------------------------------------------
 if ! command -v git >/dev/null 2>&1; then
     error "git was not found on PATH."
-    error "Install it with:  sudo apt-get install git"
+    error "Install it with your package manager, e.g.:  sudo apt-get install git  /  sudo pacman -S git"
     exit 1
 fi
 

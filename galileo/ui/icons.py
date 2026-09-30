@@ -162,14 +162,6 @@ def _solve(painter, r):
     painter.drawPolygon(QPolygonF(_star_points(c.x(), c.y(), r.width() * 0.13, r.width() * 0.055)))
 
 
-def _scheduler(painter, r):
-    from PySide6.QtCore import QLineF
-    painter.drawEllipse(r)
-    c = r.center()
-    painter.drawLine(QLineF(c.x(), c.y(), c.x(), r.top() + r.height() * 0.22))
-    painter.drawLine(QLineF(c.x(), c.y(), r.left() + r.width() * 0.7, c.y()))
-
-
 def _schedule(painter, r):
     from PySide6.QtCore import QLineF
     n = 3
@@ -457,7 +449,6 @@ ICONS: dict[str, DrawFn] = {
     "sequencer": _sequencer,
     "imaging": _imaging,
     "solve": _solve,
-    "scheduler": _scheduler,
     "schedule": _schedule,
     "library": _library,
     "variable_stars": _variable_stars,

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""The remaining, still-minimal device-category/section pages (Guider, Focus, Sessions, Scheduler, Solve)."""
+"""The remaining, still-minimal device-category/section pages (Guider, Focus, Sessions, Schedule, Solve)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class AppWindowMiscDevicePagesMixin:
 
     def _scheduler_for_pier(self: AppWindowState, pier_name: str | None) -> ObservatoryScheduler:
         """The one ``ObservatoryScheduler`` for *pier_name* — shared by Planning >
-        Sessions and Planning > Scheduler, created lazily, one per Pier. Persists to
+        Sessions and Planning > Schedule, created lazily, one per Pier. Persists to
         (and, on first use, loads from) the shared database (SCHED-100) so a Pier's
         job queue survives an application restart."""
         from galileo.scheduler import ObservatoryScheduler
@@ -63,14 +63,6 @@ class AppWindowMiscDevicePagesMixin:
             "reload": page.reload,
             "create_session_for_target": page.create_session_for_target,
         }
-        return page
-
-    def _build_scheduler_page(self: AppWindowState) -> QWidget:
-        """Planning > Scheduler (SCHED-010 … SCHED-100): the per-Pier job queue —
-        see ``galileo.ui.scheduler``."""
-        from galileo.ui.scheduler import SchedulerPageWidget
-        page = SchedulerPageWidget(self)
-        self._device_pages["scheduler"] = {"reload": page.reload}
         return page
 
     def _build_schedule_page(self: AppWindowState) -> QWidget:

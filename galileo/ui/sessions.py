@@ -931,7 +931,7 @@ class SessionsPageWidget(QWidget):
 
     def _scheduler_for(self, pier_name: str | None):
         """The Pier's shared ``ObservatoryScheduler`` (owned by ``AppWindow`` so
-        Planning > Scheduler sees the same jobs), or a local fallback instance when
+        Planning > Schedule sees the same jobs), or a local fallback instance when
         used standalone (e.g. outside a real ``AppWindow``, in a smoke test)."""
         get_scheduler = getattr(self._window, "_scheduler_for_pier", None)
         if get_scheduler is not None:
@@ -960,7 +960,7 @@ class SessionsPageWidget(QWidget):
     def reload(self) -> None:
         """Show the active Pier's own sessions (SES-100) — reaping any that finished
         (their scheduled job completed) before rebuilding, so a completed session
-        disappears here too, not only from Planning > Scheduler."""
+        disappears here too, not only from Planning > Schedule."""
         pier_name = self._active_pier_name()
         self._scheduler_for(pier_name).reap_completed_jobs()
         self.screen.set_active_pier(pier_name)

@@ -70,7 +70,6 @@ PLANNING_ITEMS = [
     ("whats_up", "What's Up Tonight", "whats_up"),
     ("targets", "Targets", "sky_atlas"),
     ("sessions", "Sessions", "sequencer"),
-    ("scheduler", "Scheduler", "scheduler"),
     ("schedule", "Schedule", "schedule"),
 ]
 SCIENCE_ITEMS = [

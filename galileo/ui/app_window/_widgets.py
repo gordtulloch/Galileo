@@ -156,6 +156,87 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         painter.end()
 
 
+class _AltitudeChart(QWidget if _HAS_QT else object):
+    """A small, self-painted altitude-over-time line (SCHED-080) — one line, one
+    axis pair; deliberately simpler than the Guiding page's drift graph since
+    there's only one series to show. Shared by the Sky Atlas/Targets page's
+    per-result cards and the What's Up Tonight screen's result tiles (`SKY-030`)
+    — the same widget, not a second copy of this paint code. Formerly also used
+    by the (removed) Planning > Scheduler screen's Show Trajectory… dialog."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(420, 220)
+        self.times: list = []
+        self.altitudes: list = []
+
+    def set_data(self, times: list, altitudes: list) -> None:
+        self.times, self.altitudes = times, altitudes
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        import datetime
+
+        from PySide6.QtCore import QPointF, QRectF, Qt as _Qt
+        from PySide6.QtGui import QColor, QFont, QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+        fg = QColor("#cccccc")
+        font = QFont(painter.font())
+        font.setPointSizeF(8.0)
+        painter.setFont(font)
+
+        plot = QRectF(40, 8, self.width() - 56, self.height() - 32)
+        if plot.width() < 20 or plot.height() < 20 or not self.altitudes:
+            painter.setPen(fg)
+            painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter, "No trajectory data")
+            painter.end()
+            return
+
+        y_min, y_max = -20.0, 90.0
+        painter.setPen(fg)
+        for alt in (0, 30, 60, 90):
+            y = plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height()
+            pen = QPen(QColor(90, 90, 90))
+            pen.setStyle(_Qt.PenStyle.DotLine)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            painter.setPen(fg)
+            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), _Qt.AlignmentFlag.AlignRight | _Qt.AlignmentFlag.AlignVCenter, f"{alt}°")
+
+        n = len(self.altitudes)
+        points = [
+            QPointF(plot.left() + i / max(n - 1, 1) * plot.width(),
+                     plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height())
+            for i, alt in enumerate(self.altitudes)
+        ]
+        painter.setPen(QPen(QColor("#4da6ff"), 2))
+        for a, b in zip(points, points[1:]):
+            painter.drawLine(a, b)
+
+        # Time-axis ticks — a handful of "HH:MM" labels, converted from the
+        # underlying naive-UTC chart data (galileo.planning.visibility) to
+        # local time so they match the clock on the wall, evenly spaced
+        # along the bottom, in the margin already reserved below the plot.
+        if self.times and n > 1:
+            num_ticks = min(4, n)
+            tick_indices = sorted({round(i * (n - 1) / (num_ticks - 1)) for i in range(num_ticks)})
+            painter.setPen(fg)
+            for idx in tick_indices:
+                x = plot.left() + idx / (n - 1) * plot.width()
+                try:
+                    when_utc = datetime.datetime.fromisoformat(self.times[idx]).replace(tzinfo=datetime.UTC)
+                    label = when_utc.astimezone().strftime("%H:%M")
+                except (ValueError, IndexError):
+                    continue
+                painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 3))
+                painter.drawText(QRectF(x - 22, plot.bottom() + 4, 44, 14), _Qt.AlignmentFlag.AlignCenter, label)
+
+        painter.end()
+
+
 class _DayNightBandChart(QWidget if _HAS_QT else object):
     """A day/night graphic across one local calendar day (WUT-110): a colored
     band from local midnight to local midnight, split into Night /

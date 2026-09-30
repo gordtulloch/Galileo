@@ -3,11 +3,14 @@
 
 """Schedule screen (SCHED-110 … SCHED-160): the per-Pier visual timeline.
 
-A thin Qt view over the same ``galileo.scheduler.ObservatoryScheduler`` queue
-Planning > Scheduler (``galileo.ui.scheduler``) already manages — this screen
-adds *placement* (when, and for how long) and *outcome* (completed/error,
-with a log) on top of that queue, rather than a second scheduler. See
-``docs/SDD.md`` Section 4.9c.
+A thin Qt view over ``galileo.scheduler.ObservatoryScheduler``'s job queue —
+the only UI onto it; the earlier Planning > Scheduler table screen
+(``galileo.ui.scheduler``, priority-order table, Edit… dialog, altitude-
+trajectory chart) was removed once this screen existed (user's call — that
+editing/charting capability has no replacement here, see ``docs/SDD.md``
+Section 4.9b's "Reopened gap" note). This screen adds *placement* (when, and
+for how long) and *outcome* (completed/error, with a log) on top of the
+queue. See ``docs/SDD.md`` Section 4.9c.
 
 A session lands on this timeline via its own Schedule control (SES-200,
 ``galileo.ui.sessions``) or its new Run control (SCHED-150); a standalone
@@ -90,8 +93,8 @@ def _pier_op_classes() -> list[type]:
 #
 # Every SchedulerJob timeline field is stored as a UTC ISO string (naive
 # strings are treated as UTC, matching _AltitudeChart's own convention in
-# galileo.ui.scheduler); the timeline itself is drawn in local wall-clock
-# time, since that's what an observer at the keyboard plans around.
+# galileo.ui.app_window._widgets); the timeline itself is drawn in local
+# wall-clock time, since that's what an observer at the keyboard plans around.
 
 def _parse_utc(text: str) -> datetime.datetime:
     from galileo.scheduler import _parse_utc as _scheduler_parse_utc

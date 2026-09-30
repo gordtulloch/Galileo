@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Galileo Installation Script for Linux (Debian/Ubuntu)
+# Galileo Installation Script for Linux (Debian/Ubuntu and Arch)
 # Clones (or updates) the Galileo repository, ensures git, Python 3.11+ and
-# required system packages are present (installing via apt if needed), creates
-# a virtual environment, installs Python dependencies, and creates a desktop
-# launcher (.desktop file) and optional application-menu entry.
+# required system packages are present (installing via apt or pacman as
+# appropriate, whichever is found), creates a virtual environment, installs
+# Python dependencies, and creates a desktop launcher (.desktop file) and
+# optional application-menu entry.
 #
 # Usage:
 #   From inside an existing checkout:  bash install/install-linux.sh
@@ -53,9 +54,22 @@ ask_yes() {
 }
 
 # ---------------------------------------------------------------------------
-# apt helper - only calls sudo apt-get when something is actually missing
+# Package manager abstraction - apt (Debian/Ubuntu/Raspberry Pi OS) or
+# pacman (Arch and derivatives, incl. the current Arch-based Stellarmate OS).
+# Detected by which package manager binary is actually present, not by
+# distro name, since that's the ground truth for what will work.
 # ---------------------------------------------------------------------------
-APT_UPDATED=0
+PKG_MGR=""
+detect_pkg_mgr() {
+    if command -v apt-get >/dev/null 2>&1; then
+        PKG_MGR="apt"
+    elif command -v pacman >/dev/null 2>&1; then
+        PKG_MGR="pacman"
+    fi
+}
+
+PKG_UPDATED=0
+
 apt_install() {
     local pkgs=("$@")
     local missing=()
@@ -70,13 +84,51 @@ apt_install() {
         exit 1
     fi
 
-    if [[ $APT_UPDATED -eq 0 ]]; then
+    if [[ $PKG_UPDATED -eq 0 ]]; then
         info "Running apt-get update..."
         sudo apt-get update -qq
-        APT_UPDATED=1
+        PKG_UPDATED=1
     fi
     info "Installing: ${missing[*]}"
     sudo apt-get install -y "${missing[@]}"
+}
+
+pacman_install() {
+    local pkgs=("$@")
+    local missing=()
+    for pkg in "${pkgs[@]}"; do
+        pacman -Qi "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        error "sudo is required to install packages: ${missing[*]}"
+        error "Run this script as root, or install them manually: pacman -S ${missing[*]}"
+        exit 1
+    fi
+
+    if [[ $PKG_UPDATED -eq 0 ]]; then
+        info "Refreshing pacman package databases..."
+        sudo pacman -Sy --noconfirm
+        PKG_UPDATED=1
+    fi
+    info "Installing: ${missing[*]}"
+    sudo pacman -S --needed --noconfirm "${missing[@]}"
+}
+
+# Installs packages using whichever package manager was detected. Takes
+# apt-style package names; pacman_install callers pass pacman-style names
+# directly (see install_system_deps, where the two lists differ).
+pkg_install() {
+    case "$PKG_MGR" in
+        apt)    apt_install "$@" ;;
+        pacman) pacman_install "$@" ;;
+        *)
+            error "No supported package manager (apt-get or pacman) was found."
+            error "Install manually, then re-run this script: $*"
+            exit 1
+            ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -85,10 +137,10 @@ apt_install() {
 ensure_git() {
     if command -v git >/dev/null 2>&1; then return 0; fi
     warn "git was not found."
-    if ask_yes "Install git via apt now?"; then
-        apt_install git
+    if ask_yes "Install git now?"; then
+        pkg_install git
     else
-        error "git is required. Install it with:  sudo apt-get install git"
+        error "git is required. Install it with your package manager (e.g. sudo apt-get install git / sudo pacman -S git)."
         exit 1
     fi
 }
@@ -216,15 +268,30 @@ install_python311() {
 
     if ! ask_yes "Attempt to install Python 3.11 automatically now?"; then
         error "Please install Python 3.11+ manually and re-run this script."
-        error "  sudo apt-get install python3.11 python3.11-venv python3.11-dev"
+        if [[ "$PKG_MGR" == "pacman" ]]; then
+            error "  sudo pacman -S python python-pip"
+        else
+            error "  sudo apt-get install python3.11 python3.11-venv python3.11-dev"
+        fi
         exit 1
+    fi
+
+    # ------------------------------------------------------------------
+    # Strategy 0: Arch and derivatives (incl. the current Arch-based
+    # Stellarmate OS) are rolling-release, so the repo's "python" package
+    # is always a recent 3.x - no PPA/pyenv juggling needed.
+    # ------------------------------------------------------------------
+    if [[ "$PKG_MGR" == "pacman" ]]; then
+        pacman_install python python-pip
+        success "Python installed via pacman."
+        return
     fi
 
     # ------------------------------------------------------------------
     # Strategy 1: python3.11 is already in the apt cache (Bookworm,
     # Ubuntu 23.04+, Ubuntu 24.04, etc.)
     # ------------------------------------------------------------------
-    if apt-cache show python3.11 >/dev/null 2>&1; then
+    if [[ "$PKG_MGR" == "apt" ]] && apt-cache show python3.11 >/dev/null 2>&1; then
         apt_install python3.11 python3.11-venv python3.11-dev
         success "Python 3.11 installed."
         return
@@ -240,7 +307,7 @@ install_python311() {
         if ask_yes "Add the deadsnakes PPA (ppa:deadsnakes/ppa) to get Python 3.11?"; then
             apt_install software-properties-common
             sudo add-apt-repository -y ppa:deadsnakes/ppa
-            APT_UPDATED=0
+            PKG_UPDATED=0
             apt_install python3.11 python3.11-venv python3.11-dev
             success "Python 3.11 installed via deadsnakes PPA."
             return
@@ -286,22 +353,40 @@ install_system_deps() {
     info "Checking required system packages..."
     # libxcb-* and libGL are needed by PySide6/Qt6 on a headless or minimal desktop install.
     # python3-pip is the bootstrap; pip inside the venv is upgraded separately.
-    apt_install \
-        git \
-        python3-pip \
-        python3-venv \
-        libxcb-cursor0 \
-        libxcb-icccm4 \
-        libxcb-image0 \
-        libxcb-keysyms1 \
-        libxcb-randr0 \
-        libxcb-render-util0 \
-        libxcb-shape0 \
-        libxcb-xinerama0 \
-        libxcb-xkb1 \
-        libxkbcommon-x11-0 \
-        libgl1 \
-        libglib2.0-0
+    if [[ "$PKG_MGR" == "pacman" ]]; then
+        # Arch package names/granularity differ from Debian's; libxcb itself
+        # covers most of the split libxcb-* packages apt needs individually.
+        pacman_install \
+            git \
+            python \
+            python-pip \
+            libxcb \
+            xcb-util-cursor \
+            xcb-util-wm \
+            xcb-util-image \
+            xcb-util-keysyms \
+            xcb-util-renderutil \
+            libxkbcommon-x11 \
+            libglvnd \
+            glib2
+    else
+        apt_install \
+            git \
+            python3-pip \
+            python3-venv \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            libxkbcommon-x11-0 \
+            libgl1 \
+            libglib2.0-0
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -309,12 +394,19 @@ install_system_deps() {
 # ---------------------------------------------------------------------------
 info "========================================"
 info "Galileo Installation Script for Linux"
-info "(Debian / Ubuntu and derivatives)"
+info "(Debian / Ubuntu and Arch families)"
 info "========================================"
 echo
 
 detect_distro
+detect_pkg_mgr
 [[ -n "$DISTRO_PRETTY" ]] && info "Detected OS: $DISTRO_PRETTY"
+if [[ -z "$PKG_MGR" ]]; then
+    error "No supported package manager (apt-get or pacman) was found on this system."
+    error "Galileo's Linux installer currently supports Debian/Ubuntu-family (apt) and Arch-family (pacman) distros."
+    exit 1
+fi
+info "Using package manager: $PKG_MGR"
 echo
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

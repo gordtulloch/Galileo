@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Galileo Setup for Linux (Debian/Ubuntu) - the one file to download for a fresh install.
+# Galileo Setup for Linux (Debian/Ubuntu and Arch) - the one file to download for a fresh install.
 # Download this file, then run it:
 #   chmod +x Install-Galileo-Linux.sh && ./Install-Galileo-Linux.sh
 #
@@ -14,7 +14,7 @@ INSTALLER_URL="https://raw.githubusercontent.com/gordtulloch/Galileo/main/instal
 TEMP_SCRIPT="$(mktemp /tmp/galileo-install.XXXXXX.sh)"
 
 echo "========================================"
-echo " Galileo Setup for Linux (Debian/Ubuntu)"
+echo " Galileo Setup for Linux (Debian/Ubuntu, Arch)"
 echo "========================================"
 echo
 echo "This will download the Galileo installer and set up Galileo on this machine."
@@ -23,9 +23,16 @@ echo
 if ! command -v curl >/dev/null 2>&1; then
     echo "curl is required but was not found.  Installing it now..." >&2
     if command -v sudo >/dev/null 2>&1; then
-        sudo apt-get update -qq && sudo apt-get install -y curl
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y curl
+        elif command -v pacman >/dev/null 2>&1; then
+            sudo pacman -Sy --noconfirm curl
+        else
+            echo "Error: no supported package manager (apt-get or pacman) found; please install curl manually and re-run." >&2
+            exit 1
+        fi
     else
-        echo "Error: please install curl (apt-get install curl) and re-run." >&2
+        echo "Error: please install curl (apt-get install curl / pacman -S curl) and re-run." >&2
         exit 1
     fi
 fi

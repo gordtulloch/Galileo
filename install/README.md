@@ -49,12 +49,12 @@ Re-running `install.sh` later (standalone, or from inside the checkout) is how t
 
 ---
 
-## Linux (Debian / Ubuntu)
+## Linux (Debian / Ubuntu, Arch)
 
 | File | Purpose |
 |---|---|
 | [`Install-Galileo-Linux.sh`](../Install-Galileo-Linux.sh) (repo root) | The one file to download for a fresh install. Run it in a terminal; it fetches `install/install-linux.sh` from GitHub and runs it. |
-| `install-linux.sh` | Clones (or updates) the repo, installs required `apt` packages (git, Python 3.11, Qt/PySide6 system libs), creates `.venv`, installs dependencies, and creates a desktop `.desktop` launcher and an application-menu entry. Safe to re-run any time. |
+| `install-linux.sh` | Clones (or updates) the repo, installs required system packages via `apt` or `pacman` - whichever is found (git, Python 3.11+, Qt/PySide6 system libs), creates `.venv`, installs dependencies, and creates a desktop `.desktop` launcher and an application-menu entry. Safe to re-run any time. |
 | `launch_galileo.sh` | Shared with macOS. Used as the desktop launcher's `Exec` target. Checks for updates on every launch, then starts Galileo. |
 | `upgrade-linux.sh` | Manual "update now" script - `git pull` plus a dependency refresh - for updating without starting the app, or after local changes blocked the automatic update. |
 
@@ -62,22 +62,24 @@ Re-running `install.sh` later (standalone, or from inside the checkout) is how t
 
 1. The user downloads `Install-Galileo-Linux.sh` from the repo root.
 2. They run `chmod +x Install-Galileo-Linux.sh && ./Install-Galileo-Linux.sh` in a terminal.
-3. `install-linux.sh` installs missing `apt` packages (git, Python 3.11 via the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) if the distro doesn't ship it, plus Qt6/PySide6 system libraries). It clones Galileo into `~/Galileo` (or wherever `--install-dir` points), creates `.venv`, installs `requirements.txt`, writes a `~/Desktop/Galileo.desktop` launcher, and copies it to `~/.local/share/applications` for the app menu.
+3. `install-linux.sh` detects the package manager (`apt-get` or `pacman`, by which binary is actually on `PATH`) and installs missing packages through it: git, Python 3.11 (via the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) on Debian/Ubuntu-family if the distro doesn't ship it, or simply `python`/`python-pip` on Arch), plus Qt6/PySide6 system libraries. It clones Galileo into `~/Galileo` (or wherever `--install-dir` points), creates `.venv`, installs `requirements.txt`, writes a `~/Desktop/Galileo.desktop` launcher, and copies it to `~/.local/share/applications` for the app menu.
 
 Re-running `install-linux.sh` later (standalone, or from inside the checkout) is how to force a full refresh; ordinary use never needs it because `launch_galileo.sh` already updates on every launch.
 
 #### Python 3.11 resolution strategy
 
-The installer works through four strategies in order, stopping at the first that succeeds:
+On Arch and its derivatives (pacman found), the installer just runs `pacman -S python python-pip` and stops there - Arch is rolling-release, so its `python` package is always a current 3.x build, with no PPA/pyenv juggling needed. This is also the path the current Arch-based **Stellarmate OS** takes, now that it has moved off its earlier Ubuntu base.
+
+On Debian/Ubuntu-family (apt found), the installer works through four strategies in order, stopping at the first that succeeds:
 
 | # | When used | What it does |
 |---|---|---|
 | 1 | `apt-cache` shows `python3.11` | `apt-get install python3.11 python3.11-venv python3.11-dev` |
-| 2 | Ubuntu family (Ubuntu, LUbuntu, **Stellarmate**, Mint, Pop!_OS …) and `python3.11` not in apt | Adds the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) and installs via apt |
+| 2 | Ubuntu family (Ubuntu, LUbuntu, Mint, Pop!_OS …) and `python3.11` not in apt | Adds the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) and installs via apt |
 | 3 | Debian / **Raspberry Pi OS** Bullseye or older | Warns about the OS version, recommends upgrading to Bookworm, then falls through to pyenv |
 | 4 | Any distro where apt can't supply 3.11 | Builds Python 3.11.9 from source via [pyenv](https://github.com/pyenv/pyenv) (~5 min on RPi 5, ~15 min on RPi 4) |
 
-Distro detection reads `ID` and `ID_LIKE` from `/etc/os-release`. `ID_LIKE` is a space-separated list of parent distros, so Stellarmate (`ID=lubuntu ID_LIKE="ubuntu debian"`) correctly gets the deadsnakes PPA path rather than the Debian path.
+Distro detection reads `ID` and `ID_LIKE` from `/etc/os-release`. `ID_LIKE` is a space-separated list of parent distros, used to tell Ubuntu-family derivatives apart from plain Debian.
 
 **Options accepted by `install-linux.sh`:**
 

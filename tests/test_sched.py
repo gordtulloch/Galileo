@@ -286,7 +286,13 @@ def test_tc_sched_100_persist_queue_across_restarts(scheduler, sample_job, tmp_p
 
 
 # ---------------------------------------------------------------------------
-# Planning > Scheduler screen (galileo.ui.scheduler)
+# Planning > Schedule screen (galileo.ui.schedule) — TC-SCHED-110 … TC-SCHED-160
+#
+# There is no dedicated "Planning > Scheduler" table screen any more
+# (galileo.ui.scheduler was removed, user's call, once this timeline screen
+# existed — see docs/SDD.md 4.9b's "Reopened gap" note) — SCHED-010 … 100's
+# domain-level coverage above is unaffected; this section only covers the
+# Schedule screen's own additions.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -296,7 +302,7 @@ def window(tmp_path):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
     from galileo.library.database import db, init_db
-    init_db(tmp_path / "scheduler_page.db")
+    init_db(tmp_path / "schedule_page.db")
     from galileo.ui.app_window import AppWindow
     win = AppWindow()
     yield win
@@ -304,9 +310,10 @@ def window(tmp_path):
     db.close()
 
 
-def _sessions_and_scheduler_pages(window):
+def _sessions_page(window):
+    """Creates a Pier and opens Planning (building the Sessions and Schedule
+    pages), returning the Sessions page."""
     from galileo.observatory import create_observatory, create_pier
-    from galileo.ui.scheduler import SchedulerPageWidget
     from galileo.ui.sessions import SessionsPageWidget
 
     obs = create_observatory("Home", 40.0, 0.0)
@@ -315,79 +322,7 @@ def _sessions_and_scheduler_pages(window):
     window._current_pier = pier
     window._on_pier_changed()
     window._primary_nav.select("planning")
-    sessions = window._window.findChildren(SessionsPageWidget)[0]
-    scheduler_page = window._window.findChildren(SchedulerPageWidget)[0]
-    return sessions, scheduler_page
-
-
-@pytest.mark.requirement("TC-SCHED-010")
-@pytest.mark.priority("MVP")
-def test_scheduler_page_shows_jobs_scheduled_from_sessions(window):
-    """SCHED-010: a job only enters the queue via a session's Schedule control, and
-    Planning > Scheduler shows it — sharing the same per-Pier ObservatoryScheduler
-    Planning > Sessions submits to, not a separate queue."""
-    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
-
-    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
-    region._scheduler = sessions._scheduler_for(region._pier_name)
-    assert sessions._scheduler_for("Pier-1") is scheduler_page._scheduler()
-
-    region.schedule()
-    scheduler_page.reload()
-    assert scheduler_page._table.rowCount() == 1
-    assert scheduler_page._table.item(0, 1).text() == "M31 Session"
-
-
-@pytest.mark.requirement("TC-SCHED-020")
-@pytest.mark.priority("MVP")
-def test_scheduler_page_move_and_edit_job(window):
-    """SCHED-020: jobs can be reordered and modified (priority, frames required) from the screen."""
-    from galileo.ui.scheduler import _EditJobDialog
-    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
-
-    for name, ra, dec in (("M31", 10.68, 41.27), ("M42", 83.8, -5.4)):
-        region = sessions.screen.create_session_for_target(name, ra, dec)
-        region._scheduler = sessions._scheduler_for(region._pier_name)
-        region.schedule()
-    scheduler_page.reload()
-
-    scheduler_page._table.selectRow(0)
-    scheduler_page._move_selected(1)
-    assert [j.name for j in scheduler_page._scheduler().jobs] == ["M42 Session", "M31 Session"]
-
-    job = scheduler_page._scheduler().jobs[0]
-    dialog = _EditJobDialog(job, scheduler_page)
-    dialog.priority_spin.setValue(1)
-    dialog.total_spin.setValue(20)
-    dialog.apply()
-    assert job.priority == 1 and job.total_required == 20
-
-
-@pytest.mark.requirement("TC-SCHED-020")
-@pytest.mark.priority("MVP")
-def test_scheduler_page_remove_deschedules_session_rather_than_deleting_it(window, monkeypatch):
-    """SCHED-020: removing a job from the queue returns its session to editable draft
-    state (deschedule) — only a job that actually completes deletes its session."""
-    from PySide6.QtWidgets import QMessageBox
-    sessions, scheduler_page = _sessions_and_scheduler_pages(window)
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
-
-    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
-    region._scheduler = sessions._scheduler_for(region._pier_name)
-    region.schedule()
-    scheduler_page.reload()
-
-    scheduler_page._table.selectRow(0)
-    scheduler_page._remove_selected()
-
-    assert scheduler_page._table.rowCount() == 0
-    sessions.reload()
-    assert region in sessions.screen.visible_sessions   # still there
-    assert region.is_editable is True and region.is_scheduled is False   # just unlocked
-
-
-# ---------------------------------------------------------------------------
-# Planning > Schedule screen (galileo.ui.schedule) — TC-SCHED-110 … TC-SCHED-160
+    return window._window.findChildren(SessionsPageWidget)[0]
 # ---------------------------------------------------------------------------
 
 def _schedule_page(window):
@@ -402,7 +337,7 @@ def test_tc_sched_110_pier_op_dropped_onto_timeline_becomes_one_sized_block(wind
     (reusing galileo.ui.sessions' own SES-140 block classes), and dropping one onto
     the timeline creates a single timeline block sized to its duration."""
     from galileo.ui.sessions import DomeOpenBlock
-    _sessions_and_scheduler_pages(window)  # builds the Sessions/Scheduler/Schedule pages
+    _sessions_page(window)  # builds the Sessions/Schedule pages
     page = _schedule_page(window)
 
     assert page.palette.count() == 5
@@ -434,7 +369,7 @@ def test_tc_sched_120_right_click_sets_start_end_duration(window):
     """SCHED-120: a right-click dialog sets/clears a block's start, end, and
     duration; leaving start unset keeps the job unpositioned."""
     from galileo.ui.schedule import _EditTimeDialog
-    sessions, _ = _sessions_and_scheduler_pages(window)
+    sessions = _sessions_page(window)
     page = _schedule_page(window)
 
     region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
@@ -492,7 +427,7 @@ def test_tc_sched_140_completed_and_error_borders_and_log_dialog(window):
     border, and its Log control shows the run_log."""
     from PySide6.QtWidgets import QPlainTextEdit
     from galileo.ui.schedule import _LogDialog, _ScheduleBlockWidget
-    sessions, _ = _sessions_and_scheduler_pages(window)
+    sessions = _sessions_page(window)
     page = _schedule_page(window)
 
     region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
@@ -518,7 +453,7 @@ def test_tc_sched_140_completed_and_error_borders_and_log_dialog(window):
 def test_tc_sched_150_run_now_positions_immediately_and_reports_conflicts(window):
     """SCHED-150: the Sessions screen's Run control schedules a session to start
     now and reports (without blocking) any overlap with existing entries."""
-    sessions, _ = _sessions_and_scheduler_pages(window)
+    sessions = _sessions_page(window)
 
     region1 = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
     region1._scheduler = sessions._scheduler_for(region1._pier_name)

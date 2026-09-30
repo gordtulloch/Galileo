@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import QWidget
-from ._widgets import _ClickableThumbnail, _DayNightBandChart
+from ._widgets import _AltitudeChart, _ClickableThumbnail, _DayNightBandChart
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,6 @@ class AppWindowWhatsUpPageMixin:
             QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget,
         )
         from PySide6.QtCore import Qt, QDate
-        from galileo.ui.scheduler import _AltitudeChart
 
         _CARD_THUMB_PX = 44
         _CARD_CHART_SIZE = (130, 74)
