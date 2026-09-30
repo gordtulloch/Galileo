@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""WUT — What's Up Tonight (TC-WUT-010 … TC-WUT-100)."""
+"""WUT — What's Up Tonight (TC-WUT-010 … TC-WUT-110)."""
 
 import pytest
 
@@ -21,6 +21,11 @@ def observing_location():
     return sky_mod.ObservingLocation(
         name="Backyard", latitude=51.5, longitude=-1.0, elevation_m=100, timezone="UTC",
     )
+
+
+@pytest.fixture
+def visibility_mod():
+    return pytest.importorskip("galileo.planning.visibility")
 
 
 @pytest.fixture
@@ -630,5 +635,102 @@ def test_tc_wut_100_never_required_for_ranking_to_proceed(recommend_mod, observi
     )
     assert len(recs) == 1
     assert recs[0].confidence == recommend_mod.Confidence.REDUCED
+
+
+# ---------------------------------------------------------------------------
+# TC-WUT-110
+# ---------------------------------------------------------------------------
+
+def _synthetic_sun_track(base, step_minutes: int = 5):
+    """A one-day, deterministic, timezone-independent stand-in for
+    ``sun_altitude_track``: a single sinusoid oscillating between -50° and
+    +50°, symmetric about local noon — one full Night/Astronomical/Nautical/
+    Civil/Daylight/Civil/Nautical/Astronomical/Night cycle, with an
+    unambiguous single altitude maximum (noon) and a tied altitude minimum at
+    both the first and last sample (midnight)."""
+    import datetime as _dt
+    import math
+    steps = int(24 * 60 / step_minutes) + 1
+    times = [base + _dt.timedelta(minutes=i * step_minutes) for i in range(steps)]
+    altitudes = [50.0 * math.cos(2 * math.pi * ((i * step_minutes) / 60.0 - 12.0) / 24.0) for i in range(steps)]
+    return {"times": [t.isoformat() for t in times], "altitudes": altitudes}
+
+
+@pytest.mark.requirement("TC-WUT-110")
+@pytest.mark.priority("MVP")
+def test_tc_wut_110_day_night_band_segments_are_contiguous_and_cover_24_hours(
+    visibility_mod, observing_location, monkeypatch,
+):
+    """WUT-110: the day/night band's segments cover the full local calendar day with
+    no gaps or overlaps, and their durations sum to exactly 24 hours."""
+    import datetime as _dt
+    base = _dt.datetime(2026, 3, 20, 0, 0, 0, tzinfo=_dt.UTC)
+    monkeypatch.setattr(visibility_mod, "sun_altitude_track",
+                         lambda *a, **k: _synthetic_sun_track(base))
+
+    result = visibility_mod.day_night_bands(observing_location, "2026-03-20")
+    segments = result["segments"]
+    assert segments, "expected at least one segment"
+
+    import itertools
+    for prev, nxt in itertools.pairwise(segments):
+        assert prev["end"] == nxt["start"]
+    assert segments[0]["start"] == base.isoformat()
+    assert segments[-1]["end"] == (base + _dt.timedelta(hours=24)).isoformat()
+
+    total_hours = sum(result["totals_hours"].values())
+    assert total_hours == pytest.approx(24.0, abs=1e-6)
+
+
+@pytest.mark.requirement("TC-WUT-110")
+@pytest.mark.priority("MVP")
+def test_tc_wut_110_day_night_band_labels_follow_the_expected_sky_brightness_cycle(
+    visibility_mod, observing_location, monkeypatch,
+):
+    """WUT-110: a single sunrise/sunset day produces exactly the Night -> Astronomical
+    -> Nautical -> Civil -> Daylight -> Civil -> Nautical -> Astronomical -> Night
+    cycle, each transition ordered by increasing then decreasing Sun altitude."""
+    import datetime as _dt
+    base = _dt.datetime(2026, 3, 20, 0, 0, 0, tzinfo=_dt.UTC)
+    monkeypatch.setattr(visibility_mod, "sun_altitude_track",
+                         lambda *a, **k: _synthetic_sun_track(base))
+
+    result = visibility_mod.day_night_bands(observing_location, "2026-03-20")
+    labels = [seg["label"] for seg in result["segments"]]
+    assert labels == [
+        "Night", "Astronomical Twilight", "Nautical Twilight", "Civil Twilight", "Daylight",
+        "Civil Twilight", "Nautical Twilight", "Astronomical Twilight", "Night",
+    ]
+
+
+@pytest.mark.requirement("TC-WUT-110")
+@pytest.mark.priority("MVP")
+def test_tc_wut_110_solar_noon_and_midnight_are_the_altitude_extremes(
+    visibility_mod, observing_location, monkeypatch,
+):
+    """WUT-110: solar noon/midnight mark the Sun's highest/lowest altitude sample
+    that day, not just a fixed 12:00/00:00 clock reading."""
+    import datetime as _dt
+    base = _dt.datetime(2026, 3, 20, 0, 0, 0, tzinfo=_dt.UTC)
+    monkeypatch.setattr(visibility_mod, "sun_altitude_track",
+                         lambda *a, **k: _synthetic_sun_track(base))
+
+    result = visibility_mod.day_night_bands(observing_location, "2026-03-20")
+    assert result["solar_noon"] == (base + _dt.timedelta(hours=12)).isoformat()
+    assert result["solar_midnight"] == base.isoformat()
+
+
+@pytest.mark.requirement("TC-WUT-110")
+@pytest.mark.priority("MVP")
+def test_tc_wut_110_no_data_degrades_gracefully(visibility_mod, observing_location, monkeypatch):
+    """WUT-110: an unavailable Sun-altitude track (e.g. astropy missing) yields empty
+    segments/totals and ``None`` solar noon/midnight rather than raising."""
+    monkeypatch.setattr(visibility_mod, "sun_altitude_track", lambda *a, **k: {"times": [], "altitudes": []})
+
+    result = visibility_mod.day_night_bands(observing_location, "2026-03-20")
+    assert result["segments"] == []
+    assert result["totals_hours"] == {}
+    assert result["solar_noon"] is None
+    assert result["solar_midnight"] is None
 
 

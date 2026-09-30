@@ -368,3 +368,218 @@ def moon_separation_deg(ra_deg: float, dec_deg: float, moon_ra_deg: float, moon_
     ra1, dec1, ra2, dec2 = (math.radians(v) for v in (ra_deg, dec_deg, moon_ra_deg, moon_dec_deg))
     cos_sep = math.sin(dec1) * math.sin(dec2) + math.cos(dec1) * math.cos(dec2) * math.cos(ra1 - ra2)
     return math.degrees(math.acos(min(1.0, max(-1.0, cos_sep))))
+
+
+def sun_altitude_deg(location: ObservingLocation, time=None) -> float | None:
+    """The Sun's altitude (degrees) above *location*'s horizon at *time* (an
+    ``astropy.time.Time``, defaulting to right now). Used to gate sky-flat
+    capture to the local twilight window (CAL-070) via :func:`is_twilight`.
+    Returns ``None`` if it can't be computed (astropy unavailable)."""
+    try:
+        from astropy.coordinates import AltAz, EarthLocation, get_sun
+        from astropy.time import Time
+        import astropy.units as u
+
+        loc = EarthLocation(
+            lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
+        )
+        t = time or Time.now()
+        frame = AltAz(obstime=t, location=loc)
+        return float(get_sun(t).transform_to(frame).alt.deg)
+    except Exception:
+        logger.debug("Could not compute the Sun's altitude", exc_info=True)
+        return None
+
+
+def is_twilight(
+    location: ObservingLocation, time=None,
+    max_altitude_deg: float = 0.0, min_altitude_deg: float = -18.0,
+) -> bool:
+    """Whether the Sun sits within the local dawn/dusk twilight band at
+    *location* and *time* (now, if not given) — below the horizon but not yet
+    (or still) fully dark, which is the window sky flats need (CAL-070):
+    bright enough for a short, even exposure, dim enough that direct
+    sunlight doesn't saturate the frame. Defaults to the full civil-through-
+    astronomical twilight range (0° down to -18°). Returns ``False`` (i.e.
+    refuses the run) if the Sun's altitude can't be computed at all, rather
+    than assuming it's safe to proceed."""
+    altitude = sun_altitude_deg(location, time)
+    if altitude is None:
+        return False
+    return min_altitude_deg <= altitude <= max_altitude_deg
+
+
+def sun_altitude_track(
+    location: ObservingLocation,
+    date_str: str | None = None,
+    resolution_min: int = 1,
+) -> dict:
+    """The Sun's altitude across one local calendar day at *location*, from local
+    midnight to the next local midnight (unlike :func:`altitude_chart`'s UTC
+    noon-to-noon "one observing night" window) — the day/night band on the
+    What's Up Tonight screen (WUT-110) is keyed to the wall-clock day the user
+    picked, not to a night that straddles two calendar dates. Sampled every
+    *resolution_min* minute(s) via a single vectorized astropy transform (the
+    same batching :func:`altitude_charts_batch` already uses, rather than one
+    ``get_sun`` call per sample). Returns a dict with ``times`` (local-time ISO
+    strings, one per sample, tz-aware) and ``altitudes`` (degrees); both empty
+    on failure (astropy unavailable), matching :func:`altitude_chart`'s own
+    never-raises contract.
+
+    Uses the *system's* local timezone (via plain ``datetime.astimezone()``),
+    the same convention the Scheduler's ``_AltitudeChart`` tick labels already
+    use, rather than ``ObservingLocation.timezone`` — that field is an IANA
+    name and resolving it correctly needs the ``tzdata`` package, which isn't
+    a declared dependency (bundled with most Linux/macOS systems but not
+    Windows). One consequence: on the two days a year the system clock's DST
+    offset changes, the second half of that local day is computed at the
+    pre-transition UTC offset, which can shift band boundaries there by up to
+    an hour."""
+    try:
+        from astropy.coordinates import AltAz, EarthLocation, get_sun
+        from astropy.time import Time
+        import astropy.units as u
+        import numpy as np
+
+        if date_str is None:
+            date_str = datetime.datetime.now().astimezone().date().isoformat()
+        year, month, day = (int(p) for p in date_str.split("-"))
+        local_midnight = datetime.datetime(year, month, day).astimezone()
+
+        loc = EarthLocation(
+            lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
+        )
+        steps = int(24 * 60 / resolution_min) + 1
+        local_times = [local_midnight + datetime.timedelta(minutes=i * resolution_min) for i in range(steps)]
+        utc_times = Time([t.astimezone(datetime.UTC).replace(tzinfo=None) for t in local_times], scale="utc")
+        frame = AltAz(obstime=utc_times, location=loc)
+        altitudes = get_sun(utc_times).transform_to(frame).alt.deg
+
+        return {"times": [t.isoformat() for t in local_times], "altitudes": np.asarray(altitudes).tolist()}
+    except Exception:
+        logger.debug("Could not compute the Sun's altitude track", exc_info=True)
+        return {"times": [], "altitudes": []}
+
+
+# Sun-altitude boundaries (degrees) between consecutive day/night bands, in
+# ascending order — the standard sunrise/sunset (-0.8333°, accounting for
+# atmospheric refraction and the solar disk's radius) plus the standard
+# civil/nautical/astronomical twilight bands, the same fixed reference table
+# already used for the What's Up Tonight advisory summary's Kp/AQI bands.
+_BAND_ORDER = ("Night", "Astronomical Twilight", "Nautical Twilight", "Civil Twilight", "Daylight")
+_BAND_THRESHOLDS_DEG = (-18.0, -12.0, -6.0, -0.8333)
+
+
+def _band_index(altitude_deg: float) -> int:
+    idx = 0
+    for threshold in _BAND_THRESHOLDS_DEG:
+        if altitude_deg < threshold:
+            break
+        idx += 1
+    return idx
+
+
+def _interp_crossing_time(
+    t1: datetime.datetime, alt1: float, t2: datetime.datetime, alt2: float, threshold_deg: float,
+) -> datetime.datetime:
+    if alt2 == alt1:
+        return t1
+    frac = min(max((threshold_deg - alt1) / (alt2 - alt1), 0.0), 1.0)
+    return t1 + (t2 - t1) * frac
+
+
+def day_night_bands(
+    location: ObservingLocation,
+    date_str: str | None = None,
+    resolution_min: int = 1,
+) -> dict:
+    """The day/night band for the What's Up Tonight screen's top graphic
+    (WUT-110) — one local calendar day (local midnight to local midnight, via
+    :func:`sun_altitude_track`) split into contiguous Night / Astronomical
+    Twilight / Nautical Twilight / Civil Twilight / Daylight segments by the
+    Sun's altitude, each boundary crossing linearly interpolated between the
+    straddling samples for a finer time than the raw sampling resolution
+    (the same technique :func:`rise_transit_set` already uses for its own
+    horizon crossings).
+
+    Returns a dict with:
+    - ``segments``: ``[{"label", "start", "end"}, ...]`` in chronological
+      order, local-time ISO strings, covering the full day with no gaps —
+      a band that never changes (e.g. permanent polar night) is a single
+      segment.
+    - ``totals_hours``: ``{label: total_hours}`` summed across every segment
+      with that label (a label can recur, e.g. "Night" before dawn and again
+      after dusk).
+    - ``solar_noon`` / ``solar_midnight``: local-time ISO strings for the
+      Sun's highest/lowest altitude sample that day, or ``None``.
+
+    All fields are empty/``None`` when the underlying track can't be
+    computed (astropy unavailable) — never raises, matching this module's
+    existing never-block-the-screen convention."""
+    track = sun_altitude_track(location, date_str, resolution_min)
+    times_iso, altitudes = track["times"], track["altitudes"]
+    if not times_iso:
+        return {"segments": [], "totals_hours": {}, "solar_noon": None, "solar_midnight": None}
+
+    times = [datetime.datetime.fromisoformat(t) for t in times_iso]
+    indices = [_band_index(a) for a in altitudes]
+
+    boundaries = [times[0]]
+    labels = [_BAND_ORDER[indices[0]]]
+    for i in range(1, len(times)):
+        if indices[i] == indices[i - 1]:
+            continue
+        rising = indices[i] > indices[i - 1]
+        lo, hi = sorted((indices[i - 1], indices[i]))
+        crossed = _BAND_THRESHOLDS_DEG[lo:hi]
+        cursor = indices[i - 1]
+        for threshold in (crossed if rising else reversed(crossed)):
+            boundaries.append(_interp_crossing_time(times[i - 1], altitudes[i - 1], times[i], altitudes[i], threshold))
+            cursor += 1 if rising else -1
+            labels.append(_BAND_ORDER[cursor])
+    boundaries.append(times[-1])
+
+    segments = [
+        {"label": labels[j], "start": boundaries[j].isoformat(), "end": boundaries[j + 1].isoformat()}
+        for j in range(len(labels))
+    ]
+    totals_hours: dict[str, float] = {}
+    for j, seg in enumerate(segments):
+        hours = (boundaries[j + 1] - boundaries[j]).total_seconds() / 3600.0
+        totals_hours[seg["label"]] = totals_hours.get(seg["label"], 0.0) + hours
+
+    noon_idx = max(range(len(altitudes)), key=lambda i: altitudes[i])
+    midnight_idx = min(range(len(altitudes)), key=lambda i: altitudes[i])
+
+    return {
+        "segments": segments,
+        "totals_hours": totals_hours,
+        "solar_noon": times_iso[noon_idx],
+        "solar_midnight": times_iso[midnight_idx],
+    }
+
+
+def altaz_to_radec_deg(
+    alt_deg: float, az_deg: float, location: ObservingLocation, time=None,
+) -> tuple[float, float] | None:
+    """Convert a local (altitude, azimuth) direction as seen from *location* at
+    *time* (now, if not given) to J2000 RA/Dec degrees — used to slew a mount
+    at a fixed sky *direction* (e.g. the Sky Flat routine's East vantage
+    point, CAL-070) rather than a fixed RA/Dec, which would drift out of that
+    direction as the night goes on. Returns ``None`` if it can't be computed."""
+    try:
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+        from astropy.time import Time
+        import astropy.units as u
+
+        loc = EarthLocation(
+            lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
+        )
+        t = time or Time.now()
+        frame = AltAz(obstime=t, location=loc)
+        coord = SkyCoord(alt=alt_deg * u.deg, az=az_deg * u.deg, frame=frame)
+        icrs = coord.transform_to("icrs")
+        return float(icrs.ra.deg), float(icrs.dec.deg)
+    except Exception:
+        logger.debug("Could not convert alt/az to RA/Dec for the Sky Flat slew", exc_info=True)
+        return None

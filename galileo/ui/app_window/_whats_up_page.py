@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import QWidget
-from ._widgets import _ClickableThumbnail
+from ._widgets import _ClickableThumbnail, _DayNightBandChart
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class AppWindowWhatsUpPageMixin:
         weather/aurora/smoke advisory summary line (WUT-100, shown only for
         today — see ``_fetch_advisories`` below) sit in the criteria panel."""
         from PySide6.QtWidgets import (
-            QApplication, QCheckBox, QDateEdit, QDoubleSpinBox, QHBoxLayout,
+            QApplication, QCheckBox, QDateEdit, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
             QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget,
         )
         from PySide6.QtCore import Qt, QDate
@@ -428,6 +428,108 @@ class AppWindowWhatsUpPageMixin:
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
+        day_night_chart = _DayNightBandChart()
+        content_layout.addWidget(day_night_chart)
+
+        legend_grid = QGridLayout()
+        legend_grid.setContentsMargins(4, 6, 4, 10)
+        legend_grid.setHorizontalSpacing(18)
+        legend_widget = QWidget()
+        legend_widget.setLayout(legend_grid)
+        content_layout.addWidget(legend_widget)
+
+        def _refresh_day_night_band() -> None:
+            """Recomputed independently of Rank Tonight (WUT-110) — this graphic
+            reflects the selected date/location alone, not the magnitude/altitude/
+            catalog ranking criteria, so it updates as soon as either changes rather
+            than waiting for a rank run."""
+            from galileo.planning.visibility import day_night_bands
+
+            while legend_grid.count():
+                item = legend_grid.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
+
+            location = _current_location()
+            if location is None:
+                day_night_chart.set_data({})
+                placeholder = QLabel("Set the active Observatory's latitude/longitude (top bar) "
+                                      "to show day/night for this date.")
+                placeholder.setObjectName("StatusHint")
+                placeholder.setWordWrap(True)
+                legend_grid.addWidget(placeholder, 0, 0)
+                return
+
+            night_date = date_edit.date().toString(Qt.DateFormat.ISODate)
+            day_data = day_night_bands(location, night_date)
+            day_night_chart.set_data(day_data)
+
+            def _fmt(iso: str) -> str:
+                import datetime as _dt
+                return _dt.datetime.fromisoformat(iso).strftime("%H:%M")
+
+            segments_by_label: dict[str, list] = {}
+            for seg in day_data.get("segments") or []:
+                segments_by_label.setdefault(seg["label"], []).append(seg)
+            totals = day_data.get("totals_hours") or {}
+
+            col = 0
+            for label, color in _DayNightBandChart._BAND_COLORS.items():
+                swatch = QFrame()
+                swatch.setFixedSize(10, 10)
+                swatch.setStyleSheet(f"background-color: {color}; border: 1px solid #555;")
+                name_label = QLabel(label)
+                name_label.setObjectName("StatusHint")
+                header_row = QHBoxLayout()
+                header_row.setSpacing(4)
+                header_row.addWidget(swatch)
+                header_row.addWidget(name_label)
+                header_row.addStretch(1)
+                header_widget = QWidget()
+                header_widget.setLayout(header_row)
+                legend_grid.addWidget(header_widget, 0, col)
+
+                ranges = "\n".join(f"{_fmt(seg['start'])} – {_fmt(seg['end'])}" for seg in segments_by_label.get(label, []))
+                ranges_label = QLabel(ranges or "—")
+                ranges_label.setObjectName("StatusHint")
+                legend_grid.addWidget(ranges_label, 1, col)
+
+                total_minutes = round(totals.get(label, 0.0) * 60)
+                hours, minutes = divmod(total_minutes, 60)
+                total_label = QLabel(f"Total: {hours:02d}:{minutes:02d}")
+                total_label.setObjectName("StatusHint")
+                legend_grid.addWidget(total_label, 2, col)
+                col += 1
+
+            noon = day_data.get("solar_noon")
+            midnight = day_data.get("solar_midnight")
+            if noon or midnight:
+                marker_col = QVBoxLayout()
+                marker_col.setSpacing(2)
+                if noon is not None:
+                    noon_row = QHBoxLayout()
+                    noon_row.setSpacing(4)
+                    noon_swatch = QFrame()
+                    noon_swatch.setFixedSize(10, 2)
+                    noon_swatch.setStyleSheet(f"background-color: {_DayNightBandChart._NOON_COLOR};")
+                    noon_row.addWidget(noon_swatch)
+                    noon_row.addWidget(QLabel(f"Solar noon {_fmt(noon)}"))
+                    marker_col.addLayout(noon_row)
+                if midnight is not None:
+                    midnight_row = QHBoxLayout()
+                    midnight_row.setSpacing(4)
+                    midnight_swatch = QFrame()
+                    midnight_swatch.setFixedSize(10, 2)
+                    midnight_swatch.setStyleSheet(f"background-color: {_DayNightBandChart._MIDNIGHT_COLOR};")
+                    midnight_row.addWidget(midnight_swatch)
+                    midnight_row.addWidget(QLabel(f"Solar midnight {_fmt(midnight)}"))
+                    marker_col.addLayout(midnight_row)
+                marker_widget = QWidget()
+                marker_widget.setLayout(marker_col)
+                marker_widget.setObjectName("StatusHint")
+                legend_grid.addWidget(marker_widget, 0, col, 3, 1, Qt.AlignmentFlag.AlignTop)
+
         fov_label = QLabel("")
         fov_label.setObjectName("StatusHint")
         fov_label.setWordWrap(True)
@@ -458,6 +560,7 @@ class AppWindowWhatsUpPageMixin:
             results.clear()
             fov_label.setText("")
             advisory_label.setText("")
+            _refresh_day_night_band()
             self._window.statusBar().showMessage("Ranking…")
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
@@ -587,6 +690,8 @@ class AppWindowWhatsUpPageMixin:
                     QApplication.restoreOverrideCursor()
 
         rank_btn.clicked.connect(run_rank)
+        date_edit.dateChanged.connect(lambda _=None: _refresh_day_night_band())
+        _refresh_day_night_band()
 
         layout.addWidget(criteria)
         layout.addWidget(content, 1)

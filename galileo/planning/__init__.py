@@ -15,6 +15,7 @@ from galileo.planning.visibility import (
     HorizonProfile,
     ObservingLocation,
     altitude_chart,
+    day_night_bands,
     is_observable_tonight,
 )
 
@@ -30,6 +31,7 @@ __all__ = [
     "ObservingLocation",
     "SkyAtlas",
     "altitude_chart",
+    "day_night_bands",
     "geocode_location",
     "is_observable_tonight",
 ]

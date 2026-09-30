@@ -126,17 +126,10 @@ class AppWindowImagingPageMixin:
         capture_row.addWidget(stop_capture_btn)
         settings_layout.addLayout(capture_row)
 
-        framing_row = QHBoxLayout()
-        framing_btn = QPushButton("Framing…")
-        framing_btn.setToolTip("Open the Framing Assistant against the selected optical train: compute the "
-                               "field of view, or define and run a mosaic grid directly from this tab "
-                               "(IMG-180, FRAME-070).")
-        framing_row.addWidget(framing_btn, 1)
         clear_mosaic_btn = QPushButton("Clear Mosaic")
         clear_mosaic_btn.setToolTip("Discard the active mosaic (IMG-180) and go back to capturing a single frame.")
         clear_mosaic_btn.setVisible(False)
-        framing_row.addWidget(clear_mosaic_btn)
-        settings_layout.addLayout(framing_row)
+        settings_layout.addWidget(clear_mosaic_btn)
 
         save_frame_btn = QPushButton("Save Frame…")
         save_frame_btn.setToolTip("Save the currently displayed frame to disk as a FITS file, with all the "
@@ -264,9 +257,21 @@ class AppWindowImagingPageMixin:
             "PNG in place of the raw FITS (IMG-210); annotated frames are never added to the "
             "Library, whichever way a frame reaches it (IMG-220)."
         )
+        framing_btn = QPushButton("Framing…")
+        framing_btn.setToolTip("Open the Framing Assistant against the selected optical train: compute the "
+                               "field of view, or define and run a mosaic grid directly from this tab "
+                               "(IMG-180, FRAME-070).")
+        flats_btn = QPushButton("Flats…")
+        flats_btn.setToolTip(
+            "Open the Flats Assistant (CAL-060): captures a set of flat frames, automatically "
+            "for Sky Flats — checks local twilight, slews the mount to a star-poor patch of sky "
+            "and converges each exposure on the camera's Max Well Depth (CAL-070)."
+        )
         annotate_status = QLabel("")
         annotate_status.setObjectName("StatusHint")
         zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
+        zoom_toolbar.insertWidget(0, flats_btn)
+        zoom_toolbar.insertWidget(0, framing_btn)
         zoom_toolbar.insertWidget(0, annotate_btn)
         content_layout.addLayout(zoom_toolbar)
         content_layout.addWidget(preview_view, 1)
@@ -913,6 +918,11 @@ class AppWindowImagingPageMixin:
             _refresh_mosaic_indicator()
 
         framing_btn.clicked.connect(_open_framing)
+
+        def _open_flats() -> None:
+            self._open_flats_dialog(_current_service())
+
+        flats_btn.clicked.connect(_open_flats)
 
         def save_frame() -> None:
             service = _current_service()

@@ -75,6 +75,9 @@ class CalibrationError(GalileoError):
 class FlatCalibrationError(CalibrationError):
     """The flat-capture routine could not reach the target ADU level."""
 
+class OutsideTwilightError(CalibrationError):
+    """A Sky Flats run was refused because the Sun is outside the local dawn/dusk twilight window."""
+
 
 # --- Safety errors --------------------------------------------------------
 

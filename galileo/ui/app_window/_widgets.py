@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from ._common import _HAS_QT, QWidget, QLabel, QPlainTextEdit, Signal
 
@@ -153,6 +153,115 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
             # itself a pane that will be captured.
             painter.setPen(QPen(QColor("#ffa64d"), 1, _Qt.PenStyle.DashLine))
             draw_rect(0.0, 0.0, self._reference_rotation_deg)
+        painter.end()
+
+
+class _DayNightBandChart(QWidget if _HAS_QT else object):
+    """A day/night graphic across one local calendar day (WUT-110): a colored
+    band from local midnight to local midnight, split into Night /
+    Astronomical / Nautical / Civil Twilight / Daylight segments
+    (``galileo.planning.visibility.day_night_bands``), an hour axis above it,
+    and tick marks for solar noon/midnight — the same reference layout as
+    timeanddate.com's day-length graphic. A single-hue sequential ramp (dark
+    navy through pale blue) encodes the segments in their natural brightness
+    order, so the ramp itself reads as "darker = closer to true night"
+    without needing the legend to explain an arbitrary color assignment; the
+    legend below this widget (built from plain ``QLabel``s in
+    ``_whats_up_page.py``, not painted here) still names each segment
+    directly, so identity is never color-alone (each swatch carries the
+    same text label it's plotted against)."""
+
+    _BAND_COLORS: ClassVar[dict[str, str]] = {
+        "Night": "#1c2c40",
+        "Astronomical Twilight": "#2b3f57",
+        "Nautical Twilight": "#44647f",
+        "Civil Twilight": "#7fa8bf",
+        "Daylight": "#cde8f5",
+    }
+    _NOON_COLOR = "#e0a030"
+    _MIDNIGHT_COLOR = "#e0524a"
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(360, 54)
+        self.setMaximumHeight(54)
+        self._segments: list[dict] = []
+        self._window_start = None
+        self._window_end = None
+        self._solar_noon = None
+        self._solar_midnight = None
+
+    def set_data(self, day_data: dict) -> None:
+        """*day_data* is a ``galileo.planning.visibility.day_night_bands()`` result."""
+        import datetime as _dt
+        segments = day_data.get("segments") or []
+        self._segments = segments
+        if segments:
+            self._window_start = _dt.datetime.fromisoformat(segments[0]["start"])
+            self._window_end = _dt.datetime.fromisoformat(segments[-1]["end"])
+        else:
+            self._window_start = self._window_end = None
+        solar_noon = day_data.get("solar_noon")
+        solar_midnight = day_data.get("solar_midnight")
+        self._solar_noon = _dt.datetime.fromisoformat(solar_noon) if solar_noon else None
+        self._solar_midnight = _dt.datetime.fromisoformat(solar_midnight) if solar_midnight else None
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        import datetime as _dt
+        from PySide6.QtCore import QRectF, Qt as _Qt
+        from PySide6.QtGui import QColor, QFont, QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        fg = QColor("#cccccc")
+        font = QFont(painter.font())
+        font.setPointSizeF(7.5)
+        painter.setFont(font)
+
+        band = QRectF(4, 16, self.width() - 8, 22)
+        if not self._segments or self._window_start is None or self._window_end is None:
+            painter.setPen(fg)
+            painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter, "No day/night data for this date/location.")
+            painter.end()
+            return
+
+        total_seconds = (self._window_end - self._window_start).total_seconds() or 1.0
+
+        def x_at(when) -> float:
+            return band.left() + (when - self._window_start).total_seconds() / total_seconds * band.width()
+
+        # Hour-axis ticks every 2 hours (00, 02, ..., 22), matching the
+        # reference day-length graphic this widget is modeled on.
+        painter.setPen(fg)
+        for hour in range(0, 24, 2):
+            tick_time = self._window_start.replace(hour=0, minute=0, second=0, microsecond=0) + \
+                _dt.timedelta(hours=hour)
+            x = x_at(tick_time)
+            painter.drawText(QRectF(x - 14, 0, 28, 14), _Qt.AlignmentFlag.AlignCenter, f"{hour:02d}")
+
+        # Band segments, with a thin surface-colored gap between adjacent
+        # fills so a boundary is always visible even between two close
+        # ramp steps (mark spec: a gap beats relying on hue contrast alone).
+        painter.setPen(_Qt.PenStyle.NoPen)
+        for seg in self._segments:
+            start = _dt.datetime.fromisoformat(seg["start"])
+            end = _dt.datetime.fromisoformat(seg["end"])
+            x0, x1 = x_at(start), x_at(end)
+            if x1 <= x0:
+                continue
+            painter.setBrush(QColor(self._BAND_COLORS.get(seg["label"], "#444444")))
+            painter.drawRect(QRectF(x0, band.top(), max(1.0, x1 - x0 - 1.0), band.height()))
+
+        # Solar noon/midnight reference lines, drawn over the band.
+        from PySide6.QtCore import QPointF
+        for when, color in ((self._solar_noon, self._NOON_COLOR), (self._solar_midnight, self._MIDNIGHT_COLOR)):
+            if when is None:
+                continue
+            x = x_at(when)
+            painter.setPen(QPen(QColor(color), 2))
+            painter.drawLine(QPointF(x, band.top() - 3), QPointF(x, band.bottom() + 3))
+
         painter.end()
 
 

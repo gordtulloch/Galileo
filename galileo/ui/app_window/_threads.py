@@ -154,6 +154,45 @@ class _DetermineRotationThread(QThread if _HAS_QT else object):
             self.failed.emit(result.failure_reason or "The solver found no solution.")
 
 
+class _FlatsThread(QThread if _HAS_QT else object):
+    """Runs one Sky Flats run (CAL-070) off the Qt UI thread: the twilight-window check,
+    the mount slew/tracking-off bracket, and the per-frame adaptive-exposure convergence
+    loop can together take many minutes (longer still across every filter), so this keeps
+    the Flats Assistant dialog responsive the same way every other multi-minute device
+    sequence in this window already runs off-thread (mirrors ``_CaptureThread``)."""
+
+    filter_started = Signal(object, int, int) if _HAS_QT else None    # (filter_name, index, total)
+    frame_done = Signal(object, int, int) if _HAS_QT else None        # (filter_name, frame index, frame total)
+    finished_ok = Signal(list) if _HAS_QT else None                   # list[CalibrationResult]
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, service, filters, count: int, max_well_depth: int, location, measure: str,
+                 exposure_s, exposure_increment_s: float, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._filters = filters
+        self._count = count
+        self._max_well_depth = max_well_depth
+        self._location = location
+        self._measure = measure
+        self._exposure_s = exposure_s
+        self._exposure_increment_s = exposure_increment_s
+
+    def run(self) -> None:
+        import asyncio
+        try:
+            results = asyncio.run(self._service.run_sky_flats_all_filters(
+                self._filters, self._count, self._max_well_depth, location=self._location,
+                measure=self._measure, exposure_s=self._exposure_s,
+                exposure_increment_s=self._exposure_increment_s,
+                on_filter_start=self.filter_started.emit, on_frame_done=self.frame_done.emit,
+            ))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(results)
+
+
 class _FilterMoveThread(QThread if _HAS_QT else object):
     """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
     several seconds to settle (INDI waits up to a minute), which would otherwise

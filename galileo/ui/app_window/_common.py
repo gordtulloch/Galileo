@@ -24,11 +24,11 @@ _MANUAL_URL = "https://github.com/gordtulloch/Galileo/tree/main/docs"
 
 try:
     from PySide6.QtCore import QThread, Signal
-    from PySide6.QtWidgets import QFormLayout, QLabel, QPlainTextEdit, QWidget
+    from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QPlainTextEdit, QWidget
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False
-    QThread = Signal = QFormLayout = QLabel = QPlainTextEdit = QWidget = None  # type: ignore[assignment,misc]
+    QThread = Signal = QDialog = QFormLayout = QLabel = QPlainTextEdit = QWidget = None  # type: ignore[assignment,misc]
 
 _NEW_OBSERVATORY_LABEL = "New Observatory…"
 _NEW_PIER_LABEL = "New Pier…"

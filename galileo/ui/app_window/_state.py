@@ -53,6 +53,7 @@ class AppWindowState(Protocol):
     _current_pier: Any
     _current_primary_section: Any
     _device_pages: Any
+    _flats_threads: Any
     _focus_settings_refresh: Any
     _horizon_table_refresh: Any
     _imaging_capture_threads: Any
@@ -122,6 +123,9 @@ class AppWindowState(Protocol):
 
     # _focuser_page.py
     def _build_focuser_page(self) -> QWidget: ...
+
+    # _flats.py
+    def _open_flats_dialog(self, service: Any) -> None: ...
 
     # _framing.py
     def _imaging_optical_profile(self) -> dict: ...

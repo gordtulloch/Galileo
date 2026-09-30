@@ -24,6 +24,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **`WUT` added:** this revision adds the `WUT` ("What's Up Tonight") domain (SRS Section 4.7a, 10 requirements — 8 MVP core-ranking, 1 P2 arbitrary-date refinement `WUT-090`, and 1 P3 aurora/smoke-advisory refinement `WUT-100`), tracing to the new SDD Sections 4.8a (`galileo.planning.recommend`) and 4.8b (`galileo.ui.whats_up`).
 
+**`CAL-070` added:** Sky Flats — the Flats Assistant's twilight check, East-vantage-point slew/tracking-off, and adaptive exposure convergence against the camera's configured Max Well Depth — tracing to SDD 4.10 `galileo.calibration` alongside `CAL-010`–`CAL-050`.
+
 **`SEQ`/`SEQ-ADV` → `SES`:** this revision replaces the former `SEQ`/`SEQ-ADV` domains with the unified `SES` ("Sessions") domain end to end (SRS Sections 4.5/4.5a/4.6). Every row below uses `SES-*` IDs; there is no `SEQ`/`SEQ-ADV` row remaining in this matrix.
 
 ---
@@ -218,6 +220,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `WUT-080` | MVP | SDD 4.8a `galileo.planning.recommend` / `galileo.planning.visibility` (`HorizonProfile`, `SKY-040`) | Test | `TC-WUT-080` |
 | `WUT-090` | P2 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-090` |
 | `WUT-100` | P3 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up`; SDD 4.16 `galileo.safety` | Test | `TC-WUT-100` |
+| `WUT-110` | MVP | SDD 4.8b `galileo.ui.whats_up` (`galileo.planning.visibility.day_night_bands`) | Test | `TC-WUT-110` |
 
 ### `FRAME` — Framing Assistant
 
@@ -273,6 +276,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-040` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-040` |
 | `CAL-050` | P2 | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-050` |
 | `CAL-060` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-060` |
+| `CAL-070` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-070` |
 
 ### `FOC` — Autofocus
 
