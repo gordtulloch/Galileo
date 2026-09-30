@@ -117,6 +117,10 @@ class ImageBlock(SessionBlock):
     def has_mosaic(self) -> bool:
         return self._mosaic is not None
 
+    @property
+    def mosaic(self) -> Any:
+        return self._mosaic
+
     def set_mosaic(self, mosaic: Any) -> None:
         self._mosaic = mosaic
 
@@ -332,6 +336,14 @@ class SessionRegion:
         self.blocks.remove(block)
         self.blocks.insert(index, block)
 
+    def remove_block(self, block: SessionBlock) -> None:
+        """Delete *block* from this region (e.g. dragged outside the session
+        panel to remove it) — a scheduled/locked region refuses, same as
+        every other authoring mutation."""
+        if not self.is_editable:
+            raise RegionLockedError(f"Session {self.name!r} is scheduled and read-only.")
+        self.blocks.remove(block)
+
     # --- Persistence (SES-060, SES-180, SES-190) ---------------------------
 
     def _store_path(self) -> Path:
@@ -478,30 +490,50 @@ _PALETTE_BLOCK_TYPES: tuple[type[SessionBlock], ...] = (
 )
 _BLOCK_ROLE = Qt.ItemDataRole.UserRole
 
+# A fixed hue (0-359) per block *type*, evenly spaced around the wheel, so every
+# kind of block keeps the same colour identity across the app and across theme
+# switches (Store a set of colours with each block type). An unlisted type
+# (e.g. a plugin-registered block, SES-340) falls back to a hash-derived hue in
+# _block_color below, so new types still get a stable colour for free.
+_BLOCK_HUES: dict[str, int] = {
+    cls.__name__: i * (360 // len(_BLOCK_CLASSES))
+    for i, cls in enumerate(_BLOCK_CLASSES.values())
+}
 
-def _block_color(kind_name: str) -> QColor:
-    """A stable, visually distinct colour per block *type* (hashed from its class
-    name), so every kind of block reads at a glance and new — including
-    plugin-registered (SES-340) — block types get one for free without a
-    hand-maintained colour table."""
-    digest = hashlib.md5(kind_name.encode("utf-8"), usedforsecurity=False).hexdigest()
-    hue = int(digest[:8], 16) % 360
-    return QColor.fromHsv(hue, 150, 210)
+
+def _block_color(kind_name: str, window: Any = None) -> QColor:
+    """This block type's colour: a fixed hue identity (_BLOCK_HUES, or a
+    hash-derived fallback for an unknown/plugin type) blended lightly into the
+    *current* theme's own surface tone, rather than an independently bright,
+    saturated colour — so every block reads as a subtle variation on whichever
+    theme is active instead of a glaring tile."""
+    hue = _BLOCK_HUES.get(kind_name)
+    if hue is None:
+        digest = hashlib.md5(kind_name.encode("utf-8"), usedforsecurity=False).hexdigest()
+        hue = int(digest[:8], 16) % 360
+    theme_mgr = getattr(window, "_theme", None)
+    if theme_mgr is None:
+        from galileo.ui.theme import ThemeManager
+        theme_mgr = ThemeManager()
+    r, g, b = theme_mgr.block_tint_rgb(hue)
+    return QColor(r, g, b)
 
 
-def _block_item_widget(label_text: str, kind_name: str) -> QLabel:
-    """A colour-coded, white-bordered, padded tile for one block — used as the
+def _block_item_widget(label_text: str, kind_name: str, window: Any = None) -> QLabel:
+    """A colour-coded, theme-bordered, padded tile for one block — used as the
     item widget for both the palette and a region's block list so a block's
     colour is consistent wherever it appears."""
-    color = _block_color(kind_name)
+    color = _block_color(kind_name, window)
     luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
     text_color = "#000000" if luminance > 140 else "#ffffff"
+    theme_mgr = getattr(window, "_theme", None)
+    border_color = theme_mgr.palette()["border"] if theme_mgr is not None else "#555555"
     widget = QLabel(label_text)
     widget.setStyleSheet(
         f"QLabel {{"
         f" background-color: {color.name()};"
         f" color: {text_color};"
-        f" border: 2px solid white;"
+        f" border: 1px solid {border_color};"
         f" border-radius: 4px;"
         f" padding: 6px 10px;"
         f" }}"
@@ -509,7 +541,7 @@ def _block_item_widget(label_text: str, kind_name: str) -> QLabel:
     return widget
 
 
-def _build_palette(parent=None) -> QListWidget:
+def _build_palette(window: Any = None, parent=None) -> QListWidget:
     palette = QListWidget(parent)
     palette.setObjectName("SessionPalette")
     palette.setDragEnabled(True)
@@ -521,8 +553,10 @@ def _build_palette(parent=None) -> QListWidget:
         item = QListWidgetItem(cls.label)
         item.setData(_BLOCK_ROLE, cls)
         palette.addItem(item)
-        widget = _block_item_widget(cls.label, cls.__name__)
+        widget = _block_item_widget(cls.label, cls.__name__, window)
         item.setSizeHint(widget.sizeHint())
+        if issubclass(cls, _REQUIRES_TARGET):
+            widget.setToolTip(f"{cls.label} requires a preceding Target block in the session (SES-170).")
         palette.setItemWidget(item, widget)
     return palette
 
@@ -539,11 +573,13 @@ class BlockListWidget(QListWidget):
     page-level ``QScrollArea`` (``SessionsPageWidget._regions_area``) is what
     scrolls once several session boxes together no longer fit on screen."""
 
-    def __init__(self, region: SessionRegion, palette: QListWidget, on_changed, parent=None) -> None:
+    def __init__(self, region: SessionRegion, palette: QListWidget, on_changed,
+                 window: Any = None, parent=None) -> None:
         super().__init__(parent)
         self._region = region
         self._palette = palette
         self._on_changed = on_changed
+        self._window = window
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAcceptDrops(True)
@@ -551,6 +587,8 @@ class BlockListWidget(QListWidget):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_right_click)
         self.refresh()
 
     def refresh(self) -> None:
@@ -559,10 +597,32 @@ class BlockListWidget(QListWidget):
             item = QListWidgetItem(block.display_text)
             item.setData(_BLOCK_ROLE, block)
             self.addItem(item)
-            widget = _block_item_widget(block.display_text, type(block).__name__)
+            widget = _block_item_widget(block.display_text, type(block).__name__, self._window)
             item.setSizeHint(widget.sizeHint())
             self.setItemWidget(item, widget)
         self._fit_height_to_contents()
+
+    def _on_right_click(self, pos) -> None:
+        """Right-click a dragged-in block to open its own parameter dialog
+        directly (e.g. an Image block's exposure/count/gain/offset and
+        Framing/mosaic control) — no intermediate menu, since editing
+        parameters is the only thing a right-click here does. A block with no
+        fields at all (Dither, Park Mount, …), or a block in a scheduled
+        (locked) session, does nothing."""
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        block = item.data(_BLOCK_ROLE)
+        if not self._region.is_editable:
+            return
+        from galileo.ui.session_block_dialogs import has_parameters, open_block_parameter_dialog
+        if not has_parameters(type(block)):
+            return
+        if open_block_parameter_dialog(self, block, self._region, self._window):
+            item.setText(block.display_text)
+            widget = _block_item_widget(block.display_text, type(block).__name__, self._window)
+            item.setSizeHint(widget.sizeHint())
+            self.setItemWidget(item, widget)
 
     def _fit_height_to_contents(self) -> None:
         height = 2 * self.frameWidth()
@@ -572,11 +632,68 @@ class BlockListWidget(QListWidget):
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
 
+    def _is_outside_every_session_panel(self, global_pos) -> bool:
+        """Whether *global_pos* (screen coordinates) falls outside every drop
+        target that counts as "the session panel" — the palette and every
+        region's own block list, including other sessions' — used to tell a
+        genuine drag-to-delete from a drop that just wasn't accepted (e.g. an
+        unsupported cross-region move, which today still does nothing rather
+        than deleting the block)."""
+        window = self.window()
+        targets = [self._palette, *window.findChildren(BlockListWidget)]
+        return not any(
+            w.isVisible() and w.rect().contains(w.mapFromGlobal(global_pos))
+            for w in targets
+        )
+
+    def startDrag(self, supportedActions) -> None:
+        """Dragging a block out of every session panel (the palette and every
+        region's block list) deletes it — the palette is drag-only and never
+        accepts a drop, so today's default Qt behavior for a drag nothing
+        accepts is to silently leave the source list untouched; this makes
+        that same gesture double as "remove this block" instead."""
+        item = self.currentItem()
+        if item is None:
+            return
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtGui import QCursor, QDrag
+        drag = QDrag(self)
+        mime_data = self.model().mimeData(self.selectedIndexes()) or QMimeData()
+        drag.setMimeData(mime_data)
+        drag.setPixmap(self.viewport().grab(self.visualItemRect(item)))
+        result = drag.exec(supportedActions, Qt.DropAction.MoveAction)
+        if result != Qt.DropAction.IgnoreAction:
+            return
+        if not self._is_outside_every_session_panel(QCursor.pos()):
+            return
+        block = item.data(_BLOCK_ROLE)
+        if block not in self._region.blocks:
+            return
+        try:
+            self._region.remove_block(block)
+        except RegionLockedError as exc:
+            QMessageBox.warning(self, "Can't remove block", str(exc))
+            return
+        self.refresh()
+        self._on_changed(None)
+
     def dropEvent(self, event) -> None:
         source = event.source()
-        drop_row = self.indexAt(event.pos()).row()
-        if drop_row < 0:
+        hovered = self.indexAt(event.pos())
+        if hovered.row() < 0:
             drop_row = self.count()
+        else:
+            # Which row the drop lands *before* depends on which half of the
+            # hovered row the pointer is in — treating every hover as "insert
+            # before this row" (regardless of position within it) made it
+            # impossible to drop *after* the last block: with the list's
+            # height fit tightly to its content, there's no empty space below
+            # the last row to drop into, so e.g. placing a Plate Solve block
+            # after an existing (and required) Target block would always be
+            # misread as inserting it *before* that Target, failing SES-170's
+            # ordering check even though a Target block was already present.
+            row_rect = self.visualRect(hovered)
+            drop_row = hovered.row() + 1 if event.pos().y() >= row_rect.center().y() else hovered.row()
         before = self._region.blocks[drop_row] if drop_row < len(self._region.blocks) else None
         try:
             if source is self._palette:
@@ -593,6 +710,7 @@ class BlockListWidget(QListWidget):
             else:
                 return
         except (BlockOrderError, RegionLockedError) as exc:
+            QMessageBox.warning(self, "Can't add block", str(exc))
             self._on_changed(str(exc))
             return
         event.acceptProposedAction()
@@ -603,7 +721,8 @@ class _RegionWidget(QFrame):
     """One session region's card: name, its five controls (SES-110), and its
     block list."""
 
-    def __init__(self, region: SessionRegion, palette: QListWidget, on_reload, parent=None) -> None:
+    def __init__(self, region: SessionRegion, palette: QListWidget, on_reload,
+                 window: Any = None, parent=None) -> None:
         super().__init__(parent)
         self._region = region
         self._on_reload = on_reload
@@ -631,7 +750,7 @@ class _RegionWidget(QFrame):
             header.addWidget(btn)
         layout.addLayout(header)
 
-        self._blocks_list = BlockListWidget(region, palette, self._on_block_change)
+        self._blocks_list = BlockListWidget(region, palette, self._on_block_change, window)
         layout.addWidget(self._blocks_list)
         self._apply_boundary_style()
 
@@ -733,7 +852,7 @@ class SessionsPageWidget(QWidget):
         add_col.addWidget(add_btn)
         body.addLayout(add_col, 1)
 
-        self._palette = _build_palette(self)
+        self._palette = _build_palette(self._window, self)
         body.addWidget(self._palette)
 
     def _scheduler_for(self, pier_name: str | None):
@@ -779,7 +898,7 @@ class SessionsPageWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         for region in self.screen.visible_sessions:
-            widget = _RegionWidget(region, self._palette, self._rebuild_regions)
+            widget = _RegionWidget(region, self._palette, self._rebuild_regions, self._window)
             self._regions_layout.insertWidget(self._regions_layout.count() - 1, widget)
         pier_name = self._active_pier_name()
         if status:

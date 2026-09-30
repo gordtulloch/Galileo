@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import json
 import logging
 from enum import Enum
@@ -105,6 +106,35 @@ class ThemeManager:
     def palette(self) -> dict:
         """Return the colour tokens for the current theme (SYSTEM resolves to DARK)."""
         return _PALETTE[self._theme if self._theme in _PALETTE else Theme.DARK]
+
+    def block_tint_rgb(self, hue_deg: int) -> tuple[int, int, int]:
+        """An (r, g, b) tint for a session block's colour identity (*hue_deg*,
+        0-359), blended lightly into this theme's own surface tone (UI-010)
+        rather than an independently bright/saturated colour — so a block
+        reads as a subtle variation on whichever theme is active instead of a
+        jarring, oversaturated tile. The hue itself is the caller's fixed
+        per-block-type identity (see ``galileo.ui.sessions._BLOCK_HUES``); this
+        method only decides how strongly, and how safely, to show it.
+
+        Theme.RED (night vision, UI-011) is special-cased to vary intensity
+        only, on the red channel alone -- consistent with that theme's own
+        palette above, no token here may carry a non-zero green/blue
+        component regardless of *hue_deg*.
+        """
+        surface = self.palette()["surface_alt"]
+        r0, g0, b0 = (int(surface[i:i + 2], 16) for i in (1, 3, 5))
+        if self._theme == Theme.RED:
+            spread = int((hue_deg / 359.0) * 90)
+            return (max(r0, min(255, r0 + 40 + spread)), 0, 0)
+        _, _, surface_v = colorsys.rgb_to_hsv(r0 / 255, g0 / 255, b0 / 255)
+        tint_v = min(1.0, surface_v + 0.35)
+        tr, tg, tb = colorsys.hsv_to_rgb(hue_deg / 359.0, 0.45, tint_v)
+        mix = 0.55  # how much of the block's hue identity shows through the theme's surface tone
+        return (
+            round(r0 * (1 - mix) + tr * 255 * mix),
+            round(g0 * (1 - mix) + tg * 255 * mix),
+            round(b0 * (1 - mix) + tb * 255 * mix),
+        )
 
     def stylesheet(self) -> str:
         """Build the Qt stylesheet for the current theme + accent colour."""

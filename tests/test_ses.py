@@ -317,6 +317,25 @@ def test_tc_ses_120_action_palette_drag_insert_reorder():
     assert region.blocks == [target_block, image_block, autofocus_block]
 
 
+def test_remove_block_deletes_it_and_refuses_on_a_locked_region():
+    """A block can be deleted from its region directly (e.g. dragged outside
+    the session panel) — refused, like every other authoring mutation, once
+    the region is scheduled/locked."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    target_block = ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4)
+    region.insert_block(target_block)
+    region.remove_block(target_block)
+    assert region.blocks == []
+
+    region.insert_block(target_block)
+    region.is_scheduled = True
+    with pytest.raises(ui_mod.RegionLockedError):
+        region.remove_block(target_block)
+    assert region.blocks == [target_block]   # not removed
+
+
 # ---------------------------------------------------------------------------
 # TC-SES-130
 # ---------------------------------------------------------------------------
@@ -605,6 +624,365 @@ def test_tc_ses_230_image_block_mosaic_follows_frame_090_execution_model():
 
     assert image_block.has_mosaic is True
     assert image_block.execution_model() == "mosaic_round_robin"  # FRAME-090, not single-target
+
+
+# ---------------------------------------------------------------------------
+# TC-SES-130/230 — block colours: a fixed, theme-muted identity per block type
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SES-130")
+@pytest.mark.priority("P2")
+def test_block_colors_are_consistent_per_type_and_muted_by_theme():
+    """Every block type keeps a stable colour identity across calls (a set of
+    colours stored per block type), and that colour is a subtle tint of the
+    current theme's own surface tone rather than an independently bright,
+    saturated hue (colours were "too bright/glaring" before this)."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.ui.theme import Theme, ThemeManager
+
+    # Stable per-type identity: repeated calls return the identical colour.
+    color_a1 = ui_mod._block_color("ImageBlock")
+    color_a2 = ui_mod._block_color("ImageBlock")
+    assert color_a1.getRgb() == color_a2.getRgb()
+
+    # Distinct types get distinguishable colours.
+    color_b = ui_mod._block_color("FilterChangeBlock")
+    assert color_a1.getRgb() != color_b.getRgb()
+
+    # Muted: nowhere near the old fully-saturated fromHsv(hue, 150, 210) tiles —
+    # every block colour stays close to the theme's own surface_alt tone.
+    from PySide6.QtGui import QColor
+    mgr = ThemeManager()
+    mgr.set_theme(Theme.DARK)
+    surface = QColor(mgr.palette()["surface_alt"])
+    for cls_name in ui_mod._BLOCK_HUES:
+        color = ui_mod._block_color(cls_name)
+        distance = abs(color.red() - surface.red()) + abs(color.green() - surface.green()) \
+            + abs(color.blue() - surface.blue())
+        assert distance < 200, f"{cls_name}'s colour strayed too far from the theme's surface tone"
+
+
+@pytest.mark.requirement("TC-SES-130")
+@pytest.mark.priority("P2")
+def test_night_vision_theme_block_colors_never_carry_green_or_blue():
+    """UI-011: night-vision (Theme.RED) block colours vary only in red-channel
+    intensity — a block's colour identity must never introduce a stray
+    green/blue pixel that would reset a dark-adapted eye."""
+    from galileo.ui.theme import Theme, ThemeManager
+
+    mgr = ThemeManager()
+    mgr.set_theme(Theme.RED)
+    for hue in (0, 60, 120, 180, 240, 300, 359):
+        r, g, b = mgr.block_tint_rgb(hue)
+        assert g == 0 and b == 0, f"hue {hue} leaked a non-red channel: ({r}, {g}, {b})"
+
+
+# ---------------------------------------------------------------------------
+# Right-click "Edit Parameters…" dialogs
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def qapp():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
+
+
+def test_has_parameters_reflects_which_block_types_are_editable(qapp):
+    """A block type with no dataclass fields (e.g. Dither, Park Mount) has no
+    parameter dialog registered — its "Edit Parameters…" menu entry should stay
+    disabled instead of opening an empty dialog."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
+
+    assert dlg_mod.has_parameters(ui_mod.ImageBlock) is True
+    assert dlg_mod.has_parameters(ui_mod.TargetBlock) is True
+    assert dlg_mod.has_parameters(ui_mod.DitherBlock) is False
+    assert dlg_mod.has_parameters(ui_mod.ParkMountBlock) is False
+
+
+def test_edit_parameters_dialog_updates_image_block_fields(qapp, monkeypatch):
+    """Right-click > Edit Parameters… on an Image block exposes exposure, count,
+    filter, binning, gain, offset and frame type — accepting the dialog writes
+    them back onto the block instance."""
+    from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QLineEdit, QSpinBox
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
+
+    region = ui_mod.SessionRegion(name="Test")
+    block = ui_mod.ImageBlock()
+    region.insert_block(block)
+
+    def fake_exec(self):
+        if self.windowTitle() != "Image Parameters":
+            return QDialog.DialogCode.Rejected
+        self.findChild(QDoubleSpinBox, "exposure_spin").setValue(120.0)
+        self.findChild(QSpinBox, "count_spin").setValue(5)
+        self.findChild(QLineEdit, "filter_edit").setText("Ha")
+        self.findChild(QComboBox, "binning_combo").setCurrentText("2x2")
+        self.findChild(QComboBox, "frame_type_combo").setCurrentText("Dark")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    changed = dlg_mod.open_block_parameter_dialog(None, block, region, window=None)
+
+    assert changed is True
+    assert block.exposure == 120.0
+    assert block.count == 5
+    assert block.filter == "Ha"
+    assert block.binning == 2
+    assert block.frame_type == "Dark"
+
+
+def test_edit_parameters_dialog_framing_button_builds_a_mosaic(qapp, monkeypatch):
+    """The Image block's own Framing / Mosaic… control (SES-130, FRAME-070) is
+    reachable from its parameter dialog and, once a grid bigger than 1×1 is
+    set, stores a real Mosaic on the block — not just a logged no-op."""
+    from PySide6.QtWidgets import QDialog, QPushButton, QSpinBox
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
+
+    region = ui_mod.SessionRegion(name="Test")
+    region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+    block = ui_mod.ImageBlock()
+    region.insert_block(block)
+
+    def fake_exec(self):
+        if self.windowTitle() == "Framing / Mosaic":
+            self.findChild(QSpinBox, "cols_spin").setValue(3)
+            self.findChild(QSpinBox, "rows_spin").setValue(2)
+            return QDialog.DialogCode.Accepted
+        if self.windowTitle() == "Image Parameters":
+            self.findChild(QPushButton, "framing_btn").click()
+            return QDialog.DialogCode.Accepted
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    changed = dlg_mod.open_block_parameter_dialog(None, block, region, window=None)
+
+    assert changed is True
+    assert block.has_mosaic is True
+    assert block.mosaic.cols == 3 and block.mosaic.rows == 2
+    assert block.execution_model() == "mosaic_round_robin"
+
+
+def test_right_click_opens_parameter_dialog_directly_with_no_menu(qapp, monkeypatch):
+    """Right-clicking a block opens its parameter dialog directly — no
+    intermediate context menu. A block with no fields (Dither) does nothing;
+    an Image block opens its dialog immediately and updates the block."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    region.insert_block(ui_mod.DitherBlock())
+    region.insert_block(ui_mod.ImageBlock())
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+
+    from PySide6.QtWidgets import QDialog
+
+    dialog_opened = {"count": 0}
+
+    def fail_if_opened(self):
+        dialog_opened["count"] += 1
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", fail_if_opened)
+    block_list._on_right_click(block_list.visualItemRect(block_list.item(0)).center())
+    assert dialog_opened["count"] == 0   # DitherBlock has no fields — nothing opens
+
+    from PySide6.QtWidgets import QLineEdit
+
+    def fake_exec(self):
+        self.findChild(QLineEdit, "filter_edit").setText("L")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    block_list._on_right_click(block_list.visualItemRect(block_list.item(1)).center())
+    assert region.blocks[1].filter == "L"
+    assert block_list.item(1).text() == region.blocks[1].display_text
+
+
+def test_right_click_does_nothing_on_a_scheduled_locked_session(qapp, monkeypatch):
+    """A scheduled (locked) session region is read-only — right-clicking one of
+    its blocks must not open a parameter dialog to edit it."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    region.insert_block(ui_mod.ImageBlock())
+    region.is_scheduled = True
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+
+    from PySide6.QtWidgets import QDialog
+
+    dialog_opened = {"count": 0}
+
+    def fail_if_opened(self):
+        dialog_opened["count"] += 1
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", fail_if_opened)
+    block_list._on_right_click(block_list.visualItemRect(block_list.item(0)).center())
+    assert dialog_opened["count"] == 0
+
+
+@pytest.mark.requirement("TC-SES-170")
+@pytest.mark.priority("MVP")
+def test_dropping_a_block_that_violates_ordering_shows_a_visible_warning(qapp, monkeypatch):
+    """SES-170: dropping a Plate Solve block with no preceding Target block in
+    the region is refused (as already covered at the model level) — this also
+    checks the drop is surfaced to the user via a visible warning dialog,
+    not just a subtle status-label update, since it otherwise looks like the
+    block "isn't placeable" rather than a same-region ordering rule."""
+    from PySide6.QtCore import QPoint
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+
+    solve_item = next(
+        palette.item(i) for i in range(palette.count())
+        if palette.item(i).data(ui_mod._BLOCK_ROLE) is ui_mod.PlateSolveBlock
+    )
+    palette.setCurrentItem(solve_item)
+
+    class _FakeDropEvent:
+        def source(self):
+            return palette
+
+        def pos(self):
+            return QPoint(0, 0)
+
+        def acceptProposedAction(self):
+            pass
+
+    warned = {}
+    monkeypatch.setattr(ui_mod.QMessageBox, "warning",
+                        lambda *a, **k: warned.setdefault("called", True))
+
+    block_list.dropEvent(_FakeDropEvent())
+    assert warned.get("called") is True
+    assert region.blocks == []   # rejected, not silently inserted
+
+
+@pytest.mark.requirement("TC-SES-170")
+@pytest.mark.priority("MVP")
+def test_dropping_plate_solve_after_an_existing_target_block_succeeds(qapp):
+    """Bug: dropping a Plate Solve block onto a session that already has a
+    Target block, releasing in the lower half of that (only, tightly-fit)
+    row to place it *after* the Target, was always read as "insert before
+    this row" regardless of which half of the row was hovered — so it failed
+    SES-170's ordering check even though a Target block was already present.
+    The insertion point must follow which half of the hovered row the drop
+    lands in."""
+    from PySide6.QtCore import QPoint
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+
+    solve_item = next(
+        palette.item(i) for i in range(palette.count())
+        if palette.item(i).data(ui_mod._BLOCK_ROLE) is ui_mod.PlateSolveBlock
+    )
+    palette.setCurrentItem(solve_item)
+
+    target_rect = block_list.visualItemRect(block_list.item(0))
+    drop_point = QPoint(target_rect.center().x(), target_rect.bottom() - 1)
+
+    class _FakeDropEvent:
+        def source(self):
+            return palette
+
+        def pos(self):
+            return drop_point
+
+        def acceptProposedAction(self):
+            pass
+
+    block_list.dropEvent(_FakeDropEvent())
+
+    assert [type(b).__name__ for b in region.blocks] == ["TargetBlock", "PlateSolveBlock"]
+
+
+def test_dragging_a_block_outside_every_session_panel_deletes_it(qapp, monkeypatch):
+    """Dragging a block out of the session panel (and releasing it somewhere
+    that isn't the palette or any region's block list) removes it — the
+    standard Qt behavior for a drag nothing accepts is to just leave the
+    source list untouched, so this is new behavior layered on top of that."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QDrag
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    block = ui_mod.ImageBlock()
+    region.insert_block(block)
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+    block_list.setCurrentItem(block_list.item(0))
+
+    monkeypatch.setattr(QDrag, "exec", lambda self, *a, **k: Qt.DropAction.IgnoreAction)
+    monkeypatch.setattr(ui_mod.BlockListWidget, "_is_outside_every_session_panel", lambda self, pos: True)
+
+    block_list.startDrag(Qt.DropAction.MoveAction)
+
+    assert region.blocks == []
+
+
+def test_dragging_a_block_onto_another_region_does_not_delete_it(qapp, monkeypatch):
+    """A drop rejected because it landed on another region's block list (an
+    unsupported cross-region move, not "outside the session panel") must not
+    delete the block — today it's just a no-op, matching pre-existing
+    behavior for that case."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QDrag
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    block = ui_mod.ImageBlock()
+    region.insert_block(block)
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+    block_list.setCurrentItem(block_list.item(0))
+
+    monkeypatch.setattr(QDrag, "exec", lambda self, *a, **k: Qt.DropAction.IgnoreAction)
+    monkeypatch.setattr(ui_mod.BlockListWidget, "_is_outside_every_session_panel", lambda self, pos: False)
+
+    block_list.startDrag(Qt.DropAction.MoveAction)
+
+    assert region.blocks == [block]   # untouched
+
+
+def test_dragging_a_block_out_of_a_locked_session_shows_a_warning(qapp, monkeypatch):
+    """Dragging a block out of a scheduled (locked) session must not delete
+    it — refused with a visible warning, same as every other authoring
+    mutation on a locked region."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QDrag
+    from PySide6.QtWidgets import QMessageBox
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    block = ui_mod.ImageBlock()
+    region.insert_block(block)
+    region.is_scheduled = True
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+    block_list.setCurrentItem(block_list.item(0))
+
+    monkeypatch.setattr(QDrag, "exec", lambda self, *a, **k: Qt.DropAction.IgnoreAction)
+    monkeypatch.setattr(ui_mod.BlockListWidget, "_is_outside_every_session_panel", lambda self, pos: True)
+    warned = {}
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.setdefault("called", True))
+
+    block_list.startDrag(Qt.DropAction.MoveAction)
+
+    assert warned.get("called") is True
+    assert region.blocks == [block]   # not removed
 
 
 # ===========================================================================
