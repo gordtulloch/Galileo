@@ -530,9 +530,29 @@ class AppWindowFocuserPageMixin:
             # The first connected focuser — what the Focus page drives.
             return next((p["adapter"] for p in panels if p.get("adapter") is not None), None)
 
-        state = {"reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter}
+        def disconnect_page() -> None:
+            """Pier-level Disconnect button: tear down every connected focuser panel for this Pier."""
+            from galileo.current_object import pier_key
+            import asyncio
+            connected = adapters_by_pier.pop(pier_key(self._current_pier), {})
+            for slot, adapter in connected.items():
+                try:
+                    asyncio.run(adapter.disconnect())
+                except Exception:
+                    logger.exception("Could not disconnect focuser slot %s", slot)
+            for panel in panels:
+                panel["adapter"] = None
+                _apply_status(panel, {})
+                panel["apply_driver_info"](None)
+            self._window.statusBar().showMessage("Focuser(s) disconnected.", 4000)
+
+        state = {
+            "reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter,
+            "disconnect": disconnect_page, "connected": lambda: connected_adapter() is not None,
+        }
         self._device_pages["focuser"] = state
         reload_page()
-        autoconnect_page()
+        if self._startup_autoconnect_allowed():
+            autoconnect_page()
 
         return page

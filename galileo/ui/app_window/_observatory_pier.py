@@ -70,7 +70,7 @@ class AppWindowObservatoryPierMixin:
         return None
 
     def _prompt_new_observatory(self: AppWindowState) -> dict | None:
-        """Modal Name/Lat/Long/Timezone/Physical Address/Owner dialog for New Observatory."""
+        """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner dialog for New Observatory."""
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
         )
@@ -93,6 +93,12 @@ class AppWindowObservatoryPierMixin:
         long_edit.setRange(-180.0, 180.0)
         long_edit.setDecimals(6)
         form.addRow("Longitude", long_edit)
+
+        elevation_edit = QDoubleSpinBox()
+        elevation_edit.setRange(-500.0, 9000.0)
+        elevation_edit.setDecimals(1)
+        elevation_edit.setSuffix(" m")
+        form.addRow("Elevation (m)", elevation_edit)
 
         tz_edit = QLineEdit()
         tz_edit.setPlaceholderText("e.g. America/Toronto")
@@ -119,6 +125,7 @@ class AppWindowObservatoryPierMixin:
             "name": name,
             "latitude": lat_edit.value(),
             "longitude": long_edit.value(),
+            "elevation_m": elevation_edit.value(),
             "timezone": tz_edit.text().strip() or None,
             "physical_address": address_edit.text().strip() or None,
             "owner": owner_edit.text().strip() or None,
@@ -151,6 +158,51 @@ class AppWindowObservatoryPierMixin:
             return combo.count() - 1
         idx = combo.findText(self._current_observatory.name)
         return idx if idx >= 0 else combo.count() - 1
+
+    def _on_delete_observatory_clicked(self: AppWindowState) -> None:
+        """Delete-button next to the Observatory selector: confirms, then
+        permanently removes the current Observatory and every Pier under it
+        (cascading at the schema level, see ``galileo.observatory.delete_observatory``)."""
+        from PySide6.QtWidgets import QMessageBox
+        from galileo.observatory import delete_observatory, list_piers
+
+        observatory = self._current_observatory
+        if observatory is None:
+            return
+        try:
+            pier_count = len(list_piers(observatory))
+        except Exception:
+            pier_count = 0
+        detail = f" and its {pier_count} Pier(s)" if pier_count else ""
+        reply = QMessageBox.question(
+            self._window, "Delete Observatory",
+            f"Permanently delete Observatory “{observatory.name}”{detail}? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_observatory(observatory)
+        except Exception:
+            logger.exception("Could not delete Observatory %r", observatory.name)
+            QMessageBox.warning(self._window, "Delete Observatory", "Could not delete this Observatory.")
+            return
+
+        self._observatories.pop(observatory.name, None)
+        combo = self._observatory_combo
+        idx = combo.findText(observatory.name)
+        if idx >= 0:
+            combo.blockSignals(True)
+            combo.removeItem(idx)
+            combo.blockSignals(False)
+        self._current_observatory = None
+        remaining = [combo.itemText(i) for i in range(combo.count()) if combo.itemText(i) != _NEW_OBSERVATORY_LABEL]
+        if remaining:
+            combo.setCurrentIndex(combo.findText(remaining[0]))
+            self._select_observatory(self._observatories[remaining[0]])
+        else:
+            self._refresh_pier_combo()
 
     def _select_observatory(self: AppWindowState, observatory) -> None:
         self._current_observatory = observatory
@@ -213,6 +265,105 @@ class AppWindowObservatoryPierMixin:
         idx = combo.findText(self._current_pier.name)
         return idx if idx >= 0 else combo.count() - 1
 
+    def _on_delete_pier_clicked(self: AppWindowState) -> None:
+        """Delete-button next to the Pier selector: confirms, then permanently
+        removes the current Pier (its device configs/optical tubes/autofocus
+        and solver settings cascade at the schema level, see
+        ``galileo.observatory.delete_pier``)."""
+        from PySide6.QtWidgets import QMessageBox
+        from galileo.observatory import delete_pier
+
+        pier = self._current_pier
+        if pier is None:
+            return
+        reply = QMessageBox.question(
+            self._window, "Delete Pier",
+            f"Permanently delete Pier “{pier.name}”? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_pier(pier)
+        except Exception:
+            logger.exception("Could not delete Pier %r", pier.name)
+            QMessageBox.warning(self._window, "Delete Pier", "Could not delete this Pier.")
+            return
+
+        self._current_pier = None
+        self._refresh_pier_combo()
+
+    def _startup_autoconnect_allowed(self: AppWindowState) -> bool:
+        """Whether the Pier selected when Galileo started should auto-connect its
+        configured devices — the top bar's "Connect on Startup" checkbox for that
+        Pier. Only consulted by each Equipment page's very first auto-connect
+        attempt, at page-build time (there is no other point at which "the app is
+        starting up" is distinguishable from a user-initiated Pier switch, which
+        always auto-connects regardless of this setting)."""
+        return bool(getattr(self._current_pier, "connect_on_startup", True))
+
+    def _pier_is_connected(self: AppWindowState) -> bool:
+        """Whether any device registered for the current Pier is currently
+        connected — decides whether the top bar shows Connect or Disconnect."""
+        for state in self._device_pages.values():
+            is_connected = state.get("connected")
+            if is_connected is not None and is_connected():
+                return True
+        return False
+
+    def _connect_all_pier_devices(self: AppWindowState) -> None:
+        """Top bar Connect button: attempt every registered Equipment page's
+        auto-connect for the current Pier (skips any slot already connected,
+        same as a Pier switch)."""
+        for state in self._device_pages.values():
+            connect = state.get("autoconnect")
+            if connect is not None:
+                connect()
+        self._refresh_pier_connect_controls()
+
+    def _disconnect_all_pier_devices(self: AppWindowState) -> None:
+        """Top bar Disconnect button: tear down every registered Equipment
+        page's live connection for the current Pier."""
+        for state in self._device_pages.values():
+            disconnect = state.get("disconnect")
+            if disconnect is not None:
+                disconnect()
+        self._refresh_pier_connect_controls()
+
+    def _refresh_pier_connect_controls(self: AppWindowState) -> None:
+        """Sync the top bar's "Connect on Startup" checkbox and Connect/Disconnect
+        button to the current Pier — called on every Pier switch, after a bulk
+        connect/disconnect, and on a short timer so a connection made or dropped
+        elsewhere (a per-device panel, a Save-triggered auto-connect) still shows."""
+        pier = self._current_pier
+        check = self._pier_connect_startup_check
+        check.blockSignals(True)
+        check.setChecked(bool(getattr(pier, "connect_on_startup", True)))
+        check.blockSignals(False)
+        check.setEnabled(pier is not None)
+
+        btn = self._pier_connect_btn
+        btn.setEnabled(pier is not None)
+        btn.setText("Disconnect" if self._pier_is_connected() else "Connect")
+
+    def _on_pier_connect_startup_toggled(self: AppWindowState, checked: bool) -> None:
+        if self._current_pier is None:
+            return
+        from galileo.observatory import set_pier_connect_on_startup
+        try:
+            set_pier_connect_on_startup(self._current_pier, checked)
+        except Exception:
+            logger.exception("Could not save Connect on Startup for Pier %r", self._current_pier.name)
+
+    def _on_pier_connect_clicked(self: AppWindowState) -> None:
+        if self._current_pier is None:
+            return
+        if self._pier_is_connected():
+            self._disconnect_all_pier_devices()
+        else:
+            self._connect_all_pier_devices()
+
     def _on_pier_changed(self: AppWindowState) -> None:
         """Reload every built Equipment page's fields for the newly selected
         Pier, then re-attempt each page's auto-connect (currently the Camera
@@ -223,6 +374,9 @@ class AppWindowObservatoryPierMixin:
         Every step is timed and the total logged, slowest steps first, since
         a Pier switch blocks the UI until the last device has connected."""
         import time
+
+        self._observatory_delete_btn.setEnabled(self._current_observatory is not None)
+        self._pier_delete_btn.setEnabled(self._current_pier is not None)
 
         timings: list[tuple[str, float]] = []
 
@@ -253,6 +407,7 @@ class AppWindowObservatoryPierMixin:
             if refresh is not None:
                 timed(refresh_name.strip("_").replace("_", " "), refresh)
         self._log_pier_switch_timings(time.perf_counter() - switch_start, timings)
+        self._refresh_pier_connect_controls()
 
     def _log_pier_switch_timings(self: AppWindowState, total: float, timings: list[tuple[str, float]]) -> None:
         """Log how long a Pier switch took, with its steps slowest first (steps

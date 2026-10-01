@@ -179,6 +179,7 @@ def create_observatory(
     name: str,
     latitude: float | None = None,
     longitude: float | None = None,
+    elevation_m: float | None = None,
     timezone: str | None = None,
     physical_address: str | None = None,
     owner: str | None = None,
@@ -189,6 +190,7 @@ def create_observatory(
         name=name,
         latitude=latitude,
         longitude=longitude,
+        elevation_m=elevation_m,
         timezone=timezone,
         physical_address=physical_address,
         owner=owner,
@@ -205,6 +207,33 @@ def create_pier(observatory: ObservatoryRecord, name: str) -> PierRecord:
     """Create and persist a new Pier settings record under *observatory*."""
     from galileo.library.models.observatory import PierRecord
     return PierRecord.create(observatory=observatory, name=name)
+
+
+def set_pier_connect_on_startup(pier: PierRecord, connect_on_startup: bool) -> None:
+    """Persist *pier*'s "Connect on Startup" top-bar checkbox state."""
+    pier.connect_on_startup = connect_on_startup
+    pier.save()
+
+
+def delete_observatory(observatory: ObservatoryRecord) -> None:
+    """Permanently delete *observatory*'s settings record.
+
+    Every Pier belonging to it — and, transitively, each Pier's device
+    configs, optical tubes, and autofocus/solver settings — along with the
+    Observatory's horizon points, cascade via the schema's own
+    ``ON DELETE CASCADE`` (enforced since ``galileo.library.models.base``
+    turns on SQLite's ``foreign_keys`` pragma), not application code here.
+    """
+    observatory.delete_instance()
+
+
+def delete_pier(pier: PierRecord) -> None:
+    """Permanently delete *pier*'s settings record.
+
+    Its device configs, optical tubes, and autofocus/solver settings cascade
+    via ``ON DELETE CASCADE``, same as :func:`delete_observatory`.
+    """
+    pier.delete_instance()
 
 
 def list_horizon_points(observatory: ObservatoryRecord) -> list[tuple[float, float]]:

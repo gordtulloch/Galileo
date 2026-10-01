@@ -233,3 +233,136 @@ def test_tc_obs_090_observatory_carries_operator_contact_details():
     obs.add_pier(pier2)
     assert not hasattr(pier1, "contact_details")
     assert not hasattr(pier2, "contact_details")
+
+
+# ---------------------------------------------------------------------------
+# Observatory/Pier deletion (persisted settings records, not RTM-numbered —
+# a direct counterpart to the already-shipped create_observatory/create_pier)
+# ---------------------------------------------------------------------------
+
+def test_delete_pier_removes_the_record_and_its_device_config(tmp_path):
+    """Deleting a Pier removes its settings record, and its device config cascades with it (ON DELETE CASCADE) without touching a sibling Pier's."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import (
+        create_observatory, create_pier, delete_pier, get_device_config, list_piers, save_device_config,
+    )
+    init_db(tmp_path / "delete_pier.db")
+    try:
+        obs = create_observatory("Backyard")
+        keep, gone = create_pier(obs, "Keep"), create_pier(obs, "Gone")
+        save_device_config(keep, "Camera", driver="indi", server="localhost", port=7624)
+        save_device_config(gone, "Camera", driver="indi", server="localhost", port=7624)
+
+        delete_pier(gone)
+
+        assert [p.name for p in list_piers(obs)] == ["Keep"]
+        assert get_device_config(keep, "Camera") is not None
+        assert get_device_config(gone, "Camera") is None
+    finally:
+        db.close()
+
+
+def test_delete_observatory_cascades_to_its_piers_and_horizon_points(tmp_path):
+    """Deleting an Observatory removes its record, every Pier under it (and that Pier's device config), and its horizon points — but leaves an unrelated Observatory untouched."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import (
+        create_observatory, create_pier, delete_observatory, get_device_config,
+        list_horizon_points, list_observatories, list_piers, save_device_config, save_horizon_points,
+    )
+    init_db(tmp_path / "delete_observatory.db")
+    try:
+        gone = create_observatory("Gone")
+        pier = create_pier(gone, "Pier-1")
+        save_device_config(pier, "Camera", driver="indi", server="localhost", port=7624)
+        save_horizon_points(gone, [(0.0, 5.0)])
+        keep = create_observatory("Keep")
+        keep_pier = create_pier(keep, "Keep Pier")
+
+        delete_observatory(gone)
+
+        assert [o.name for o in list_observatories()] == ["Keep"]
+        assert list_piers(keep) == [keep_pier]
+        assert list_piers(gone) == []            # its Pier row cascaded away with it
+        assert get_device_config(pier, "Camera") is None
+        assert list_horizon_points(gone) == []    # its horizon points cascaded away too
+    finally:
+        db.close()
+
+
+def _built_window(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import init_db
+    init_db(tmp_path / "delete_ui.db")
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Yes))
+    from galileo.ui.app_window import AppWindow
+    win = AppWindow()
+    win.app = app
+    return win
+
+
+def test_the_delete_buttons_are_only_enabled_with_a_selection(tmp_path, monkeypatch):
+    """The top bar's Observatory/Pier delete buttons start disabled (nothing saved yet) and enable once a real Observatory/Pier is selected."""
+    from galileo.library.database import db
+    win = _built_window(tmp_path, monkeypatch)
+    try:
+        assert win._observatory_delete_btn.isEnabled() is False
+        assert win._pier_delete_btn.isEnabled() is False
+
+        from galileo.observatory import create_observatory, create_pier
+        pier = create_pier(create_observatory("Backyard"), "Pier A")
+        win._current_pier = pier
+        win._current_observatory = pier.observatory
+        win._on_pier_changed()
+
+        assert win._observatory_delete_btn.isEnabled() is True
+        assert win._pier_delete_btn.isEnabled() is True
+    finally:
+        win._window.close()
+        db.close()
+
+
+def test_clicking_delete_pier_removes_it_and_falls_back_to_no_pier_selected(tmp_path, monkeypatch):
+    """Clicking the Pier delete button (after confirming) deletes the current Pier's record and leaves no Pier selected since it was the only one."""
+    from galileo.library.database import db
+    win = _built_window(tmp_path, monkeypatch)
+    try:
+        from galileo.observatory import create_observatory, create_pier, list_piers
+        observatory = create_observatory("Backyard")
+        pier = create_pier(observatory, "Pier A")
+        win._current_observatory = observatory
+        win._current_pier = pier
+        win._on_pier_changed()
+
+        win._on_delete_pier_clicked()
+
+        assert win._current_pier is None
+        assert list_piers(observatory) == []
+        assert win._pier_delete_btn.isEnabled() is False
+    finally:
+        win._window.close()
+        db.close()
+
+
+def test_clicking_delete_observatory_removes_it_and_falls_back_to_no_observatory_selected(tmp_path, monkeypatch):
+    """Clicking the Observatory delete button (after confirming) deletes the current Observatory's record, along with its Pier, and leaves no Observatory selected since it was the only one."""
+    from galileo.library.database import db
+    win = _built_window(tmp_path, monkeypatch)
+    try:
+        from galileo.observatory import create_observatory, create_pier, list_observatories
+        observatory = create_observatory("Backyard")
+        create_pier(observatory, "Pier A")
+        win._current_observatory = observatory
+        win._on_pier_changed()
+
+        win._on_delete_observatory_clicked()
+
+        assert win._current_observatory is None
+        assert list_observatories() == []
+        assert win._observatory_delete_btn.isEnabled() is False
+        assert win._pier_delete_btn.isEnabled() is False
+    finally:
+        win._window.close()
+        db.close()

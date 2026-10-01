@@ -446,7 +446,7 @@ class GuiderPage(QWidget):
         box.setSpacing(6)
 
         train_row = QHBoxLayout()
-        train_row.addWidget(QLabel("Train:"))
+        train_row.addWidget(QLabel("Optic:"))
         self.train_combo = QComboBox()
         self.train_combo.currentIndexChanged.connect(lambda _i: self._force_render())
         train_row.addWidget(self.train_combo, 1)

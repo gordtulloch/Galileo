@@ -559,6 +559,47 @@ def day_night_bands(
     }
 
 
+_MOON_PHASE_NAMES = (
+    (22.5, "New"), (67.5, "Waxing Crescent"), (112.5, "First Quarter"),
+    (157.5, "Waxing Gibbous"), (202.5, "Full"), (247.5, "Waning Gibbous"),
+    (292.5, "Last Quarter"), (337.5, "Waning Crescent"), (360.1, "New"),
+)
+
+
+def moon_phase_info(date_str: str | None = None) -> dict | None:
+    """The Moon's phase at local noon on *date_str* (today, if not given):
+    illuminated fraction (0.0-1.0) and a phase name (New, Waxing Crescent,
+    First Quarter, Waxing Gibbous, Full, Waning Gibbous, Last Quarter, Waning
+    Crescent) — for the Schedule screen's per-night almanac shading
+    (`galileo.ui.schedule`). Derived from the geocentric Moon-minus-Sun
+    apparent ecliptic-longitude difference (the "age angle": 0=new,
+    180=full), the standard low-precision approximation used for a display
+    label rather than the precise phase-angle calculation SKY-020's Moon-
+    distance filter would need; independent of observer location, unlike
+    :func:`moon_position_deg`. Returns ``None`` if it can't be computed
+    (astropy unavailable), never raises — the same convention every other
+    function in this module follows."""
+    try:
+        from astropy.coordinates import GeocentricTrueEcliptic, get_body
+        from astropy.time import Time
+
+        if date_str is None:
+            date_str = datetime.date.today().isoformat()
+        time = Time(f"{date_str}T12:00:00", scale="utc")
+
+        frame = GeocentricTrueEcliptic(equinox=time)
+        moon_lon = get_body("moon", time).transform_to(frame).lon.deg
+        sun_lon = get_body("sun", time).transform_to(frame).lon.deg
+        age_deg = float(moon_lon - sun_lon) % 360.0
+        fraction = (1.0 - math.cos(math.radians(age_deg))) / 2.0
+        name = next(label for threshold, label in _MOON_PHASE_NAMES if age_deg < threshold)
+
+        return {"fraction": fraction, "age_deg": age_deg, "name": name}
+    except Exception:
+        logger.debug("Could not compute Moon phase", exc_info=True)
+        return None
+
+
 def altaz_to_radec_deg(
     alt_deg: float, az_deg: float, location: ObservingLocation, time=None,
 ) -> tuple[float, float] | None:

@@ -383,14 +383,32 @@ class AppWindowFilterWheelPageMixin:
             if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
                 _do_connect(device_name)
 
+        def disconnect_page() -> None:
+            """Pier-level Disconnect button: tear down this Pier's filter wheel connection."""
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
+            if adapter is None:
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.disconnect())
+            except Exception:
+                logger.exception("Could not disconnect Filter Wheel")
+            state["adapter"] = None
+            _apply_status({})
+            self._window.statusBar().showMessage("Filter wheel disconnected.", 4000)
+
         status_timer = QTimer(page)
         status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
 
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page
+        state["disconnect"] = disconnect_page
+        state["connected"] = lambda: state.get("adapter") is not None
         self._device_pages["filter_wheel"] = state
         reload_page()
-        autoconnect_page()
+        if self._startup_autoconnect_allowed():
+            autoconnect_page()
 
         return page

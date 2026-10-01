@@ -642,16 +642,34 @@ class AppWindowMountPageMixin:
             if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
                 _do_connect(device_name)
 
+        def disconnect_page() -> None:
+            """Pier-level Disconnect button: tear down this Pier's mount connection."""
+            from galileo.current_object import pier_key
+            adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
+            if adapter is None:
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.disconnect())
+            except Exception:
+                logger.exception("Could not disconnect Mount")
+            state["adapter"] = None
+            _apply_status({})
+            self._window.statusBar().showMessage("Mount disconnected.", 4000)
+
         status_timer = QTimer(page)
         status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
 
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page
+        state["disconnect"] = disconnect_page
+        state["connected"] = lambda: state.get("adapter") is not None
         # The jog pad's axis reversal, so the Imaging page's nudge pad points the same way.
         state["axis_reversed"] = lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked())
         self._device_pages["mount"] = state
         reload_page()
-        autoconnect_page()
+        if self._startup_autoconnect_allowed():
+            autoconnect_page()
 
         return page

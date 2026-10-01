@@ -54,6 +54,7 @@ class AppWindowFlatsMixin:
         from galileo.planning.visibility import ObservingLocation
         return ObservingLocation(
             name=observatory.name, latitude=observatory.latitude, longitude=observatory.longitude,
+            elevation_m=getattr(observatory, "elevation_m", None) or 0.0,
         )
 
     def _open_flats_dialog(self: AppWindowState, service) -> None:

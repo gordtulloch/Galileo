@@ -73,6 +73,7 @@ class AppWindowWhatsUpPageMixin:
             from galileo.planning.visibility import ObservingLocation
             loc = ObservingLocation(
                 name=getattr(obs, "name", ""), latitude=obs.latitude, longitude=obs.longitude,
+                elevation_m=getattr(obs, "elevation_m", None) or 0.0,
                 timezone=getattr(obs, "timezone", None) or "UTC",
             )
             from galileo.observatory import list_horizon_points

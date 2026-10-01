@@ -23,6 +23,7 @@ class ObservatoryRecord(BaseModel):
     name = pw.TextField(unique=True)
     latitude = pw.FloatField(null=True)
     longitude = pw.FloatField(null=True)
+    elevation_m = pw.FloatField(null=True)
     timezone = pw.TextField(null=True)
     physical_address = pw.TextField(null=True)
     owner = pw.TextField(null=True)
@@ -36,6 +37,10 @@ class PierRecord(BaseModel):
 
     observatory = pw.ForeignKeyField(ObservatoryRecord, backref="piers", on_delete="CASCADE")
     name = pw.TextField()
+    # Whether this Pier's configured devices should auto-connect when Galileo
+    # starts (top bar's "Connect on Startup" checkbox). True by default so an
+    # existing Pier keeps today's behaviour unchanged.
+    connect_on_startup = pw.BooleanField(default=True)
 
     class Meta:
         table_name = "piers"

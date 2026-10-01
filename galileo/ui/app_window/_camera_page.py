@@ -552,9 +552,26 @@ class AppWindowCameraPageMixin:
                 )
                 _show_connected_driver_info(panel, slot_label)
 
-        state = {"reload": reload_page, "autoconnect": autoconnect_page}
+        def disconnect_page() -> None:
+            """Pier-level Disconnect button: tear down every connected camera slot for this Pier."""
+            import asyncio
+            for slot_label, adapter in list(self._camera_backends.items()):
+                try:
+                    asyncio.run(adapter.disconnect())
+                except Exception:
+                    logger.exception("Could not disconnect %s", slot_label)
+                del self._camera_backends[slot_label]
+            reload_page()
+            self._refresh_camera_combo()
+            self._window.statusBar().showMessage("Camera(s) disconnected.", 4000)
+
+        state = {
+            "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
+            "connected": lambda: bool(self._camera_backends),
+        }
         self._device_pages["camera"] = state
         reload_page()
-        autoconnect_page()
+        if self._startup_autoconnect_allowed():
+            autoconnect_page()
 
         return page

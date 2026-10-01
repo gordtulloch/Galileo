@@ -463,13 +463,19 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     sidebar = next(c for c in window._nav_columns if c.objectName() == "Sidebar")
     next(b for b in sidebar.findChildren(window.QtWidgets.QToolButton)
          if " ".join(b.text().split()) == "Imaging").click()
-    window._window.resize(1500, 900)
+    # The top bar's own minimum width (Observatory/Pier selectors, Connect on
+    # Startup checkbox, Connect/Disconnect button, ...) keeps growing as
+    # Galileo gains top-bar controls, so these two sizes must stay comfortably
+    # above it — a window smaller than that minimum gets silently clamped up
+    # by Qt, which would make the second resize below a no-op and this test's
+    # "grows as the page grows" assertion meaningless.
+    window._window.resize(2000, 900)
     window.app.processEvents()
     assert content.minimumWidth() == content.maximumWidth() == page.width() // 3, "the preview column is a third of the page"
     assert content.height() == page.height(), "the preview keeps the full height of the page"
     assert log_bar.width() == left_column.width() > dock.width(), "the log bar spans the settings and dock columns"
     before = content.maximumWidth()
-    window._window.resize(1900, 900)
+    window._window.resize(2400, 900)
     window.app.processEvents()
     assert content.maximumWidth() == page.width() // 3 > before, "and follows the page as it is resized"
 

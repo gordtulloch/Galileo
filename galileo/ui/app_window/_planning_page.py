@@ -337,6 +337,7 @@ class AppWindowPlanningPageMixin:
             from galileo.planning.visibility import ObservingLocation
             return ObservingLocation(
                 name=getattr(obs, "name", ""), latitude=obs.latitude, longitude=obs.longitude,
+                elevation_m=getattr(obs, "elevation_m", None) or 0.0,
                 timezone=getattr(obs, "timezone", None) or "UTC",
             )
 

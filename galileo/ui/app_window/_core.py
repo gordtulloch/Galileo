@@ -130,7 +130,8 @@ class AppWindowCoreMixin:
             self._window.showMaximized()
 
     def _build_top_bar(self: AppWindowState) -> QWidget:
-        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QComboBox
+        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox
+        from PySide6.QtCore import QTimer
 
         bar = QWidget()
         bar.setObjectName("TopBar")
@@ -146,6 +147,13 @@ class AppWindowCoreMixin:
         self._observatory_combo.activated.connect(self._on_observatory_activated)
         layout.addWidget(self._observatory_combo)
 
+        self._observatory_delete_btn = QPushButton("✕")
+        self._observatory_delete_btn.setFixedWidth(26)
+        self._observatory_delete_btn.setEnabled(False)
+        self._observatory_delete_btn.setToolTip("Delete this Observatory and every Pier under it")
+        self._observatory_delete_btn.clicked.connect(self._on_delete_observatory_clicked)
+        layout.addWidget(self._observatory_delete_btn)
+
         layout.addSpacing(16)
 
         self._pier_label = QLabel("Pier:")
@@ -155,6 +163,31 @@ class AppWindowCoreMixin:
         self._pier_combo.setEnabled(False)
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
+
+        self._pier_delete_btn = QPushButton("✕")
+        self._pier_delete_btn.setFixedWidth(26)
+        self._pier_delete_btn.setEnabled(False)
+        self._pier_delete_btn.setToolTip("Delete this Pier")
+        self._pier_delete_btn.clicked.connect(self._on_delete_pier_clicked)
+        layout.addWidget(self._pier_delete_btn)
+
+        # Whether this Pier's configured devices should auto-connect when
+        # Galileo starts, instead of every Pier always doing so — with it
+        # unchecked, the Connect/Disconnect button lets the user bring the
+        # Pier's devices up (or down) by hand instead.
+        self._pier_connect_startup_check = QCheckBox("Connect on Startup")
+        self._pier_connect_startup_check.setEnabled(False)
+        self._pier_connect_startup_check.setToolTip(
+            "Automatically connect this Pier's configured devices when Galileo starts."
+        )
+        self._pier_connect_startup_check.toggled.connect(self._on_pier_connect_startup_toggled)
+        layout.addWidget(self._pier_connect_startup_check)
+
+        self._pier_connect_btn = QPushButton("Connect")
+        self._pier_connect_btn.setEnabled(False)
+        self._pier_connect_btn.setToolTip("Connect every configured device for this Pier.")
+        self._pier_connect_btn.clicked.connect(self._on_pier_connect_clicked)
+        layout.addWidget(self._pier_connect_btn)
 
         layout.addSpacing(16)
 
@@ -198,6 +231,14 @@ class AppWindowCoreMixin:
         self._refresh_current_object()
 
         self._load_observatories()
+
+        # Keeps the Connect/Disconnect button's label in sync with whatever
+        # connected (or dropped) a device outside the top bar -- a per-panel
+        # Connect click, a Save-triggered auto-connect, or a Pier switch.
+        pier_connect_timer = QTimer(self._window)
+        pier_connect_timer.timeout.connect(self._refresh_pier_connect_controls)
+        pier_connect_timer.start(2000)
+
         return bar
 
     def _build_primary_nav(self: AppWindowState):
@@ -244,7 +285,8 @@ class AppWindowCoreMixin:
             self._current_primary_section = section_id
             stack.setCurrentIndex(pages[section_id])
             # The library is about the whole catalog, not any one Pier's equipment.
-            for widget in (self._pier_label, self._pier_combo):
+            for widget in (self._pier_label, self._pier_combo, self._pier_delete_btn,
+                           self._pier_connect_startup_check, self._pier_connect_btn):
                 widget.setVisible(section_id != "library")
             self._refresh_optics_combo()
             self._refresh_camera_combo()

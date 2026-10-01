@@ -27,7 +27,11 @@ class AppWindowMiscDevicePagesMixin:
         camera/mount handling."""
         from galileo.ui.guider import GuiderPage
         page = GuiderPage(self)
-        self._device_pages["guider"] = {"reload": page.reload, "autoconnect": page.autoconnect}
+        self._device_pages["guider"] = {
+            "reload": page.reload, "autoconnect": page.autoconnect,
+            "disconnect": page.disconnect_from_phd2,
+            "connected": lambda: (page._service() is not None and page._service().is_connected),
+        }
         page.reload()
         return page
 

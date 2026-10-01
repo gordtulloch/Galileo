@@ -332,20 +332,25 @@ def _schedule_page(window):
 
 @pytest.mark.requirement("TC-SCHED-110")
 @pytest.mark.priority("MVP")
-def test_tc_sched_110_pier_op_dropped_onto_timeline_becomes_one_sized_block(window):
-    """SCHED-110: the Schedule screen's palette holds the five pier-level operations
-    (reusing galileo.ui.sessions' own SES-140 block classes), and dropping one onto
-    the timeline creates a single timeline block sized to its duration."""
+def test_tc_sched_110_pier_op_added_becomes_one_sized_block(window):
+    """SCHED-110: the Schedule screen's calendar grid can place any of the five
+    pier-level operations (reusing galileo.ui.sessions' own SES-140 block
+    classes) via its "Add Pier Operation" control, and doing so creates a
+    single calendar block sized (on the grid's vertical time axis) to its
+    duration. There is no side drag palette any more (user's call) — pier
+    operations are added via the grid's own right-click menu instead."""
+    from PySide6.QtWidgets import QListWidget
     from galileo.ui.sessions import DomeOpenBlock
+    from galileo.ui.schedule import _PIER_OP_LABELS, _pier_op_classes
     _sessions_page(window)  # builds the Sessions/Schedule pages
     page = _schedule_page(window)
 
-    assert page.palette.count() == 5
-    palette_labels = {page.palette.item(i).text() for i in range(page.palette.count())}
-    assert palette_labels == {"Open Dome", "Close Dome", "Unpark Scope", "Park Scope", "Dome Sync"}
+    assert page.findChildren(QListWidget) == []  # no drag-source side palette any more
+    op_labels = {_PIER_OP_LABELS[cls.__name__] for cls in _pier_op_classes()}
+    assert op_labels == {"Open Dome", "Close Dome", "Unpark Scope", "Park Scope", "Dome Sync"}
 
     import datetime
-    start = page.displayed_day_start_local() + datetime.timedelta(hours=10)
+    start = page.displayed_day_start_local() + datetime.timedelta(hours=22)
     page.add_pier_operation(DomeOpenBlock, "Open Dome", start)
 
     jobs = page._scheduler().jobs
@@ -359,8 +364,8 @@ def test_tc_sched_110_pier_op_dropped_onto_timeline_becomes_one_sized_block(wind
     page._canvas.refresh()
     assert len(page._canvas._blocks) == 1
     block = page._canvas._blocks[0]
-    expected_width = max(24, int(job.duration_minutes / 60.0 * 48))
-    assert block.width() == expected_width
+    expected_height = max(20, int(job.duration_minutes / 60.0 * page.pixels_per_hour))
+    assert block.height() == expected_height
 
 
 @pytest.mark.requirement("TC-SCHED-120")
