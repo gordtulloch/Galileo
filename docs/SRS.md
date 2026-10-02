@@ -372,6 +372,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 | CAL-050 | The system shall abort and report the flat-capture routine if a target ADU level cannot be reached within configured exposure-time bounds. | P2 |
 | CAL-060 | The system shall present the flat-wizard workflow within the Imaging tab (`IMG`) rather than as a separate top-level navigation section. | MVP |
 | CAL-070 | The system shall provide a Sky Flats capture mode that: refuses to run outside the local dawn/dusk twilight window; slews the mount to a star-poor vantage point and disables tracking before capturing; adaptively converges each frame's exposure toward a configured fraction of the camera's configured maximum well depth, re-measuring and re-adjusting after every frame; and submits each captured frame to the Library. | MVP |
+| CAL-080 | The system shall present a Darks Assistant within the Imaging tab (in the zoom toolbar in landscape layout, in the Tools panel in portrait layout) that: accepts a comma-separated list of exposure lengths (default "10,20,30,60" s); accepts an optional filter selection; captures one dark frame at each listed exposure length in order; submits each captured frame to the Library; and prevents the dialog from being closed while a run is in progress. | MVP |
 
 ### 4.10 `FOC` — Autofocus
 

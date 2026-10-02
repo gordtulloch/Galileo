@@ -320,14 +320,23 @@ class AppWindowMountPageMixin:
             return status
 
         def _do_connect(device_name: str) -> None:
+            import asyncio
             from galileo.core.devices import DeviceCategory
             from galileo.core.slew_guard import get_slew_guard
             from galileo.current_object import pier_key
-            adapter = self._connect_device_adapter(
-                DeviceCategory.MOUNT, driver_combo.currentText(),
-                server_edit.text().strip() or "localhost", port_spin.value(), device_name,
-            )
-            if adapter is None:
+            driver = driver_combo.currentText()
+            server = server_edit.text().strip() or "localhost"
+            port = port_spin.value()
+            try:
+                adapter = self._make_adapter(DeviceCategory.MOUNT, driver, server, port, device_name)
+                obs = self._current_observatory
+                if obs is not None:
+                    adapter.site_lat = getattr(obs, "latitude", None)
+                    adapter.site_lon = getattr(obs, "longitude", None)
+                    adapter.site_elevation = getattr(obs, "elevation_m", None)
+                asyncio.run(adapter.connect())
+            except Exception:
+                logger.exception("Could not connect to Mount %r at %s:%d", device_name, server, port)
                 self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
                 return
             # Bind this adapter to its own Pier's slew guard (not whichever

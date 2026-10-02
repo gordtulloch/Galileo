@@ -194,8 +194,22 @@ class AppWindowStarAtlasPageMixin:
             detail_values[key] = value
             details_form.addRow(label, value)
         details_layout.addLayout(details_form)
+
+        action_row = QHBoxLayout()
+        detail_goto_btn = QPushButton("Goto")
+        detail_goto_btn.setToolTip("Slew the current Pier's mount to this object")
+        detail_sync_btn = QPushButton("Sync")
+        detail_sync_btn.setToolTip("Tell the current Pier's mount it is pointing at this object")
+        detail_session_btn = QPushButton("Add to Session")
+        detail_session_btn.setToolTip("Create a new session pre-populated with a Target block for this object")
+        for btn in (detail_goto_btn, detail_sync_btn, detail_session_btn):
+            btn.setEnabled(False)
+            action_row.addWidget(btn)
+        details_layout.addLayout(action_row)
+
         hint = QLabel("Click an object to identify it. Double-click to centre and track it. "
-                      "Drag to pan, scroll to zoom. Right-click for Goto and Sync.")
+                      "Drag to pan, scroll to zoom. Right-click to Goto/Sync an object, "
+                      "or Goto any point in the sky.")
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         details_layout.addWidget(hint)
@@ -303,10 +317,28 @@ class AppWindowStarAtlasPageMixin:
         view.objectSelected.connect(show_object)
         view.objectSelected.connect(self._set_current_object)
 
-        def show_context_menu(obj, global_pos) -> None:
+        def on_selection_changed(obj) -> None:
+            has_obj = obj is not None
+            detail_goto_btn.setEnabled(has_obj)
+            detail_sync_btn.setEnabled(has_obj)
+            detail_session_btn.setEnabled(has_obj)
+            if not has_obj:
+                for key in detail_values:
+                    detail_values[key].setText("—")
+
+        view.selectionChanged.connect(on_selection_changed)
+        detail_goto_btn.clicked.connect(
+            lambda: self._mount_to_object("goto", view.selected) if view.selected is not None else None)
+        detail_sync_btn.clicked.connect(
+            lambda: self._mount_to_object("sync", view.selected) if view.selected is not None else None)
+        detail_session_btn.clicked.connect(
+            lambda: self._add_to_session(view.selected["name"], view.selected["ra_deg"], view.selected["dec_deg"])
+            if view.selected is not None else None)
+
+        def show_context_menu(obj, global_pos, sky_point=None) -> None:
             menu = QMenu(view)
             goto = menu.addAction("Goto")
-            goto.setToolTip("Slew the current Pier's mount to this object")
+            goto.setToolTip("Slew the current Pier's mount to this object or sky position")
             sync = menu.addAction("Sync")
             sync.setToolTip("Tell the current Pier's mount it is pointing at this object")
             menu.addSeparator()
@@ -315,10 +347,29 @@ class AppWindowStarAtlasPageMixin:
                 "Create a new session pre-populated with a Target block for this object (SES-160). "
                 "A plain click only selects it — this is the explicit way to build a session from it."
             )
-            goto.setEnabled(obj is not None)
+            goto.setEnabled(obj is not None or sky_point is not None)
             sync.setEnabled(obj is not None)
             add_to_session.setEnabled(obj is not None)
-            goto.triggered.connect(lambda: self._mount_to_object("goto", obj))
+
+            def do_goto() -> None:
+                if obj is not None:
+                    self._mount_to_object("goto", obj)
+                    return
+                if sky_point is None:
+                    return
+                from PySide6.QtWidgets import QInputDialog
+                default_name = f"RA {format_ra(sky_point['ra_deg'])} / Dec {format_dec(sky_point['dec_deg'])}"
+                name, ok = QInputDialog.getText(
+                    view, "Goto Sky Position", "Target name:", text=default_name)
+                if not ok or not name.strip():
+                    return
+                self._mount_to_object("goto", {
+                    "name": name.strip(),
+                    "ra_deg": sky_point["ra_deg"], "dec_deg": sky_point["dec_deg"],
+                    "alt": sky_point["alt"], "az": sky_point["az"],
+                })
+
+            goto.triggered.connect(do_goto)
             sync.triggered.connect(lambda: self._mount_to_object("sync", obj))
             add_to_session.triggered.connect(
                 lambda: self._add_to_session(obj["name"], obj["ra_deg"], obj["dec_deg"])

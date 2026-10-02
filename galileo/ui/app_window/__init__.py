@@ -61,6 +61,7 @@ from ._planning_page import AppWindowPlanningPageMixin
 from ._whats_up_page import AppWindowWhatsUpPageMixin
 from ._framing import AppWindowFramingMixin
 from ._flats import AppWindowFlatsMixin
+from ._darks import AppWindowDarksMixin
 
 # Re-exported for other galileo.ui modules and tests that import them
 # straight off galileo.ui.app_window, as they did before this split.
@@ -107,5 +108,6 @@ class AppWindow(
     AppWindowWhatsUpPageMixin,
     AppWindowFramingMixin,
     AppWindowFlatsMixin,
+    AppWindowDarksMixin,
 ):
     """Main Galileo application window."""

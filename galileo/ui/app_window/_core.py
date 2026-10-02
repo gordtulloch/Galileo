@@ -50,6 +50,7 @@ class AppWindowCoreMixin:
         self._imaging_capture_threads: dict = {}
         self._imaging_filter_threads: dict = {}
         self._flats_threads: dict = {}
+        self._darks_threads: dict = {}
         self._thumbnail_cache_worker: _ThumbnailCacheThread | None = None
         # A single persistent SkyAtlas instance, lazily created — see _shared_sky_atlas().
         self._sky_atlas: SkyAtlas | None = None

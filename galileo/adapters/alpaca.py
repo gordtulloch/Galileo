@@ -11,6 +11,7 @@ for async HTTP; falls back to ``urllib`` for minimal dependency footprint.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import socket
@@ -576,6 +577,33 @@ class AlpacaMountAdapter(AlpacaAdapter):
         self.is_tracking = False
         self.is_slewing = False
         self._static_status: dict[str, Any] | None = None
+        self.site_lat: float | None = None
+        self.site_lon: float | None = None
+        self.site_elevation: float | None = None
+
+    async def connect(self) -> None:
+        await super().connect()
+        await self._sync_site_and_time()
+
+    async def _sync_site_and_time(self) -> None:
+        """Push current UTC time and (if configured) site coordinates to the
+        mount immediately after connection so goto, meridian-flip limits, and
+        sidereal time are all computed from accurate values."""
+        utc_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        pairs: list[tuple[str, str, object]] = [
+            ("utcdate", "UTCDate", utc_now),
+            ("sitelatitude", "SiteLatitude", self.site_lat),
+            ("sitelongitude", "SiteLongitude", self.site_lon),
+            ("siteelevation", "SiteElevation", self.site_elevation),
+        ]
+        for attribute, key, value in pairs:
+            if value is None:
+                continue
+            try:
+                await self._put(attribute, **{key: value})
+            except Exception:
+                logger.warning("Could not set %s on Alpaca mount %s", attribute, self.base_url, exc_info=True)
+        self._static_status = None  # site values may have changed; re-read on next get_status()
 
     async def _refuse_if_parked(self, command: str) -> None:
         """Movement commands must not reach a parked mount. Asks the mount

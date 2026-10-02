@@ -183,6 +183,9 @@ def create_observatory(
     timezone: str | None = None,
     physical_address: str | None = None,
     owner: str | None = None,
+    notification_type: str | None = None,
+    email_address: str | None = None,
+    cell_number: str | None = None,
 ) -> ObservatoryRecord:
     """Create and persist a new Observatory settings record."""
     from galileo.library.models.observatory import ObservatoryRecord
@@ -194,6 +197,9 @@ def create_observatory(
         timezone=timezone,
         physical_address=physical_address,
         owner=owner,
+        notification_type=notification_type,
+        email_address=email_address,
+        cell_number=cell_number,
     )
 
 

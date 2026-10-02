@@ -14,6 +14,7 @@ port methods into that device's standard INDI properties
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import math
 import time
@@ -550,6 +551,9 @@ class IndiMountAdapter(IndiAdapter):
         self.pier_side = "East"
         self.is_tracking = False
         self.is_slewing = False
+        self.site_lat: float | None = None
+        self.site_lon: float | None = None
+        self.site_elevation: float | None = None
 
     def get_capabilities(self) -> DeviceCapabilities:
         if self._client is None:
@@ -560,6 +564,31 @@ class IndiMountAdapter(IndiAdapter):
             can_sync=self._has("ON_COORD_SET"),
             can_track_non_sidereal=self._has("TELESCOPE_TRACK_RATE"),
         )
+
+    def _on_connected(self) -> None:
+        self._sync_site_and_time()
+
+    def _sync_site_and_time(self) -> None:
+        """Push current UTC time and (if configured) site coordinates to the
+        mount right after connection so goto, meridian-flip limits, and
+        sidereal time are computed from accurate values."""
+        if self._client is None:
+            return
+        utc_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        if self._has("TIME_UTC"):
+            try:
+                self._client.send_text(self.device_name, "TIME_UTC", {"UTC": utc_now, "OFFSET": "0"})
+            except Exception:
+                logger.warning("Could not set TIME_UTC on INDI mount %r", self.device_name, exc_info=True)
+        if self.site_lat is not None and self.site_lon is not None and self._has("GEOGRAPHIC_COORD"):
+            lon_indi = self.site_lon if self.site_lon >= 0 else self.site_lon + 360.0
+            geo: dict[str, float] = {"LAT": self.site_lat, "LONG": lon_indi}
+            if self.site_elevation is not None:
+                geo["ELEV"] = self.site_elevation
+            try:
+                self._client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
+            except Exception:
+                logger.warning("Could not set GEOGRAPHIC_COORD on INDI mount %r", self.device_name, exc_info=True)
 
     def _refuse_if_parked(self, command: str) -> None:
         """Movement commands must not reach a parked mount. Checked against the
