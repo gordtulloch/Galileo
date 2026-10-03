@@ -150,7 +150,7 @@ class AppWindowDarksMixin:
             if not exposures:
                 QMessageBox.warning(
                     self._window, "No valid exposures",
-                    "Enter at least one positive exposure length in seconds, e.g. "10,20,30,60".",
+                    "Enter at least one positive exposure length in seconds, e.g. '10,20,30,60'.",
                 )
                 return
             run_state["frames_captured"] = 0
