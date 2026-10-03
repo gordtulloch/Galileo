@@ -91,7 +91,7 @@ Python 3 with [PySide6](https://doc.qt.io/qtforpython/) (Qt for Python), chosen 
 **On moving to Python 3.14:** The latest version of Python has a lot of performance improvements including free-threading which eliminates the GIL bit at a general 10-15% performance reduction so the author has decided to hold off on moving from 3.11 for the time being, particularly to ensure that libraries are properly implemented for the new features (otherwise the whole program reverts to GIL). 
 ## Reference Test Environment
 
-Galileo's design is validated against the author's own physical multi-Pier Observatory: a roll-off-roof shed ([indi-rolloffino](https://github.com/wotalota/indi-rolloffino)), an INDI weather station ([indi-argentweather](https://github.com/gordtulloch/indi-argentweather)) and rain monitor ([indi-hydreon](https://github.com/gordtulloch/indi-hydreon)), and two independent Piers — a Seestar S30 and a Seestar S30 Pro, both connected via ASCOM Alpaca. See [PSD Section 6.8](docs/PSD.md) for details.
+Galileo's design is validated against the author's own physical multi-Pier Observatory: a roll-off-roof shed ([indi-rolloffino](https://github.com/wotalota/indi-rolloffino)), an INDI weather station ([indi-argentweather](https://github.com/gordtulloch/indi-argentweather)) and rain monitor ([indi-hydreon](https://github.com/gordtulloch/indi-hydreon)), and three independent Piers — a Seestar S30 and a Seestar S30 Pro (both connected via ASCOM Alpaca) and a 62 mm refractor on an OnStep mount (connected via INDI). See [PSD Section 6.8](docs/PSD.md) for details.
 
 ## License
 
