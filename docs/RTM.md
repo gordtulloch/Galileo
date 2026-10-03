@@ -400,6 +400,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-060` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-060` |
 | `PLUG-070` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-070` |
 | `PLUG-080` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-080` |
+| `PLUG-090` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-090` |
+| `PLUG-100` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-100` |
+| `PLUG-110` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-110` |
+| `PLUG-120` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-120` |
 
 ### `UI` — Customization & Theming
 

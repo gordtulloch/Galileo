@@ -33,8 +33,8 @@ VSTarget's own background is unchanged from core PSD Section 2: Galileo's author
 
 | # | Goal |
 |---|---|
-| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party, pre-loaded, independently-disableable plugin (core `PLUG-060`), presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it |
-| G2 | Deliver VSTarget's photometric analysis/AAVSO-reporting workflow as the separate `VST-AN` plugin, paired with but independently enabled/disabled from `VST` |
+| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party plugin distributed as a downloadable ZIP from the galileo-imaging.com plugin repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`), presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it. The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
+| G2 | Deliver VSTarget's photometric analysis/AAVSO-reporting workflow as the separate `VST-AN` plugin — also a first-party ZIP distributed from the same website, paired with but independently installed, enabled, and disabled from `VST` |
 | G3 | Reuse core capabilities as a client rather than duplicating them: visibility computation (`SKY-030`), plate solving (`PLT-010`), Scheduler job submission (`SCHED-010`, via `PluginContext`) — this plugin owns no device ports and introduces no new core domain |
 | G4 | Demonstrate, not just declare, that Galileo's plugin architecture (core `PLUG`) is sufficient for a first-party workflow of this complexity — every capability below is expressed through `PLUG`'s existing extension points, with no plugin-specific carve-out added to core to make it fit |
 

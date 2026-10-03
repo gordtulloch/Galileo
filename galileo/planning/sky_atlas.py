@@ -671,6 +671,7 @@ class SkyAtlas:
         min_moon_separation_deg: float = 0.0,
         catalogs: set[str] | None = None,
         date_str: str | None = None,
+        constellation: str | None = None,
     ) -> list[DeepSkyObject]:
         """Filter the catalog by type, magnitude, size (a min/max range — a
         catalog object with no recorded size, ``size_arcmin`` 0, always passes
@@ -718,6 +719,8 @@ class SkyAtlas:
             if moon_pos is not None:
                 if moon_separation_deg(o.ra_deg, o.dec_deg, *moon_pos) < min_moon_separation_deg:
                     continue
+            if constellation and constellation_for(o.ra_deg, o.dec_deg).lower() != constellation.lower():
+                continue
             results.append(o)
         return results
 

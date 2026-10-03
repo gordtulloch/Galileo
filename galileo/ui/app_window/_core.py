@@ -278,6 +278,7 @@ class AppWindowCoreMixin:
         option_builders["imaging"] = self._build_imaging_settings_page
         option_builders["focus"] = self._build_focus_settings_page
         option_builders["solve"] = self._build_solve_settings_page
+        option_builders["plugins"] = self._build_plugins_settings_page
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)

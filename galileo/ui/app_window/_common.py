@@ -58,8 +58,9 @@ PRIMARY_SECTIONS = [
 
 OPTIONS_SECTION = ("options", "Options", "options")
 
-# Options opens onto one settings page per primary section, in the same order.
-OPTIONS_ITEMS = list(PRIMARY_SECTIONS)
+# Options opens onto one settings page per primary section, in the same order,
+# plus a dedicated Plugins entry (PLUG-030) that is not a primary nav section.
+OPTIONS_ITEMS = list(PRIMARY_SECTIONS) + [("plugins", "Plugins", "plugins")]
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].

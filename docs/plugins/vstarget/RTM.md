@@ -72,4 +72,4 @@ This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the S
 
 ## 4. Cross-Reference to Core
 
-Requirements this plugin's own rows trace to but do not define (see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core) and [Galileo core's own RTM](../../RTM.md) for their coverage): core `PLUG-010`–`PLUG-080`, `SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`.
+Requirements this plugin's own rows trace to but do not define (see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core) and [Galileo core's own RTM](../../RTM.md) for their coverage): core `PLUG-010`–`PLUG-120` (plugin framework, enable/disable, install from ZIP, marketplace download, and remove), `SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`.

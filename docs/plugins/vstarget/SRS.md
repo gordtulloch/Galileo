@@ -46,7 +46,7 @@ See [this plugin's PSD Glossary](PSD.md#13-glossary) and [core PSD's Glossary](.
 
 ### 2.1 Product Perspective
 
-This plugin is not a standalone product — it is a first-party, pre-loaded plugin against Galileo core's plugin architecture (core `PLUG` domain), loaded in-process at application start alongside core, independently enabled/disabled by the user.
+This plugin is not a standalone product — it is a first-party plugin against Galileo core's plugin architecture (core `PLUG` domain), distributed as a downloadable ZIP from galileo-imaging.com and installed by the user through the Options > Plugins screen (core `PLUG-090`/`PLUG-110`). Once installed, it is independently enabled/disabled by the user (core `PLUG-060`).
 
 ### 2.2 Product Functions (Summary)
 
@@ -62,7 +62,7 @@ Identical to core (Windows/macOS/Linux) — this plugin introduces no additional
 
 ### 2.5 Design and Implementation Constraints
 
-- Loaded exclusively through core's plugin extension points (`PLUG-010`–`PLUG-080`); no direct import of core adapter internals (mirrors core SRS Section 2.5's `ARCH-010` constraint, applied to this plugin specifically).
+- Distributed as a ZIP installable via core `PLUG-090`/`PLUG-110`; loaded exclusively through core's plugin extension points (`PLUG-010`–`PLUG-120`); no direct import of core adapter internals (mirrors core SRS Section 2.5's `ARCH-010` constraint, applied to this plugin specifically).
 - No bundled device control of its own — image capture is performed by core (`EQP-CAM-*`) or the image is retrieved pre-captured from a remote-telescope network.
 
 ### 2.6 Assumptions and Dependencies
