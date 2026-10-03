@@ -63,6 +63,10 @@ class AppWindowCoreMixin:
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
+        from galileo.plugins import PluginManager
+        self._plugin_manager = PluginManager()
+        self._plugin_manager.initialize_from_disk()
+
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
         self._window = QMainWindow()
         self._window.setWindowTitle("Galileo")

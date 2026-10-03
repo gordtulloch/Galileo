@@ -75,6 +75,7 @@ class AppWindowState(Protocol):
     _optics_label: Any
     _options_page: Any
     _pier_combo: Any
+    _plugin_manager: Any
     _pier_connect_btn: Any
     _pier_connect_startup_check: Any
     _pier_delete_btn: Any
