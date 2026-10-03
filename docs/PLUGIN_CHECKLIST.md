@@ -46,7 +46,7 @@ Tracks the work required to implement plugin packaging, distribution via galileo
 
 ## 5. `galileo.plugins.marketplace.MarketplaceClient` ✅
 
-- [x] HTTP GET to `https://www.galileo-imaging.com/plugins` (configurable `base_url`)
+- [x] HTTP GET to `https://www.galileo-imaging.com/assets/plug-ins` (configurable `base_url`)
 - [x] **Primary parse strategy:** JSON embed (`<script … id="galileo-plugins">`)
 - [x] **Fallback parse strategy:** HTML scrape for `<section id="plugins">` `<a>` links
 - [x] Returns `list[MarketplaceEntry]`; graceful failure returns `([], error_str)`

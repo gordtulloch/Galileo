@@ -24,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Marketplace URL corrected from `/plugins` to `/assets/plug-ins`.** `MARKETPLACE_URL` in `galileo/plugins/marketplace.py` pointed to `https://www.galileo-imaging.com/plugins`, which does not exist; the actual plugin assets live at `assets/plug-ins/` on the website. Updated the constant and added `assets/plug-ins/index.html` to `Galileo.web` with the JSON embed the primary parser expects.
+
+- **Plugin Marketplace and Installed tabs reworked to bordered cards.** Both tabs now display plugins as bordered `QFrame` cards (name, version/tier/author metadata, long description, icon) instead of flat `QTableWidget` rows. `MarketplaceEntry` gains `description_long`, `icon_url`, and `icon_data` fields; `MarketplaceClient._do_fetch` fetches each entry's icon after parsing and stores the bytes in `icon_data` for the UI to render (PNG or SVG via `QSvgRenderer`). The VSTarget entry in `Galileo.web/assets/plug-ins/index.html` now carries a full paragraph description and `icon_url` pointing to the site's Galileo logo.
+
+- **Marketplace download silently failed for relative `download_url` values.** `_parse_json_embed` passed the raw `download_url` from the JSON directly to `requests.get`; a relative path like `"vstarget-1.0.0.zip"` caused a `MissingSchema` exception, which the download wrapper caught and reported as "failed or was cancelled." Fixed by passing `base_url` into `_parse_json_embed` and applying `urljoin` to resolve relative URLs — matching the behaviour already present in the HTML fallback parser. Added `test_tc_plug_100_marketplace_json_embed_relative_url_resolved` to cover this case.
+
 - **`KeyError: 'plugins'` crash on startup.** The Options > Plugins nav item referenced an icon name (`'plugins'`) that was missing from `galileo/ui/icons.py`. Added `_plugins` draw function (puzzle-piece shape) and registered it in `ICONS`.
 
 ### Added

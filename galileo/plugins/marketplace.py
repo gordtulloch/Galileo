@@ -24,7 +24,7 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 # Default index URL — can be overridden in tests or config.
-MARKETPLACE_URL = "https://www.galileo-imaging.com/plugins"
+MARKETPLACE_URL = "https://www.galileo-imaging.com/assets/plug-ins/"
 
 
 @dataclass
@@ -36,6 +36,9 @@ class MarketplaceEntry:
     tier: str           # "first_party" | "third_party"
     author: str
     download_url: str
+    description_long: str = ""
+    icon_url: str = ""
+    icon_data: bytes | None = field(default=None, compare=False, repr=False)
 
 
 class MarketplaceClient:
@@ -136,7 +139,7 @@ class MarketplaceClient:
             logger.warning(msg)
             return [], msg
 
-        entries = self._parse_json_embed(html)
+        entries = self._parse_json_embed(html, self._base_url)
         if entries is None:
             entries = self._parse_html_fallback(html, self._base_url)
 
@@ -145,14 +148,20 @@ class MarketplaceClient:
             logger.warning(msg)
             return [], msg
 
+        for entry in entries:
+            if entry.icon_url:
+                entry.icon_data = self._fetch_icon(entry.icon_url)
+
         with self._lock:
             self._cache = list(entries)
 
         return list(entries), ""
 
     @staticmethod
-    def _parse_json_embed(html: str) -> list[MarketplaceEntry] | None:
+    def _parse_json_embed(html: str, base_url: str = "") -> list[MarketplaceEntry] | None:
         """Primary strategy: extract the JSON block embedded in the page."""
+        from urllib.parse import urljoin
+
         pattern = r'<script[^>]+type=["\']application/json["\'][^>]+id=["\']galileo-plugins["\'][^>]*>(.*?)</script>'
         match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
         if not match:
@@ -168,17 +177,33 @@ class MarketplaceClient:
             if not isinstance(item, dict):
                 continue
             try:
+                raw_url = item["download_url"]
+                download_url = urljoin(base_url, raw_url) if base_url else raw_url
+                raw_icon = item.get("icon_url", "")
+                icon_url = urljoin(base_url, raw_icon) if base_url and raw_icon else raw_icon
                 entries.append(MarketplaceEntry(
                     name=item["name"],
                     description=item.get("description", ""),
                     version=item.get("version", ""),
                     tier=item.get("tier", "third_party"),
                     author=item.get("author", ""),
-                    download_url=item["download_url"],
+                    download_url=download_url,
+                    description_long=item.get("description_long", ""),
+                    icon_url=icon_url,
                 ))
             except KeyError:
                 continue
         return entries if entries else None
+
+    def _fetch_icon(self, url: str) -> bytes | None:
+        import requests
+        try:
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            return resp.content
+        except Exception:
+            logger.debug("Could not fetch icon %r", url)
+            return None
 
     @staticmethod
     def _parse_html_fallback(html: str, base_url: str) -> list[MarketplaceEntry] | None:

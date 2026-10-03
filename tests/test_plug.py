@@ -434,6 +434,39 @@ def test_tc_plug_100_marketplace_fetch_json_embed():
 
 @pytest.mark.requirement("TC-PLUG-100")
 @pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_json_embed_relative_url_resolved():
+    """PLUG-100: Relative download_url in JSON embed is resolved against the base URL."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = """
+    <html><body>
+    <script type="application/json" id="galileo-plugins">
+    [
+      {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
+       "tier": "first_party", "author": "Gord Tulloch",
+       "download_url": "vstarget-1.0.0.zip"}
+    ]
+    </script>
+    </body></html>
+    """
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp):
+        client = marketplace.MarketplaceClient(
+            base_url="https://www.galileo-imaging.com/assets/plug-ins/"
+        )
+        entries, error = client.fetch()
+
+    assert error == ""
+    assert len(entries) == 1
+    assert entries[0].download_url == "https://www.galileo-imaging.com/assets/plug-ins/vstarget-1.0.0.zip"
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
 def test_tc_plug_100_marketplace_fetch_html_fallback():
     """PLUG-100: Marketplace fetch falls back to HTML scraping when no JSON embed."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
