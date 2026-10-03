@@ -439,6 +439,26 @@ def _merge(painter, r):
     painter.drawLine(QLineF(r.right(), mid.y(), r.right() - r.width() * 0.22, mid.y() + r.height() * 0.18))
 
 
+def _plugins(painter, r):
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPainterPath
+    # A puzzle piece: rectangular body with a tab bump on the right and a notch on the bottom.
+    bx, by = r.left(), r.top() + r.height() * 0.12
+    bw, bh = r.width() * 0.72, r.height() * 0.72
+    tab_r = r.width() * 0.14
+    path = QPainterPath()
+    path.moveTo(bx, by)
+    path.lineTo(bx + bw * 0.5 - tab_r, by)
+    path.arcTo(QRectF(bx + bw * 0.5 - tab_r, by - tab_r * 2, tab_r * 2, tab_r * 2), 180, -180)
+    path.lineTo(bx + bw, by)
+    path.lineTo(bx + bw, by + bh * 0.5 - tab_r)
+    path.arcTo(QRectF(bx + bw, by + bh * 0.5 - tab_r, tab_r * 2, tab_r * 2), 180, 180)
+    path.lineTo(bx + bw, by + bh)
+    path.lineTo(bx, by + bh)
+    path.closeSubpath()
+    painter.drawPath(path)
+
+
 ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
     "star_atlas": _star_atlas,
@@ -476,4 +496,5 @@ ICONS: dict[str, DrawFn] = {
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,
+    "plugins": _plugins,
 }

@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Plugin distribution model redesigned across PSD/SRS/SDD/RTM and VSTarget plugin PSD.** VSTarget is no longer bundled (pre-loaded) inside the Galileo installer; it now ships as distributable ZIP files hosted on galileo-imaging.com, downloadable through the new in-app Plugin Marketplace or via Install from file — making it the first live proof of the full distribution pipeline. Core changes: (1) `PLUG-030` now covers the full **Options > Plugins screen** (Installed tab, Install from file, Marketplace tab) at MVP priority — moved up from P2 since VSTarget requires it from day one; (2) `PLUG-060` reworded to describe installed-plugin enable/disable rather than pre-bundled plugins; (3) four new requirements added — `PLUG-090` (install from local ZIP), `PLUG-100` (Marketplace fetch/parse from galileo-imaging.com), `PLUG-110` (one-click download + install from Marketplace), `PLUG-120` (remove/uninstall an installed plugin); (4) SDD §4.20 expanded with the ZIP package format (`plugin.toml` manifest schema), the install pipeline (validate → version-check → extract → load → rollback on failure), the Options > Plugins screen behavior, and the Marketplace scraping strategy (JSON embed preferred, HTML fallback); (5) RTM gained rows for `TC-PLUG-090`–`TC-PLUG-120`; (6) `docs/plugins/vstarget/PSD.md` G1/G2 updated to reflect downloadable ZIP distribution rather than pre-loaded bundling. PSD G5 and G8 updated to describe the distribution model as part of the plugin architecture goal.
 
+### Fixed
+
+- **`KeyError: 'plugins'` crash on startup.** The Options > Plugins nav item referenced an icon name (`'plugins'`) that was missing from `galileo/ui/icons.py`. Added `_plugins` draw function (puzzle-piece shape) and registered it in `ICONS`.
+
 ### Added
 
 - **`README.md` reference test environment updated to three Piers.** Added a 62 mm refractor on an OnStep mount connected via INDI as a third Pier alongside the two Seestar (Alpaca) Piers, reflecting the actual current test setup and exercising the INDI mount adapter path that the Seestar Alpaca Piers do not.
