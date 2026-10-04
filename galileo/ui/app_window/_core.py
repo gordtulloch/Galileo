@@ -255,6 +255,7 @@ class AppWindowCoreMixin:
         _pm = getattr(self, "_plugin_manager", None)
         _science_plugin_items: list[tuple[str, str, str]] = []
         _science_plugin_builders: dict = {}
+        _plugin_primary_labels: set[str] = set()
         if _pm is not None:
             registry = _pm.get_ui_registry()
             for _panel in registry.get_primary_panels() + registry.get_secondary_panels():
@@ -266,6 +267,14 @@ class AppWindowCoreMixin:
                         _p.build_page() or self._build_placeholder_page(_lbl)
                 )
                 _science_plugin_items.append((_sid, _plabel, "plugins"))
+                if _panel.level == "primary":
+                    _plugin_primary_labels.add(_plabel)
+        # Drop SCIENCE_ITEMS stubs whose labels are already provided by a
+        # primary plugin panel, so installing a plugin doesn't create a
+        # duplicate entry alongside the static stub.
+        _effective_science_items = [
+            item for item in SCIENCE_ITEMS if item[1] not in _plugin_primary_labels
+        ]
 
         page_builders = {
             "equipment": self._build_equipment_page,
@@ -276,7 +285,7 @@ class AppWindowCoreMixin:
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page}),
             "science": lambda: self._build_submenu_page(
-                SCIENCE_ITEMS + _science_plugin_items, _science_plugin_builders
+                _effective_science_items + _science_plugin_items, _science_plugin_builders
             ),
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,

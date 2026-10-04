@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Duplicate "Variable Stars" entry in Science submenu when VSTarget plugin is installed.** `_build_primary_nav` in `galileo/ui/app_window/_core.py` now filters out any `SCIENCE_ITEMS` stub whose label is already covered by a primary-level plugin panel, so the VSTarget plugin's "Variable Stars" item replaces the static stub rather than appearing alongside it.
+
 - **IERS-A Earth orientation data no longer downloaded on every run.** `galileo/planning/visibility.py` now caches `finals2000A.all` in Galileo's own cache directory (`get_cache_dir() / "iers"`). The file is downloaded at most once every 30 days; on subsequent runs astropy's class-level table cache is pre-populated from the local copy and `iers_conf.auto_download` is set to `False`, so no network request is made unless the cached copy is missing or stale.
 
 - **`KeyError: 'plugin'` crash on startup when plugins with primary UI panels are loaded.** `_core.py` was passing `"plugin"` (no `s`) as the icon name for dynamically injected plugin nav buttons, but the `ICONS` registry only contains `"plugins"`. Changed the icon name to `"plugins"` so the correct puzzle-piece icon is used.
