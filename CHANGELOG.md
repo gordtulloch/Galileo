@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`KeyError: 'plugin'` crash on startup when plugins with primary UI panels are loaded.** `_core.py` was passing `"plugin"` (no `s`) as the icon name for dynamically injected plugin nav buttons, but the `ICONS` registry only contains `"plugins"`. Changed the icon name to `"plugins"` so the correct puzzle-piece icon is used.
+
 - **Marketplace URL corrected from `/plugins` to `/assets/plug-ins`.** `MARKETPLACE_URL` in `galileo/plugins/marketplace.py` pointed to `https://www.galileo-imaging.com/plugins`, which does not exist; the actual plugin assets live at `assets/plug-ins/` on the website. Updated the constant and added `assets/plug-ins/index.html` to `Galileo.web` with the JSON embed the primary parser expects.
 
 - **Plugin UI panels never appeared after install.** Two root causes: (1) `_build_primary_nav()` never read `UiRegistry` — panels registered by `initialize_from_disk()` at startup were silently discarded. Fixed by injecting primary-level `UiPanel` entries into `page_builders` and `sidebar_items` before the `_NavColumn` is constructed, so plugins present at launch get a nav button and page. (2) Runtime installs (via Marketplace) happen after the nav is built and require a restart; the `_on_dl_done` callback now shows the restart banner and a message saying so. `PluginBase` gains a default `build_page()` method (returns `None` → placeholder page).

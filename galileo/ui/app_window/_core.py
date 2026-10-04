@@ -279,7 +279,7 @@ class AppWindowCoreMixin:
                     lambda _p=_plugin_ref, _lbl=_plabel:
                         _p.build_page() or self._build_placeholder_page(_lbl)
                 )
-                _plugin_sections.append((_sid, _plabel, "plugin"))
+                _plugin_sections.append((_sid, _plabel, "plugins"))
 
         pages: dict[str, int] = {}
         for section_id, label, icon_name in PRIMARY_SECTIONS:
