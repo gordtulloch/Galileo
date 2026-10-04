@@ -114,6 +114,10 @@ class PluginBase(ABC):
     def deactivate(self) -> None:
         """Called when the plugin is disabled."""
 
+    def build_page(self) -> Any:
+        """Return a QWidget for this plugin's main panel, or None for a placeholder."""
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Plugin context (PLUG-080)

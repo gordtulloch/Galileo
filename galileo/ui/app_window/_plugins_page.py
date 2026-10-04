@@ -412,8 +412,11 @@ class AppWindowPluginsPageMixin:
                     return
                 try:
                     mgr.install(path)
-                    market_status.setText(f"'{entry.name}' installed successfully.")
+                    market_status.setText(
+                        f"'{entry.name}' installed — restart Galileo to add its panel to the sidebar."
+                    )
                     market_status.setVisible(True)
+                    restart_banner.setVisible(True)
                     _refresh_installed()
                     _fetch_thread_start(force=True)
                 except PluginInstallError as exc:
