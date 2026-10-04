@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Plugin Marketplace switched from galileo-imaging.com to the Galileo-Plugins GitHub repository.** `galileo/plugins/marketplace.py` now fetches `plugins.json` from `raw.githubusercontent.com/gordtulloch/Galileo-Plugins/main/plugins.json` — a plain JSON array built and committed by the repository's CI pipeline on every push. Removes the HTML-scraping logic entirely; `MarketplaceClient.__init__` now takes `index_url` instead of `base_url`. No separate website upload is needed: pushing plugin code to the repo is the only required step.
+
 - **Duplicate "Variable Stars" entry in Science submenu when VSTarget plugin is installed.** `_build_primary_nav` in `galileo/ui/app_window/_core.py` now filters out any `SCIENCE_ITEMS` stub whose label is already covered by a primary-level plugin panel, so the VSTarget plugin's "Variable Stars" item replaces the static stub rather than appearing alongside it.
 
 - **IERS-A Earth orientation data no longer downloaded on every run.** `galileo/planning/visibility.py` now caches `finals2000A.all` in Galileo's own cache directory (`get_cache_dir() / "iers"`). The file is downloaded at most once every 30 days; on subsequent runs astropy's class-level table cache is pre-populated from the local copy and `iers_conf.auto_download` is set to `False`, so no network request is made unless the cached copy is missing or stale.

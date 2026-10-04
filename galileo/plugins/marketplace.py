@@ -3,10 +3,11 @@
 
 """Plugin Marketplace client (PLUG-100 / PLUG-110).
 
-Fetches the list of available plugins from the galileo-imaging.com plugins page.
-Primary strategy: parse a ``<script type="application/json" id="galileo-plugins">``
-JSON block embedded in the page.  Fallback: scrape ``<a href="*.zip">`` links
-inside a ``<section id="plugins">`` element.
+Fetches the list of available plugins from the Galileo-Plugins GitHub
+repository via raw.githubusercontent.com.  The repository maintains a
+``plugins.json`` index at its root; each entry carries the plugin metadata and
+a direct download URL for its ZIP file.  The CI pipeline rebuilds this index
+automatically on every push, so no separate website upload is needed.
 
 The client is intentionally synchronous — callers run it in a QThread so it
 doesn't block the Qt event loop.
@@ -16,15 +17,17 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-# Default index URL — can be overridden in tests or config.
-MARKETPLACE_URL = "https://www.galileo-imaging.com/assets/plug-ins/"
+# URL of the plugins.json index in the Galileo-Plugins GitHub repository.
+# Override in tests by passing a different base_url to MarketplaceClient().
+MARKETPLACE_INDEX_URL = (
+    "https://raw.githubusercontent.com/gordtulloch/Galileo-Plugins/main/plugins.json"
+)
 
 
 @dataclass
@@ -42,7 +45,7 @@ class MarketplaceEntry:
 
 
 class MarketplaceClient:
-    """Fetch and cache the list of plugins available on galileo-imaging.com.
+    """Fetch and cache the list of plugins available in the Galileo-Plugins repo.
 
     Usage::
 
@@ -55,8 +58,8 @@ class MarketplaceClient:
     call :meth:`refresh` to force a new HTTP request.
     """
 
-    def __init__(self, base_url: str = MARKETPLACE_URL) -> None:
-        self._base_url = base_url
+    def __init__(self, index_url: str = MARKETPLACE_INDEX_URL) -> None:
+        self._index_url = index_url
         self._cache: list[MarketplaceEntry] | None = None
         self._lock = threading.Lock()
 
@@ -131,22 +134,36 @@ class MarketplaceClient:
         import requests
 
         try:
-            resp = requests.get(self._base_url, timeout=15)
+            resp = requests.get(self._index_url, timeout=15)
             resp.raise_for_status()
-            html = resp.text
+            data = resp.json()
         except Exception as exc:
-            msg = f"Could not reach {self._base_url}: {exc}"
+            msg = f"Could not fetch plugin index from {self._index_url}: {exc}"
             logger.warning(msg)
             return [], msg
 
-        entries = self._parse_json_embed(html, self._base_url)
-        if entries is None:
-            entries = self._parse_html_fallback(html, self._base_url)
-
-        if entries is None:
-            msg = "Plugin list not found on the page — the website format may have changed."
+        if not isinstance(data, list):
+            msg = "Plugin index is not a JSON array — the repository format may have changed."
             logger.warning(msg)
             return [], msg
+
+        entries = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                entries.append(MarketplaceEntry(
+                    name=item["name"],
+                    description=item.get("description", ""),
+                    version=item.get("version", ""),
+                    tier=item.get("tier", "third_party"),
+                    author=item.get("author", ""),
+                    download_url=item["download_url"],
+                    description_long=item.get("description_long", ""),
+                    icon_url=item.get("icon_url", ""),
+                ))
+            except KeyError:
+                logger.debug("Skipping malformed plugin index entry: %r", item)
 
         for entry in entries:
             if entry.icon_url:
@@ -157,44 +174,6 @@ class MarketplaceClient:
 
         return list(entries), ""
 
-    @staticmethod
-    def _parse_json_embed(html: str, base_url: str = "") -> list[MarketplaceEntry] | None:
-        """Primary strategy: extract the JSON block embedded in the page."""
-        from urllib.parse import urljoin
-
-        pattern = r'<script[^>]+type=["\']application/json["\'][^>]+id=["\']galileo-plugins["\'][^>]*>(.*?)</script>'
-        match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(data, list):
-            return None
-        entries = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            try:
-                raw_url = item["download_url"]
-                download_url = urljoin(base_url, raw_url) if base_url else raw_url
-                raw_icon = item.get("icon_url", "")
-                icon_url = urljoin(base_url, raw_icon) if base_url and raw_icon else raw_icon
-                entries.append(MarketplaceEntry(
-                    name=item["name"],
-                    description=item.get("description", ""),
-                    version=item.get("version", ""),
-                    tier=item.get("tier", "third_party"),
-                    author=item.get("author", ""),
-                    download_url=download_url,
-                    description_long=item.get("description_long", ""),
-                    icon_url=icon_url,
-                ))
-            except KeyError:
-                continue
-        return entries if entries else None
-
     def _fetch_icon(self, url: str) -> bytes | None:
         import requests
         try:
@@ -204,37 +183,3 @@ class MarketplaceClient:
         except Exception:
             logger.debug("Could not fetch icon %r", url)
             return None
-
-    @staticmethod
-    def _parse_html_fallback(html: str, base_url: str) -> list[MarketplaceEntry] | None:
-        """Fallback: scrape <a href="*.zip"> links inside <section id="plugins">."""
-        # Narrow to the plugins section if possible.
-        section_match = re.search(
-            r'<section[^>]+id=["\']plugins["\'][^>]*>(.*?)</section>',
-            html, re.DOTALL | re.IGNORECASE,
-        )
-        search_html = section_match.group(1) if section_match else html
-
-        # Find all .zip anchor links.
-        link_pattern = re.compile(
-            r'<a\s[^>]*href=["\']([^"\']*\.zip)["\'][^>]*>(.*?)</a>',
-            re.DOTALL | re.IGNORECASE,
-        )
-        entries = []
-        from urllib.parse import urljoin
-        for m in link_pattern.finditer(search_html):
-            href = m.group(1).strip()
-            label = re.sub(r"<[^>]+>", "", m.group(2)).strip()  # strip inner tags
-            url = urljoin(base_url, href)
-            # Derive a minimal name from the filename (e.g. "vstarget-planning-1.0.0.zip").
-            filename = href.rsplit("/", 1)[-1]
-            name = re.sub(r"-\d+\.\d+.*\.zip$", "", filename, flags=re.IGNORECASE) or filename
-            entries.append(MarketplaceEntry(
-                name=name,
-                description=label or name,
-                version="",
-                tier="third_party",
-                author="",
-                download_url=url,
-            ))
-        return entries if entries else None
