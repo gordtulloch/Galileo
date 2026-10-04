@@ -251,6 +251,22 @@ class AppWindowCoreMixin:
         stack = QStackedWidget()
         stack.setObjectName("PrimaryStack")
 
+        # Collect plugin panels to inject into the Science submenu.
+        _pm = getattr(self, "_plugin_manager", None)
+        _science_plugin_items: list[tuple[str, str, str]] = []
+        _science_plugin_builders: dict = {}
+        if _pm is not None:
+            registry = _pm.get_ui_registry()
+            for _panel in registry.get_primary_panels() + registry.get_secondary_panels():
+                _sid = _panel.plugin.name
+                _plugin_ref = _panel.plugin
+                _plabel = _panel.label
+                _science_plugin_builders[_sid] = (
+                    lambda _p=_plugin_ref, _lbl=_plabel:
+                        _p.build_page() or self._build_placeholder_page(_lbl)
+                )
+                _science_plugin_items.append((_sid, _plabel, "plugins"))
+
         page_builders = {
             "equipment": self._build_equipment_page,
             "star_atlas": self._build_star_atlas_page,
@@ -259,7 +275,9 @@ class AppWindowCoreMixin:
                                   "targets": self._build_sky_atlas_page,
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page}),
-            "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
+            "science": lambda: self._build_submenu_page(
+                SCIENCE_ITEMS + _science_plugin_items, _science_plugin_builders
+            ),
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,
             "guiding": self._build_guider_page,
@@ -267,27 +285,11 @@ class AppWindowCoreMixin:
             "solve": self._build_solve_page,
         }
 
-        # Inject primary-level plugin panels from UiRegistry into the nav.
-        _plugin_sections: list[tuple[str, str, str]] = []
-        _pm = getattr(self, "_plugin_manager", None)
-        if _pm is not None:
-            for _panel in _pm.get_ui_registry().get_primary_panels():
-                _sid = f"plugin_{_panel.plugin.name}"
-                _plugin_ref = _panel.plugin
-                _plabel = _panel.label
-                page_builders[_sid] = (
-                    lambda _p=_plugin_ref, _lbl=_plabel:
-                        _p.build_page() or self._build_placeholder_page(_lbl)
-                )
-                _plugin_sections.append((_sid, _plabel, "plugins"))
-
         pages: dict[str, int] = {}
         for section_id, label, icon_name in PRIMARY_SECTIONS:
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             pages[section_id] = stack.addWidget(page)
-        for section_id, label, icon_name in _plugin_sections:
-            pages[section_id] = stack.addWidget(page_builders[section_id]())
 
         option_builders = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
@@ -320,7 +322,7 @@ class AppWindowCoreMixin:
         # of the sidebar next to Options instead of sitting among the
         # screens above the stretch.
         equipment_section = next(s for s in PRIMARY_SECTIONS if s[0] == "equipment")
-        sidebar_items = [s for s in PRIMARY_SECTIONS if s[0] != "equipment"] + _plugin_sections
+        sidebar_items = [s for s in PRIMARY_SECTIONS if s[0] != "equipment"]
         sidebar = _NavColumn(
             object_name="Sidebar",
             button_object_name="NavButton",

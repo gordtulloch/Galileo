@@ -20,6 +20,48 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_IERS_URL = "https://datacenter.iers.org/data/9/finals2000A.all"
+_IERS_MAX_AGE_DAYS = 30
+_iers_configured = False
+
+
+def _configure_iers_cache() -> None:
+    """Cache the IERS-A Earth orientation data in Galileo's cache dir.
+
+    Downloads only when the cached copy is missing or older than _IERS_MAX_AGE_DAYS.
+    Pre-populates astropy's class-level table cache so coordinate transforms
+    never trigger a network fetch after the first download.
+    """
+    global _iers_configured
+    if _iers_configured:
+        return
+    try:
+        from galileo.platform import get_cache_dir
+        from astropy.utils.iers import IERS_A, IERS_Auto, conf as iers_conf
+
+        iers_path = get_cache_dir() / "iers" / "finals2000A.all"
+        iers_path.parent.mkdir(parents=True, exist_ok=True)
+
+        needs_update = not iers_path.exists() or (
+            datetime.datetime.now() - datetime.datetime.fromtimestamp(iers_path.stat().st_mtime)
+        ).days >= _IERS_MAX_AGE_DAYS
+
+        if needs_update:
+            logger.info(
+                "Downloading IERS-A Earth orientation data to %s (refreshes every %d days)",
+                iers_path, _IERS_MAX_AGE_DAYS,
+            )
+            import urllib.request
+            tmp = iers_path.with_suffix(".tmp")
+            urllib.request.urlretrieve(_IERS_URL, tmp)
+            tmp.replace(iers_path)
+
+        iers_conf.auto_download = False
+        IERS_Auto.iers_table = IERS_A.open(str(iers_path))
+        _iers_configured = True
+    except Exception as exc:
+        logger.debug("IERS cache setup failed (%s); astropy will use its own auto-download", exc)
+
 
 @dataclass
 class ObservingLocation:
@@ -127,6 +169,7 @@ def altitude_chart(
         from astropy.time import Time
         import astropy.units as u
         import numpy as np
+        _configure_iers_cache()
 
         if date_str is None:
             date_str = datetime.date.today().isoformat()
@@ -196,6 +239,7 @@ def altitude_charts_batch(
         from astropy.time import Time
         import astropy.units as u
         import numpy as np
+        _configure_iers_cache()
 
         if date_str is None:
             date_str = datetime.date.today().isoformat()
@@ -344,6 +388,7 @@ def moon_position_deg(location: ObservingLocation, date_str: str | None = None) 
         from astropy.coordinates import EarthLocation, get_body
         from astropy.time import Time
         import astropy.units as u
+        _configure_iers_cache()
 
         if date_str is None:
             date_str = datetime.date.today().isoformat()
@@ -379,6 +424,7 @@ def sun_altitude_deg(location: ObservingLocation, time=None) -> float | None:
         from astropy.coordinates import AltAz, EarthLocation, get_sun
         from astropy.time import Time
         import astropy.units as u
+        _configure_iers_cache()
 
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
@@ -440,6 +486,7 @@ def sun_altitude_track(
         from astropy.time import Time
         import astropy.units as u
         import numpy as np
+        _configure_iers_cache()
 
         if date_str is None:
             date_str = datetime.datetime.now().astimezone().date().isoformat()
@@ -582,6 +629,7 @@ def moon_phase_info(date_str: str | None = None) -> dict | None:
     try:
         from astropy.coordinates import GeocentricTrueEcliptic, get_body
         from astropy.time import Time
+        _configure_iers_cache()
 
         if date_str is None:
             date_str = datetime.date.today().isoformat()
@@ -612,6 +660,7 @@ def altaz_to_radec_deg(
         from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
         import astropy.units as u
+        _configure_iers_cache()
 
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,

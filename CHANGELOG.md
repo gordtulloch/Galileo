@@ -24,11 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **IERS-A Earth orientation data no longer downloaded on every run.** `galileo/planning/visibility.py` now caches `finals2000A.all` in Galileo's own cache directory (`get_cache_dir() / "iers"`). The file is downloaded at most once every 30 days; on subsequent runs astropy's class-level table cache is pre-populated from the local copy and `iers_conf.auto_download` is set to `False`, so no network request is made unless the cached copy is missing or stale.
+
 - **`KeyError: 'plugin'` crash on startup when plugins with primary UI panels are loaded.** `_core.py` was passing `"plugin"` (no `s`) as the icon name for dynamically injected plugin nav buttons, but the `ICONS` registry only contains `"plugins"`. Changed the icon name to `"plugins"` so the correct puzzle-piece icon is used.
 
 - **Marketplace URL corrected from `/plugins` to `/assets/plug-ins`.** `MARKETPLACE_URL` in `galileo/plugins/marketplace.py` pointed to `https://www.galileo-imaging.com/plugins`, which does not exist; the actual plugin assets live at `assets/plug-ins/` on the website. Updated the constant and added `assets/plug-ins/index.html` to `Galileo.web` with the JSON embed the primary parser expects.
 
 - **Plugin UI panels never appeared after install.** Two root causes: (1) `_build_primary_nav()` never read `UiRegistry` — panels registered by `initialize_from_disk()` at startup were silently discarded. Fixed by injecting primary-level `UiPanel` entries into `page_builders` and `sidebar_items` before the `_NavColumn` is constructed, so plugins present at launch get a nav button and page. (2) Runtime installs (via Marketplace) happen after the nav is built and require a restart; the `_on_dl_done` callback now shows the restart banner and a message saying so. `PluginBase` gains a default `build_page()` method (returns `None` → placeholder page).
+
+- **Plugin panels appeared as top-level sidebar items instead of under Science.** `_build_primary_nav()` was injecting plugin `UiPanel` entries directly into `sidebar_items`, adding a new top-level nav button alongside Star Atlas and Imaging. Plugin panels now go into the Science submenu: `_science_plugin_items` and `_science_plugin_builders` are assembled from the `UiRegistry` before `page_builders` is declared, then passed to `_build_submenu_page` for the `"science"` entry. Both primary- and secondary-level panels are included.
+
+- **Remove plugin dialog showed "Remove 'False'?" and did nothing.** `QPushButton.clicked` always emits a `checked: bool` as its first positional argument. `_on_remove` had `name` as its first parameter, so every click bound `name=False`; `PluginManager.remove(False)` found no matching record and returned silently. Fixed by adding `checked: bool = False` as the leading parameter so `name` retains its default-captured value.
 
 - **`PluginManager` was never instantiated — "Plugin manager not available" on every install/remove action.** `AppWindowCoreMixin.__init__` now creates `self._plugin_manager = PluginManager()` and calls `initialize_from_disk()` before the UI is built. `_plugin_manager` added to `AppWindowState` protocol.
 
