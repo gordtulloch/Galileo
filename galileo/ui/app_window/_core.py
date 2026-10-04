@@ -295,10 +295,13 @@ class AppWindowCoreMixin:
         }
 
         pages: dict[str, int] = {}
+        self._science_nav = None
         for section_id, label, icon_name in PRIMARY_SECTIONS:
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             pages[section_id] = stack.addWidget(page)
+            if section_id == "science":
+                self._science_nav = getattr(page, "_secondary_nav", None)
 
         option_builders = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))

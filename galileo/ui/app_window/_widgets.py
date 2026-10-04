@@ -538,6 +538,12 @@ class _NavColumn(QWidget if _HAS_QT else object):
         """Select *item_id* as if its button had been clicked."""
         self._buttons[item_id].click()
 
+    def hide_item(self, section_id: str) -> None:
+        """Hide the button for *section_id* (e.g. after the plugin providing it is removed)."""
+        btn = self._buttons.get(section_id)
+        if btn is not None:
+            btn.setVisible(False)
+
     def refresh_icons(self, dim_color: str, accent: str) -> None:
         """Regenerate every icon in this column after a theme/accent change."""
         from galileo.ui.icons import make_icon

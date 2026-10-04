@@ -92,6 +92,7 @@ class PluginRecord:
     enabled: bool = True
     loaded: bool = False
     faulted: bool = False
+    loaded_names: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +273,8 @@ class PluginManager:
                 and cls.name
             ):
                 self.load(cls)
+                if cls.name in self._loaded:
+                    record.loaded_names.append(cls.name)
         record.loaded = True
 
     def load(self, plugin_cls: type[PluginBase]) -> None:
@@ -431,6 +434,12 @@ class PluginManager:
 
     # --- Remove (PLUG-120) ------------------------------------------------
 
+    def get_panel_section_ids(self, manifest_name: str) -> list[str]:
+        """Return the plugin class names loaded for *manifest_name*, used to
+        remove their nav buttons when the plugin is uninstalled."""
+        record = self._records.get(manifest_name)
+        return list(record.loaded_names) if record else []
+
     def remove(self, plugin_name: str) -> bool:
         """Uninstall an installed plugin (PLUG-120).
 
@@ -442,7 +451,12 @@ class PluginManager:
 
         Returns ``True`` if fully removed, ``False`` if a restart is needed.
         """
-        self.unload(plugin_name)
+        # Unload all class instances loaded from this manifest record — the
+        # registry key is the class name (e.g. "VSTPlugin"), not the manifest
+        # name (e.g. "vstarget"), so unloading by manifest name alone misses them.
+        record = self._records.get(plugin_name)
+        for cls_name in (record.loaded_names if record else [plugin_name]):
+            self.unload(cls_name)
         record = self._records.pop(plugin_name, None)
         if record is None:
             return True

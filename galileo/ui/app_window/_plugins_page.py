@@ -166,7 +166,12 @@ class AppWindowPluginsPageMixin:
                         )
                         if confirm != QMessageBox.StandardButton.Yes:
                             return
+                        section_ids = m.get_panel_section_ids(name)
                         needs_restart = not m.remove(name)
+                        science_nav = getattr(self, "_science_nav", None)
+                        if science_nav is not None:
+                            for sid in section_ids:
+                                science_nav.hide_item(sid)
                         if needs_restart:
                             restart_banner.setVisible(True)
                         _refresh_installed()
