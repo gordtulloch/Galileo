@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
 from ._widgets import _NavColumn
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # See _state.py: every method below takes an explicit `self:
@@ -263,8 +266,7 @@ class AppWindowCoreMixin:
                 _plugin_ref = _panel.plugin
                 _plabel = _panel.label
                 _science_plugin_builders[_sid] = (
-                    lambda _p=_plugin_ref, _lbl=_plabel:
-                        _p.build_page() or self._build_placeholder_page(_lbl)
+                    lambda _p=_plugin_ref, _lbl=_plabel: self._build_plugin_page(_p, _lbl)
                 )
                 _science_plugin_items.append((_sid, _plabel, "plugins"))
                 if _panel.level == "primary":
@@ -425,7 +427,27 @@ class AppWindowCoreMixin:
         layout.addWidget(stack, 1)
         return page
 
-    def _build_placeholder_page(self: AppWindowState, title: str) -> QWidget:
+    def _build_plugin_page(self: AppWindowState, plugin, label: str) -> QWidget:
+        """Build one plugin's panel, isolating a faulty plugin from the rest of
+        the app (PLUG-040, ARCH-060). ``build_page()`` runs arbitrary
+        third-party code — and, being imported lazily, can still raise
+        ImportError/SyntaxError here long after the plugin loaded cleanly — so a
+        failure must leave Galileo startable rather than aborting nav construction."""
+        try:
+            return plugin.build_page() or self._build_placeholder_page(label)
+        except Exception:
+            logger.exception("Plugin panel %r failed to build", label)
+            return self._build_placeholder_page(
+                label,
+                "This plugin panel failed to load — see the log for details. "
+                "Reinstall or remove the plugin in Options › Plugins.",
+            )
+
+    def _build_placeholder_page(
+        self: AppWindowState,
+        title: str,
+        subtitle_text: str = "This panel is not implemented yet.",
+    ) -> QWidget:
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
         page = QWidget()
@@ -437,8 +459,9 @@ class AppWindowCoreMixin:
         heading.setObjectName("PageTitle")
         layout.addWidget(heading)
 
-        subtitle = QLabel("This panel is not implemented yet.")
+        subtitle = QLabel(subtitle_text)
         subtitle.setObjectName("PageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
         layout.addStretch(1)
         return page

@@ -633,6 +633,89 @@ def test_tc_plug_120_remove_nonexistent_plugin_is_noop():
     assert result is True   # reports success — nothing to do
 
 
+MULTI_PANEL_TOML = """\
+name        = "multipanel"
+version     = "1.0.0"
+api_min     = "1"
+api_max     = "1"
+author      = "Test Author"
+description = "A plugin whose manifest name differs from its class names"
+tier        = "first_party"
+entry_point = "multipanel"
+"""
+
+
+def _make_multi_panel_zip() -> bytes:
+    """A plugin shaped like VSTarget: a manifest name ("multipanel") that matches
+    neither of its two panel-providing class names ("PanelAPlugin"/"PanelBPlugin")."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", MULTI_PANEL_TOML)
+        zf.writestr(
+            "multipanel/__init__.py",
+            "from galileo.plugins import PluginBase\n"
+            "class PanelAPlugin(PluginBase):\n"
+            "    name = 'PanelAPlugin'\n"
+            "    version = '1.0.0'\n"
+            "    api_version = '1'\n"
+            "    panel_level = 'primary'\n"
+            "    panel_label = 'Panel A'\n"
+            "    def activate(self, ctx): pass\n"
+            "    def deactivate(self): pass\n"
+            "class PanelBPlugin(PluginBase):\n"
+            "    name = 'PanelBPlugin'\n"
+            "    version = '1.0.0'\n"
+            "    api_version = '1'\n"
+            "    panel_level = 'secondary'\n"
+            "    panel_label = 'Panel B'\n"
+            "    def activate(self, ctx): pass\n"
+            "    def deactivate(self): pass\n",
+        )
+    return buf.getvalue()
+
+
+@pytest.mark.requirement("TC-PLUG-120")
+@pytest.mark.priority("MVP")
+def test_tc_plug_120_remove_unloads_panels_when_manifest_name_differs(tmp_path):
+    """PLUG-120: Removing a plugin unloads every class it registered and drops their
+    UI panels, even when the manifest name matches none of those class names.
+
+    Regression: remove() used to unload by manifest name only, so a plugin like
+    VSTarget (manifest "vstarget"; classes "VSTPlugin"/"VSTAnalysisPlugin") was
+    never really unloaded and its nav entries survived the uninstall.
+    """
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_file = tmp_path / "multipanel.zip"
+    zip_file.write_bytes(_make_multi_panel_zip())
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.install(zip_file)
+
+        assert mgr.is_loaded("PanelAPlugin")
+        assert mgr.is_loaded("PanelBPlugin")
+        registry = mgr.get_ui_registry()
+        assert {p.label for p in registry.get_primary_panels()} == {"Panel A"}
+        assert {p.label for p in registry.get_secondary_panels()} == {"Panel B"}
+        # The section ids the nav needs in order to hide the buttons.
+        assert set(mgr.get_panel_section_ids("multipanel")) == {"PanelAPlugin", "PanelBPlugin"}
+
+        fully_removed = mgr.remove("multipanel")
+
+    assert fully_removed
+    assert not mgr.is_loaded("PanelAPlugin")
+    assert not mgr.is_loaded("PanelBPlugin")
+    assert not mgr.is_active("PanelAPlugin")
+    assert not mgr.is_active("PanelBPlugin")
+    assert registry.get_primary_panels() == []
+    assert registry.get_secondary_panels() == []
+    assert mgr.get_panel_section_ids("multipanel") == []
+
+
 @pytest.mark.requirement("TC-PLUG-120")
 @pytest.mark.priority("MVP")
 def test_tc_plug_120_remove_deferred_writes_marker(tmp_path):
