@@ -46,7 +46,7 @@ See [this plugin's PSD Glossary](PSD.md#13-glossary) and [core PSD's Glossary](.
 
 ### 2.1 Product Perspective
 
-This plugin is not a standalone product — it is a first-party, pre-loaded plugin against Galileo core's plugin architecture (core `PLUG` domain), loaded in-process at application start alongside core, independently enabled/disabled by the user.
+This plugin is not a standalone product — it is a first-party plugin against Galileo core's plugin architecture (core `PLUG` domain), distributed as a downloadable ZIP from galileo-imaging.com and installed by the user through the Options > Plugins screen (core `PLUG-090`/`PLUG-110`). Once installed, it is independently enabled/disabled by the user (core `PLUG-060`).
 
 ### 2.2 Product Functions (Summary)
 
@@ -62,7 +62,7 @@ Identical to core (Windows/macOS/Linux) — this plugin introduces no additional
 
 ### 2.5 Design and Implementation Constraints
 
-- Loaded exclusively through core's plugin extension points (`PLUG-010`–`PLUG-080`); no direct import of core adapter internals (mirrors core SRS Section 2.5's `ARCH-010` constraint, applied to this plugin specifically).
+- Distributed as a ZIP installable via core `PLUG-090`/`PLUG-110`; loaded exclusively through core's plugin extension points (`PLUG-010`–`PLUG-120`); no direct import of core adapter internals (mirrors core SRS Section 2.5's `ARCH-010` constraint, applied to this plugin specifically).
 - No bundled device control of its own — image capture is performed by core (`EQP-CAM-*`) or the image is retrieved pre-captured from a remote-telescope network.
 
 ### 2.6 Assumptions and Dependencies
@@ -77,7 +77,7 @@ See [this plugin's PSD Section 7](PSD.md#7-dependencies-on-galileo-core) (core c
 |---|---|---|
 | VST-EXT-010 | The system shall retrieve variable-star target data from the AAVSO Target Tool API and comparison-star data from the AAVSO VSP API. | MVP |
 
-Every other external interface this plugin uses is an existing core requirement: Simbad lookup (core `EXT-110`), remote-telescope FTP/FTPS/SFTP retrieval (core `EXT-080`/`EXT-120`) — see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core).
+Every other external interface this plugin uses is an existing core requirement: Simbad lookup (core `EXT-110`) — see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core). Remote-telescope image retrieval (FTP/FTPS/SFTP) is core's alone, owned by the Library (`EXT-080`/`EXT-120`); this plugin takes its images from the library (`VST-AN-100`). `VST-AN-010`, which had the plugin retrieve images itself, is retired (left as a gap, matching this document's ID-stability convention).
 
 ---
 
@@ -98,6 +98,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (core `
 | VST-070 | The system shall persist observation plans across application restarts. | MVP |
 | VST-080 | The system shall look up a target's coordinates/magnitude via a Simbad query (traces to core `EXT-110`) when not already present in the synced AAVSO catalog data. | MVP |
 | VST-090 | The system shall allow a variable-star target, with its observation-plan parameters, to be submitted directly to core's `SCHED` job queue (core `SCHED-010`) from within this plugin's own interface, without switching to the Scheduler UI first (traces to core `PLUG-080`). | MVP |
+| VST-100 | The system shall create a core `SES` session from the observation plan, with targets ordered by right ascension, each contributing a Target block and one Image block per configured filter, plus optional plate-solve/autofocus/dither/guiding blocks. This is the plugin panel's primary hand-off to Galileo; `VST-060`'s ACP script generation remains available for remote-telescope networks that consume scripts rather than sessions. | MVP |
 
 ### 4.2 `VST-AN` — Variable Star Analysis & Photometry
 
@@ -105,7 +106,6 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (core `
 
 | ID | Requirement | Priority |
 |---|---|---|
-| VST-AN-010 | The system shall retrieve calibrated FITS images for a completed observation plan from a remote-telescope data server via FTP/FTPS/SFTP (traces to core `EXT-080`, `EXT-120`). | MVP |
 | VST-AN-020 | The system shall plate-solve retrieved or captured variable-star images via core's existing solver integration (traces to core `PLT-010`) to add WCS coordinates. | MVP |
 | VST-AN-030 | The system shall produce a registered, mean-stacked image from a set of same-target, same-filter frames for photometric signal-to-noise improvement. This is a bounded photometric-analysis operation, distinct from general-purpose deep-sky image stacking, which remains out of scope. | MVP |
 | VST-AN-040 | The system shall perform aperture photometry on a target star against AAVSO VSP comparison stars, using ensemble linear-regression differential photometry. | MVP |
@@ -114,6 +114,7 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (core `
 | VST-AN-070 | The system shall apply stored transformation coefficients to multi-filter observations prior to report generation. | P2 |
 | VST-AN-080 | The system shall provide an exposure-time calculator calibrated to the configured telescope/filter throughput. | P2 |
 | VST-AN-090 | The system shall generate an AAVSO-style finder chart image for a variable-star field, given a target name or coordinates, showing comparison stars and their magnitudes. | P2 |
+| VST-AN-100 | The system shall take its analysis input images from Galileo's image library rather than a filesystem folder, listing every catalogued session (core `LIB-040`) of every target the user has designated a variable star, and shall run photometry over the frames of the selected session(s), preferring a session's calibrated frames where it has them. | MVP |
 
 ---
 
@@ -122,9 +123,9 @@ Delivered as a first-party, pre-loaded, independently disableable plugin (core `
 | Domain | Requirement Count | MVP | P2 | P3 |
 |---|---|---|---|---|
 | VST-EXT | 1 | 1 | 0 | 0 |
-| VST | 9 | 8 | 1 | 0 |
+| VST | 10 | 9 | 1 | 0 |
 | VST-AN | 9 | 5 | 4 | 0 |
-| **Total** | **19** | | | |
+| **Total** | **20** | | | |
 
 ---
 

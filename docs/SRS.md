@@ -78,7 +78,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 
 ## 3. External Interface Requirements
 
-**`EXT-100` is retired** (left as a gap rather than renumbering, matching this document's ID conventions elsewhere): it covered the AAVSO Target Tool/VSP API, which is not a Galileo-core-wide integration — only the VSTarget plugin uses it, so it now lives as `VST-EXT-010` in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md). `EXT-110` (Simbad) and `EXT-120` (SFTP) stay here and are reworded to drop their AAVSO-specific framing, since both are genuinely shared infrastructure — `EXT-110` also backs `SKY-100`'s fallback lookup, and `EXT-120`'s SFTP adapter lives in core `galileo.library.adapters` (SDD Section 4.23), reused by the plugin rather than owned by it.
+**`EXT-100` is retired** (left as a gap rather than renumbering, matching this document's ID conventions elsewhere): it covered the AAVSO Target Tool/VSP API, which is not a Galileo-core-wide integration — only the VSTarget plugin uses it, so it now lives as `VST-EXT-010` in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md). `EXT-110` (Simbad) and `EXT-120` (SFTP) stay here and are reworded to drop their AAVSO-specific framing, since both are genuinely shared infrastructure — `EXT-110` also backs `SKY-100`'s fallback lookup, and `EXT-120`'s SFTP adapter lives in core `galileo.library.adapters` (SDD Section 4.23) and is the Library's alone — the VSTarget plugin does no image retrieval of its own (its `VST-AN-010` is retired) and reads its images from the library.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -372,6 +372,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 | CAL-050 | The system shall abort and report the flat-capture routine if a target ADU level cannot be reached within configured exposure-time bounds. | P2 |
 | CAL-060 | The system shall present the flat-wizard workflow within the Imaging tab (`IMG`) rather than as a separate top-level navigation section. | MVP |
 | CAL-070 | The system shall provide a Sky Flats capture mode that: refuses to run outside the local dawn/dusk twilight window; slews the mount to a star-poor vantage point and disables tracking before capturing; adaptively converges each frame's exposure toward a configured fraction of the camera's configured maximum well depth, re-measuring and re-adjusting after every frame; and submits each captured frame to the Library. | MVP |
+| CAL-080 | The system shall present a Darks Assistant within the Imaging tab (in the zoom toolbar in landscape layout, in the Tools panel in portrait layout) that: accepts a comma-separated list of exposure lengths (default "10,20,30,60" s); accepts an optional filter selection; captures one dark frame at each listed exposure length in order; submits each captured frame to the Library; and prevents the dialog from being closed while a run is in progress. | MVP |
 
 ### 4.10 `FOC` — Autofocus
 
@@ -488,18 +489,28 @@ External delivery is narrowed to **email and/or text message (SMS)** as the two 
 
 ### 4.19 `PLUG` — Plugin Framework
 
-Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo — the VSTarget plugin, [`docs/plugins/vstarget/`](../plugins/vstarget/SRS.md), is the reference example, specified in its own document chain rather than here) from **third-party plugins** (discovered/installed from a repository, `PLUG-030`). The former requires only `PLUG-010`/`020`/`040`/`050`/`060`/`070`/`080` — the loader and extension-point mechanism — which is therefore MVP; the plugin *marketplace* (`PLUG-030`) is not needed for pre-loaded plugins and stays P2.
+Plugins are self-contained ZIP packages (a Python package plus a manifest declaring name, version, API-compatibility range, author, and description). Distribution is via the **galileo-imaging.com plugin page**, where each plugin appears as a direct download link. The **Options > Plugins screen** provides two installation paths and a removal path; both installation paths share the same extraction, validation, version-check, and load logic:
+
+- **Install from file (`PLUG-090`)** — user selects a ZIP from local disk.
+- **Plugin Marketplace (`PLUG-100`/`PLUG-110`)** — the screen fetches the list of available plugins by scraping/parsing the galileo-imaging.com plugins page, presents each entry (name, description, version, author), and installs the user's chosen plugin with a single action.
+- **Remove (`PLUG-120`)** — uninstall an installed plugin (remove its files, deregister its extension points); a restart may be required for full unload.
+
+Plugins are divided into two tiers: **first-party** (authored by the Galileo project, listed prominently on the website — the VSTarget planning and analysis plugins are the first examples) and **third-party** (community-authored). No plugins are bundled inside the Galileo installer itself; the VSTarget plugin ships exclusively as a downloadable ZIP on the website, making it the concrete proof that the entire distribution pipeline works. Every installed plugin (first-party or third-party) can be independently enabled or disabled; a disabled plugin is fully inert.
 
 | ID | Requirement | Priority |
 |---|---|---|
 | PLUG-010 | The system shall expose a documented API allowing a plugin to register a new device backend implementing the `ARCH-010` abstraction — including a Safety Monitor device backend (traces to `SAFE-080`), which is trusted identically to an external INDI/Alpaca driver rather than treated as a special case. | MVP |
 | PLUG-020 | The system shall expose a documented API allowing a plugin to register a new session action, instruction, condition, or trigger block type (traces to `SES-340`), or a new top-level or nested UI panel. | MVP |
-| PLUG-030 | The system shall provide an in-app plugin manager to browse, install, update, and remove third-party plugins from a configured plugin repository. | P2 |
+| PLUG-030 | The system shall provide an **Options > Plugins screen** with three capabilities: (1) a list of currently installed plugins showing name, version, enabled/disabled state, and author; (2) an **Install from file** button that accepts a plugin ZIP from the local filesystem; (3) a **Plugin Marketplace** tab that fetches and displays available plugins from the galileo-imaging.com plugin page (`PLUG-100`). Each installed plugin shall have an enable/disable toggle and a **Remove** button (`PLUG-120`). | MVP |
 | PLUG-040 | The system shall load and unload plugins without requiring a full application rebuild, and shall isolate a plugin failure from crashing the core application. | MVP |
-| PLUG-050 | The system shall version-check a plugin against the running application's plugin API version and warn on incompatibility. | MVP |
-| PLUG-060 | The system shall ship one or more first-party plugins pre-loaded (not requiring download/install), each independently enabled or disabled by the user; a disabled pre-loaded plugin shall be fully inert (no UI, no background activity), and an enabled one shall be functionally indistinguishable from an equivalent capability built into core. | MVP |
+| PLUG-050 | The system shall version-check a plugin against the running application's plugin API version and warn on incompatibility before completing installation. | MVP |
+| PLUG-060 | Every installed plugin — whether first-party or third-party — that is enabled shall be functionally indistinguishable from an equivalent capability built into core; a disabled plugin shall be fully inert (no UI, no background activity). No plugins are bundled into the Galileo installer; all plugins, including first-party ones, are obtained via `PLUG-090` or `PLUG-110`. | MVP |
 | PLUG-070 | The system shall allow a plugin's registered UI panel to be inserted at either the primary navigation level (a top-level tab/section, peer to built-in ones) or the secondary level (nested within an existing section), as declared by the plugin. | MVP |
 | PLUG-080 | The system shall expose, via `PluginContext`, a documented API for a plugin to invoke specific core services it has been granted access to (e.g. submitting a job to the `SCHED` queue) without those services being otherwise part of the plugin extension-point surface (`PLUG-010`/`020`). | MVP |
+| PLUG-090 | The system shall install a plugin from a ZIP file selected from the local filesystem: extract it to a configured plugins directory, validate the manifest (schema, required fields), version-check against the running application (`PLUG-050`), and make the plugin available immediately or, if dynamic load is not possible, on the next application restart. | MVP |
+| PLUG-100 | The Plugin Marketplace shall fetch the list of available plugins by retrieving and parsing the galileo-imaging.com plugins page (HTML scrape or a structured index file on that page, whichever the website provides), presenting each entry with at minimum: plugin name, short description, current version, author, and a download action. The fetch shall fail gracefully (an explanatory message, not a crash) when the page is unreachable. | MVP |
+| PLUG-110 | The Plugin Marketplace shall allow the user to download and install a listed plugin with a single action, using the same extraction/validation/load path as `PLUG-090`. Download progress shall be shown; a partially-downloaded ZIP shall be discarded if the download fails or is cancelled. | MVP |
+| PLUG-120 | The system shall allow the user to remove (uninstall) an installed plugin from the Options > Plugins screen: delete its files from the plugins directory, deregister its extension-point contributions, and — if full deregistration requires a restart — disable the plugin immediately and complete removal on the next restart, notifying the user of that requirement. A first-party plugin removed this way is re-installable from the Marketplace like any other. | MVP |
 
 ### 4.20 `UI` — Customization & Theming
 
@@ -542,10 +553,11 @@ Distinguishes **first-party, pre-loaded plugins** (shipped with Galileo — the 
 | LIB-140 | The system shall verify file integrity via stored content hashes on demand, flagging any repository file whose content no longer matches its recorded hash. | P2 |
 | LIB-150 | The system shall automatically register each frame into the repository catalog as it is written to disk during a running session (`SES`), rather than requiring a separate manual or scheduled scan (`LIB-010`) to discover it. | MVP |
 | LIB-160 | The system shall automatically create a session container grouping every frame acquired during one session-block execution, distinct from `LIB-040`'s post-hoc heuristic (camera/binning/temperature/date) grouping of files already in the repository — a session-block container is authoritative because it comes directly from `SES` execution, not inferred from file metadata. | MVP |
+| LIB-170 | The system shall browse and selectively download files from an SFTP server (traces to `EXT-120`): every FITS file under a configured remote folder, authenticating with the configured account and a key file or password (kept in the OS keychain, not `library.ini`), with a host-key policy that either logs or refuses unknown servers, from the Download dialog and the `galileo-download` command. This is the Library's only SFTP capability; plugins do not carry their own. | P2 |
 
 ### 4.23 `VST` / `VST-AN` — Moved
 
-Variable Star Target Planning and Variable Star Analysis & Photometry are no longer decomposed here — they are the VSTarget plugin's own requirements, specified in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) Sections 4.1–4.2 against this document's `PLUG` domain (`PLUG-060`/`070`/`080`) and a small number of other core requirements consumed by reference (`SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`). This section number is kept as a placeholder rather than renumbered away, consistent with this document's ID-stability convention elsewhere (e.g. `SES`'s Section 4.5a).
+Variable Star Target Planning and Variable Star Analysis & Photometry are no longer decomposed here — they are the VSTarget plugin's own requirements, specified in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) Sections 4.1–4.2 against this document's `PLUG` domain (`PLUG-060`/`070`/`080`) and a small number of other core requirements consumed by reference (`SKY-030`, `EXT-110`, `PLT-010`, `SCHED-010`). This section number is kept as a placeholder rather than renumbered away, consistent with this document's ID-stability convention elsewhere (e.g. `SES`'s Section 4.5a).
 
 ---
 
@@ -647,7 +659,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |
-| LIB | 15 | 10 | 4 | 1 |
+| LIB | 16 | 10 | 5 | 1 |
 | NFR-PERF | 3 | 3 | 0 | 0 |
 | NFR-REL | 4 | 3 | 1 | 0 |
 | NFR-PORT | 2 | 2 | 0 | 0 |
@@ -657,7 +669,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **270** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **271** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
 
 ---
 

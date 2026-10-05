@@ -376,6 +376,9 @@ def test_star_atlas_find_solar_system_body(view):
 def window(tmp_path, monkeypatch):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     monkeypatch.setattr(sa, "load_star_catalog", sa._fallback_catalog)
+    # Built before any test body runs, so isolate the Planning options here: otherwise the page reads the
+    # developer's real planning.json and its checkboxes start in whatever state they last saved.
+    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
     from galileo.library.database import db, init_db
     init_db(tmp_path / "star_atlas_page.db")
     from galileo.ui.app_window import AppWindow
@@ -423,7 +426,10 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert ["What's Up Tonight", "Targets", "Sessions", "Schedule"] in menus and ["Variable Stars"] in menus
+    # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
+    # Science), so check that the core items come first rather than that the menu is exactly them.
+    assert ["What's Up Tonight", "Targets", "Sessions", "Schedule"] in menus
+    assert any(menu[:1] == ["Variable Stars"] for menu in menus)
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 
@@ -709,7 +715,8 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
     view = page.findChildren(StarAtlasView)[0]
 
     vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
-    view.contextMenuRequested.emit(vega, QtCore.QPoint(10, 10))
+    # (object, global position, sky point) — the third is the clicked sky position, None when an object was hit
+    view.contextMenuRequested.emit(vega, QtCore.QPoint(10, 10), None)
 
     menu = captured["menu"]
     actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
@@ -720,7 +727,7 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
     mock_create.assert_called_once_with("Vega", 279.2347, 38.7837)
 
     mock_create.reset_mock()
-    view.contextMenuRequested.emit(None, QtCore.QPoint(10, 10))
+    view.contextMenuRequested.emit(None, QtCore.QPoint(10, 10), None)
     menu = captured["menu"]
     add_to_session = next(a for a in menu.actions() if a.text() == "Add to Session")
     assert not add_to_session.isEnabled()

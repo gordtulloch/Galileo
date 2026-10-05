@@ -191,6 +191,12 @@ class AppWindowImagingPageMixin:
 
         settings_layout.addWidget(view_group)
 
+        tools_group = QGroupBox("Tools")
+        tools_group_layout = QVBoxLayout(tools_group)
+        tools_group_layout.setSpacing(6)
+        tools_group.setVisible(False)
+        settings_layout.addWidget(tools_group)
+
         nudge_group = QGroupBox("Mount Nudge")
         nudge_layout = QVBoxLayout(nudge_group)
         nudge_grid = QGridLayout()
@@ -273,9 +279,15 @@ class AppWindowImagingPageMixin:
             "for Sky Flats — checks local twilight, slews the mount to a star-poor patch of sky "
             "and converges each exposure on the camera's Max Well Depth (CAL-070)."
         )
+        darks_btn = QPushButton("Darks…")
+        darks_btn.setToolTip(
+            "Open the Darks Assistant: capture one dark frame at each exposure length in a "
+            "comma-separated list, saving each to the Library."
+        )
         annotate_status = QLabel("")
         annotate_status.setObjectName("StatusHint")
         zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
+        zoom_toolbar.insertWidget(0, darks_btn)
         zoom_toolbar.insertWidget(0, flats_btn)
         zoom_toolbar.insertWidget(0, framing_btn)
         zoom_toolbar.insertWidget(0, annotate_btn)
@@ -308,6 +320,7 @@ class AppWindowImagingPageMixin:
         progress_row = QHBoxLayout(progress_widget)
         progress_row.setContentsMargins(0, 0, 0, 0)
         status_label = QLabel("Idle")
+        status_label.setWordWrap(True)
         progress_row.addWidget(status_label)
         progress_bar = QProgressBar()
         progress_bar.setRange(0, 1000)
@@ -396,6 +409,23 @@ class AppWindowImagingPageMixin:
                 for widget in (*secondary_widgets, *log_widgets):
                     content_layout.addWidget(widget)
                     widget.setVisible(True)
+            # Move Annotate / Framing / Flats / Darks between the zoom toolbar (landscape)
+            # and the Tools panel under View (portrait — IMG-120).
+            for btn in (annotate_btn, framing_btn, flats_btn, darks_btn):
+                zoom_toolbar.removeWidget(btn)
+                tools_group_layout.removeWidget(btn)
+            if portrait:
+                tools_group_layout.addWidget(annotate_btn)
+                tools_group_layout.addWidget(framing_btn)
+                tools_group_layout.addWidget(flats_btn)
+                tools_group_layout.addWidget(darks_btn)
+                tools_group.setVisible(True)
+            else:
+                zoom_toolbar.insertWidget(0, darks_btn)
+                zoom_toolbar.insertWidget(0, flats_btn)
+                zoom_toolbar.insertWidget(0, framing_btn)
+                zoom_toolbar.insertWidget(0, annotate_btn)
+                tools_group.setVisible(False)
             dock_panel.setVisible(portrait)
             log_bar.setVisible(portrait)
             # Landscape: dock/log are hidden, so left_column collapses to just Settings'
@@ -930,6 +960,11 @@ class AppWindowImagingPageMixin:
             self._open_flats_dialog(_current_service())
 
         flats_btn.clicked.connect(_open_flats)
+
+        def _open_darks() -> None:
+            self._open_darks_dialog()
+
+        darks_btn.clicked.connect(_open_darks)
 
         def save_frame() -> None:
             service = _current_service()

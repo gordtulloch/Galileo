@@ -240,8 +240,12 @@ class OpenMeteoClient:
             "forecast_days": 1,
         })
         url = f"https://api.open-meteo.com/v1/forecast?{params}"
-        try:
+        def _fetch() -> dict:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 return json.loads(resp.read())
+        try:
+            # Off the event loop: this runs inside the safety poll, which must stay responsive
+            # even when the forecast service is slow.
+            return await asyncio.to_thread(_fetch)
         except Exception:
             return {}

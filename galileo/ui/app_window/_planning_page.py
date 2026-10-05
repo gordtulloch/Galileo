@@ -213,6 +213,33 @@ class AppWindowPlanningPageMixin:
             pass
         form.addRow("Object type", type_combo)
 
+        constellation_combo = QComboBox()
+        constellation_combo.addItem("Any")
+        for _con in (
+            "Andromeda", "Antlia", "Apus", "Aquarius", "Aquila", "Ara", "Aries",
+            "Auriga", "Boötes", "Caelum", "Camelopardalis", "Cancer",
+            "Canes Venatici", "Canis Major", "Canis Minor", "Capricornus",
+            "Carina", "Cassiopeia", "Centaurus", "Cepheus", "Cetus",
+            "Chamaeleon", "Circinus", "Columba", "Coma Berenices",
+            "Corona Australis", "Corona Borealis", "Corvus", "Crater", "Crux",
+            "Cygnus", "Delphinus", "Dorado", "Draco", "Equuleus", "Eridanus",
+            "Fornax", "Gemini", "Grus", "Hercules", "Horologium", "Hydra",
+            "Hydrus", "Indus", "Lacerta", "Leo", "Leo Minor", "Lepus",
+            "Libra", "Lupus", "Lynx", "Lyra", "Mensa", "Microscopium",
+            "Monoceros", "Musca", "Norma", "Octans", "Ophiuchus", "Orion",
+            "Pavo", "Pegasus", "Perseus", "Phoenix", "Pictor", "Pisces",
+            "Piscis Austrinus", "Puppis", "Pyxis", "Reticulum", "Sagitta",
+            "Sagittarius", "Scorpius", "Sculptor", "Scutum", "Serpens",
+            "Sextans", "Taurus", "Telescopium", "Triangulum",
+            "Triangulum Australe", "Tucana", "Ursa Major", "Ursa Minor",
+            "Vela", "Virgo", "Volans", "Vulpecula",
+        ):
+            constellation_combo.addItem(_con)
+        constellation_combo.setToolTip(
+            "Restrict results to objects whose coordinates fall within this IAU constellation."
+        )
+        form.addRow("Constellation", constellation_combo)
+
         # Stacked, not side by side (QVBoxLayout, not QHBoxLayout): the fixed
         # 260px-wide criteria panel doesn't leave enough field-column room for
         # three checkboxes abreast (each needs its indicator plus label text,
@@ -392,6 +419,9 @@ class AppWindowPlanningPageMixin:
                             "Visible tonight/Moon separation need the Observatory's latitude/longitude "
                             "set (top bar) — showing all matches instead.", 6000)
                     selected_catalogs = {cat for cat, cb in catalog_checks.items() if cb.isChecked()} or None
+                    selected_constellation = constellation_combo.currentText()
+                    if selected_constellation == "Any":
+                        selected_constellation = None
                     matches = atlas.filter(
                         object_types=object_types,
                         max_magnitude=max_mag.value(),
@@ -403,6 +433,7 @@ class AppWindowPlanningPageMixin:
                         min_duration_hours=min_duration.value(),
                         min_moon_separation_deg=min_moon_sep.value(),
                         catalogs=selected_catalogs,
+                        constellation=selected_constellation,
                     )
             except Exception:
                 logger.exception("Sky Atlas search failed")

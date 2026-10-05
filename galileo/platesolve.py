@@ -194,13 +194,16 @@ class PlateSolver:
         return SolveResult(success=False, failure_reason=f"Unknown backend: {self.backend}")
 
     async def _run_astap(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:
-        if not self.executable or not Path(self.executable).exists():
+        if not self.executable or not await asyncio.to_thread(Path(self.executable).exists):
             return SolveResult(success=False, failure_reason="ASTAP executable not found")
 
         base = fits_path.with_suffix("")
         # A previous solve of this same frame must not be mistaken for this one's answer.
-        for suffix in (".ini", ".wcs"):
-            base.with_suffix(suffix).unlink(missing_ok=True)
+        def _clear_previous_solve() -> None:
+            for suffix in (".ini", ".wcs"):
+                base.with_suffix(suffix).unlink(missing_ok=True)
+
+        await asyncio.to_thread(_clear_previous_solve)
 
         cmd = [self.executable, "-f", str(fits_path), "-update", "-o", str(base)]
         if self.params.fov_hint_deg > 0:

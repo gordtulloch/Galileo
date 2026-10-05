@@ -27,6 +27,10 @@ class ObservatoryRecord(BaseModel):
     timezone = pw.TextField(null=True)
     physical_address = pw.TextField(null=True)
     owner = pw.TextField(null=True)
+    # Notification contact details (OBS-090)
+    notification_type = pw.TextField(null=True)   # "Email", "Text", "Both", or None
+    email_address = pw.TextField(null=True)
+    cell_number = pw.TextField(null=True)
 
     class Meta:
         table_name = "observatories"

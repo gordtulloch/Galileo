@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-080)."""
+"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-120)."""
+
+import io
+import json
+import zipfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import MagicMock
 
 
 @pytest.fixture
@@ -231,20 +236,30 @@ def test_tc_plug_050_version_check_on_load(plugin_manager):
 
 @pytest.mark.requirement("TC-PLUG-060")
 @pytest.mark.priority("MVP")
-def test_tc_plug_060_preloaded_first_party_plugins_independently_disableable(plugin_manager):
-    """PLUG-060: First-party pre-loaded plugins independently enable/disable; disabled ones are fully inert."""
+def test_tc_plug_060_installed_plugin_enable_disable(plugin_manager):
+    """PLUG-060: Installed plugin is active when enabled and fully inert when disabled."""
     plugins = pytest.importorskip("galileo.plugins")
-    plugin_manager.initialize_preloaded()
 
-    # VST plugin (pre-loaded)
-    assert plugin_manager.is_loaded("VSTPlugin")
+    class FirstPartyPlugin(plugins.PluginBase):
+        name = "FirstPartyPlugin"
+        version = "1.0.0"
+        api_version = "1"
+        panel_level = "primary"
+        panel_label = "First Party"
 
-    plugin_manager.disable("VSTPlugin")
-    assert not plugin_manager.is_active("VSTPlugin")
-    assert plugin_manager.get_ui_panels("VSTPlugin") == []
+        def activate(self, ctx): pass
+        def deactivate(self): pass
 
-    plugin_manager.enable("VSTPlugin")
-    assert plugin_manager.is_active("VSTPlugin")
+    plugin_manager.load(FirstPartyPlugin)
+    assert plugin_manager.is_active("FirstPartyPlugin")
+    assert any(p.label == "First Party" for p in plugin_manager.get_ui_registry().get_primary_panels())
+
+    plugin_manager.disable("FirstPartyPlugin")
+    assert not plugin_manager.is_active("FirstPartyPlugin")
+    assert plugin_manager.get_ui_panels("FirstPartyPlugin") == []
+
+    plugin_manager.enable("FirstPartyPlugin")
+    assert plugin_manager.is_active("FirstPartyPlugin")
 
 
 # ---------------------------------------------------------------------------
@@ -291,3 +306,513 @@ def test_tc_plug_080_plugin_context_api_for_core_services(plugin_manager):
     # Accessing a service not in the grant list must raise
     with pytest.raises(plugins.ServiceAccessDenied):
         ctx.get_service("library")
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by PLUG-090 … PLUG-120 tests
+# ---------------------------------------------------------------------------
+
+MINIMAL_TOML = """\
+name        = "TestPlugin"
+version     = "1.0.0"
+api_min     = "1"
+api_max     = "1"
+author      = "Test Author"
+description = "A minimal test plugin"
+tier        = "third_party"
+entry_point = "TestPlugin"
+"""
+
+INCOMPATIBLE_TOML = """\
+name        = "BadVersionPlugin"
+version     = "1.0.0"
+api_min     = "99"
+api_max     = "99"
+author      = "Test Author"
+description = "Requires a future API version"
+tier        = "third_party"
+"""
+
+MISSING_FIELD_TOML = """\
+name        = "MissingFields"
+version     = "1.0.0"
+"""
+
+
+def _make_plugin_zip(toml_content: str, include_package: bool = True) -> bytes:
+    """Build an in-memory ZIP containing plugin.toml and optionally a stub package.
+
+    The stub package is a top-level ``TestPlugin`` module (not nested under
+    ``galileo.plugins``) to avoid namespace-package conflicts with the main
+    installed ``galileo`` package during tests.  ``MINIMAL_TOML`` sets
+    ``entry_point = "TestPlugin"`` to match.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", toml_content)
+        if include_package:
+            # A PluginBase subclass the loader will discover.
+            zf.writestr(
+                "TestPlugin/__init__.py",
+                "from galileo.plugins import PluginBase\n"
+                "class TestPlugin(PluginBase):\n"
+                "    name = 'TestPlugin'\n"
+                "    version = '1.0.0'\n"
+                "    api_version = '1'\n"
+                "    def activate(self, ctx): pass\n"
+                "    def deactivate(self): pass\n",
+            )
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-090
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-PLUG-090")
+@pytest.mark.priority("MVP")
+def test_tc_plug_090_install_from_valid_zip(tmp_path):
+    """PLUG-090: Install plugin from valid local ZIP; plugin appears in installed list."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_bytes = _make_plugin_zip(MINIMAL_TOML)
+    zip_file = tmp_path / "testplugin.zip"
+    zip_file.write_bytes(zip_bytes)
+
+    with patch("galileo.platform.get_plugins_dir", return_value=tmp_path / "plugins"):
+        mgr = plugins.PluginManager()
+        record = mgr.install(zip_file)
+
+    assert record.manifest.name == "TestPlugin"
+    assert record.manifest.version == "1.0.0"
+    assert (tmp_path / "plugins" / "TestPlugin-1.0.0").is_dir()
+
+
+@pytest.mark.requirement("TC-PLUG-090")
+@pytest.mark.priority("MVP")
+def test_tc_plug_090_install_missing_manifest_raises(tmp_path):
+    """PLUG-090 error path: ZIP without plugin.toml raises PluginInstallError; no files left."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("README.txt", "no manifest here")
+    zip_file = tmp_path / "bad.zip"
+    zip_file.write_bytes(buf.getvalue())
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError, match="plugin.toml"):
+            mgr.install(zip_file)
+
+    # Nothing should have been extracted.
+    assert list(plugins_dir.iterdir()) == []
+
+
+@pytest.mark.requirement("TC-PLUG-090")
+@pytest.mark.priority("MVP")
+def test_tc_plug_090_install_missing_required_manifest_field_raises(tmp_path):
+    """PLUG-090 error path: manifest with missing required fields raises PluginInstallError."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_bytes = _make_plugin_zip(MISSING_FIELD_TOML)
+    zip_file = tmp_path / "bad.zip"
+    zip_file.write_bytes(zip_bytes)
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError):
+            mgr.install(zip_file)
+
+    assert list(plugins_dir.iterdir()) == []
+
+
+@pytest.mark.requirement("TC-PLUG-090")
+@pytest.mark.priority("MVP")
+def test_tc_plug_090_install_incompatible_api_version_raises(tmp_path):
+    """PLUG-090 / PLUG-050: Incompatible API version raises PluginInstallError; no files left."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_bytes = _make_plugin_zip(INCOMPATIBLE_TOML)
+    zip_file = tmp_path / "bad.zip"
+    zip_file.write_bytes(zip_bytes)
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError, match="API"):
+            mgr.install(zip_file)
+
+    assert list(plugins_dir.iterdir()) == []
+
+
+@pytest.mark.requirement("TC-PLUG-090")
+@pytest.mark.priority("MVP")
+def test_tc_plug_090_install_corrupt_zip_raises(tmp_path):
+    """PLUG-090 error path: corrupt archive raises PluginInstallError."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_file = tmp_path / "corrupt.zip"
+    zip_file.write_bytes(b"this is not a zip file at all")
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError):
+            mgr.install(zip_file)
+
+    assert list(plugins_dir.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-100
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_fetch_json_embed():
+    """PLUG-100: Marketplace fetch parses JSON embed in the page."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = """
+    <html><body>
+    <script type="application/json" id="galileo-plugins">
+    [
+      {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
+       "tier": "first_party", "author": "Gord Tulloch",
+       "download_url": "https://example.com/vstarget-1.0.0.zip"}
+    ]
+    </script>
+    </body></html>
+    """
+
+    import requests
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp):
+        client = marketplace.MarketplaceClient()
+        entries, error = client.fetch()
+
+    assert error == ""
+    assert len(entries) == 1
+    assert entries[0].name == "vstarget"
+    assert entries[0].version == "1.0.0"
+    assert entries[0].tier == "first_party"
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_json_embed_relative_url_resolved():
+    """PLUG-100: Relative download_url in JSON embed is resolved against the base URL."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = """
+    <html><body>
+    <script type="application/json" id="galileo-plugins">
+    [
+      {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
+       "tier": "first_party", "author": "Gord Tulloch",
+       "download_url": "vstarget-1.0.0.zip"}
+    ]
+    </script>
+    </body></html>
+    """
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp):
+        client = marketplace.MarketplaceClient(
+            base_url="https://www.galileo-imaging.com/assets/plug-ins/"
+        )
+        entries, error = client.fetch()
+
+    assert error == ""
+    assert len(entries) == 1
+    assert entries[0].download_url == "https://www.galileo-imaging.com/assets/plug-ins/vstarget-1.0.0.zip"
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_fetch_html_fallback():
+    """PLUG-100: Marketplace fetch falls back to HTML scraping when no JSON embed."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = """
+    <html><body>
+    <section id="plugins">
+      <a href="/downloads/myplugin-1.2.0.zip">My Plugin 1.2.0</a>
+    </section>
+    </body></html>
+    """
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp):
+        client = marketplace.MarketplaceClient()
+        entries, error = client.fetch()
+
+    assert error == ""
+    assert len(entries) == 1
+    assert "myplugin" in entries[0].name.lower()
+    assert entries[0].download_url.endswith(".zip")
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_fetch_network_failure_graceful():
+    """PLUG-100: Network failure returns empty list + error string; no exception propagated."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    with patch("requests.get", side_effect=ConnectionError("network down")):
+        client = marketplace.MarketplaceClient()
+        entries, error = client.fetch()
+
+    assert entries == []
+    assert "network down" in error or len(error) > 0
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_fetch_uses_cache_on_second_call():
+    """PLUG-100: Second call within session returns cached result; no second HTTP request."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = '<script type="application/json" id="galileo-plugins">[{"name":"X","description":"","version":"1","tier":"third_party","author":"","download_url":"http://x.com/x.zip"}]</script>'
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp) as mock_get:
+        client = marketplace.MarketplaceClient()
+        client.fetch()
+        client.fetch()   # second call — should NOT issue another HTTP request
+
+    assert mock_get.call_count == 1
+
+
+@pytest.mark.requirement("TC-PLUG-100")
+@pytest.mark.priority("MVP")
+def test_tc_plug_100_marketplace_refresh_clears_cache():
+    """PLUG-100: refresh() forces a new HTTP request."""
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    html = '<script type="application/json" id="galileo-plugins">[]</script>'
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = html
+
+    with patch("requests.get", return_value=mock_resp) as mock_get:
+        client = marketplace.MarketplaceClient()
+        client.fetch()
+        client.refresh()
+
+    assert mock_get.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-110
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-PLUG-110")
+@pytest.mark.priority("MVP")
+def test_tc_plug_110_marketplace_download_and_install(tmp_path):
+    """PLUG-110: Marketplace download + install pipeline installs the plugin."""
+    plugins = pytest.importorskip("galileo.plugins")
+    marketplace = pytest.importorskip("galileo.plugins.marketplace")
+
+    zip_bytes = _make_plugin_zip(MINIMAL_TOML)
+    entry = marketplace.MarketplaceEntry(
+        name="TestPlugin",
+        description="Test",
+        version="1.0.0",
+        tier="third_party",
+        author="Tester",
+        download_url="https://example.com/testplugin-1.0.0.zip",
+    )
+
+    download_dest = tmp_path / "testplugin-1.0.0.zip"
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    # Simulate download by patching requests.get to return the zip bytes.
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.headers = {"content-length": str(len(zip_bytes))}
+    mock_resp.iter_content = MagicMock(return_value=[zip_bytes])
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("requests.get", return_value=mock_resp):
+        client = marketplace.MarketplaceClient()
+        ok = client.download(entry, str(download_dest))
+
+    assert ok
+    assert download_dest.exists()
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        record = mgr.install(download_dest)
+
+    assert record.manifest.name == "TestPlugin"
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-120
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-PLUG-120")
+@pytest.mark.priority("MVP")
+def test_tc_plug_120_remove_plugin_fully(tmp_path):
+    """PLUG-120: Remove plugin — disabled immediately, files gone when full removal succeeds."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_bytes = _make_plugin_zip(MINIMAL_TOML)
+    zip_file = tmp_path / "testplugin.zip"
+    zip_file.write_bytes(zip_bytes)
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.install(zip_file)
+        assert mgr.is_loaded("TestPlugin")
+
+        fully_removed = mgr.remove("TestPlugin")
+
+    assert fully_removed
+    assert not mgr.is_loaded("TestPlugin")
+    assert not mgr.is_active("TestPlugin")
+    # Install directory should be gone.
+    assert not (plugins_dir / "TestPlugin-1.0.0").exists()
+
+
+@pytest.mark.requirement("TC-PLUG-120")
+@pytest.mark.priority("MVP")
+def test_tc_plug_120_remove_nonexistent_plugin_is_noop():
+    """PLUG-120: Removing a plugin that is not installed is a graceful no-op."""
+    plugins = pytest.importorskip("galileo.plugins")
+    mgr = plugins.PluginManager()
+    result = mgr.remove("DoesNotExist")
+    assert result is True   # reports success — nothing to do
+
+
+MULTI_PANEL_TOML = """\
+name        = "multipanel"
+version     = "1.0.0"
+api_min     = "1"
+api_max     = "1"
+author      = "Test Author"
+description = "A plugin whose manifest name differs from its class names"
+tier        = "first_party"
+entry_point = "multipanel"
+"""
+
+
+def _make_multi_panel_zip() -> bytes:
+    """A plugin shaped like VSTarget: a manifest name ("multipanel") that matches
+    neither of its two panel-providing class names ("PanelAPlugin"/"PanelBPlugin")."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", MULTI_PANEL_TOML)
+        zf.writestr(
+            "multipanel/__init__.py",
+            "from galileo.plugins import PluginBase\n"
+            "class PanelAPlugin(PluginBase):\n"
+            "    name = 'PanelAPlugin'\n"
+            "    version = '1.0.0'\n"
+            "    api_version = '1'\n"
+            "    panel_level = 'primary'\n"
+            "    panel_label = 'Panel A'\n"
+            "    def activate(self, ctx): pass\n"
+            "    def deactivate(self): pass\n"
+            "class PanelBPlugin(PluginBase):\n"
+            "    name = 'PanelBPlugin'\n"
+            "    version = '1.0.0'\n"
+            "    api_version = '1'\n"
+            "    panel_level = 'secondary'\n"
+            "    panel_label = 'Panel B'\n"
+            "    def activate(self, ctx): pass\n"
+            "    def deactivate(self): pass\n",
+        )
+    return buf.getvalue()
+
+
+@pytest.mark.requirement("TC-PLUG-120")
+@pytest.mark.priority("MVP")
+def test_tc_plug_120_remove_unloads_panels_when_manifest_name_differs(tmp_path):
+    """PLUG-120: Removing a plugin unloads every class it registered and drops their
+    UI panels, even when the manifest name matches none of those class names.
+
+    Regression: remove() used to unload by manifest name only, so a plugin like
+    VSTarget (manifest "vstarget"; classes "VSTPlugin"/"VSTAnalysisPlugin") was
+    never really unloaded and its nav entries survived the uninstall.
+    """
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_file = tmp_path / "multipanel.zip"
+    zip_file.write_bytes(_make_multi_panel_zip())
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.install(zip_file)
+
+        assert mgr.is_loaded("PanelAPlugin")
+        assert mgr.is_loaded("PanelBPlugin")
+        registry = mgr.get_ui_registry()
+        assert {p.label for p in registry.get_primary_panels()} == {"Panel A"}
+        assert {p.label for p in registry.get_secondary_panels()} == {"Panel B"}
+        # The section ids the nav needs in order to hide the buttons.
+        assert set(mgr.get_panel_section_ids("multipanel")) == {"PanelAPlugin", "PanelBPlugin"}
+
+        fully_removed = mgr.remove("multipanel")
+
+    assert fully_removed
+    assert not mgr.is_loaded("PanelAPlugin")
+    assert not mgr.is_loaded("PanelBPlugin")
+    assert not mgr.is_active("PanelAPlugin")
+    assert not mgr.is_active("PanelBPlugin")
+    assert registry.get_primary_panels() == []
+    assert registry.get_secondary_panels() == []
+    assert mgr.get_panel_section_ids("multipanel") == []
+
+
+@pytest.mark.requirement("TC-PLUG-120")
+@pytest.mark.priority("MVP")
+def test_tc_plug_120_remove_deferred_writes_marker(tmp_path):
+    """PLUG-120: When files can't be deleted, a .pending_removal marker is written."""
+    plugins = pytest.importorskip("galileo.plugins")
+
+    zip_bytes = _make_plugin_zip(MINIMAL_TOML)
+    zip_file = tmp_path / "testplugin.zip"
+    zip_file.write_bytes(zip_bytes)
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.install(zip_file)
+
+        # Simulate OSError on rmtree (files in use on Windows).
+        with patch("shutil.rmtree", side_effect=OSError("file in use")):
+            result = mgr.remove("TestPlugin")
+
+    assert result is False   # deferred removal needed
+    marker = plugins_dir / "TestPlugin-1.0.0" / plugins._PENDING_REMOVAL_MARKER
+    assert marker.exists()

@@ -114,8 +114,13 @@ class StarAtlasView(QWidget):
     ``catalogsLoaded(stars, dsos)`` once the background catalog load finishes."""
 
     objectSelected = Signal(dict)
-    # Right-click: the object under the cursor (None over empty sky) and the global position for a menu.
-    contextMenuRequested = Signal(object, QPoint)
+    # Fires on every selection change — None when the selection is cleared, a dict when one is made.
+    # objectSelected fires only for non-None; selectionChanged fires for both, so listeners can
+    # react to deselection (e.g. disabling action buttons in the detail panel).
+    selectionChanged = Signal(object)
+    # Right-click: the object under the cursor (None over empty sky), the global position for a menu,
+    # and the sky coords at the click (always a dict with ra_deg/dec_deg/alt/az, or None on error).
+    contextMenuRequested = Signal(object, QPoint, object)
     viewChanged = Signal()
     catalogsLoaded = Signal(int, int)
     _catalogsReady = Signal(object, object, object, object)
@@ -298,6 +303,7 @@ class StarAtlasView(QWidget):
         self.update()
         if obj is not None:
             self.objectSelected.emit(obj)
+        self.selectionChanged.emit(obj)
 
     def find(self, query: str) -> dict[str, Any] | None:
         """Look an object up by name across bodies, stars and deep-sky objects."""
@@ -752,6 +758,19 @@ class StarAtlasView(QWidget):
 
     # -- interaction ---------------------------------------------------------
 
+    def _sky_point_at(self, sx: float, sy: float) -> dict[str, Any] | None:
+        """J2000 ra_deg/dec_deg + alt/az for screen position (sx, sy), or None on error."""
+        try:
+            vp = self._viewport()
+            alt_arr, az_arr = vp.unproject(sx, sy)
+            alt = float(alt_arr)
+            az = float(az_arr)
+            ra_date, dec_date = sa.horizontal_to_equatorial(alt, az, self._lst, self.latitude)
+            ra, dec = sa.precess_to_j2000(float(ra_date), float(dec_date), self._jd)
+            return {"kind": "sky_point", "ra_deg": float(ra), "dec_deg": float(dec), "alt": alt, "az": az}
+        except Exception:
+            return None
+
     def object_at(self, x: float, y: float) -> dict[str, Any] | None:
         """Nearest visible object within a few pixels of screen position (x, y)."""
         sets = self._sets(self._viewport())
@@ -807,7 +826,8 @@ class StarAtlasView(QWidget):
         obj = self.object_at(event.pos().x(), event.pos().y())
         if obj is not None:
             self.select(obj)
-        self.contextMenuRequested.emit(obj, event.globalPos())
+        sky_point = self._sky_point_at(event.pos().x(), event.pos().y())
+        self.contextMenuRequested.emit(obj, event.globalPos(), sky_point)
 
     def leaveEvent(self, _event) -> None:
         self._cursor = None

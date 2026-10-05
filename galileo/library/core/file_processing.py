@@ -846,6 +846,9 @@ class FileProcessor:
                 from .repository import RepositoryManager
 
                 repo_manager = RepositoryManager()
+                # A fresh manager reads library.ini; honour this processor's folder instead, so the commands'
+                # --repo override (and any caller that sets repoFolder) decides where the file is filed.
+                repo_manager.repoFolder = self.repoFolder
                 # Ensure the repository root folders exist (Light/Calibrate/Masters/Incoming/etc.)
                 repo_manager.createRepositoryStructure()
 

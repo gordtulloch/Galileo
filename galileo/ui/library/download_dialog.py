@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
 from astropy.io import fits
 from galileo.library.core import fitsProcessing
 from galileo.library.services.telescope import smart_telescope_manager
-from galileo.library.config import load_config as load_library_config
+from galileo.library.config import get_sftp_settings, load_config as load_library_config
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,8 @@ class TelescopeDownloadWorker(QThread):
                 protocol_info = "SMB"
             elif self.telescope_type == "iTelescope":
                 protocol_info = "FTPS"
+            elif self.telescope_type == "SFTP":
+                protocol_info = "SFTP"
             else:
                 protocol_info = "FTP"
             self.progress_updated.emit(f"Scanning network for {self.telescope_type} telescope ({protocol_info})...")
@@ -172,6 +174,11 @@ class TelescopeDownloadWorker(QThread):
                     self.error_occurred.emit("iTelescope credentials not configured. Please configure in Config → Smart Telescopes tab.")
                     logger.error("iTelescope credentials not configured")
                     return
+
+            if self.telescope_type == "SFTP" and not get_sftp_settings()["username"]:
+                self.error_occurred.emit("SFTP account not configured. Please set it in Options > Library > Smart Telescopes.")
+                logger.error("SFTP username not configured")
+                return
 
             fits_files, error = smart_telescope_manager.get_fits_files(self.telescope_type, ip, self.username, self.password)
 
@@ -341,6 +348,7 @@ class SmartTelescopeDownloadDialog(QDialog):
         self.telescope_list.addItem("StellarMate")
         self.telescope_list.addItem("DWARF 3")
         self.telescope_list.addItem("iTelescope")
+        self.telescope_list.addItem("SFTP")
         self.telescope_list.setCurrentRow(0)
         self.telescope_list.setMaximumHeight(100)
 
@@ -451,6 +459,9 @@ class SmartTelescopeDownloadDialog(QDialog):
                 self.hostname_edit.setText("dwarf.local")
             elif telescope_type == "iTelescope":
                 self.hostname_edit.setText("data.itelescope.net")
+            elif telescope_type == "SFTP":
+                self.hostname_edit.setText("")
+            self.network_edit.setEnabled(telescope_type != "SFTP")   # an SFTP server is addressed, never scanned for
 
     def start_download(self):
         """Start the download process."""
@@ -465,7 +476,11 @@ class SmartTelescopeDownloadDialog(QDialog):
         target_directory = self.target_dir_edit.text().strip()
         delete_files = self.delete_files_checkbox.isChecked()
 
-        if not network:
+        if telescope_type == "SFTP" and not hostname:
+            QMessageBox.warning(self, "Warning", "Please enter the SFTP server's hostname or IP address.")
+            return
+
+        if not network and telescope_type != "SFTP":
             QMessageBox.warning(self, "Warning", "Please enter a network range.")
             return
 

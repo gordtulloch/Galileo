@@ -497,4 +497,5 @@ ICONS: dict[str, DrawFn] = {
     "cloud": _cloud,
     "merge": _merge,
     "plugins": _plugins,
+    "plugins": _plugins,
 }

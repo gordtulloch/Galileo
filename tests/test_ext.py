@@ -8,6 +8,8 @@ VSTarget-plugin-only integration and now lives as VST-EXT-010 in
 docs/plugins/vstarget/SRS.md, tested in tests/test_vst.py.
 """
 
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch
 
@@ -211,10 +213,39 @@ def test_tc_ext_090_google_cloud_storage_sync():
 @pytest.mark.priority("MVP")
 def test_tc_ext_110_simbad_coordinate_lookup():
     """EXT-110: Query the Simbad astronomical database for target coordinate/magnitude lookup — genuinely shared infrastructure, also backing SKY-100's fallback lookup (not AAVSO-specific)."""
+    import sys
+    import types
+    from astropy.table import Table
+
     sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
-    assert hasattr(sky_mod, "SimbadClient"), "SimbadClient must be present"
-    client = sky_mod.SimbadClient.__new__(sky_mod.SimbadClient)
-    assert hasattr(client, "lookup"), "SimbadClient must expose lookup(target_name)"
+    queried: list[tuple[str, tuple[str, ...]]] = []
+
+    class FakeSimbad:
+        """Stands in for ``astroquery.simbad.Simbad``: answers the primary name/type/coordinate query
+        and the follow-up V-magnitude query, so no network is touched."""
+        def __init__(self):
+            self.fields: tuple[str, ...] = ()
+
+        def add_votable_fields(self, *fields):
+            self.fields += fields
+
+        def query_object(self, name, wildcard=False):
+            queried.append((name, self.fields))
+            if "V" in self.fields:
+                return Table({"V": [3.44]})
+            return Table({"main_id": ["M  31"], "ra": [10.6847], "dec": [41.2687], "otype": ["G"]})
+
+    fake_module = types.ModuleType("astroquery.simbad")
+    fake_module.Simbad = FakeSimbad
+    with patch.dict(sys.modules, {"astroquery.simbad": fake_module}):
+        results = sky_mod._search_simbad_sync("M31")
+
+    assert len(results) == 1
+    obj = results[0]
+    assert obj.primary_name == "M31"
+    assert (obj.ra_deg, obj.dec_deg) == pytest.approx((10.6847, 41.2687))   # coordinates
+    assert obj.magnitude == pytest.approx(3.44)                              # magnitude, via the follow-up query
+    assert [name for name, _ in queried] == ["M31", "M31"]
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +260,102 @@ def test_tc_ext_120_sftp_remote_telescope_retrieval():
     assert hasattr(adapters, "SftpImageRetriever"), "SftpImageRetriever must be present"
     retriever = adapters.SftpImageRetriever.__new__(adapters.SftpImageRetriever)
     assert hasattr(retriever, "download"), "SftpImageRetriever must expose download()"
+
+
+def _fake_paramiko(files, *, connect_error=None, bad_files=()):
+    """A stand-in ``paramiko`` module whose SFTP server holds *files*; records what the client did."""
+    import types
+    state = types.SimpleNamespace(policy=None, closed=False, sftp_closed=False, fetched=[])
+
+    class Policy:
+        pass
+
+    class RejectPolicy(Policy):
+        pass
+
+    class MissingHostKeyPolicy:
+        pass
+
+    class Entry:
+        def __init__(self, filename):
+            self.filename = filename
+
+    class Sftp:
+        def listdir_attr(self, path):
+            return [Entry(name) for name in files]
+
+        def get(self, remote, local, callback=None):
+            if remote.rsplit("/", 1)[-1] in bad_files:
+                raise OSError("transfer failed")
+            state.fetched.append(remote)
+
+        def close(self):
+            state.sftp_closed = True
+
+    class SSHClient:
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            state.policy = policy
+
+        def connect(self, **kwargs):
+            if connect_error:
+                raise connect_error
+
+        def open_sftp(self):
+            return Sftp()
+
+        def close(self):
+            state.closed = True
+
+    module = types.ModuleType("paramiko")
+    module.SSHClient, module.RejectPolicy, module.MissingHostKeyPolicy = SSHClient, RejectPolicy, MissingHostKeyPolicy
+    return module, state
+
+
+@pytest.mark.requirement("TC-EXT-120")
+@pytest.mark.priority("MVP")
+async def test_tc_ext_120_sftp_downloads_only_fits_and_skips_a_failed_file(tmp_path):
+    """EXT-120: only FITS files are fetched, one failed transfer is skipped without abandoning the rest, and the connection is always closed."""
+    import sys
+    from galileo.library.adapters import SftpImageRetriever
+    module, state = _fake_paramiko(["a.fits", "notes.txt", "b.FIT", "c.fits"], bad_files={"b.FIT"})
+    with patch.dict(sys.modules, {"paramiko": module}):
+        got = await SftpImageRetriever("host", "user").download(path="/data/", dest=tmp_path)
+    assert [Path(g).name for g in got] == ["a.fits", "c.fits"]
+    assert state.fetched == ["/data/a.fits", "/data/c.fits"]
+    assert state.closed and state.sftp_closed
+
+
+@pytest.mark.requirement("TC-EXT-120")
+@pytest.mark.priority("MVP")
+async def test_tc_ext_120_sftp_failure_is_logged_and_the_client_is_closed(tmp_path, caplog):
+    """EXT-120: an unreachable server is reported at WARNING with its traceback (not buried at debug) and the client is still closed."""
+    import sys
+    from galileo.library.adapters import SftpImageRetriever
+    module, state = _fake_paramiko([], connect_error=OSError("no route to host"))
+    with patch.dict(sys.modules, {"paramiko": module}), caplog.at_level("WARNING", logger="galileo.library.adapters.sftp"):
+        got = await SftpImageRetriever("203.0.113.9", "user").download(dest=tmp_path)
+    assert got == []
+    assert any(r.levelname == "WARNING" and r.exc_info and "203.0.113.9" in r.getMessage() for r in caplog.records)
+    assert state.closed
+
+
+@pytest.mark.requirement("TC-EXT-120")
+@pytest.mark.priority("MVP")
+async def test_tc_ext_120_sftp_host_key_policy_logs_by_default_and_rejects_when_strict(tmp_path, caplog):
+    """EXT-120: an unknown host key is accepted but logged with its fingerprint by default; strict_host_keys refuses it outright."""
+    import sys
+    from galileo.library.adapters import SftpImageRetriever
+    module, state = _fake_paramiko([])
+    key = type("Key", (), {"get_name": lambda self: "ssh-ed25519", "get_fingerprint": lambda self: bytes([0xAB, 0xCD])})()
+    with patch.dict(sys.modules, {"paramiko": module}), caplog.at_level("WARNING", logger="galileo.library.adapters.sftp"):
+        await SftpImageRetriever("h", "u").download(dest=tmp_path)
+        state.policy.missing_host_key(None, "h", key)
+        assert any("unknown host key" in r.getMessage() and "abcd" in r.getMessage() for r in caplog.records)
+        await SftpImageRetriever("h", "u", strict_host_keys=True).download(dest=tmp_path)
+    assert isinstance(state.policy, module.RejectPolicy)
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +409,16 @@ async def test_tc_ext_150_telescopius_optional_and_never_a_dependency():
     with patch.object(sky_mod, "_search_telescopius_sync", side_effect=OSError("unreachable")):
         results = await atlas.search_online("M42")
         assert any("M42" in obj.designations for obj in results), "offline-first path unaffected"
+
+
+@pytest.mark.requirement("TC-EXT-070")
+@pytest.mark.priority("P3")
+async def test_tc_ext_070_webhook_refuses_non_http_urls(caplog):
+    """EXT-070: a webhook endpoint is an HTTP(S) POST — a file:// or ftp:// URL is refused and logged, never opened."""
+    from galileo import notify
+    channel = notify.WebhookChannel(url="file:///etc/passwd")
+    note = notify._Notification(notify.NotificationEvent.SEQUENCE_COMPLETE, "done")
+    with patch("urllib.request.urlopen") as opened, caplog.at_level("ERROR", logger="galileo.notify"):
+        await channel.send(note)
+    opened.assert_not_called()
+    assert any("non-HTTP" in r.getMessage() for r in caplog.records)

@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
 from ._widgets import _NavColumn
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # See _state.py: every method below takes an explicit `self:
@@ -50,6 +53,7 @@ class AppWindowCoreMixin:
         self._imaging_capture_threads: dict = {}
         self._imaging_filter_threads: dict = {}
         self._flats_threads: dict = {}
+        self._darks_threads: dict = {}
         self._thumbnail_cache_worker: _ThumbnailCacheThread | None = None
         # A single persistent SkyAtlas instance, lazily created — see _shared_sky_atlas().
         self._sky_atlas: SkyAtlas | None = None
@@ -61,6 +65,10 @@ class AppWindowCoreMixin:
         self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
+
+        from galileo.plugins import PluginManager
+        self._plugin_manager = PluginManager()
+        self._plugin_manager.initialize_from_disk()
 
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
         self._window = QMainWindow()
@@ -254,6 +262,30 @@ class AppWindowCoreMixin:
         stack = QStackedWidget()
         stack.setObjectName("PrimaryStack")
 
+        # Collect plugin panels to inject into the Science submenu.
+        _pm = getattr(self, "_plugin_manager", None)
+        _science_plugin_items: list[tuple[str, str, str]] = []
+        _science_plugin_builders: dict = {}
+        _plugin_primary_labels: set[str] = set()
+        if _pm is not None:
+            registry = _pm.get_ui_registry()
+            for _panel in registry.get_primary_panels() + registry.get_secondary_panels():
+                _sid = _panel.plugin.name
+                _plugin_ref = _panel.plugin
+                _plabel = _panel.label
+                _science_plugin_builders[_sid] = (
+                    lambda _p=_plugin_ref, _lbl=_plabel: self._build_plugin_page(_p, _lbl)
+                )
+                _science_plugin_items.append((_sid, _plabel, "plugins"))
+                if _panel.level == "primary":
+                    _plugin_primary_labels.add(_plabel)
+        # Drop SCIENCE_ITEMS stubs whose labels are already provided by a
+        # primary plugin panel, so installing a plugin doesn't create a
+        # duplicate entry alongside the static stub.
+        _effective_science_items = [
+            item for item in SCIENCE_ITEMS if item[1] not in _plugin_primary_labels
+        ]
+
         page_builders = {
             "equipment": self._build_equipment_page,
             "star_atlas": self._build_star_atlas_page,
@@ -262,18 +294,24 @@ class AppWindowCoreMixin:
                                   "targets": self._build_sky_atlas_page,
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page}),
-            "science": lambda: self._build_submenu_page(SCIENCE_ITEMS, {}),
+            "science": lambda: self._build_submenu_page(
+                _effective_science_items + _science_plugin_items, _science_plugin_builders
+            ),
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,
             "guiding": self._build_guider_page,
             "focus": self._build_focus_page,
             "solve": self._build_solve_page,
         }
+
         pages: dict[str, int] = {}
+        self._science_nav = None
         for section_id, label, icon_name in PRIMARY_SECTIONS:
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             pages[section_id] = stack.addWidget(page)
+            if section_id == "science":
+                self._science_nav = getattr(page, "_secondary_nav", None)
 
         option_builders = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
@@ -397,7 +435,27 @@ class AppWindowCoreMixin:
         layout.addWidget(stack, 1)
         return page
 
-    def _build_placeholder_page(self: AppWindowState, title: str) -> QWidget:
+    def _build_plugin_page(self: AppWindowState, plugin, label: str) -> QWidget:
+        """Build one plugin's panel, isolating a faulty plugin from the rest of
+        the app (PLUG-040, ARCH-060). ``build_page()`` runs arbitrary
+        third-party code — and, being imported lazily, can still raise
+        ImportError/SyntaxError here long after the plugin loaded cleanly — so a
+        failure must leave Galileo startable rather than aborting nav construction."""
+        try:
+            return plugin.build_page() or self._build_placeholder_page(label)
+        except Exception:
+            logger.exception("Plugin panel %r failed to build", label)
+            return self._build_placeholder_page(
+                label,
+                "This plugin panel failed to load — see the log for details. "
+                "Reinstall or remove the plugin in Options › Plugins.",
+            )
+
+    def _build_placeholder_page(
+        self: AppWindowState,
+        title: str,
+        subtitle_text: str = "This panel is not implemented yet.",
+    ) -> QWidget:
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
         page = QWidget()
@@ -409,8 +467,9 @@ class AppWindowCoreMixin:
         heading.setObjectName("PageTitle")
         layout.addWidget(heading)
 
-        subtitle = QLabel("This panel is not implemented yet.")
+        subtitle = QLabel(subtitle_text)
         subtitle.setObjectName("PageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
         layout.addStretch(1)
         return page

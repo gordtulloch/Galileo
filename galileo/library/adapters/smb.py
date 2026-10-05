@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -40,8 +41,9 @@ class SmartTelescopeSmbAdapter:
     async def download(self, remote_path: str, dest: Path | str) -> Path:
         """Download *remote_path* from the SMB share to *dest*."""
         dest_path = Path(dest) / Path(remote_path).name
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
+
+        def _download_sync() -> None:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
             from smb.SMBConnection import SMBConnection  # type: ignore[import]
             import socket
             conn = SMBConnection("", "", "galileo", self.host)
@@ -49,6 +51,9 @@ class SmartTelescopeSmbAdapter:
             with open(dest_path, "wb") as fh:
                 conn.retrieveFile(self.share, remote_path, fh)
             conn.close()
+
+        try:
+            await asyncio.to_thread(_download_sync)
         except Exception as exc:
             logger.warning("SMB download error: %s", exc)
         return dest_path

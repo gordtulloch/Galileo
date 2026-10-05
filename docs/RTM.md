@@ -26,6 +26,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **`CAL-070` added:** Sky Flats — the Flats Assistant's twilight check, East-vantage-point slew/tracking-off, and adaptive exposure convergence against the camera's configured Max Well Depth — tracing to SDD 4.10 `galileo.calibration` alongside `CAL-010`–`CAL-050`.
 
+**`CAL-080` added:** Darks Assistant — the Imaging tab's Darks… button (zoom toolbar in landscape, Tools panel in portrait) opening a dialog that captures one dark frame at each user-supplied exposure length in sequence, with optional filter selection, auto-saving each frame to the Library — tracing to SDD 4.5 `galileo.ui.imaging` (same component as `CAL-060`; the dialog itself lives in `galileo.ui.app_window._darks`).
+
 **`SEQ`/`SEQ-ADV` → `SES`:** this revision replaces the former `SEQ`/`SEQ-ADV` domains with the unified `SES` ("Sessions") domain end to end (SRS Sections 4.5/4.5a/4.6). Every row below uses `SES-*` IDs; there is no `SEQ`/`SEQ-ADV` row remaining in this matrix.
 
 ---
@@ -284,6 +286,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-050` | P2 | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-050` |
 | `CAL-060` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-060` |
 | `CAL-070` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-070` |
+| `CAL-080` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-080` |
 
 ### `FOC` — Autofocus
 
@@ -397,6 +400,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-060` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-060` |
 | `PLUG-070` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-070` |
 | `PLUG-080` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-080` |
+| `PLUG-090` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-090` |
+| `PLUG-100` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-100` |
+| `PLUG-110` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-110` |
+| `PLUG-120` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-120` |
 
 ### `UI` — Customization & Theming
 
@@ -437,6 +444,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-140` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-140` |
 | `LIB-150` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-150` |
 | `LIB-160` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-160` |
+| `LIB-170` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-170` |
 
 ### `VST` / `VST-AN` — Moved
 
@@ -539,7 +547,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
-| `LIB` | 15 | 10 | 4 | 1 |
+| `LIB` | 16 | 10 | 5 | 1 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
@@ -549,4 +557,4 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **284** | **169** | **100** | **15** |
+| **Total** | **285** | **169** | **101** | **15** |

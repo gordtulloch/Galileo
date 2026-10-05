@@ -7,9 +7,11 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QTabWidget)
 from galileo.library.config import (
     get_itelescope_password,
+    get_sftp_password,
     load_config as load_library_config,
     save_config as save_library_config,
     set_itelescope_password,
+    set_sftp_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,6 +343,48 @@ class ConfigWidget(QWidget):
         itelescope_layout.addRow("Password:", self.itelescope_password)
 
         layout.addWidget(itelescope_group)
+
+        # SFTP server settings group (EXT-120, LIB-170) - the host is entered in the Download dialog
+        sftp_group = QGroupBox("SFTP Server")
+        sftp_layout = QFormLayout(sftp_group)
+
+        self.sftp_username = QLineEdit()
+        self.sftp_username.setToolTip("Account on the SFTP server (used by Library > Download > SFTP).")
+
+        self.sftp_password = QLineEdit()
+        self.sftp_password.setEchoMode(QLineEdit.Password)
+        self.sftp_password.setToolTip(
+            "Password for the account. Stored in the operating system's keychain, not in library.ini.\n"
+            "Leave empty to use a key file or your SSH agent instead.")
+
+        self.sftp_key_path = QLineEdit()
+        self.sftp_key_path.setPlaceholderText("Optional private key file")
+        browse_key = QPushButton("Browse...")
+        browse_key.clicked.connect(self.browse_sftp_key)
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.sftp_key_path)
+        key_row.addWidget(browse_key)
+
+        self.sftp_remote_path = QLineEdit("/")
+        self.sftp_remote_path.setToolTip("Folder on the server to search (recursively) for FITS files.")
+
+        self.sftp_port = QSpinBox()
+        self.sftp_port.setRange(1, 65535)
+        self.sftp_port.setValue(22)
+
+        self.sftp_strict_host_keys = QCheckBox("Only connect to servers already in known_hosts")
+        self.sftp_strict_host_keys.setToolTip(
+            "When off, a server whose host key is not known yet is accepted and its fingerprint logged "
+            "(fine on a home or observatory LAN).\nTurn this on for any server reached over the internet.")
+
+        sftp_layout.addRow("Username:", self.sftp_username)
+        sftp_layout.addRow("Password:", self.sftp_password)
+        sftp_layout.addRow("Key file:", key_row)
+        sftp_layout.addRow("Remote folder:", self.sftp_remote_path)
+        sftp_layout.addRow("Port:", self.sftp_port)
+        sftp_layout.addRow("", self.sftp_strict_host_keys)
+
+        layout.addWidget(sftp_group)
         layout.addStretch()
 
         self.tab_widget.addTab(smart_telescopes_tab, "Smart Telescopes")
@@ -391,6 +435,14 @@ class ConfigWidget(QWidget):
             if config.has_option('DEFAULT', 'itelescope_password'):
                 config.remove_option('DEFAULT', 'itelescope_password')
             set_itelescope_password(self.itelescope_password.text().strip())
+
+            # SFTP server settings (EXT-120) - likewise, the password goes to the keychain
+            config.set('DEFAULT', 'sftp_username', self.sftp_username.text().strip())
+            config.set('DEFAULT', 'sftp_key_path', self.sftp_key_path.text().strip())
+            config.set('DEFAULT', 'sftp_remote_path', self.sftp_remote_path.text().strip() or '/')
+            config.set('DEFAULT', 'sftp_port', str(self.sftp_port.value()))
+            config.set('DEFAULT', 'sftp_strict_host_keys', str(self.sftp_strict_host_keys.isChecked()))
+            set_sftp_password(self.sftp_password.text().strip())
 
             # FITS compression settings
             config.set('DEFAULT', 'compress_fits', str(self.compress_fits.isChecked()))
@@ -510,6 +562,16 @@ class ConfigWidget(QWidget):
 
             self.itelescope_password.setText(get_itelescope_password())
 
+            # Load SFTP settings
+            self.sftp_username.setText(config.get('DEFAULT', 'sftp_username', fallback=''))
+            self.sftp_key_path.setText(config.get('DEFAULT', 'sftp_key_path', fallback=''))
+            self.sftp_remote_path.setText(config.get('DEFAULT', 'sftp_remote_path', fallback='/'))
+            port_text = config.get('DEFAULT', 'sftp_port', fallback='22').strip()
+            self.sftp_port.setValue(int(port_text) if port_text.isdigit() else 22)
+            self.sftp_strict_host_keys.setChecked(
+                config.get('DEFAULT', 'sftp_strict_host_keys', fallback='False').strip().lower() in ('true', '1', 'yes', 'on'))
+            self.sftp_password.setText(get_sftp_password())
+
             # Load FITS compression settings
             if config.has_option('DEFAULT', 'compress_fits'):
                 compress_fits_str = config.get('DEFAULT', 'compress_fits')
@@ -566,12 +628,27 @@ class ConfigWidget(QWidget):
         self.itelescope_username.setText("")
         self.itelescope_password.setText("")
 
+        # SFTP defaults
+        self.sftp_username.setText("")
+        self.sftp_password.setText("")
+        self.sftp_key_path.setText("")
+        self.sftp_remote_path.setText("/")
+        self.sftp_port.setValue(22)
+        self.sftp_strict_host_keys.setChecked(False)
+
         # FITS compression defaults
         self.compress_fits.setChecked(False)
         self.compression_algorithm.setCurrentIndex(0)  # Reset to 'fits_gzip2'
         self.compression_level.setValue(6)
         self.verify_compression.setChecked(True)
         self.min_compression_size.setValue(1024)
+
+    def browse_sftp_key(self):
+        """Pick the private key file used to log in to the SFTP server."""
+        start = self.sftp_key_path.text().strip() or os.path.expanduser("~/.ssh")
+        path, _ = QFileDialog.getOpenFileName(self, "Select SFTP Private Key", start)
+        if path:
+            self.sftp_key_path.setText(path)
 
     def browse_source_path(self):
         """Open directory dialog for source path"""

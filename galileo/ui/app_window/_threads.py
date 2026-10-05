@@ -193,6 +193,41 @@ class _FlatsThread(QThread if _HAS_QT else object):
         self.finished_ok.emit(results)
 
 
+class _DarksThread(QThread if _HAS_QT else object):
+    """Captures one dark frame at each requested exposure length in order, off the Qt UI thread.
+    Calls ImagingService.capture_series(1, exposure_s, filter_name, "Dark") for each entry so
+    each frame is auto-saved to the Library the same way a manual capture is."""
+
+    exposure_started = Signal(int, int, float) if _HAS_QT else None   # (index, total, exposure_s)
+    exposure_done = Signal(int, int, float) if _HAS_QT else None       # (index, total, exposure_s)
+    finished_ok = Signal() if _HAS_QT else None
+    failed = Signal(str) if _HAS_QT else None
+
+    def __init__(self, service, exposures: list, filter_name: str, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._exposures = exposures
+        self._filter_name = filter_name
+
+    def run(self) -> None:
+        import asyncio
+        total = len(self._exposures)
+        for i, exposure_s in enumerate(self._exposures):
+            if self._service.stop_requested:
+                break
+            self.exposure_started.emit(i + 1, total, exposure_s)
+            try:
+                asyncio.run(self._service.capture_series(
+                    1, exposure_s, self._filter_name, "Dark",
+                ))
+            except Exception as exc:
+                if not self._service.stop_requested:
+                    self.failed.emit(str(exc))
+                    return
+            self.exposure_done.emit(i + 1, total, exposure_s)
+        self.finished_ok.emit()
+
+
 class _FilterMoveThread(QThread if _HAS_QT else object):
     """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
     several seconds to settle (INDI waits up to a minute), which would otherwise

@@ -70,9 +70,9 @@ class AppWindowObservatoryPierMixin:
         return None
 
     def _prompt_new_observatory(self: AppWindowState) -> dict | None:
-        """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner dialog for New Observatory."""
+        """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner/Notification dialog for New Observatory."""
         from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox,
+            QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox, QComboBox,
         )
 
         dialog = QDialog(self._window)
@@ -110,6 +110,18 @@ class AppWindowObservatoryPierMixin:
         owner_edit = QLineEdit()
         form.addRow("Owner", owner_edit)
 
+        notif_combo = QComboBox()
+        notif_combo.addItems(["None", "Email", "Text", "Both"])
+        form.addRow("Notification Type", notif_combo)
+
+        email_edit = QLineEdit()
+        email_edit.setPlaceholderText("e.g. observer@example.com")
+        form.addRow("Email Address", email_edit)
+
+        cell_edit = QLineEdit()
+        cell_edit.setPlaceholderText("e.g. +1-555-555-5555")
+        form.addRow("Cell Number", cell_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -121,6 +133,7 @@ class AppWindowObservatoryPierMixin:
         name = name_edit.text().strip()
         if not name:
             return None
+        notif_type = notif_combo.currentText()
         return {
             "name": name,
             "latitude": lat_edit.value(),
@@ -129,6 +142,9 @@ class AppWindowObservatoryPierMixin:
             "timezone": tz_edit.text().strip() or None,
             "physical_address": address_edit.text().strip() or None,
             "owner": owner_edit.text().strip() or None,
+            "notification_type": notif_type if notif_type != "None" else None,
+            "email_address": email_edit.text().strip() or None,
+            "cell_number": cell_edit.text().strip() or None,
         }
 
     def _on_observatory_activated(self: AppWindowState, index: int) -> None:

@@ -11,6 +11,7 @@ for async HTTP; falls back to ``urllib`` for minimal dependency footprint.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import socket
@@ -206,8 +207,10 @@ async def get_configured_devices(host: str, port: int, protocol: str = "http") -
         import urllib.request
         import urllib.parse
         query = urllib.parse.urlencode({"ClientID": 1, "ClientTransactionID": 1})
-        with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
-            data = json.loads(r.read())
+        def _fetch() -> Any:
+            with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
+                return json.loads(r.read())
+        data = await asyncio.to_thread(_fetch)
     return data.get("Value") or []
 
 
@@ -328,12 +331,15 @@ class AlpacaAdapter(DeviceBackend):
                     resp.raise_for_status()
                     data = resp.json()
             except ImportError:
-                # httpx not available; use urllib synchronously
+                # httpx not available; use urllib, off the event loop
                 import urllib.request
                 import urllib.parse
                 query = urllib.parse.urlencode(params)
-                with urllib.request.urlopen(f"{url}?{query}", timeout=timeout) as r:
-                    data = json.loads(r.read())
+
+                def _fetch() -> Any:
+                    with urllib.request.urlopen(f"{url}?{query}", timeout=timeout) as r:
+                        return json.loads(r.read())
+                data = await asyncio.to_thread(_fetch)
         except _TRANSPORT_ERRORS as exc:
             raise self._unreachable_error(exc) from exc
         if (data.get("ErrorNumber") or 0) == self._ASCOM_NOT_IMPLEMENTED:
@@ -375,11 +381,14 @@ class AlpacaAdapter(DeviceBackend):
                 import urllib.parse
                 encoded = urllib.parse.urlencode(body).encode()
                 req = urllib.request.Request(url, data=encoded, method="PUT")
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    try:
-                        data = json.loads(r.read())
-                    except Exception:
-                        data = {}
+
+                def _send() -> Any:
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        try:
+                            return json.loads(r.read())
+                        except Exception:
+                            return {}
+                data = await asyncio.to_thread(_send)
         except _TRANSPORT_ERRORS as exc:
             raise self._unreachable_error(exc) from exc
         self._raise_on_alpaca_error(data, attribute)
@@ -576,6 +585,33 @@ class AlpacaMountAdapter(AlpacaAdapter):
         self.is_tracking = False
         self.is_slewing = False
         self._static_status: dict[str, Any] | None = None
+        self.site_lat: float | None = None
+        self.site_lon: float | None = None
+        self.site_elevation: float | None = None
+
+    async def connect(self) -> None:
+        await super().connect()
+        await self._sync_site_and_time()
+
+    async def _sync_site_and_time(self) -> None:
+        """Push current UTC time and (if configured) site coordinates to the
+        mount immediately after connection so goto, meridian-flip limits, and
+        sidereal time are all computed from accurate values."""
+        utc_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        pairs: list[tuple[str, str, object]] = [
+            ("utcdate", "UTCDate", utc_now),
+            ("sitelatitude", "SiteLatitude", self.site_lat),
+            ("sitelongitude", "SiteLongitude", self.site_lon),
+            ("siteelevation", "SiteElevation", self.site_elevation),
+        ]
+        for attribute, key, value in pairs:
+            if value is None:
+                continue
+            try:
+                await self._put(attribute, **{key: value})
+            except Exception:
+                logger.warning("Could not set %s on Alpaca mount %s", attribute, self.base_url, exc_info=True)
+        self._static_status = None  # site values may have changed; re-read on next get_status()
 
     async def _refuse_if_parked(self, command: str) -> None:
         """Movement commands must not reach a parked mount. Asks the mount

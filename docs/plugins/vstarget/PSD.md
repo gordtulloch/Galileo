@@ -33,8 +33,8 @@ VSTarget's own background is unchanged from core PSD Section 2: Galileo's author
 
 | # | Goal |
 |---|---|
-| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party, pre-loaded, independently-disableable plugin (core `PLUG-060`), presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it |
-| G2 | Deliver VSTarget's photometric analysis/AAVSO-reporting workflow as the separate `VST-AN` plugin, paired with but independently enabled/disabled from `VST` |
+| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party plugin distributed as a downloadable ZIP from the galileo-imaging.com plugin repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`), presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it. The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
+| G2 | Deliver VSTarget's photometric analysis/AAVSO-reporting workflow as the separate `VST-AN` plugin — also a first-party ZIP distributed from the same website, paired with but independently installed, enabled, and disabled from `VST` |
 | G3 | Reuse core capabilities as a client rather than duplicating them: visibility computation (`SKY-030`), plate solving (`PLT-010`), Scheduler job submission (`SCHED-010`, via `PluginContext`) — this plugin owns no device ports and introduces no new core domain |
 | G4 | Demonstrate, not just declare, that Galileo's plugin architecture (core `PLUG`) is sufficient for a first-party workflow of this complexity — every capability below is expressed through `PLUG`'s existing extension points, with no plugin-specific carve-out added to core to make it fit |
 
@@ -50,7 +50,7 @@ Compiled from [github.com/gordtulloch/VSTarget](https://github.com/gordtulloch/V
 
 - **Target planning:** AAVSO Target Tool API sync, filterable by observing section (Alerts, Cataclysmic Variables, Eclipsing Variables, Long Period Variables, etc.); sortable/searchable list with priority highlighting and solar-conjunction warnings; observable-only visibility filtering; manual delimited-text import
 - **Observation plans:** per-target filter/exposure-count/interval/binning editor; iTelescope ACP observing-script generation sorted by right ascension; plan persistence
-- **Image retrieval:** FTP/SFTP calibrated-FITS download from remote-telescope data servers
+- **Image retrieval:** *(the standalone application's FTP/SFTP download is not carried over — Galileo's Library owns remote-telescope retrieval, and this plugin reads its images from the library)*
 - **Analysis pipeline:** ASTAP plate-solving; registered mean-stacking (`astroalign`) for photometric SNR improvement; aperture photometry against AAVSO VSP comparison stars with ensemble linear-regression differential photometry
 - **Reporting:** AAVSO WebObs Extended-format report generation
 - **Calibration:** per-telescope/per-filter transformation-coefficient calculation from standard fields (M67, NGC 7790, M11, NGC 1252, NGC 3532, Melotte 111, Landolt fields), with interactive outlier review; exposure-time calculator
@@ -68,7 +68,7 @@ This plugin is a client of the following core capabilities — each is an existi
 | Target visibility computation | `SKY-030` | `VST`'s observable-only filtering reuses this rather than a second rise/transit/set implementation |
 | Simbad object-name lookup | Core `EXT-110` (external interface) | `VST`'s coordinate/magnitude fallback lookup |
 | Plate solving | `PLT-010` | `VST-AN` solves retrieved/captured images via the existing solver integration rather than embedding its own |
-| Remote-telescope FTP/FTPS/SFTP retrieval | Core `EXT-080`, `EXT-120` | `VST-AN`'s calibrated-image download |
+| Image library | Core `LIB-040` (sessions), `EXT-080`/`EXT-120` (Library-owned remote retrieval) | `VST-AN-100`'s input images; the plugin does no retrieval of its own |
 | Scheduler job queue | `SCHED-010` | `VST`'s direct-submission control |
 
 ## 8. Functional Requirement Domains (Scope-Level)
@@ -88,7 +88,7 @@ Domain IDs and numbering (`VST-*`, `VST-AN-*`) are unchanged from their original
 
 ## 10. Assumptions and Constraints
 
-- **PC1** — VSTarget is GPL-3.0 licensed and runs on the same Python/PySide6/AstroPy stack as Galileo core, so this plugin's dependencies (`astroquery`, `paramiko`, `astroalign`, `photutils`, `pandas`, `matplotlib` — see [SDD.md](SDD.md)) are all GPL-3.0-compatible, with no license tension against core PSD Section 11, C4's GPL-3.0 project license.
+- **PC1** — VSTarget is GPL-3.0 licensed and runs on the same Python/PySide6/AstroPy stack as Galileo core, so this plugin's dependencies (`astroquery`, `astroalign`, `photutils`, `pandas`, `matplotlib` — see [SDD.md](SDD.md)) are all GPL-3.0-compatible, with no license tension against core PSD Section 11, C4's GPL-3.0 project license.
 - **PC2** — Under Galileo's in-process plugin design (core PSD Section 11, C4), this plugin is very likely a "combined work" under GPL-3.0 and must itself be GPL-compatible-licensed to distribute — trivially satisfied since it's first-party and GPL-3.0 itself.
 - **PC3** — `matplotlib` (interactive transformation-outlier review, finder-chart rendering) is a second charting library alongside core's Qt Charts (`HIST`). This is scoped as this plugin's own dependency, not a core packaging concern: a plugin process carries whatever charting library its own UI needs, and core is not obligated to unify around it. Accepted because VSTarget's interactive outlier-rejection UX is proven in matplotlib; revisit only if it becomes a genuine cross-plugin packaging problem.
 

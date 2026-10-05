@@ -79,3 +79,10 @@ def get_reports_dir() -> Path:
     d = get_data_dir() / "reports"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def get_plugins_dir() -> Path:
+    """Return the directory where installed plugin packages live, creating it if needed."""
+    d = get_data_dir() / "plugins"
+    d.mkdir(parents=True, exist_ok=True)
+    return d

@@ -44,7 +44,8 @@ class AppWindowState(Protocol):
     # --- attributes -----------------------------------------------------
     _active_camera_slot: str
     _active_optics_position: int
-    _camera_backends: Any
+    @property
+    def _camera_backends(self) -> dict: ...   # a read-only property on the mixin (_core.py)
     _camera_backends_by_pier: Any
     _camera_combo: Any
     _camera_label: Any
@@ -54,6 +55,7 @@ class AppWindowState(Protocol):
     _current_primary_section: Any
     _device_pages: Any
     _flats_threads: Any
+    _darks_threads: Any
     _focus_settings_refresh: Any
     _horizon_table_refresh: Any
     _imaging_capture_threads: Any
@@ -61,7 +63,8 @@ class AppWindowState(Protocol):
     _imaging_filter_combo: Any
     _imaging_filter_threads: Any
     _imaging_preview_renders: Any
-    _imaging_service: Any
+    @property
+    def _imaging_service(self) -> Any: ...   # a read-only property on the mixin (_core.py)
     _imaging_services: Any
     _imaging_ui: Any
     _library_screens: Any
@@ -74,6 +77,7 @@ class AppWindowState(Protocol):
     _optics_label: Any
     _options_page: Any
     _pier_combo: Any
+    _plugin_manager: Any
     _pier_connect_btn: Any
     _pier_connect_startup_check: Any
     _pier_delete_btn: Any
@@ -82,6 +86,7 @@ class AppWindowState(Protocol):
     _pier_poll_threads: Any
     _primary_nav: Any
     _schedulers: Any
+    _science_nav: Any
     _sky_atlas: SkyAtlas | None
     _solve_settings_refresh: Any
     _star_atlas_refresh_markers: Any
@@ -106,7 +111,8 @@ class AppWindowState(Protocol):
     def _open_manual(self) -> None: ...
     def _show_about(self) -> None: ...
     def _build_submenu_page(self, items: list, builders: dict) -> QWidget: ...
-    def _build_placeholder_page(self, title: str) -> QWidget: ...
+    def _build_plugin_page(self, plugin: Any, label: str) -> QWidget: ...
+    def _build_placeholder_page(self, title: str, subtitle_text: str = ...) -> QWidget: ...
 
     # _current_object.py
     def current_object(self) -> Any: ...
@@ -130,6 +136,9 @@ class AppWindowState(Protocol):
 
     # _focuser_page.py
     def _build_focuser_page(self) -> QWidget: ...
+
+    # _darks.py
+    def _open_darks_dialog(self) -> None: ...
 
     # _flats.py
     def _open_flats_dialog(self, service: Any) -> None: ...
@@ -221,6 +230,9 @@ class AppWindowState(Protocol):
     def _build_imaging_settings_page(self) -> QWidget: ...
     def _build_focus_settings_page(self) -> QWidget: ...
     def _build_solve_settings_page(self) -> QWidget: ...
+
+    # _plugins_page.py
+    def _build_plugins_settings_page(self) -> QWidget: ...
 
     # _star_atlas_page.py
     def _build_star_atlas_page(self) -> QWidget: ...
