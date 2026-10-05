@@ -463,6 +463,185 @@ async def test_tc_lib_110_ftp_dwarf_experimental():
 
 
 # ---------------------------------------------------------------------------
+# TC-LIB-170  (SFTP server source)
+# ---------------------------------------------------------------------------
+
+def _fake_sftp_server(tree, *, deleted=None, fail_on=()):
+    """A stand-in ``paramiko`` whose server holds *tree* ({directory: [(name, size) | name/ for a folder]})."""
+    import stat
+    import types
+
+    class Entry:
+        def __init__(self, name, size, is_dir):
+            self.filename, self.st_size = name, size
+            self.st_mode = (stat.S_IFDIR if is_dir else stat.S_IFREG) | 0o755
+
+    class Sftp:
+        def listdir_attr(self, path):
+            return [Entry(n.rstrip("/"), s, n.endswith("/")) for n, s in tree[path.rstrip("/") or "/"]]
+
+        def get(self, remote, local, callback=None):
+            if remote in fail_on:
+                raise OSError("transfer failed")
+            with open(local, "wb") as fh:
+                fh.write(b"SIMPLE")
+            if callback:
+                callback(6, 6)
+
+        def remove(self, remote):
+            deleted.append(remote)
+
+        def close(self):
+            pass
+
+    class SSHClient:
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, **kwargs):
+            SSHClient.connected_with = kwargs
+
+        def open_sftp(self):
+            return Sftp()
+
+        def close(self):
+            pass
+
+    module = types.ModuleType("paramiko")
+    module.SSHClient = SSHClient
+    module.RejectPolicy = type("RejectPolicy", (), {})
+    module.MissingHostKeyPolicy = type("MissingHostKeyPolicy", (), {})
+    return module
+
+
+@pytest.fixture
+def sftp_settings(library, monkeypatch):
+    """library.ini carrying an SFTP account; the keychain is faked so no test touches the real one."""
+    library.ini.write_text(
+        library.ini.read_text()
+        + "sftp_username = astro\nsftp_remote_path = /data\nsftp_port = 2222\nsftp_key_path = /keys/id\n"
+    )
+    stored = {"password": "s3cret"}
+    monkeypatch.setattr("galileo.library.config.get_sftp_password", lambda: stored["password"])
+    monkeypatch.setattr("galileo.library.config.set_sftp_password", lambda pw: stored.update(password=pw))
+    # the Options widget imported the two functions by name, so patch its references as well
+    monkeypatch.setattr("galileo.ui.library.config_widget.get_sftp_password", lambda: stored["password"])
+    monkeypatch.setattr("galileo.ui.library.config_widget.set_sftp_password", lambda pw: stored.update(password=pw))
+    return stored
+
+
+@pytest.mark.requirement("TC-LIB-170")
+@pytest.mark.priority("P2")
+def test_tc_lib_170_sftp_server_browse_download_and_delete(sftp_settings, tmp_path):
+    """LIB-170: Browse and selectively download files from an SFTP server — every FITS file under the configured
+    folder (recursively, skipping other files), downloaded with the configured account, key and port, and
+    deletable from the server afterwards."""
+    import sys
+    from unittest.mock import patch
+    from galileo.library.services.telescope import SmartTelescopeManager
+
+    tree = {
+        "/data": [("m42_001.fits", 10), ("notes.txt", 3), ("night1/", 0)],
+        "/data/night1": [("m31_001.FIT", 20), ("m31_002.zip", 30), ("readme.md", 1)],
+    }
+    deleted = []
+    module = _fake_sftp_server(tree, deleted=deleted)
+    manager = SmartTelescopeManager()
+    with patch.dict(sys.modules, {"paramiko": module}):
+        files, error = manager.get_fits_files("SFTP", "observatory.example")
+        assert error is None
+        assert sorted(f["path"] for f in files) == ["/data/m42_001.fits", "/data/night1/m31_001.FIT", "/data/night1/m31_002.zip"]
+        nested = next(f for f in files if f["name"] == "m31_001.FIT")
+        assert (nested["size"], nested["folder_name"]) == (20, "night1")
+        # the configured account, key, port and keychain password reached the connection
+        assert module.SSHClient.connected_with["username"] == "astro"
+        assert module.SSHClient.connected_with["key_filename"] == "/keys/id"
+        assert module.SSHClient.connected_with["port"] == 2222
+        assert module.SSHClient.connected_with["password"] == "s3cret"
+
+        local = tmp_path / "out" / "m42_001.fits"
+        ok, error = manager.download_file("SFTP", "observatory.example", files[0], str(local))
+        assert ok and error is None and local.read_bytes() == b"SIMPLE"
+
+        ok, error = manager.delete_file("SFTP", "observatory.example", files[0])
+        assert ok and deleted == [files[0]["path"]]
+
+
+@pytest.mark.requirement("TC-LIB-170")
+@pytest.mark.priority("P2")
+def test_tc_lib_170_sftp_failures_are_reported_and_cancel_leaves_no_partial_file(sftp_settings, tmp_path):
+    """LIB-170: an unreachable server or failed transfer comes back as an error message (not an empty success), a
+    cancelled download stops cleanly with no partial file, and an SFTP source is addressed by hostname, never scanned for."""
+    import sys
+    from unittest.mock import patch
+    from galileo.library.services.telescope import SmartTelescopeManager
+
+    manager = SmartTelescopeManager()
+    assert manager.find_telescope("SFTP", hostname="observatory.example") == ("observatory.example", None)
+    ip, error = manager.find_telescope("SFTP", network_range="10.0.0.0/24")
+    assert ip is None and "hostname" in error
+
+    module = _fake_sftp_server({"/data": [("a.fits", 1)]}, fail_on=("/data/a.fits",))
+    module.SSHClient.connect = lambda self, **kw: (_ for _ in ()).throw(OSError("no route to host"))
+    with patch.dict(sys.modules, {"paramiko": module}):
+        files, error = manager.get_fits_files("SFTP", "203.0.113.9")
+    assert files == [] and "no route to host" in error
+
+    module = _fake_sftp_server({"/data": [("a.fits", 1)]}, fail_on=("/data/a.fits",))
+    with patch.dict(sys.modules, {"paramiko": module}):
+        ok, error = manager.download_file("SFTP", "h", {"name": "a.fits", "path": "/data/a.fits", "size": 1}, str(tmp_path / "a.fits"))
+    assert not ok and "transfer failed" in error and not (tmp_path / "a.fits").exists()
+
+    module = _fake_sftp_server({"/data": [("a.fits", 1)]})
+    with patch.dict(sys.modules, {"paramiko": module}):
+        ok, error = manager.download_file("SFTP", "h", {"name": "a.fits", "path": "/data/a.fits", "size": 1},
+                                          str(tmp_path / "b.fits"), progress_callback=lambda done: False)
+    assert not ok and "cancelled" in error.lower() and not (tmp_path / "b.fits").exists()
+
+
+@pytest.mark.requirement("TC-LIB-170")
+@pytest.mark.priority("P2")
+def test_tc_lib_170_sftp_is_offered_in_download_dialog_and_options(window, sftp_settings, monkeypatch):
+    """LIB-170: the Download dialog lists an SFTP source (no network range needed) and Options > Library > Smart
+    Telescopes holds its account, key, folder, port and host-key policy, with the password kept in the keychain."""
+    from PySide6 import QtWidgets
+    from galileo.library.config import load_config
+    from galileo.ui.library.config_widget import ConfigWidget
+    from galileo.ui.library.download_dialog import SmartTelescopeDownloadDialog
+
+    dialog = SmartTelescopeDownloadDialog()
+    names = [dialog.telescope_list.item(i).text() for i in range(dialog.telescope_list.count())]
+    assert "SFTP" in names
+    dialog.telescope_list.setCurrentRow(names.index("SFTP"))
+    assert dialog.hostname_edit.text() == "" and not dialog.network_edit.isEnabled()
+    dialog.telescope_list.setCurrentRow(0)
+    assert dialog.network_edit.isEnabled()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    window._open_library_settings()
+    widget = window._window.findChildren(ConfigWidget)[0]
+    assert (widget.sftp_username.text(), widget.sftp_remote_path.text(), widget.sftp_port.value()) == ("astro", "/data", 2222)
+    assert widget.sftp_password.text() == "s3cret"
+    widget.sftp_username.setText("newuser")
+    widget.sftp_password.setText("changed")
+    widget.sftp_strict_host_keys.setChecked(True)
+    widget.save_settings()
+    config = load_config()
+    assert config.get("DEFAULT", "sftp_username") == "newuser"
+    assert config.get("DEFAULT", "sftp_strict_host_keys") == "True"
+    assert "changed" not in open(library_ini_path(config)).read()      # never in the ini file
+    assert sftp_settings["password"] == "changed"                      # went to the (fake) keychain
+
+
+def library_ini_path(_config):
+    from galileo.library.config import get_config_path
+    return get_config_path()
+
+
+# ---------------------------------------------------------------------------
 # TC-LIB-120
 # ---------------------------------------------------------------------------
 
@@ -1364,3 +1543,46 @@ def test_tc_lib_070_quality_assessment_writes_a_report_when_requested(library, m
     assert len(data_rows) == total + 1, "one row per analyzed file plus the summary row"
     assert all(r["star_count"] == "42" and r["avg_hfr_arcsec"] == "1.5" for r in data_rows[:-1])
     assert data_rows[-1]["file"] == "SUMMARY" and f"{total}/{total}" in data_rows[-1]["status"]
+
+
+# ---------------------------------------------------------------------------
+# TC-LIB-010  (XISF import reads an untrusted header)
+# ---------------------------------------------------------------------------
+
+def _write_xisf(path, header_xml: str):
+    import struct
+    body = header_xml.encode("utf-8")
+    path.write_bytes(b"XISF0100" + struct.pack("<I", len(body)) + struct.pack("<I", 0) + body)
+    return str(path)
+
+
+_XISF_HEADER = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<xisf version="1.0" xmlns="http://www.pixinsight.com/xisf">'
+    '<Image geometry="4:4:1" sampleFormat="UInt16" location="attachment:100:32">'
+    '<FITSKeyword name="OBJECT" value="M42" comment="target"/></Image></xisf>'
+)
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_xisf_header_is_parsed(tmp_path):
+    """LIB-010: a well-formed XISF header is read (its FITS keywords come through) after the switch to a hardened XML parser."""
+    from galileo.library.file_formats.xisfFile.xisf_converter import XISFConverter
+    converter = XISFConverter(_write_xisf(tmp_path / "ok.xisf", _XISF_HEADER))
+    assert converter.get_header_cards().get("OBJECT") == "M42"
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_xisf_header_with_entity_expansion_is_rejected(tmp_path):
+    """LIB-010: an imported XISF whose header declares XML entities (the billion-laughs / external-entity attacks) is refused rather than expanded."""
+    from galileo.library.file_formats.xisfFile.xisf_converter import XISFConverter
+    bomb = (
+        '<?xml version="1.0"?><!DOCTYPE xisf [<!ENTITY a "AAAAAAAAAA"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;">]>'
+        '<xisf version="1.0" xmlns="http://www.pixinsight.com/xisf"><Image geometry="4:4:1" sampleFormat="UInt16">'
+        '<FITSKeyword name="OBJECT" value="&b;"/></Image></xisf>'
+    )
+    with pytest.raises(ValueError, match="(?i)entit|forbidden|Error reading XISF"):
+        XISFConverter(_write_xisf(tmp_path / "bomb.xisf", bomb))
+

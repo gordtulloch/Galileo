@@ -190,11 +190,8 @@ class XISFGeometry:
             return (self.channels, self.height, self.width)
 
     def channel_size(self) -> int:
-        """Calculate size of a single channel in pixels."""
-        size = 1
-        for dim in self.dimensions:
-            size *= dim
-        return size
+        """Calculate size of a single channel (one width x height plane) in pixels."""
+        return self.width * self.height
 
     def __str__(self) -> str:
         """String representation."""

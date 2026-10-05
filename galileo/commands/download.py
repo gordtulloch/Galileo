@@ -14,7 +14,7 @@ Options:
     -h, --help              Show this help message and exit
     -v, --verbose           Enable verbose logging
     -c, --config            Path to configuration file (default: library.ini in the Galileo config folder)
-    -t, --telescope TYPE    Telescope type: SeeStar, StellarMate, iTelescope
+    -t, --telescope TYPE    Telescope type: SeeStar, StellarMate, DWARF 3, iTelescope, SFTP
     -H, --hostname HOST     Hostname or IP address of telescope
     -n, --network RANGE     Network range to scan (e.g., 192.168.1.0/24)
     -d, --destination DIR   Download destination folder
@@ -28,6 +28,7 @@ Telescope Types:
     StellarMate - StellarMate device (SMB protocol)  
     DWARF 3     - DWARF 3 smart telescope (FTP protocol)
     iTelescope  - iTelescope network (FTPS protocol)
+    SFTP        - any SFTP server (needs --hostname; account, key and folder come from Options > Library)
 
 Examples:
     # Download from SeeStar with auto-discovery
@@ -337,7 +338,7 @@ def main():
     parser.add_argument('-c', '--config', default=None,
                         help='Path to configuration file (default: library.ini in the Galileo config folder)')
     parser.add_argument('-t', '--telescope', required=True,
-                        choices=['SeeStar', 'StellarMate', 'DWARF 3', 'iTelescope'],
+                        choices=['SeeStar', 'StellarMate', 'DWARF 3', 'iTelescope', 'SFTP'],
                         help='Telescope type')
     parser.add_argument('-H', '--hostname',
                         help='Hostname or IP address of telescope')

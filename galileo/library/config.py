@@ -139,3 +139,50 @@ def set_itelescope_password(password: str) -> None:
                 logger.debug("Could not delete iTelescope password from the OS keychain", exc_info=True)
     except Exception:
         logger.warning("Could not save the iTelescope password to the OS keychain", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# SFTP server (EXT-120, LIB-170): the connection settings live in library.ini, the password in the keychain
+# ---------------------------------------------------------------------------
+
+_KEYRING_SFTP_USER = "sftp"
+
+
+def get_sftp_password() -> str:
+    """The SFTP server password, from the OS keychain ("" if unset or the keychain is unavailable)."""
+    try:
+        import keyring
+        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_SFTP_USER) or ""
+    except Exception:
+        logger.warning("Could not read the SFTP password from the OS keychain", exc_info=True)
+        return ""
+
+
+def set_sftp_password(password: str) -> None:
+    """Store the SFTP server password in the OS keychain (an empty string clears it)."""
+    try:
+        import keyring
+        if password:
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_SFTP_USER, password)
+        else:
+            try:
+                keyring.delete_password(_KEYRING_SERVICE, _KEYRING_SFTP_USER)
+            except Exception:
+                logger.debug("Could not delete SFTP password from the OS keychain", exc_info=True)
+    except Exception:
+        logger.warning("Could not save the SFTP password to the OS keychain", exc_info=True)
+
+
+def get_sftp_settings() -> dict:
+    """The configured SFTP server's connection settings (Options > Library > Smart Telescopes)."""
+    config = load_config()
+    port_text = config.get("DEFAULT", "sftp_port", fallback="22").strip()
+    return {
+        "username": config.get("DEFAULT", "sftp_username", fallback="").strip(),
+        "password": get_sftp_password(),
+        "key_path": config.get("DEFAULT", "sftp_key_path", fallback="").strip(),
+        "remote_path": config.get("DEFAULT", "sftp_remote_path", fallback="/").strip() or "/",
+        "port": int(port_text) if port_text.isdigit() else 22,
+        "strict_host_keys": config.get("DEFAULT", "sftp_strict_host_keys", fallback="False").strip().lower()
+                            in ("true", "1", "yes", "on"),
+    }

@@ -44,7 +44,8 @@ class AppWindowState(Protocol):
     # --- attributes -----------------------------------------------------
     _active_camera_slot: str
     _active_optics_position: int
-    _camera_backends: Any
+    @property
+    def _camera_backends(self) -> dict: ...   # a read-only property on the mixin (_core.py)
     _camera_backends_by_pier: Any
     _camera_combo: Any
     _camera_label: Any
@@ -62,7 +63,8 @@ class AppWindowState(Protocol):
     _imaging_filter_combo: Any
     _imaging_filter_threads: Any
     _imaging_preview_renders: Any
-    _imaging_service: Any
+    @property
+    def _imaging_service(self) -> Any: ...   # a read-only property on the mixin (_core.py)
     _imaging_services: Any
     _imaging_ui: Any
     _library_screens: Any

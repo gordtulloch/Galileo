@@ -8,7 +8,7 @@ import socket
 import ipaddress
 import os
 import logging
-from galileo.library.config import get_itelescope_password, load_config as load_library_config
+from galileo.library.config import get_itelescope_password, get_sftp_settings, load_config as load_library_config
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import ftplib
@@ -67,6 +67,16 @@ class SmartTelescopeManager:
                 'protocol': 'ftps',  # FTP with TLS
                 'fits_path': '',  # Start scanning from root
                 'port': 21
+            },
+            'SFTP': {
+                # A remote-telescope/observatory data server over SSH (EXT-120, LIB-170). The host comes
+                # from the Download dialog or --hostname; the account, key, folder and host-key policy
+                # from Options > Library > Smart Telescopes (see galileo.library.config.get_sftp_settings).
+                'default_hostname': '',
+                'default_username': None,
+                'default_password': None,
+                'protocol': 'sftp',
+                'fits_path': '/'
             }
         }
 
@@ -152,6 +162,12 @@ class SmartTelescopeManager:
     def find_telescope(self, telescope_type, network_range=None, hostname=None):
         """Find a specific telescope on the network."""
         logger.info(f"Starting search for {telescope_type} telescope (hostname={hostname}, network={network_range})")
+
+        # An SFTP server is addressed by name; there is nothing to scan for
+        if telescope_type == 'SFTP':
+            if not hostname:
+                return None, "Enter the SFTP server's hostname or IP address."
+            return hostname, None
 
         # For iTelescope, bypass all network scanning and SMB checks
         if telescope_type == 'iTelescope':
@@ -302,6 +318,8 @@ class SmartTelescopeManager:
             return self._get_fits_files_ftp(telescope_type, ip, username, password)
         elif config.get('protocol') == 'ftps':
             return self._get_fits_files_ftps(telescope_type, ip, username, password)
+        elif config.get('protocol') == 'sftp':
+            return self._get_fits_files_sftp(ip)
         else:
             return self._get_fits_files_smb(telescope_type, ip, username, password)
 
@@ -845,6 +863,8 @@ class SmartTelescopeManager:
             return self._download_file_ftp(telescope_type, ip, file_info, local_path, progress_callback)
         elif config.get('protocol') == 'ftps':
             return self._download_file_ftps(telescope_type, ip, file_info, local_path, username, password, progress_callback)
+        elif config.get('protocol') == 'sftp':
+            return self._download_file_sftp(ip, file_info, local_path, progress_callback)
         else:
             return self._download_file_smb(telescope_type, ip, file_info, local_path, username, password, progress_callback)
 
@@ -1037,8 +1057,52 @@ class SmartTelescopeManager:
 
         return f"{size_bytes:.1f} {size_names[i]}"
 
+    # --- SFTP (EXT-120, LIB-170) ----------------------------------------------
+
+    @staticmethod
+    def _open_sftp(host):
+        """A connected SftpSession to *host* using the Options > Library SFTP settings."""
+        from galileo.library.adapters.sftp import SftpSession
+        s = get_sftp_settings()
+        return SftpSession(host, s['username'], s['password'], s['key_path'], s['port'], s['strict_host_keys'])
+
+    def _get_fits_files_sftp(self, host):
+        """Every FITS file under the configured remote folder of an SFTP server."""
+        try:
+            with self._open_sftp(host) as session:
+                return session.list_fits(get_sftp_settings()['remote_path']), None
+        except Exception as e:
+            logger.warning(f"SFTP listing on {host} failed", exc_info=True)
+            return [], f"SFTP error: {e}"
+
+    def _download_file_sftp(self, host, file_info, local_path, progress_callback=None):
+        from galileo.library.adapters.sftp import SftpDownloadCancelled
+        try:
+            with self._open_sftp(host) as session:
+                session.get(
+                    file_info['path'], local_path,
+                    (lambda done, total: progress_callback(done)) if progress_callback else None)
+            return True, None
+        except SftpDownloadCancelled:
+            return False, "Download cancelled"
+        except Exception as e:
+            logger.warning(f"SFTP download of {file_info.get('name')} from {host} failed", exc_info=True)
+            return False, f"SFTP error: {e}"
+
+    def _delete_file_sftp(self, host, file_info):
+        try:
+            with self._open_sftp(host) as session:
+                session.remove(file_info['path'])
+            return True, None
+        except Exception as e:
+            logger.warning(f"SFTP delete of {file_info.get('name')} on {host} failed", exc_info=True)
+            return False, f"SFTP error: {e}"
+
     def delete_file(self, telescope_type, ip, file_info):
         """Delete a file from the telescope."""
+        if telescope_type == 'SFTP':
+            return self._delete_file_sftp(ip, file_info)
+
         if not SMB_AVAILABLE:
             return False, "SMB library not available"
 

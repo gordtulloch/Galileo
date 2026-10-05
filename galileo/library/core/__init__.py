@@ -55,8 +55,28 @@ class fitsProcessing:
 
         # Load configuration for backwards compatibility
         self.config = load_library_config()
-        self.sourceFolder: str = self.config.get('DEFAULT', 'source', fallback='.')
-        self.repoFolder: str = self.config.get('DEFAULT', 'repo', fallback='.')
+        self.sourceFolder = self.config.get('DEFAULT', 'source', fallback='.')
+        self.repoFolder = self.config.get('DEFAULT', 'repo', fallback='.')
+
+    # The folders live on the components that do the work. The commands' --source/--repo overrides set them on this
+    # facade, so they must reach those components - otherwise files are still filed into the configured repository.
+    @property
+    def sourceFolder(self) -> str:
+        return self.file_processor.sourceFolder
+
+    @sourceFolder.setter
+    def sourceFolder(self, folder: str) -> None:
+        self.file_processor.sourceFolder = folder
+        self.repository_manager.sourceFolder = folder
+
+    @property
+    def repoFolder(self) -> str:
+        return self.file_processor.repoFolder
+
+    @repoFolder.setter
+    def repoFolder(self, folder: str) -> None:
+        self.file_processor.repoFolder = folder
+        self.repository_manager.repoFolder = folder
 
     # Delegate methods to appropriate processors with original signatures
     def calculateFileHash(self, filePath: FilePath) -> str | None:

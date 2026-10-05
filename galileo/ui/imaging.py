@@ -639,9 +639,16 @@ class ImagingService:
 
         if save_dir is not None:
             out_dir = Path(save_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
             p = out_dir / f"{self.file_stem}_{datetime.datetime.utcnow().strftime('%H%M%S')}.fits"
-            _save_fits(data, p, self.object_name, self.frame_metadata(), self.bitpix)
+            # A full-frame FITS write takes long enough to stall the event loop, so do it on a worker
+            # thread; the metadata is read here, on the loop, before the thread starts.
+            metadata = self.frame_metadata()
+
+            def _write() -> None:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                _save_fits(data, p, self.object_name, metadata, self.bitpix)
+
+            await asyncio.to_thread(_write)
             self.last_saved_path = p
 
     async def capture_single(self, duration: float, filter_name: str = "", frame_type: str = "Light"):

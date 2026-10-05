@@ -444,6 +444,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-140` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-140` |
 | `LIB-150` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-150` |
 | `LIB-160` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-160` |
+| `LIB-170` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-170` |
 
 ### `VST` / `VST-AN` — Moved
 
@@ -546,7 +547,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
-| `LIB` | 15 | 10 | 4 | 1 |
+| `LIB` | 16 | 10 | 5 | 1 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
@@ -556,4 +557,4 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **284** | **169** | **100** | **15** |
+| **Total** | **285** | **169** | **101** | **15** |

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ def main() -> None:
         print("PySide6 is required to run Galileo.  Install it with: pip install PySide6")
         sys.exit(1)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    # instance() is typed as QCoreApplication; a running one here is always the QApplication we create.
+    app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setApplicationName("Galileo")
     app.setOrganizationName("GordTulloch")
     if _ICON_PATH.exists():

@@ -40,6 +40,36 @@ def test_tc_eqp_020_display_and_configure_device_settings(mock_indi_camera):
     mock_indi_camera.set_property.assert_called_with("GAIN", 200)
 
 
+@pytest.mark.requirement("TC-EQP-020")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_020_set_property_from_a_running_loop_is_held_and_completes(mock_indi_camera):
+    """EQP-020: from a running event loop the property write is scheduled, kept referenced until it finishes, and actually runs."""
+    import asyncio
+    devices = pytest.importorskip("galileo.core.devices")
+    ctrl = devices.DeviceController(mock_indi_camera)
+    ctrl.set_property("GAIN", 200)
+    assert len(devices._pending_property_writes) == 1      # strongly referenced while in flight
+    await asyncio.gather(*list(devices._pending_property_writes))
+    await asyncio.sleep(0)                                  # let the done-callback run
+    mock_indi_camera.set_property.assert_awaited_once_with("GAIN", 200)
+    assert not devices._pending_property_writes
+
+
+@pytest.mark.requirement("TC-EQP-020")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_020_failed_property_write_is_logged_not_lost(mock_indi_camera, caplog):
+    """EQP-020: a property write that fails is logged with its traceback rather than vanishing, and does not raise into the caller."""
+    import asyncio
+    devices = pytest.importorskip("galileo.core.devices")
+    mock_indi_camera.set_property.side_effect = RuntimeError("device refused")
+    ctrl = devices.DeviceController(mock_indi_camera)
+    with caplog.at_level("ERROR", logger="galileo.core.devices"):
+        ctrl.set_property("GAIN", 999)
+        await asyncio.gather(*list(devices._pending_property_writes), return_exceptions=True)
+        await asyncio.sleep(0)
+    assert any("GAIN" in r.getMessage() and r.exc_info for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # TC-EQP-030
 # ---------------------------------------------------------------------------

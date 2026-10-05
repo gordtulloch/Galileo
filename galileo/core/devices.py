@@ -230,6 +230,14 @@ class DevicePool:
 # Device controller (thin wrapper over a backend)
 # ---------------------------------------------------------------------------
 
+_pending_property_writes: set[asyncio.Task] = set()
+
+
+async def _await(awaitable) -> None:
+    """Adapt any awaitable to a coroutine, which is what ``create_task``/``asyncio.run`` need."""
+    await awaitable
+
+
 class DeviceController:
     """Wraps a *DeviceBackend* with error handling and event publication."""
 
@@ -253,19 +261,33 @@ class DeviceController:
         return raw if isinstance(raw, dict) else {}
 
     def set_property(self, name: str, value: object) -> None:
-        # Call synchronously if the backend's set_property is not a coroutine
-        import asyncio
+        """Set a backend property. Backends may implement this as a coroutine; from a running event
+        loop it is scheduled (fire-and-forget, as this method is synchronous), otherwise it is run
+        to completion here. Failures are logged — a bad property write must not raise into the
+        caller, but must not vanish either."""
         import inspect
         result = self._backend.set_property(name, value)
-        if inspect.isawaitable(result):
+        if not inspect.isawaitable(result):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(result)
-                else:
-                    loop.run_until_complete(result)
-            except RuntimeError:
-                pass  # no event loop — best-effort
+                asyncio.run(_await(result))
+            except Exception:
+                logger.exception("Setting device property %r failed", name)
+            return
+        # The loop only keeps a weak reference to a task, so hold one until it finishes — otherwise
+        # the write can be garbage-collected mid-flight — and report its failure rather than losing it.
+        task = loop.create_task(_await(result))
+        _pending_property_writes.add(task)
+
+        def _done(finished: asyncio.Task) -> None:
+            _pending_property_writes.discard(finished)
+            if not finished.cancelled() and finished.exception() is not None:
+                logger.error("Setting device property %r failed", name, exc_info=finished.exception())
+
+        task.add_done_callback(_done)
 
     async def connect(self) -> None:
         from galileo.bus import DeviceConnectedEvent, DeviceErrorEvent

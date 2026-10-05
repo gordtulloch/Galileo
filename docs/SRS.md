@@ -78,7 +78,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 
 ## 3. External Interface Requirements
 
-**`EXT-100` is retired** (left as a gap rather than renumbering, matching this document's ID conventions elsewhere): it covered the AAVSO Target Tool/VSP API, which is not a Galileo-core-wide integration — only the VSTarget plugin uses it, so it now lives as `VST-EXT-010` in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md). `EXT-110` (Simbad) and `EXT-120` (SFTP) stay here and are reworded to drop their AAVSO-specific framing, since both are genuinely shared infrastructure — `EXT-110` also backs `SKY-100`'s fallback lookup, and `EXT-120`'s SFTP adapter lives in core `galileo.library.adapters` (SDD Section 4.23), reused by the plugin rather than owned by it.
+**`EXT-100` is retired** (left as a gap rather than renumbering, matching this document's ID conventions elsewhere): it covered the AAVSO Target Tool/VSP API, which is not a Galileo-core-wide integration — only the VSTarget plugin uses it, so it now lives as `VST-EXT-010` in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md). `EXT-110` (Simbad) and `EXT-120` (SFTP) stay here and are reworded to drop their AAVSO-specific framing, since both are genuinely shared infrastructure — `EXT-110` also backs `SKY-100`'s fallback lookup, and `EXT-120`'s SFTP adapter lives in core `galileo.library.adapters` (SDD Section 4.23) and is the Library's alone — the VSTarget plugin does no image retrieval of its own (its `VST-AN-010` is retired) and reads its images from the library.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -553,10 +553,11 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | LIB-140 | The system shall verify file integrity via stored content hashes on demand, flagging any repository file whose content no longer matches its recorded hash. | P2 |
 | LIB-150 | The system shall automatically register each frame into the repository catalog as it is written to disk during a running session (`SES`), rather than requiring a separate manual or scheduled scan (`LIB-010`) to discover it. | MVP |
 | LIB-160 | The system shall automatically create a session container grouping every frame acquired during one session-block execution, distinct from `LIB-040`'s post-hoc heuristic (camera/binning/temperature/date) grouping of files already in the repository — a session-block container is authoritative because it comes directly from `SES` execution, not inferred from file metadata. | MVP |
+| LIB-170 | The system shall browse and selectively download files from an SFTP server (traces to `EXT-120`): every FITS file under a configured remote folder, authenticating with the configured account and a key file or password (kept in the OS keychain, not `library.ini`), with a host-key policy that either logs or refuses unknown servers, from the Download dialog and the `galileo-download` command. This is the Library's only SFTP capability; plugins do not carry their own. | P2 |
 
 ### 4.23 `VST` / `VST-AN` — Moved
 
-Variable Star Target Planning and Variable Star Analysis & Photometry are no longer decomposed here — they are the VSTarget plugin's own requirements, specified in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) Sections 4.1–4.2 against this document's `PLUG` domain (`PLUG-060`/`070`/`080`) and a small number of other core requirements consumed by reference (`SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`). This section number is kept as a placeholder rather than renumbered away, consistent with this document's ID-stability convention elsewhere (e.g. `SES`'s Section 4.5a).
+Variable Star Target Planning and Variable Star Analysis & Photometry are no longer decomposed here — they are the VSTarget plugin's own requirements, specified in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) Sections 4.1–4.2 against this document's `PLUG` domain (`PLUG-060`/`070`/`080`) and a small number of other core requirements consumed by reference (`SKY-030`, `EXT-110`, `PLT-010`, `SCHED-010`). This section number is kept as a placeholder rather than renumbered away, consistent with this document's ID-stability convention elsewhere (e.g. `SES`'s Section 4.5a).
 
 ---
 
@@ -658,7 +659,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |
-| LIB | 15 | 10 | 4 | 1 |
+| LIB | 16 | 10 | 5 | 1 |
 | NFR-PERF | 3 | 3 | 0 | 0 |
 | NFR-REL | 4 | 3 | 1 | 0 |
 | NFR-PORT | 2 | 2 | 0 | 0 |
@@ -668,7 +669,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **270** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **271** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
 
 ---
 

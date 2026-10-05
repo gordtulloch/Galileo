@@ -815,14 +815,17 @@ async def geocode_location(place_name: str) -> dict:
 
     params = urllib.parse.urlencode({"name": place_name, "count": 1, "format": "json"})
     url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
-    try:
+    def _fetch() -> dict:
         with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read())
-            result = data.get("results", [{}])[0]
-            return {
-                "latitude": result.get("latitude", 0.0),
-                "longitude": result.get("longitude", 0.0),
-                "timezone": result.get("timezone", "UTC"),
-            }
+            return json.loads(resp.read())
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+        result = data.get("results", [{}])[0]
+        return {
+            "latitude": result.get("latitude", 0.0),
+            "longitude": result.get("longitude", 0.0),
+            "timezone": result.get("timezone", "UTC"),
+        }
     except Exception:
         return {}

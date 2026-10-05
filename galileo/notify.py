@@ -38,8 +38,13 @@ class WebhookChannel:
 
     async def send(self, notification: _Notification) -> None:
         """POST the notification payload to the configured URL."""
+        import urllib.parse
         import urllib.request
         import json
+        # urlopen also speaks file:// and ftp://; a webhook is an HTTP POST, so refuse anything else
+        if urllib.parse.urlparse(self.url).scheme not in ("http", "https"):
+            logger.error("WebhookChannel: refusing non-HTTP(S) webhook URL %r", self.url)
+            return
         payload = json.dumps({
             "event": notification.event_type.value,
             "detail": notification.detail,

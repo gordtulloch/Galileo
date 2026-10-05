@@ -13,11 +13,11 @@
 
 ## 1. Purpose and Method
 
-This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the SDD component(s) that satisfy it and to a Test Case ID, structurally parallel to [Galileo core's own RTM](../../RTM.md). **Test Case ID convention:** `TC-<requirement-ID>` (e.g. `TC-VST-010` verifies `VST-010`). No test suite exists yet for this plugin — these IDs are the reserved identifiers a future test suite should use.
+This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the SDD component(s) that satisfy it and to a Test Case ID, structurally parallel to [Galileo core's own RTM](../../RTM.md). **Test Case ID convention:** `TC-<requirement-ID>` (e.g. `TC-VST-010` verifies `VST-010`). The plugin's own suite lives beside its package (`tests/test_vst.py`, `tests/test_vst_an.py`), one file per domain as in core; an ID with no test yet is the reserved identifier that test must use.
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise.
 
-**Coverage:** 19 requirements, 100% mapped to an SDD component.
+**Coverage:** 21 requirements, 100% mapped to an SDD component.
 
 ---
 
@@ -42,12 +42,12 @@ This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the S
 | `VST-070` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-070` |
 | `VST-080` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-080` |
 | `VST-090` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-090` |
+| `VST-100` | MVP | SDD 3.1 `galileo.plugins.vstarget.planning` | Test | `TC-VST-100` |
 
 ### `VST-AN` — Variable Star Analysis & Photometry
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `VST-AN-010` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-010` |
 | `VST-AN-020` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-020` |
 | `VST-AN-030` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-030` |
 | `VST-AN-040` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-040` |
@@ -56,6 +56,7 @@ This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the S
 | `VST-AN-070` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-070` |
 | `VST-AN-080` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-080` |
 | `VST-AN-090` | P2 | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-090` |
+| `VST-AN-100` | MVP | SDD 3.2 `galileo.plugins.vstarget.analysis` | Test | `TC-VST-AN-100` |
 
 ---
 
@@ -64,12 +65,12 @@ This RTM maps every numbered requirement in [this plugin's SRS](SRS.md) to the S
 | Domain | Requirements | MVP | P2 | P3 |
 |---|---|---|---|---|
 | `VST-EXT` | 1 | 1 | 0 | 0 |
-| `VST` | 9 | 8 | 1 | 0 |
+| `VST` | 10 | 9 | 1 | 0 |
 | `VST-AN` | 9 | 5 | 4 | 0 |
-| **Total** | **19** | **14** | **5** | **0** |
+| **Total** | **20** | **15** | **5** | **0** |
 
 ---
 
 ## 4. Cross-Reference to Core
 
-Requirements this plugin's own rows trace to but do not define (see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core) and [Galileo core's own RTM](../../RTM.md) for their coverage): core `PLUG-010`–`PLUG-120` (plugin framework, enable/disable, install from ZIP, marketplace download, and remove), `SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`.
+Requirements this plugin's own rows trace to but do not define (see [PSD.md Section 7](PSD.md#7-dependencies-on-galileo-core) and [Galileo core's own RTM](../../RTM.md) for their coverage): core `PLUG-010`–`PLUG-120` (plugin framework, enable/disable, install from ZIP, marketplace download, and remove), `SKY-030`, `EXT-080`, `EXT-110`, `EXT-120`, `PLT-010`, `SCHED-010`, `LIB-040` (the catalogued sessions `VST-AN-100` lists), `NFR-PERF-020` (the UI-responsiveness rule its run obeys).

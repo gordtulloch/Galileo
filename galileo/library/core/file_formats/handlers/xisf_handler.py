@@ -51,18 +51,17 @@ class XisfFileHandler(BaseFileFormatHandler):
             fits_path = os.path.splitext(file_path)[0] + '.fits'
 
             # Convert the file
-            converter = XISFConverter()
-            success = converter.convert_to_fits(file_path, fits_path)
+            # XISFConverter reads the file in its constructor and convert_to_fits() returns the path it wrote
+            written = XISFConverter(str(file_path)).convert_to_fits(fits_path)
 
-            if success:
-                logger.info(f"Successfully converted XISF to FITS: {fits_path}")
-                return fits_path
-            else:
-                raise FileProcessingError(
-                    "XISF conversion failed - converter returned False",
-                    file_path=str(file_path),
-                    error_code="XISF_CONVERSION_FAILED"
-                )
+            if written and os.path.exists(written):
+                logger.info(f"Successfully converted XISF to FITS: {written}")
+                return written
+            raise FileProcessingError(
+                "XISF conversion failed - no FITS file was written",
+                file_path=str(file_path),
+                error_code="XISF_CONVERSION_FAILED"
+            )
 
         except FileProcessingError:
             # Re-raise our custom exceptions

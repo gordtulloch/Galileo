@@ -207,8 +207,10 @@ async def get_configured_devices(host: str, port: int, protocol: str = "http") -
         import urllib.request
         import urllib.parse
         query = urllib.parse.urlencode({"ClientID": 1, "ClientTransactionID": 1})
-        with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
-            data = json.loads(r.read())
+        def _fetch() -> Any:
+            with urllib.request.urlopen(f"{url}?{query}", timeout=10) as r:
+                return json.loads(r.read())
+        data = await asyncio.to_thread(_fetch)
     return data.get("Value") or []
 
 
@@ -329,12 +331,15 @@ class AlpacaAdapter(DeviceBackend):
                     resp.raise_for_status()
                     data = resp.json()
             except ImportError:
-                # httpx not available; use urllib synchronously
+                # httpx not available; use urllib, off the event loop
                 import urllib.request
                 import urllib.parse
                 query = urllib.parse.urlencode(params)
-                with urllib.request.urlopen(f"{url}?{query}", timeout=timeout) as r:
-                    data = json.loads(r.read())
+
+                def _fetch() -> Any:
+                    with urllib.request.urlopen(f"{url}?{query}", timeout=timeout) as r:
+                        return json.loads(r.read())
+                data = await asyncio.to_thread(_fetch)
         except _TRANSPORT_ERRORS as exc:
             raise self._unreachable_error(exc) from exc
         if (data.get("ErrorNumber") or 0) == self._ASCOM_NOT_IMPLEMENTED:
@@ -376,11 +381,14 @@ class AlpacaAdapter(DeviceBackend):
                 import urllib.parse
                 encoded = urllib.parse.urlencode(body).encode()
                 req = urllib.request.Request(url, data=encoded, method="PUT")
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    try:
-                        data = json.loads(r.read())
-                    except Exception:
-                        data = {}
+
+                def _send() -> Any:
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        try:
+                            return json.loads(r.read())
+                        except Exception:
+                            return {}
+                data = await asyncio.to_thread(_send)
         except _TRANSPORT_ERRORS as exc:
             raise self._unreachable_error(exc) from exc
         self._raise_on_alpaca_error(data, attribute)

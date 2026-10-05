@@ -14,7 +14,7 @@ Thanks to
 """
 
 import os
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as DefusedET
 import numpy as np
 from astropy.io import fits
 import struct
@@ -98,10 +98,11 @@ class XISFConverter:
                 # Read XML header
                 xml_content = f.read(xml_length).decode('utf-8')
 
-                # Parse XML
+                # Parse XML - with defusedxml: the header comes from a file the user imported, and the
+                # standard parser would expand entity declarations (billion-laughs / external entities)
                 try:
-                    self.xml_header = ET.fromstring(xml_content)
-                except ET.ParseError as e:
+                    self.xml_header = DefusedET.fromstring(xml_content)
+                except DefusedET.ParseError as e:
                     raise ValueError(f"Invalid XML in XISF file: {e}")
 
                 # Calculate data offset (16 bytes binary header + XML length)
@@ -224,11 +225,6 @@ class XISFConverter:
         for i, dim in enumerate(geometry.dimensions):
             self.header_cards[f'NAXIS{i+1}'] = dim
 
-        # Add NAXIS3 for channels if multi-channel
-        if geometry.channels > 1:
-            naxis_channels = len(geometry.dimensions) + 1
-            self.header_cards[f'NAXIS{naxis_channels}'] = geometry.channels
-
         # Extract FITS keywords from XISF properties
         namespace = {'xisf': 'http://www.pixinsight.com/xisf'}
 
@@ -263,11 +259,8 @@ class XISFConverter:
 
     def _get_naxis(self) -> int:
         """Get number of axes for FITS header."""
-        geometry = self.image_geometry['geometry']
-        naxis = len(geometry.dimensions)
-        if geometry.channels > 1:
-            naxis += 1
-        return naxis
+        # The XISF geometry already lists the channel count as its third dimension
+        return len(self.image_geometry['geometry'].dimensions)
 
     def _convert_fits_value(self, value_str: str):
         """Convert string value to appropriate Python type for FITS."""
@@ -292,6 +285,23 @@ class XISFConverter:
         # Return as string
         return value_str.strip('\'"')
 
+    def _find_element(self, tag: str):
+        """The first *tag* element anywhere in the header, whether or not it carries the XISF namespace."""
+        found = self.xml_header.find(f'.//{{http://www.pixinsight.com/xisf}}{tag}')
+        return found if found is not None else self.xml_header.find(f'.//{tag}')
+
+    def _find_text(self, tag: str | None, property_id: str) -> str:
+        """A metadata value: the text of a plain *tag* element, else the value of the standard
+        ``<Property id="...">`` form (XISF 1.0 stores creation time and creator that way)."""
+        if tag:
+            elem = self._find_element(tag)
+            if elem is not None and elem.text and elem.text.strip():
+                return elem.text.strip()
+        for prop in self.xml_header.iter():
+            if prop.tag.rsplit('}', 1)[-1] == 'Property' and prop.get('id') == property_id:
+                return (prop.get('value') or prop.text or '').strip()
+        return ''
+
     def _extract_metadata_as_fits_keywords(self):
         """Extract additional metadata and convert to FITS keywords."""
         geometry = self.image_geometry['geometry']
@@ -311,17 +321,20 @@ class XISFConverter:
             self.header_cards[f'XISFDIM{i+1}'] = dim
 
         # Extract creation time if available
-        creation_elem = self.xml_header.find('.//CreationTime')
-        if creation_elem is not None and creation_elem.text:
-            self.header_cards['DATE'] = creation_elem.text
+        creation_time = self._find_text('CreationTime', 'XISF:CreationTime')
+        if creation_time:
+            self.header_cards['DATE'] = creation_time
 
         # Extract software information
-        software_elem = self.xml_header.find('.//Software')
-        if software_elem is not None:
+        software_elem = self._find_element('Software')
+        if software_elem is not None and software_elem.get('name', ''):
             software_name = software_elem.get('name', '')
             software_version = software_elem.get('version', '')
-            if software_name:
-                self.header_cards['SOFTWARE'] = f"{software_name} {software_version}".strip()
+            self.header_cards['SOFTWARE'] = f"{software_name} {software_version}".strip()
+        else:
+            creator = self._find_text(None, 'XISF:CreatorApplication')
+            if creator:
+                self.header_cards['SOFTWARE'] = creator
 
     def _unshuffle_bytes(self, data: bytes, byte_size: int) -> bytes:
         """

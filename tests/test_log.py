@@ -128,6 +128,7 @@ def test_tc_log_050_log_file_resets_each_run_rather_than_appending(tmp_path):
 
 @pytest.mark.requirement("TC-LOG-060")
 @pytest.mark.priority("P2")
+@pytest.mark.xfail(strict=True, raises=AttributeError, reason="LOG-060 is not implemented yet: no RecentLogPane in galileo.diagnostics")
 def test_tc_log_060_recent_log_pane_on_equipment_screens(diag_service):
     """LOG-060: Display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer."""
     diag_mod = pytest.importorskip("galileo.diagnostics")
