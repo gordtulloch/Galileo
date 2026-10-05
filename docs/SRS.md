@@ -105,7 +105,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 
 | ID | Requirement | Priority |
 |---|---|---|
-| ARCH-010 | The system shall define a device-abstraction interface per device category (camera, mount, filter wheel, focuser, rotator, guider, switch, flat panel, weather, dome, safety monitor) that is implemented independently by an INDI backend and an Alpaca backend. | MVP |
+| ARCH-010 | The system shall define a device-abstraction interface per device category (camera, mount, filter wheel, focuser, rotator, guider, switch, flat panel, weather, dome, safety monitor, aux) that is implemented independently by an INDI backend and an Alpaca backend. | MVP |
 | ARCH-020 | The system shall allow each connected device to independently use either the INDI backend or the Alpaca backend, simultaneously, within a single equipment profile (e.g. an INDI camera with an Alpaca focuser). | MVP |
 | ARCH-030 | The system shall query a connected device's advertised capabilities (INDI properties / Alpaca `Can*` flags) and expose only the corresponding controls in the UI. | MVP |
 | ARCH-040 | The system shall detect and surface a device disconnect event to the equipment layer within a bounded time, without crashing or requiring application restart. | MVP |
@@ -151,8 +151,13 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-SW-010 | The system shall enumerate switch/relay devices and their read/write state, supporting both boolean and analog (variable) switches. | P2 |
 | EQP-FP-010 | The system shall control an electroluminescent/flat-panel device's cover open/close (where supported) and brightness level. | MVP |
 | EQP-WX-010 | The system shall poll and display weather-device readings (e.g. cloud cover, wind, humidity, temperature, rain) at a configurable interval. | P2 |
+| EQP-WX-020 | The system shall allow the user to mark any Weather-Station reading as safety-related and configure the comparison operator and threshold value that reading must cross to be considered unsafe (e.g. Rain is YES, Wind Speed >= 20 km/h), from the Equipment > Weather screen. This evaluation is advisory/display-only and shall not itself drive an automated sequence abort — only a connected Safety Monitor device (`SAFE-070`/`SAFE-080`) is authoritative for `SAFE-010`. | P2 |
 | EQP-DOME-010 | The system shall issue dome slew-to-azimuth, open/close-shutter, and park commands and display current azimuth and shutter state. | P2 |
 | EQP-SAFE-010 | The system shall poll a connected safety-monitor device's SAFE/NOT-SAFE state, and its accompanying human-readable explanation string where the driver provides one, at a configurable interval, and surface state changes (with explanation) to the sequencer (traces to `SAFE-010`). | P2 |
+| EQP-SAFE-020 | The system shall surface, on the Equipment > Safety Monitor screen, the current value and SAFE/UNSAFE verdict of every Weather-Station reading configured as safety-related (`EQP-WX-020`), separately from the connected Safety Monitor device's own SAFE/NOT-SAFE state, alongside a trend graph of recent readings (e.g. wind speed, temperature, dew point) so a developing unsafe condition is visible before it trips. | P2 |
+| EQP-AUX-010 | The system shall provide an "Aux" equipment category for connecting a miscellaneous INDI driver, or an ASCOM Alpaca Switch device, that has no dedicated Galileo device category, and shall present the connected device's driver-defined properties as a tabbed control panel — one tab per INDI property group, or a single tab for an Alpaca Switch device — with fields and switches generated from the driver's own property definitions rather than a fixed per-category UI. | P2 |
+
+**`EQP-SW-010` has two first-party plugin consumers beyond the generic INDI/Alpaca Switch adapters above.** The Equipment > Switches screen these rows describe is intentionally left unpopulated for hardware that speaks neither INDI nor Alpaca; the Kasa Switch plugin ([`docs/plugins/kasa_switch/SRS.md`](plugins/kasa_switch/SRS.md), `KASA-*`) and Generic Relay plugin ([`docs/plugins/generic_relay/SRS.md`](plugins/generic_relay/SRS.md), `RELAY-*`) each register their own `DeviceBackend` for `DeviceCategory.SWITCH` (`ARCH-070`/`PLUG-010`) satisfying this same requirement for TP-Link Kasa devices and generic HTTP-toggled relay boards respectively, surfaced through their own plugin panels rather than this screen.
 
 ### 4.3 `PROF` — Equipment Profiles (Piers)
 
@@ -637,7 +642,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 |---|---|---|---|---|
 | ARCH | 8 | 6 | 2 | 0 |
 | OBS | 9 | 0 | 9 | 0 |
-| EQP (generic + device) | 27 | 19 | 8 | 0 |
+| EQP (generic + device) | 31 | 20 | 11 | 0 |
 | PROF | 12 | 11 | 1 | 0 |
 | IMG | 20 | 10 | 10 | 0 |
 | SES (formerly `SEQ`/`SEQ-ADV`; Sections 4.5–4.6) | 30 | 17 | 10 | 3 |
@@ -669,7 +674,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **271** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23) | | | |
+| **Total** | **275** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23 — several other domain rows above are currently stale against the body and due a full re-audit, tracked separately from this revision) | | | |
 
 ---
 

@@ -22,7 +22,7 @@ from typing import Any
 
 from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
-from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
 from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
@@ -59,6 +59,7 @@ def get_adapter_class(category: DeviceCategory) -> type[DeviceBackend]:
         DeviceCategory.SAFETY_MONITOR: IndiSafetyMonitorAdapter,
         DeviceCategory.GUIDER: IndiGuiderAdapter,
         DeviceCategory.SWITCH: IndiSwitchAdapter,
+        DeviceCategory.AUX: IndiAuxAdapter,
     }
     cls = _MAP.get(category)
     if cls is None:
@@ -977,14 +978,29 @@ class IndiWeatherAdapter(IndiAdapter):
         super().__init__(DeviceCategory.WEATHER_STATION, host, port, **kwargs)
         self.cloud_cover = 0.0
         self.wind_speed = 0.0
+        self.wind_gust = 0.0
         self.humidity = 50.0
         self.temperature = 15.0
+        self.dew_point = 0.0
+        self.pressure = 1013.0
         self.rain_rate = 0.0
+        self.rain = 0.0
         self.is_safe = True
 
     async def poll(self) -> None:
-        for attr, element in (("temperature", "WEATHER_TEMPERATURE"), ("humidity", "WEATHER_HUMIDITY"),
-                              ("wind_speed", "WEATHER_WIND_SPEED"), ("rain_rate", "WEATHER_RAIN_HOUR")):
+        # Element names cover both reference drivers EQP-WX-010/EQP-WX-020
+        # target: indi-argentweather's ADS-WS1 (temperature, humidity,
+        # dewpoint, barometer, wind_speed/gust, rain_hour) and indi-hydreon's
+        # RG-11 (WEATHER_RAIN, a 0/1 "raining now" flag, distinct from
+        # WEATHER_RAIN_HOUR's running total) — a driver missing an element
+        # simply leaves that attribute at its last value (``_num`` returns
+        # ``None`` for one it doesn't define).
+        for attr, element in (
+            ("temperature", "WEATHER_TEMPERATURE"), ("humidity", "WEATHER_HUMIDITY"),
+            ("dew_point", "WEATHER_DEWPOINT"), ("pressure", "WEATHER_BAROMETER"),
+            ("wind_speed", "WEATHER_WIND_SPEED"), ("wind_gust", "WEATHER_WIND_GUST"),
+            ("rain_rate", "WEATHER_RAIN_HOUR"), ("rain", "WEATHER_RAIN"),
+        ):
             value = self._num("WEATHER_PARAMETERS", element)
             if value is not None:
                 setattr(self, attr, value)
@@ -1020,6 +1036,10 @@ class IndiDomeAdapter(IndiAdapter):
         self._set_sw("DOME_PARK", {"PARK": True, "UNPARK": False})
         self.is_at_park = True
 
+    async def abort_slew(self) -> None:
+        self._log_interaction("abort_slew")
+        self._set_sw("DOME_ABORT_MOTION", {"ABORT": True})
+
 
 class IndiSafetyMonitorAdapter(IndiAdapter):
     """INDI defines no safety-monitor device interface, so there is nothing
@@ -1050,3 +1070,69 @@ class IndiSwitchAdapter(IndiAdapter):
         for sw in self.switches:
             if sw.name == name:
                 sw.state = value
+
+
+class IndiAuxAdapter(IndiAdapter):
+    """Generic control-panel adapter for a miscellaneous INDI driver
+    (EQP-AUX-010). Unlike every other category adapter, this one doesn't
+    translate a fixed set of standard properties into typed port methods —
+    it exposes whatever properties the connected driver defines, grouped
+    exactly as the driver groups them (its own INDI tabs), for
+    ``AuxController``/the Equipment > Aux page to render generically."""
+
+    def __init__(self, host: str = "localhost", port: int = 7624, **kwargs) -> None:
+        super().__init__(DeviceCategory.AUX, host, port, **kwargs)
+
+    async def list_available_devices(self, category: DeviceCategory) -> list[str]:
+        """Every device the server currently has, unfiltered by
+        ``DRIVER_INTERFACE`` — Aux is the deliberate catch-all for a driver
+        that doesn't fit one of the other categories' guided pages, or that
+        the user wants to drive directly rather than through one."""
+        return await asyncio.to_thread(self._list_all_devices_sync)
+
+    def _list_all_devices_sync(self) -> list[str]:
+        client = ic.acquire_client(self.host, self.port)
+        try:
+            return client.device_names()
+        finally:
+            ic.release_client(client)
+
+    async def get_property_groups(self) -> list[AuxPropertyGroup]:
+        return await asyncio.to_thread(self._get_property_groups_sync)
+
+    def _get_property_groups_sync(self) -> list[AuxPropertyGroup]:
+        client = self._c()
+        groups: dict[str, AuxPropertyGroup] = {}
+        for prop in client.device_properties(self.device_name):
+            if prop.kind == "blob":
+                continue  # image/data payloads aren't a control-panel field
+            group_name = prop.group or "Main Control"
+            group = groups.setdefault(group_name, AuxPropertyGroup(name=group_name))
+            group.properties.append(AuxProperty(
+                name=prop.name, label=prop.label or prop.name, kind=prop.kind,
+                group=group_name, perm=prop.perm, rule=prop.rule, state=prop.state,
+                elements=[
+                    AuxElement(name=el.name, label=el.label or el.name, value=el.value,
+                               min=el.min, max=el.max, step=el.step)
+                    for el in prop.elements.values()
+                ],
+            ))
+        return list(groups.values())
+
+    async def write_property(self, name: str, values: dict[str, Any]) -> None:
+        self._log_interaction("write_property", name=name, values=values)
+        await asyncio.to_thread(self._write_property_sync, name, values)
+
+    def _write_property_sync(self, name: str, values: dict[str, Any]) -> None:
+        client = self._c()
+        prop = client.get_property(self.device_name, name)
+        if prop is None:
+            raise DevicePropertyError(f"INDI property {name!r} is not defined on {self.device_name!r}.")
+        if prop.kind == "number":
+            client.send_number(self.device_name, name, {k: float(v) for k, v in values.items()})
+        elif prop.kind == "switch":
+            client.send_switch(self.device_name, name, {k: bool(v) for k, v in values.items()})
+        elif prop.kind == "text":
+            client.send_text(self.device_name, name, {k: str(v) for k, v in values.items()})
+        else:
+            raise DevicePropertyError(f"INDI property {name!r} ({prop.kind}) is not writable from the Aux panel.")

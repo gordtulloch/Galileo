@@ -95,6 +95,7 @@ class AppWindowState(Protocol):
     _theme: Any
     _thumbnail_cache_worker: _ThumbnailCacheThread | None
     _tracking_threads: Any
+    _weather_history_by_pier: Any
     _window: Any
 
     # --- methods --------------------------------------------------------
@@ -131,8 +132,22 @@ class AppWindowState(Protocol):
     # _filter_wheel_page.py
     def _build_filter_wheel_page(self) -> QWidget: ...
 
+    # _aux_page.py
+    def _build_aux_page(self) -> QWidget: ...
+
     # _flat_panel_page.py
     def _build_flat_panel_page(self) -> QWidget: ...
+
+    # _weather_page.py
+    def _build_weather_page(self) -> QWidget: ...
+
+    # _safety_monitor_page.py
+    def _build_safety_monitor_page(self) -> QWidget: ...
+    @staticmethod
+    def _build_weather_trend_chart() -> tuple: ...
+
+    # _dome_page.py
+    def _build_dome_page(self) -> QWidget: ...
 
     # _focuser_page.py
     def _build_focuser_page(self) -> QWidget: ...

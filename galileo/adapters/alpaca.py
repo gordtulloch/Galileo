@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
-from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
 from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
@@ -47,6 +47,9 @@ _ALPACA_WIRE_TYPE: dict[DeviceCategory, str] = {
     DeviceCategory.MOUNT: "telescope",
     DeviceCategory.WEATHER_STATION: "observingconditions",
     DeviceCategory.FLAT_PANEL: "covercalibrator",
+    # Aux has no device type of its own on the wire — it's scoped to ASCOM's
+    # own generic/auxiliary-hardware interface, ISwitchV2 (see AlpacaAuxAdapter).
+    DeviceCategory.AUX: "switch",
 }
 
 
@@ -64,6 +67,7 @@ def get_adapter_class(category: DeviceCategory) -> type[DeviceBackend]:
         DeviceCategory.WEATHER_STATION: AlpacaWeatherAdapter,
         DeviceCategory.GUIDER: AlpacaGuiderAdapter,
         DeviceCategory.FLAT_PANEL: AlpacaFlatPanelAdapter,
+        DeviceCategory.AUX: AlpacaAuxAdapter,
     }
     cls = _MAP.get(category)
     if cls is None:
@@ -314,14 +318,16 @@ class AlpacaAdapter(DeviceBackend):
             f"Alpaca server is running."
         )
 
-    async def _get(self, attribute: str, timeout: float = 10.0) -> Any:
-        """HTTP GET an Alpaca device attribute."""
+    async def _get(self, attribute: str, timeout: float = 10.0, **extra: Any) -> Any:
+        """HTTP GET an Alpaca device attribute. *extra* adds device-specific
+        query parameters (e.g. ISwitchV2's ``Id`` channel index)."""
         await self._ensure_resolved()
         self._transaction_id += 1
         url = f"{self.base_url}/{attribute}"
         params = {
             "ClientID": self._client_id,
             "ClientTransactionID": self._transaction_id,
+            **extra,
         }
         try:
             try:
@@ -1042,6 +1048,9 @@ class AlpacaDomeAdapter(AlpacaAdapter):
     async def park(self) -> None:
         await self._put("park")
 
+    async def abort_slew(self) -> None:
+        await self._put("abortslew")
+
 
 class AlpacaSafetyMonitorAdapter(AlpacaAdapter):
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
@@ -1066,18 +1075,100 @@ class AlpacaSwitchAdapter(AlpacaAdapter):
                 sw.state = value
 
 
+def _is_boolean_switch_range(min_value: Any, max_value: Any, step_value: Any) -> bool:
+    """Whether an ISwitchV2 channel's declared range (``MinSwitchValue``/
+    ``MaxSwitchValue``/``SwitchStep``) is really just a boolean On/Off rather
+    than a variable analog value — the ASCOM spec defines a boolean switch as
+    one with range 0..1 and step 1."""
+    try:
+        return float(min_value) == 0.0 and float(max_value) == 1.0 and float(step_value) == 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+class AlpacaAuxAdapter(AlpacaAdapter):
+    """Generic control-panel adapter for a miscellaneous Alpaca device
+    (EQP-AUX-010). Alpaca has no cross-device-type generic property
+    introspection — unlike INDI, each DeviceType's property set is a fixed,
+    separately-specified interface — so this adapter is scoped to the one
+    ASCOM interface meant for this purpose, ISwitchV2 (the Alpaca "Switch"
+    DeviceType), which the ASCOM spec itself describes as being for
+    arbitrary/auxiliary hardware (a power box, a flip mirror, a relay
+    board, ...) rather than a specific instrument. Every channel becomes one
+    property with one element: a boolean On/Off pair when its declared range
+    is 0..1 step 1 (:func:`_is_boolean_switch_range`), or a numeric
+    slider/spinbox otherwise — both in a single "Switches" group/tab, since
+    ISwitchV2 has no grouping concept of its own."""
+
+    def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
+        super().__init__(DeviceCategory.AUX, host, port, **kwargs)
+
+    async def get_property_groups(self) -> list[AuxPropertyGroup]:
+        max_switch = int(await self._get("maxswitch") or 0)
+        group = AuxPropertyGroup(name="Switches")
+        for i in range(max_switch):
+            name = str(await self._get("getswitchname", Id=i) or f"Switch {i}")
+            description = await self._get("getswitchdescription", Id=i)
+            can_write = bool(await self._get("canwrite", Id=i))
+            min_value = await self._get("minswitchvalue", Id=i)
+            max_value = await self._get("maxswitchvalue", Id=i)
+            step = await self._get("switchstep", Id=i)
+            if _is_boolean_switch_range(min_value, max_value, step):
+                value: Any = bool(await self._get("getswitch", Id=i))
+                kind = "switch"
+                element = AuxElement(name=str(i), label=name, value=value)
+            else:
+                value = await self._get("getswitchvalue", Id=i)
+                kind = "number"
+                element = AuxElement(
+                    name=str(i), label=name, value=value,
+                    min=float(min_value) if min_value is not None else None,
+                    max=float(max_value) if max_value is not None else None,
+                    step=float(step) if step is not None else None,
+                )
+            group.properties.append(AuxProperty(
+                name=str(i), label=str(description) if description else name, kind=kind,
+                group="Switches", perm="rw" if can_write else "ro", elements=[element],
+            ))
+        return [group]
+
+    async def write_property(self, name: str, values: dict[str, Any]) -> None:
+        index = int(name)
+        value = next(iter(values.values()))
+        if isinstance(value, bool):
+            await self._put("setswitch", Id=index, State=value)
+        else:
+            await self._put("setswitchvalue", Id=index, Value=float(value))
+
+
 class AlpacaWeatherAdapter(AlpacaAdapter):
+    """Weather station via ASCOM ``ObservingConditions``. Any property the
+    driver doesn't implement comes back as the ASCOM "not implemented" error,
+    which ``_get`` already turns into ``None`` (EQP-WX-010/EQP-WX-020) —
+    this attribute is then simply left at its last value."""
+
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.WEATHER_STATION, host, port, **kwargs)
         self.cloud_cover = 0.0
         self.wind_speed = 0.0
+        self.wind_gust = 0.0
         self.humidity = 50.0
         self.temperature = 15.0
+        self.dew_point = 0.0
+        self.pressure = 1013.0
         self.rain_rate = 0.0
         self.is_safe = True
 
     async def poll(self) -> None:
-        pass
+        for attr, prop in (
+            ("cloud_cover", "cloudcover"), ("humidity", "humidity"),
+            ("temperature", "temperature"), ("dew_point", "dewpoint"),
+            ("pressure", "pressure"), ("wind_speed", "windspeed"),
+            ("wind_gust", "windgust"), ("rain_rate", "rainrate"),
+        ):
+            value = await self._get(prop)
+            if value is not None:
+                setattr(self, attr, float(value))
 
 
 class AlpacaGuiderAdapter(AlpacaAdapter):

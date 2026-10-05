@@ -518,6 +518,26 @@ async def test_tc_eqp_sw_010_switch_enumeration_and_control(mock_switch_device):
 
 
 # ---------------------------------------------------------------------------
+# TC-EQP-AUX-010
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_aux_010_generic_property_groups_and_writes(mock_aux_device):
+    """EQP-AUX-010: an Aux device's driver-defined properties are exposed as groups, and writes reach the backend."""
+    devices = pytest.importorskip("galileo.core.devices")
+    aux = devices.AuxController(mock_aux_device)
+
+    groups = await aux.get_property_groups()
+    assert len(groups) == 1 and groups[0].name == "Main Control"
+    prop = groups[0].properties[0]
+    assert prop.kind == "switch" and prop.name == "CAP_PARK"
+
+    await aux.write_property("CAP_PARK", {"PARK": True})
+    mock_aux_device.write_property.assert_called_with("CAP_PARK", {"PARK": True})
+
+
+# ---------------------------------------------------------------------------
 # TC-EQP-FP-010
 # ---------------------------------------------------------------------------
 
@@ -561,6 +581,46 @@ async def test_tc_eqp_wx_010_weather_polling_and_display(mock_weather_station):
 
 
 # ---------------------------------------------------------------------------
+# TC-EQP-WX-020
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-WX-020")
+@pytest.mark.priority("P2")
+def test_tc_eqp_wx_020_per_measure_safety_rules():
+    """EQP-WX-020: Mark a Weather-Station reading safety-related and configure its unsafe condition."""
+    safety = pytest.importorskip("galileo.safety")
+
+    rain_rule = safety.WeatherSafetyRule(parameter="rain", operator=">", threshold=0.0, safety_related=True)
+    wind_rule = safety.WeatherSafetyRule(parameter="wind_speed", operator=">=", threshold=20.0, safety_related=True)
+    off_rule = safety.WeatherSafetyRule(parameter="humidity", operator=">=", threshold=90.0, safety_related=False)
+
+    # Safe: no rain, wind below threshold.
+    status = safety.evaluate_weather_safety(
+        {"rain": 0.0, "wind_speed": 10.0, "humidity": 95.0}, [rain_rule, wind_rule, off_rule],
+    )
+    assert status.is_safe is True
+    assert status.violations == []
+
+    # Unsafe: rain detected ("Rain is YES").
+    status = safety.evaluate_weather_safety(
+        {"rain": 1.0, "wind_speed": 10.0, "humidity": 95.0}, [rain_rule, wind_rule, off_rule],
+    )
+    assert status.is_safe is False
+    assert any("Rain" in v for v in status.violations)
+
+    # Unsafe: wind at/above 20 km/h.
+    status = safety.evaluate_weather_safety(
+        {"rain": 0.0, "wind_speed": 25.0, "humidity": 95.0}, [rain_rule, wind_rule, off_rule],
+    )
+    assert status.is_safe is False
+    assert any("Wind" in v for v in status.violations)
+
+    # A reading with no value (device not reporting it) is skipped, not an automatic unsafe.
+    status = safety.evaluate_weather_safety({"rain": None, "wind_speed": None}, [rain_rule, wind_rule])
+    assert status.is_safe is True
+
+
+# ---------------------------------------------------------------------------
 # TC-EQP-DOME-010
 # ---------------------------------------------------------------------------
 
@@ -579,6 +639,9 @@ async def test_tc_eqp_dome_010_slew_shutter_park(mock_dome):
 
     await dome.park()
     mock_dome.park.assert_called_once()
+
+    await dome.abort_slew()
+    mock_dome.abort_slew.assert_called_once()
 
     status = dome.get_status()
     assert "azimuth" in status
@@ -606,6 +669,32 @@ async def test_tc_eqp_safe_010_safety_monitor_polling(mock_safety_monitor, event
     mock_safety_monitor.explanation = "Rain detected"
     await safe_ctrl.poll()
     assert event_bus.publish.called
+
+
+# ---------------------------------------------------------------------------
+# TC-EQP-SAFE-020
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-EQP-SAFE-020")
+@pytest.mark.priority("P2")
+def test_tc_eqp_safe_020_weather_derived_measures_surfaced_read_only():
+    """EQP-SAFE-020: Weather readings marked safety-related surface, with their verdict, independent of the device's own SAFE/NOT-SAFE state."""
+    safety = pytest.importorskip("galileo.safety")
+
+    rules = safety.default_weather_safety_rules()
+    safety_related = [r for r in rules if r.safety_related]
+    assert safety_related  # the defaults pre-enable at least Rain and Wind Speed (EQP-WX-020)
+    assert {r.parameter for r in safety_related} >= {"rain", "wind_speed"}
+
+    # The Weather screen's verdict (EQP-WX-020) and the Safety Monitor
+    # screen's per-measure verdict (EQP-SAFE-020) are the same advisory
+    # computation — surfacing it separately must not change the answer.
+    readings = {"rain": 0.0, "wind_speed": 25.0}
+    overall = safety.evaluate_weather_safety(readings, rules)
+    wind_rule = next(r for r in safety_related if r.parameter == "wind_speed")
+    per_measure = safety.evaluate_weather_safety(readings, [wind_rule])
+    assert overall.is_safe is False
+    assert per_measure.is_safe is False
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from galileo.library.models.optical_tube import OpticalTubeRecord
     from galileo.autofocus import AutofocusParams, FilterOffset
     from galileo.platesolve import SolverParams
+    from galileo.safety import WeatherSafetyRule
 
 logger = logging.getLogger(__name__)
 
@@ -431,6 +432,51 @@ def get_filter_offset_steps(pier: PierRecord | None) -> dict[str, int]:
         offset.filter_name: offset.offset_steps
         for offset in get_filter_offsets(pier) if offset.offset_steps is not None
     }
+
+
+def get_weather_safety_rules(pier: PierRecord | None) -> list[WeatherSafetyRule]:
+    """Return *pier*'s saved per-reading weather safety rules (Equipment >
+    Weather screen, EQP-WX-020) — one entry per reading the user has
+    configured. Empty if none have been saved yet or no Pier is selected."""
+    from galileo.safety import WeatherSafetyRule
+    if pier is None:
+        return []
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    return [
+        WeatherSafetyRule(
+            parameter=record.parameter, label=record.label, unit=record.unit,
+            safety_related=record.safety_related, operator=record.operator, threshold=record.threshold,
+        )
+        for record in WeatherSafetyRuleRecord.select().where(WeatherSafetyRuleRecord.pier == pier)
+    ]
+
+
+def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule) -> None:
+    """Create or update *pier*'s saved rule for ``rule.parameter`` (Equipment >
+    Weather screen's Save button, EQP-WX-020)."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    fields = dict(
+        label=rule.label, unit=rule.unit, safety_related=rule.safety_related,
+        operator=rule.operator, threshold=rule.threshold,
+    )
+    record = WeatherSafetyRuleRecord.get_or_none(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.parameter == rule.parameter)
+    )
+    if record is None:
+        WeatherSafetyRuleRecord.create(pier=pier, parameter=rule.parameter, **fields)
+        return
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+
+
+def delete_weather_safety_rule(pier: PierRecord, parameter: str) -> None:
+    """Delete *pier*'s saved rule for *parameter*, if any (Weather screen's
+    per-row Remove control)."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    WeatherSafetyRuleRecord.delete().where(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.parameter == parameter)
+    ).execute()
 
 
 def get_solver_settings(pier: PierRecord | None) -> tuple[str, SolverParams]:

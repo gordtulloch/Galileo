@@ -117,6 +117,7 @@ EQUIPMENT_CATEGORIES = [
     ("weather", "Weather", "weather"),
     ("dome", "Dome", "dome"),
     ("safety_monitor", "Safety Monitor", "safety_monitor"),
+    ("aux", "Aux", "aux"),
 ]
 
 
@@ -134,6 +135,7 @@ def _category_enum_map() -> dict:
         "weather": DeviceCategory.WEATHER_STATION,
         "dome": DeviceCategory.DOME,
         "safety_monitor": DeviceCategory.SAFETY_MONITOR,
+        "aux": DeviceCategory.AUX,
     }
 
 

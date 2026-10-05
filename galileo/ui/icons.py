@@ -339,6 +339,18 @@ def _flat_panel(painter, r):
     painter.drawEllipse(c, r.width() * 0.14, r.width() * 0.14)
 
 
+def _aux(painter, r):
+    from PySide6.QtCore import QLineF, QRectF
+    # A generic IC/board glyph: a chip body with pin legs, for a
+    # miscellaneous/catch-all driver that isn't one of the other categories.
+    body = QRectF(r.left() + r.width() * 0.2, r.top() + r.height() * 0.2, r.width() * 0.6, r.height() * 0.6)
+    painter.drawRoundedRect(body, 2, 2)
+    for frac in (0.3, 0.5, 0.7):
+        y = r.top() + r.height() * frac
+        painter.drawLine(QLineF(r.left(), y, body.left(), y))
+        painter.drawLine(QLineF(body.right(), y, r.right(), y))
+
+
 def _weather(painter, r):
     from PySide6.QtCore import QRectF
     painter.drawEllipse(QRectF(r.left(), r.top() + r.height() * 0.15, r.width() * 0.55, r.height() * 0.45))
@@ -490,6 +502,7 @@ ICONS: dict[str, DrawFn] = {
     "weather": _weather,
     "dome": _dome,
     "safety_monitor": _safety_monitor,
+    "aux": _aux,
     "images": _images,
     "sessions": _sessions,
     "mappings": _mappings,

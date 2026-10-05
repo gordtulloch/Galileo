@@ -14,8 +14,9 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import Any, TYPE_CHECKING, Protocol, cast
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities
 from galileo.core.monitor import ConnectionMonitor as ConnectionMonitor  # re-exported so importers find it here
@@ -42,6 +43,7 @@ class DeviceCategory(str, Enum):
     WEATHER_STATION = "WeatherStation"
     DOME = "Dome"
     SAFETY_MONITOR = "SafetyMonitor"
+    AUX = "Aux"
 
 
 class DeviceBackend(ABC):
@@ -161,6 +163,7 @@ class _DomeBackend(Protocol):
     async def open_shutter(self) -> None: ...
     async def close_shutter(self) -> None: ...
     async def park(self) -> None: ...
+    async def abort_slew(self) -> None: ...
 
 
 class _SafetyMonitorBackend(Protocol):
@@ -170,6 +173,62 @@ class _SafetyMonitorBackend(Protocol):
 
 class _SwitchBackend(Protocol):
     async def set_switch(self, name: str, value: object) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Aux (miscellaneous driver) property model — EQP-AUX-010
+#
+# Unlike every other category, Aux has no fixed set of named properties: it
+# exists to control whatever a driver defines for itself, so the port here is
+# a generic, driver-described property model rather than typed methods like
+# slew_to_coordinates/move_to. An INDI adapter builds this straight from the
+# driver's own property vectors (one group per INDI "group", i.e. tab); an
+# Alpaca adapter builds it from ASCOM's own generic-device interface,
+# ISwitchV2 (the one Alpaca DeviceType meant for arbitrary/auxiliary
+# hardware), as a single "Switches" group.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AuxElement:
+    """One value within an Aux property — e.g. a switch vector's individual
+    On/Off member, or a number vector's single value. *min*/*max*/*step* are
+    only meaningful for a ``"number"`` property's elements."""
+    name: str
+    label: str
+    value: Any = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+
+
+@dataclass
+class AuxProperty:
+    """One driver-defined control — an INDI property vector, or one Alpaca
+    ISwitchV2 channel. *kind* decides how the Aux page renders it:
+    ``"switch"`` as a button per element, ``"number"`` as a slider/spinbox
+    with a Set button, ``"text"`` as a line edit with a Set button, ``"light"``
+    as a read-only state indicator."""
+    name: str
+    label: str
+    kind: str  # "text" | "number" | "switch" | "light"
+    group: str
+    perm: str = "rw"  # "ro" | "wo" | "rw"
+    rule: str = ""    # switch vectors only: "OneOfMany" | "AtMostOne" | "AnyOfMany"
+    state: str = "Idle"  # "Idle" | "Ok" | "Busy" | "Alert"
+    elements: list[AuxElement] = field(default_factory=list)
+
+
+@dataclass
+class AuxPropertyGroup:
+    """One tab of the Aux control panel — an INDI property group, or the
+    single "Switches" group an Alpaca Switch device produces."""
+    name: str
+    properties: list[AuxProperty] = field(default_factory=list)
+
+
+class _AuxBackend(Protocol):
+    async def get_property_groups(self) -> list[AuxPropertyGroup]: ...
+    async def write_property(self, name: str, values: dict[str, Any]) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -537,9 +596,13 @@ class WeatherController(DeviceController):
         return {
             "cloud_cover": getattr(b, "cloud_cover", None),
             "wind_speed": getattr(b, "wind_speed", None),
+            "wind_gust": getattr(b, "wind_gust", None),
             "humidity": getattr(b, "humidity", None),
             "temperature": getattr(b, "temperature", None),
+            "dew_point": getattr(b, "dew_point", None),
+            "pressure": getattr(b, "pressure", None),
             "rain_rate": getattr(b, "rain_rate", None),
+            "rain": getattr(b, "rain", None),
         }
 
 
@@ -557,6 +620,9 @@ class DomeController(DeviceController):
 
     async def park(self) -> None:
         await cast(_DomeBackend, self._backend).park()
+
+    async def abort_slew(self) -> None:
+        await cast(_DomeBackend, self._backend).abort_slew()
 
     def get_status(self) -> dict:
         b = self._backend
@@ -636,3 +702,15 @@ class SwitchController(DeviceController):
 
     async def set_switch(self, name: str, value) -> None:
         await cast(_SwitchBackend, self._backend).set_switch(name, value)
+
+
+class AuxController(DeviceController):
+    """Controls a miscellaneous/auxiliary device (EQP-AUX-010): rather than a
+    fixed set of typed operations, it exposes whatever properties the
+    connected driver defines, grouped for a tabbed control panel."""
+
+    async def get_property_groups(self) -> list[AuxPropertyGroup]:
+        return await cast(_AuxBackend, self._backend).get_property_groups()
+
+    async def write_property(self, name: str, values: dict[str, Any]) -> None:
+        await cast(_AuxBackend, self._backend).write_property(name, values)

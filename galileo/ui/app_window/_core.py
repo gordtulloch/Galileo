@@ -62,6 +62,12 @@ class AppWindowCoreMixin:
         self._pier_pointing: dict = {}
         self._pier_poll_threads: dict = {}
         self._tracking_threads: dict = {}     # per-Pier: waits for a slew to end, then starts tracking (EQP-MNT-050)
+        # Per-Pier weather-reading trend history for the Safety Monitor
+        # screen's graphs (EQP-SAFE-020): {pier key: [(unix timestamp,
+        # readings dict), ...]}, capped in _weather_page.py's _record_reading.
+        # Populated whenever either the Weather or Safety Monitor page polls
+        # the connected weather station while it is the one on screen.
+        self._weather_history_by_pier: dict = {}
         self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0

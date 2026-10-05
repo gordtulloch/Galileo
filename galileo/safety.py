@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import operator
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,133 @@ class WeatherLoggingService:
                 source=getattr(self._station, "name", ""),
                 timestamp=datetime.datetime.utcnow().isoformat(),
             ))
+
+
+# ---------------------------------------------------------------------------
+# Per-reading weather safety rules (EQP-WX-020)
+# ---------------------------------------------------------------------------
+#
+# A Weather Station device (e.g. indi-argentweather's ADS-WS1, or
+# indi-hydreon's RG-11 rain sensor) is a different device category from a
+# Safety Monitor (SAFE-070/SAFE-080) — it has no SAFE/NOT-SAFE state of its
+# own in Galileo's device model, only readings. This lets the user annotate
+# which of those readings matter for safety and what crossing into "unsafe"
+# looks like for each (e.g. Rain >= 1, Wind Speed >= 20 km/h), for display on
+# the Equipment > Weather screen. Deliberately advisory-only, the same trust
+# tier as the SAFE-050 internet forecast: it never publishes an unsafe-state
+# event and never drives an automated abort by itself — only a connected
+# Safety Monitor device is authoritative for SAFE-010 (see galileo.safety
+# module docstring / SDD 4.16's trust-tier note).
+
+#: Comparison operators a WeatherSafetyRule's *operator* may be.
+UNSAFE_OPERATORS: tuple[str, ...] = (">=", ">", "<=", "<", "==", "!=")
+
+_OPERATOR_FUNCS = {
+    ">=": operator.ge, ">": operator.gt, "<=": operator.le,
+    "<": operator.lt, "==": operator.eq, "!=": operator.ne,
+}
+
+#: Known Weather Station reading keys (WeatherController.get_readings()) ->
+#: (display label, unit), covering both reference drivers named in EQP-WX-020
+#: (indi-argentweather's ADS-WS1, indi-hydreon's RG-11) plus Alpaca
+#: ObservingConditions. Not exhaustive — a rule may name any reading key the
+#: connected backend actually reports, even one not listed here.
+WEATHER_PARAMETER_INFO: dict[str, tuple[str, str]] = {
+    "temperature": ("Outdoor Temperature", "°C"),
+    "humidity": ("Outdoor Humidity", "%"),
+    "dew_point": ("Dew Point", "°C"),
+    "pressure": ("Barometric Pressure", "mbar"),
+    "wind_speed": ("Wind Speed", "km/h"),
+    "wind_gust": ("Wind 1-min Avg", "km/h"),
+    "rain_rate": ("Rain Today", "mm"),
+    "rain": ("Rain (now)", "bool"),
+    "cloud_cover": ("Cloud Cover", "%"),
+}
+
+
+@dataclass
+class WeatherSafetyRule:
+    """One user-configured rule for a single Weather Station reading
+    (EQP-WX-020): whether *parameter* counts toward the Weather screen's
+    safety verdict, and what reading crosses it into "unsafe" — e.g.
+    ``WeatherSafetyRule("rain_rate", operator=">", threshold=0.0)`` ("Rain is
+    YES") or ``WeatherSafetyRule("wind_speed", operator=">=", threshold=20.0)``
+    ("Wind >= 20 km/h")."""
+
+    parameter: str
+    label: str = ""
+    unit: str = ""
+    safety_related: bool = False
+    operator: str = ">="
+    threshold: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.operator not in UNSAFE_OPERATORS:
+            raise ValueError(f"Unknown weather safety operator {self.operator!r}")
+        if not self.label or not self.unit:
+            default_label, default_unit = WEATHER_PARAMETER_INFO.get(self.parameter, (self.parameter, ""))
+            self.label = self.label or default_label
+            self.unit = self.unit or default_unit
+
+    def describe(self) -> str:
+        """Human-readable form of this rule's unsafe condition, e.g. ``"Wind Speed >= 20 km/h"``."""
+        unit_suffix = f" {self.unit}" if self.unit and self.unit != "bool" else ""
+        return f"{self.label} {self.operator} {self.threshold:g}{unit_suffix}"
+
+
+def default_weather_safety_rules() -> list[WeatherSafetyRule]:
+    """Starter rules shown on an unconfigured Pier's Weather screen — one row
+    per :data:`WEATHER_PARAMETER_INFO` entry, with only the two measures
+    EQP-WX-020 itself gives as examples (Rain, Wind Speed) pre-enabled, at
+    conservative astronomy-friendly thresholds. The user is free to enable,
+    disable, or retune any row from there; this only seeds first use."""
+    defaults: dict[str, tuple[bool, str, float]] = {
+        "rain": (True, ">", 0.0),
+        "wind_speed": (True, ">=", 20.0),
+        "wind_gust": (False, ">=", 30.0),
+        "humidity": (False, ">=", 90.0),
+        "cloud_cover": (False, ">=", 80.0),
+    }
+    rules = []
+    for parameter in WEATHER_PARAMETER_INFO:
+        safety_related, op, threshold = defaults.get(parameter, (False, ">=", 0.0))
+        rules.append(WeatherSafetyRule(
+            parameter=parameter, safety_related=safety_related, operator=op, threshold=threshold,
+        ))
+    return rules
+
+
+@dataclass
+class WeatherSafetyStatus:
+    """Result of evaluating a Weather Station's current readings against its
+    configured :class:`WeatherSafetyRule`\\ s (EQP-WX-020)."""
+
+    is_safe: bool = True
+    violations: list[str] = field(default_factory=list)
+
+
+def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> WeatherSafetyStatus:
+    """Evaluate *rules* (a Pier's saved weather safety rules) against
+    *readings* (``WeatherController.get_readings()``) and return the overall
+    verdict plus which rules tripped. Advisory/display-only (EQP-WX-020) —
+    the caller must not treat this as an automated-abort trigger; see this
+    module's note above. A rule not marked ``safety_related``, or whose
+    reading is currently unavailable (``None``), is skipped rather than
+    counted as either safe or unsafe."""
+    violations = []
+    for rule in rules:
+        if not rule.safety_related:
+            continue
+        value = readings.get(rule.parameter)
+        if value is None:
+            continue
+        try:
+            unsafe = _OPERATOR_FUNCS[rule.operator](value, rule.threshold)
+        except TypeError:
+            continue
+        if unsafe:
+            violations.append(rule.describe())
+    return WeatherSafetyStatus(is_safe=not violations, violations=violations)
 
 
 # ---------------------------------------------------------------------------

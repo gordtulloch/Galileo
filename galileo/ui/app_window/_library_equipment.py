@@ -69,6 +69,14 @@ class AppWindowLibraryEquipmentMixin:
                 page_widget = self._build_flat_panel_page()
             elif cat_id == "optics":
                 page_widget = self._build_optics_page()
+            elif cat_id == "aux":
+                page_widget = self._build_aux_page()
+            elif cat_id == "weather":
+                page_widget = self._build_weather_page()
+            elif cat_id == "safety_monitor":
+                page_widget = self._build_safety_monitor_page()
+            elif cat_id == "dome":
+                page_widget = self._build_dome_page()
             else:
                 page_widget = self._build_device_config_page(cat_id, label)
             device_pages[cat_id] = device_stack.addWidget(page_widget)
