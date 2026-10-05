@@ -175,16 +175,6 @@ class UiRegistry:
 # Plugin manager
 # ---------------------------------------------------------------------------
 
-@dataclass
-class PluginInfo:
-    """A UI-facing snapshot of one plugin's current state (Options > Plugins)."""
-    name: str
-    version: str
-    panel_label: str
-    active: bool
-    faulted: bool
-
-
 class PluginManager:
     """Discovers, loads, enables, disables, installs, and removes plugins
     (PLUG-030 … PLUG-120).

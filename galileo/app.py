@@ -59,6 +59,8 @@ def main() -> None:
     if splash is not None:
         splash.finish(getattr(window, "_window", None))
 
+    _schedule_registration_ping()
+
     exit_code = app.exec()
     # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
     from galileo.core.compute import shutdown_cpu_executor
@@ -93,7 +95,7 @@ def _show_splash(app):
     font.setPointSize(16)
     splash.setFont(font)
     splash.showMessage(
-        FULL_NOTICE,
+        f"v{_version()}\n{FULL_NOTICE}",
         Qt.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
         QColor("white"),
     )
@@ -105,6 +107,16 @@ def _show_splash(app):
 def _version() -> str:
     from galileo import __version__
     return __version__
+
+
+def _schedule_registration_ping() -> None:
+    """Fire the usage-tracking registration ping once the event loop is spinning (never blocks startup)."""
+    try:
+        from PySide6.QtCore import QTimer
+        from galileo.registration import start_startup_ping
+        QTimer.singleShot(0, start_startup_ping)
+    except Exception:
+        logger.debug("Could not schedule the registration ping", exc_info=True)
 
 
 if __name__ == "__main__":

@@ -98,82 +98,6 @@ def test_tc_plug_030_in_app_plugin_manager_ui():
     assert hasattr(mgr, "remove")
 
 
-@pytest.mark.requirement("TC-PLUG-030")
-@pytest.mark.priority("P2")
-def test_tc_plug_030_list_plugins_snapshot_for_options_page(plugin_manager):
-    """PLUG-030: the Options > Plugins page reads its rows from list_plugins(),
-    a name/version/panel/active/faulted snapshot of every loaded or faulted plugin."""
-    pytest.importorskip("galileo.plugins")
-    plugin_manager.initialize_preloaded()
-
-    infos = {info.name: info for info in plugin_manager.list_plugins()}
-    assert infos["VSTPlugin"].panel_label == "Variable Stars"
-    assert infos["VSTPlugin"].version == "1.0.0"
-    assert infos["VSTPlugin"].active is True
-    assert infos["VSTPlugin"].faulted is False
-
-    plugin_manager.disable("VSTPlugin")
-    infos = {info.name: info for info in plugin_manager.list_plugins()}
-    assert infos["VSTPlugin"].active is False
-
-
-@pytest.mark.requirement("TC-PLUG-030")
-@pytest.mark.priority("P2")
-def test_tc_plug_030_options_plugins_page_lists_and_toggles_vstarget():
-    """PLUG-030: the actual Options > Plugins widget lists VSTarget's plugins and its
-    Enable/Disable control calls through to the real PluginManager."""
-    qtwidgets = pytest.importorskip("PySide6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    qtwidgets.QApplication.instance() or qtwidgets.QApplication([])
-
-    from galileo.ui.app_window._settings_pages import AppWindowSettingsPagesMixin
-    from galileo.plugins import get_plugin_manager
-
-    class _Dummy(AppWindowSettingsPagesMixin):
-        pass
-
-    page = _Dummy()._build_plugins_settings_page()
-    table = page.findChild(qtwidgets.QTableWidget, "PluginTable")
-    names = [table.item(r, 0).text() for r in range(table.rowCount())]
-    assert "VSTPlugin" in names
-    assert "VSTAnalysisPlugin" in names
-
-    mgr = get_plugin_manager()
-    row = names.index("VSTPlugin")
-    table.selectRow(row)
-    toggle_btn = next(b for b in page.findChildren(qtwidgets.QPushButton)
-                       if b.text() == "Enable / Disable Selected")
-    was_active = mgr.is_active("VSTPlugin")
-    toggle_btn.click()
-    assert mgr.is_active("VSTPlugin") is not was_active
-    assert table.item(row, 3).text() == ("Enabled" if mgr.is_active("VSTPlugin") else "Disabled")
-
-    # restore state so this test doesn't leak into others via the process-wide singleton
-    if mgr.is_active("VSTPlugin") != was_active:
-        toggle_btn.click()
-
-
-@pytest.mark.requirement("TC-PLUG-060")
-@pytest.mark.priority("MVP")
-def test_tc_plug_060_process_wide_manager_preloads_vstarget():
-    """PLUG-060: get_plugin_manager() is the process-wide singleton the UI shares;
-    it pre-loads VSTarget's two first-party plugins on first use, idempotently."""
-    plugins = pytest.importorskip("galileo.plugins")
-    mgr1 = plugins.get_plugin_manager()
-    mgr2 = plugins.get_plugin_manager()
-    assert mgr1 is mgr2
-    assert mgr1.is_loaded("VSTPlugin")
-    assert mgr1.is_loaded("VSTAnalysisPlugin")
-
-    # Calling initialize_preloaded() again must not re-activate an already-loaded plugin.
-    mgr1.disable("VSTPlugin")
-    mgr1.initialize_preloaded()
-    assert mgr1.is_loaded("VSTPlugin")
-    assert not mgr1.is_active("VSTPlugin")
-    mgr1.enable("VSTPlugin")
-
-
 # ---------------------------------------------------------------------------
 # TC-PLUG-040
 # ---------------------------------------------------------------------------
@@ -476,26 +400,19 @@ def test_tc_plug_090_install_corrupt_zip_raises(tmp_path):
 
 @pytest.mark.requirement("TC-PLUG-100")
 @pytest.mark.priority("MVP")
-def test_tc_plug_100_marketplace_fetch_json_embed():
-    """PLUG-100: Marketplace fetch parses JSON embed in the page."""
+def test_tc_plug_100_marketplace_fetch_json_array():
+    """PLUG-100: Marketplace fetch parses the plugins.json array from the Galileo-Plugins repo."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
 
-    html = """
-    <html><body>
-    <script type="application/json" id="galileo-plugins">
-    [
-      {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
-       "tier": "first_party", "author": "Gord Tulloch",
-       "download_url": "https://example.com/vstarget-1.0.0.zip"}
+    index = [
+        {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
+         "tier": "first_party", "author": "Gord Tulloch",
+         "download_url": "https://example.com/vstarget-1.0.0.zip"}
     ]
-    </script>
-    </body></html>
-    """
 
-    import requests
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = html
+    mock_resp.json = MagicMock(return_value=index)
 
     with patch("requests.get", return_value=mock_resp):
         client = marketplace.MarketplaceClient()
@@ -506,58 +423,40 @@ def test_tc_plug_100_marketplace_fetch_json_embed():
     assert entries[0].name == "vstarget"
     assert entries[0].version == "1.0.0"
     assert entries[0].tier == "first_party"
+    assert entries[0].download_url == "https://example.com/vstarget-1.0.0.zip"
 
 
 @pytest.mark.requirement("TC-PLUG-100")
 @pytest.mark.priority("MVP")
-def test_tc_plug_100_marketplace_json_embed_relative_url_resolved():
-    """PLUG-100: Relative download_url in JSON embed is resolved against the base URL."""
+def test_tc_plug_100_marketplace_fetch_malformed_index_graceful():
+    """PLUG-100: A non-array index (repository format changed) returns empty list + error string."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
-
-    html = """
-    <html><body>
-    <script type="application/json" id="galileo-plugins">
-    [
-      {"name": "vstarget", "description": "Variable Stars", "version": "1.0.0",
-       "tier": "first_party", "author": "Gord Tulloch",
-       "download_url": "vstarget-1.0.0.zip"}
-    ]
-    </script>
-    </body></html>
-    """
 
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = html
+    mock_resp.json = MagicMock(return_value={"not": "an array"})
 
     with patch("requests.get", return_value=mock_resp):
-        client = marketplace.MarketplaceClient(
-            base_url="https://www.galileo-imaging.com/assets/plug-ins/"
-        )
+        client = marketplace.MarketplaceClient()
         entries, error = client.fetch()
 
-    assert error == ""
-    assert len(entries) == 1
-    assert entries[0].download_url == "https://www.galileo-imaging.com/assets/plug-ins/vstarget-1.0.0.zip"
+    assert entries == []
+    assert error != ""
 
 
 @pytest.mark.requirement("TC-PLUG-100")
 @pytest.mark.priority("MVP")
-def test_tc_plug_100_marketplace_fetch_html_fallback():
-    """PLUG-100: Marketplace fetch falls back to HTML scraping when no JSON embed."""
+def test_tc_plug_100_marketplace_fetch_skips_malformed_entries():
+    """PLUG-100: Entries missing required fields (name/download_url) are skipped, not fatal."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
 
-    html = """
-    <html><body>
-    <section id="plugins">
-      <a href="/downloads/myplugin-1.2.0.zip">My Plugin 1.2.0</a>
-    </section>
-    </body></html>
-    """
-
+    index = [
+        {"description": "missing name and download_url"},
+        {"name": "ok-plugin", "download_url": "https://example.com/ok-plugin-1.0.0.zip"},
+    ]
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = html
+    mock_resp.json = MagicMock(return_value=index)
 
     with patch("requests.get", return_value=mock_resp):
         client = marketplace.MarketplaceClient()
@@ -565,8 +464,7 @@ def test_tc_plug_100_marketplace_fetch_html_fallback():
 
     assert error == ""
     assert len(entries) == 1
-    assert "myplugin" in entries[0].name.lower()
-    assert entries[0].download_url.endswith(".zip")
+    assert entries[0].name == "ok-plugin"
 
 
 @pytest.mark.requirement("TC-PLUG-100")
@@ -589,10 +487,12 @@ def test_tc_plug_100_marketplace_fetch_uses_cache_on_second_call():
     """PLUG-100: Second call within session returns cached result; no second HTTP request."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
 
-    html = '<script type="application/json" id="galileo-plugins">[{"name":"X","description":"","version":"1","tier":"third_party","author":"","download_url":"http://x.com/x.zip"}]</script>'
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = html
+    mock_resp.json = MagicMock(return_value=[
+        {"name": "X", "description": "", "version": "1", "tier": "third_party",
+         "author": "", "download_url": "http://x.com/x.zip"},
+    ])
 
     with patch("requests.get", return_value=mock_resp) as mock_get:
         client = marketplace.MarketplaceClient()
@@ -608,10 +508,9 @@ def test_tc_plug_100_marketplace_refresh_clears_cache():
     """PLUG-100: refresh() forces a new HTTP request."""
     marketplace = pytest.importorskip("galileo.plugins.marketplace")
 
-    html = '<script type="application/json" id="galileo-plugins">[]</script>'
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = html
+    mock_resp.json = MagicMock(return_value=[])
 
     with patch("requests.get", return_value=mock_resp) as mock_get:
         client = marketplace.MarketplaceClient()

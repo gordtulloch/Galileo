@@ -71,8 +71,9 @@ class AppWindowCoreMixin:
         self._plugin_manager.initialize_from_disk()
 
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
+        from galileo import __version__
         self._window = QMainWindow()
-        self._window.setWindowTitle("Galileo")
+        self._window.setWindowTitle(f"Galileo {__version__}")
         self._window.resize(1400, 900)
 
         # Set up before the Equipment page is built below, since building it
