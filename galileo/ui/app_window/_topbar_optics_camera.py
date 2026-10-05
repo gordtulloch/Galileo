@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _camera_slot_label, _camera_backend_key_for_slot, _optical_tube_label, _OPTICS_SECTIONS, _CAMERA_SECTIONS
+from ._common import apply_filter_focus_offset, _camera_slot_label, _camera_backend_key_for_slot, _optical_tube_label, _OPTICS_SECTIONS, _CAMERA_SECTIONS
 from ._threads import _FilterMoveThread
 
 logger = logging.getLogger(__name__)
@@ -127,11 +127,14 @@ class AppWindowTopbarOpticsCameraMixin:
             self._window.statusBar().showMessage("The filter wheel is still moving.", 4000)
             return
         index = names.index(name)
+        position = getattr(wheel, "position", None)
+        from_name = names[position] if isinstance(position, int) and 0 <= position < len(names) else None
 
         def done() -> None:
             self._imaging_filter_threads.pop(key, None)
             logger.info("Filter wheel: moved to %r (#%d)", name, index)
             self._window.statusBar().showMessage(f"Filter wheel at {name}.", 4000)
+            apply_filter_focus_offset(self, from_name, name)
 
         def failed(message: str) -> None:
             self._imaging_filter_threads.pop(key, None)

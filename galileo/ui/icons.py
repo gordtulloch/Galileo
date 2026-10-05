@@ -439,6 +439,26 @@ def _merge(painter, r):
     painter.drawLine(QLineF(r.right(), mid.y(), r.right() - r.width() * 0.22, mid.y() + r.height() * 0.18))
 
 
+def _plugins(painter, r):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainterPath
+    # A single puzzle piece: a square outline with one knob bump (top edge)
+    # and one matching notch (left edge).
+    x, y, w, h = r.left(), r.top(), r.width(), r.height()
+    knob = w * 0.2
+    path = QPainterPath()
+    path.moveTo(x, y)
+    path.lineTo(x + w * 0.42, y)
+    path.arcTo(QRectF(x + w * 0.42 - knob, y - knob, knob * 2, knob * 2), 180, -180)
+    path.lineTo(x + w, y)
+    path.lineTo(x + w, y + h)
+    path.lineTo(x, y + h)
+    path.lineTo(x, y + h * 0.58)
+    path.arcTo(QRectF(x - knob, y + h * 0.58 - knob, knob * 2, knob * 2), 270, 180)
+    path.lineTo(x, y)
+    painter.drawPath(path)
+
+
 ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
     "star_atlas": _star_atlas,
@@ -476,4 +496,5 @@ ICONS: dict[str, DrawFn] = {
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,
+    "plugins": _plugins,
 }

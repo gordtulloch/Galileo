@@ -324,6 +324,13 @@ class FocusPage(QWidget):
         self.stop_btn.setToolTip("Stop the run started here: the focuser goes back to where it began.")
         self.stop_btn.clicked.connect(self.stop_autofocus)
         grid.addWidget(self.stop_btn, 3, 2, 1, 2)
+        self.filter_offsets_btn = QPushButton("Filter Offsets")
+        self.filter_offsets_btn.setToolTip(
+            "Measure each filter's focus offset relative to a Primary filter, and apply it "
+            "automatically on future filter changes without a full autofocus run (FOC-060)."
+        )
+        self.filter_offsets_btn.clicked.connect(self.open_filter_offsets_dialog)
+        grid.addWidget(self.filter_offsets_btn, 4, 0, 1, 4)
         box.addWidget(focuser)
 
         camera = QGroupBox("Camera")
@@ -520,6 +527,7 @@ class FocusPage(QWidget):
         busy = self._busy(key)
         self.autofocus_btn.setEnabled(not busy)
         self.stop_btn.setEnabled(self._services.get(key) is not None)
+        self.filter_offsets_btn.setEnabled(not busy)
         self.clear_btn.setEnabled(not busy)
         self.manual_move_btn.setEnabled(not busy)
         self.capture_btn.setEnabled(not busy)
@@ -535,6 +543,14 @@ class FocusPage(QWidget):
     def _focuser(self):
         get_adapter = (self._window._device_pages.get("focuser") or {}).get("get_adapter")
         return get_adapter() if get_adapter is not None else None
+
+    def _filter_wheel(self):
+        return (self._window._device_pages.get("filter_wheel") or {}).get("adapter")
+
+    def open_filter_offsets_dialog(self) -> None:
+        from galileo.ui.filter_offsets_dialog import FilterOffsetsDialog
+        dialog = FilterOffsetsDialog(self)
+        dialog.exec()
 
     def start_autofocus(self) -> None:
         key = self._pier_key()

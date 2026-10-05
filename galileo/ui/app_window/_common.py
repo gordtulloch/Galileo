@@ -5,6 +5,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # How often the Star Atlas re-reads a mount's position for its reticle (SKYMAP-090).
 _POINTING_POLL_MS = 3000
 _SLEWING_POLL_MS = 1000
@@ -58,8 +62,10 @@ PRIMARY_SECTIONS = [
 
 OPTIONS_SECTION = ("options", "Options", "options")
 
-# Options opens onto one settings page per primary section, in the same order.
-OPTIONS_ITEMS = list(PRIMARY_SECTIONS)
+# Options opens onto one settings page per primary section, in the same order,
+# plus a few Options-only entries that aren't primary sections themselves —
+# "plugins" is the in-app Plugin Manager (PLUG-030/PLUG-060).
+OPTIONS_ITEMS = [*PRIMARY_SECTIONS, ("plugins", "Plugins", "plugins")]
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].
@@ -233,6 +239,39 @@ def _new_form_layout(parent: QWidget | None = None) -> QFormLayout:
     form = QFormLayout(parent) if parent is not None else QFormLayout()
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
     return form
+
+
+def apply_filter_focus_offset(window, from_filter: str | None, to_filter: str) -> None:
+    """Move the connected focuser by the delta between *to_filter* and
+    *from_filter*'s saved offsets (Focus screen's Filter Offsets dialog,
+    FOC-060), so a filter change made directly by the user — the Filter
+    Wheel page's Change button, the Imaging page's Filter selector — doesn't
+    lose focus without needing a full autofocus run.
+
+    A no-op if there's no focuser connected, no Pier selected, nothing was
+    measured for either filter, or *from_filter* is unknown (nothing to
+    compare against) or unchanged."""
+    if not from_filter or from_filter == to_filter or window._current_pier is None:
+        return
+    get_focuser = (window._device_pages.get("focuser") or {}).get("get_adapter")
+    focuser = get_focuser() if get_focuser is not None else None
+    if focuser is None:
+        return
+    from galileo.observatory import get_autofocus_params, get_filter_offset_steps
+    offsets = get_filter_offset_steps(window._current_pier)
+    if not offsets:
+        return
+    from galileo.autofocus import AutofocusService
+    params = get_autofocus_params(window._current_pier)
+    service = AutofocusService(focuser=focuser, backlash_compensation=params.backlash_compensation, filter_offsets=offsets)
+    service._current_position = int(getattr(focuser, "position", 0))
+    import asyncio
+    try:
+        asyncio.run(service.apply_filter_offset(from_filter, to_filter))
+    except Exception:
+        logger.exception("Could not apply filter focus offset (%s -> %s)", from_filter, to_filter)
+        return
+    logger.info("Filter focus offset applied: %s -> %s.", from_filter, to_filter)
 
 
 def _when_visible(page, refresh):

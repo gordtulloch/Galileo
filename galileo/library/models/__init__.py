@@ -13,6 +13,7 @@ same database.
 from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
 from galileo.library.models.base import BaseModel, db
 from galileo.library.models.device_config import DeviceConfigRecord
+from galileo.library.models.filter_offset import FilterOffsetRecord
 from galileo.library.models.fits_file import fitsFile
 from galileo.library.models.fits_session import fitsSession
 from galileo.library.models.mapping import Mapping
@@ -27,6 +28,7 @@ __all__ = [
     "AutofocusSettingsRecord",
     "BaseModel",
     "DeviceConfigRecord",
+    "FilterOffsetRecord",
     "HorizonPointRecord",
     "Mapping",
     "Masters",

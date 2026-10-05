@@ -147,9 +147,13 @@ class AppWindowCoreMixin:
         self._observatory_combo.activated.connect(self._on_observatory_activated)
         layout.addWidget(self._observatory_combo)
 
-        self._observatory_delete_btn = QPushButton("✕")
+        self._observatory_delete_btn = QPushButton("X")
         self._observatory_delete_btn.setFixedWidth(26)
         self._observatory_delete_btn.setEnabled(False)
+        self._observatory_delete_btn.setStyleSheet(
+            "QPushButton { color: #e74c3c; font-weight: bold; padding: 0px; } "
+            "QPushButton:disabled { color: #888888; }"
+        )
         self._observatory_delete_btn.setToolTip("Delete this Observatory and every Pier under it")
         self._observatory_delete_btn.clicked.connect(self._on_delete_observatory_clicked)
         layout.addWidget(self._observatory_delete_btn)
@@ -164,9 +168,13 @@ class AppWindowCoreMixin:
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
 
-        self._pier_delete_btn = QPushButton("✕")
+        self._pier_delete_btn = QPushButton("X")
         self._pier_delete_btn.setFixedWidth(26)
         self._pier_delete_btn.setEnabled(False)
+        self._pier_delete_btn.setStyleSheet(
+            "QPushButton { color: #e74c3c; font-weight: bold; padding: 0px; } "
+            "QPushButton:disabled { color: #888888; }"
+        )
         self._pier_delete_btn.setToolTip("Delete this Pier")
         self._pier_delete_btn.clicked.connect(self._on_delete_pier_clicked)
         layout.addWidget(self._pier_delete_btn)
@@ -277,6 +285,7 @@ class AppWindowCoreMixin:
         option_builders["imaging"] = self._build_imaging_settings_page
         option_builders["focus"] = self._build_focus_settings_page
         option_builders["solve"] = self._build_solve_settings_page
+        option_builders["plugins"] = self._build_plugins_settings_page
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)

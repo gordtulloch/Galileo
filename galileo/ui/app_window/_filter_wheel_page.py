@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _when_visible, _DEFAULT_PORTS, QWidget
+from ._common import apply_filter_focus_offset, _when_visible, _DEFAULT_PORTS, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,11 @@ class AppWindowFilterWheelPageMixin:
 
         state: dict = {"adapter": None}
         adapters_by_pier: dict = {}
+        # The wheel's own last-known actual filter (as opposed to filter_combo's
+        # selection, which is the *target* once the user has picked a new one but
+        # before Change is pressed) — the "from" side of the focus-offset delta
+        # applied on a successful change (FOC-060).
+        last_known_filter: dict = {"name": None}
 
         def _apply_status(status: dict) -> None:
             name_value.setText(status.get("name") or "—")
@@ -170,6 +175,7 @@ class AppWindowFilterWheelPageMixin:
             driver_version_value.setText(status.get("driver_version") or "—")
             names = status.get("filter_names") or []
             position = status.get("position")
+            last_known_filter["name"] = names[position] if position is not None and 0 <= position < len(names) else None
 
             current = filter_combo.currentText()
             filter_combo.blockSignals(True)
@@ -284,6 +290,7 @@ class AppWindowFilterWheelPageMixin:
             if index < 0:
                 return
             filter_name = filter_combo.currentText()
+            from_filter = last_known_filter["name"]
             import asyncio
             try:
                 asyncio.run(adapter.move_to(index))
@@ -293,6 +300,7 @@ class AppWindowFilterWheelPageMixin:
                 return
             logger.info("Filter wheel: changed to %r (#%d)", filter_name, index)
             _refresh_status()
+            apply_filter_focus_offset(self, from_filter, filter_name)
 
         change_btn.clicked.connect(_change_clicked)
 

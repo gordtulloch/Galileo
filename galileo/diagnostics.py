@@ -220,6 +220,30 @@ class DiagnosticsService:
             logger.log(py_level, "Stack trace:\n%s", stack_trace)
 
 
+class RecentLogPane:
+    """Non-UI view onto a :class:`DiagnosticsService`'s recent entries,
+    backing the scrollable "last N lines" pane every Equipment
+    device-category screen shows (LOG-060) — the same relationship
+    :class:`LogViewer` (LOG-020) has to a full log-viewer dialog. The actual
+    on-screen widget (``galileo.ui.app_window``'s ``_build_log_pane``) polls
+    the separate process-wide :func:`get_recent_log_lines` tail buffer
+    instead, since it renders formatted lines from *every* logger, not just
+    one service's own ``log_*()`` calls; this class is the equivalent
+    logic-level view for callers (and tests) that hold a specific
+    ``DiagnosticsService`` instance."""
+
+    def __init__(self, service: DiagnosticsService, min_visible_lines: int = 10) -> None:
+        self._service = service
+        self.min_visible_lines = min_visible_lines
+
+    def get_visible_entries(self) -> list[LogEntry]:
+        """The most recent entries, at least ``min_visible_lines`` of them
+        (fewer only if the service hasn't logged that many yet), oldest
+        first — so the last element is always the most recent."""
+        entries = self._service.get_entries()
+        return entries[-self.min_visible_lines:]
+
+
 class LogViewer:
     """In-app log viewer with severity filtering (LOG-020)."""
 

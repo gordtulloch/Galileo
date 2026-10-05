@@ -1050,10 +1050,17 @@ class AlpacaGuiderAdapter(AlpacaAdapter):
 
 
 class AlpacaFlatPanelAdapter(AlpacaAdapter):
+    # ASCOM ICoverCalibratorV1's CoverState/CalibratorState are integer enums
+    # on the wire — normalized to strings here, same convention as
+    # AlpacaMountAdapter's SideOfPier/EquatorialSystem.
+    _COVER_STATE = {0: "NotPresent", 1: "Closed", 2: "Moving", 3: "Open", 4: "Unknown"}
+    _CALIBRATOR_STATE = {0: "NotPresent", 1: "Off", 2: "NotReady", 3: "Ready", 4: "Unknown", 5: "Error"}
+
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.FLAT_PANEL, host, port, **kwargs)
         self.cover_state = "Closed"
         self.brightness = 0
+        self.is_light_on = False
 
     async def open_cover(self) -> None:
         await self._put("opencover")
@@ -1063,6 +1070,41 @@ class AlpacaFlatPanelAdapter(AlpacaAdapter):
         await self._put("closecover")
         self.cover_state = "Closed"
 
+    async def light_on(self) -> None:
+        """``ICoverCalibratorV1.CalibratorOn`` at the panel's current brightness."""
+        await self._put("calibratoron", Brightness=self.brightness)
+        self.is_light_on = True
+
+    async def light_off(self) -> None:
+        await self._put("calibratoroff")
+        self.is_light_on = False
+
     async def set_brightness(self, level: int) -> None:
         await self._put("brightness", Brightness=level)
         self.brightness = level
+
+    async def get_status(self) -> dict:
+        """Live status: ``CoverState``/``CalibratorState`` (both read
+        defensively — a cover-only or calibrator-only panel lacks one side)
+        plus ``Brightness``."""
+        status: dict[str, Any] = dict(await self.get_driver_info())
+        try:
+            raw_cover = await self._get("coverstate")
+            if raw_cover is not None:
+                self.cover_state = self._COVER_STATE.get(int(raw_cover), "Unknown")
+        except Exception:
+            logger.exception("Could not read CoverState from %s", self.base_url)
+        try:
+            raw_cal = await self._get("calibratorstate")
+            if raw_cal is not None:
+                self.is_light_on = self._CALIBRATOR_STATE.get(int(raw_cal)) in ("Ready", "NotReady")
+        except Exception:
+            logger.exception("Could not read CalibratorState from %s", self.base_url)
+        try:
+            raw_brightness = await self._get("brightness")
+            if raw_brightness is not None:
+                self.brightness = int(raw_brightness)
+        except Exception:
+            logger.exception("Could not read Brightness from %s", self.base_url)
+        status.update(cover_state=self.cover_state, is_light_on=self.is_light_on, brightness=self.brightness)
+        return status

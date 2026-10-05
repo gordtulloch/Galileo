@@ -573,3 +573,84 @@ class AppWindowSettingsPagesMixin:
         self._solve_settings_refresh = refresh
         refresh()
         return page
+
+    def _build_plugins_settings_page(self: AppWindowState) -> QWidget:
+        """Options > Plugins: the in-app plugin manager (PLUG-030/PLUG-060) — lists
+        every loaded plugin, first-party pre-loaded ones (VSTarget's planning and
+        analysis plugins) today, and lets the user enable or disable each one
+        independently. A disabled plugin is fully inert: it registers no UI panel
+        until it is re-enabled (``PluginManager.get_ui_panels`` returns nothing for it)."""
+        from PySide6.QtWidgets import (
+            QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+        )
+        from galileo.plugins import get_plugin_manager
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        heading = QLabel("Plugin Manager")
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+
+        hint = QLabel(
+            "Plugins add device backends, sequencer blocks, or screens without changing core "
+            "application code. Disabling a plugin here makes it fully inert — no UI, no "
+            "background activity — until it's re-enabled.")
+        hint.setObjectName("StatusHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        table = QTableWidget(0, 4)
+        table.setObjectName("PluginTable")
+        table.setHorizontalHeaderLabels(["Plugin", "Panel", "Version", "Status"])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        layout.addWidget(table, 1)
+
+        mgr = get_plugin_manager()
+
+        def refresh() -> None:
+            table.setRowCount(0)
+            for info in mgr.list_plugins():
+                row = table.rowCount()
+                table.insertRow(row)
+                table.setItem(row, 0, QTableWidgetItem(info.name))
+                table.setItem(row, 1, QTableWidgetItem(info.panel_label))
+                table.setItem(row, 2, QTableWidgetItem(info.version))
+                status = "Faulted" if info.faulted else ("Enabled" if info.active else "Disabled")
+                table.setItem(row, 3, QTableWidgetItem(status))
+
+        def toggle_selected() -> None:
+            row = table.currentRow()
+            if row < 0:
+                return
+            name = table.item(row, 0).text()
+            if mgr.is_faulted(name):
+                return
+            if mgr.is_active(name):
+                mgr.disable(name)
+            else:
+                mgr.enable(name)
+            refresh()
+            table.selectRow(row)
+
+        buttons = QHBoxLayout()
+        toggle_btn = QPushButton("Enable / Disable Selected")
+        toggle_btn.setObjectName("AccentButton")
+        toggle_btn.clicked.connect(toggle_selected)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(refresh)
+        buttons.addWidget(toggle_btn)
+        buttons.addWidget(refresh_btn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self._plugins_settings_refresh = refresh
+        refresh()
+        return page

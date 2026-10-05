@@ -9,6 +9,7 @@ import importlib
 import logging
 import warnings
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,16 @@ class UiRegistry:
 # Plugin manager
 # ---------------------------------------------------------------------------
 
+@dataclass
+class PluginInfo:
+    """A UI-facing snapshot of one plugin's current state (Options > Plugins)."""
+    name: str
+    version: str
+    panel_label: str
+    active: bool
+    faulted: bool
+
+
 class PluginManager:
     """Discovers, loads, enables, and disables plugins (PLUG-030 … PLUG-080)."""
 
@@ -126,6 +137,25 @@ class PluginManager:
 
     def is_faulted(self, name: str) -> bool:
         return name in self._faulted
+
+    def list_plugins(self) -> list[PluginInfo]:
+        """Snapshot every loaded or faulted plugin, for the Options > Plugins page."""
+        infos = [
+            PluginInfo(
+                name=name,
+                version=getattr(instance, "version", ""),
+                panel_label=getattr(instance, "panel_label", ""),
+                active=self._active.get(name, False),
+                faulted=False,
+            )
+            for name, instance in self._loaded.items()
+        ]
+        infos.extend(
+            PluginInfo(name=name, version="", panel_label="", active=False, faulted=True)
+            for name in self._faulted
+            if name not in self._loaded
+        )
+        return infos
 
     # --- Load / unload ---------------------------------------------------
 
@@ -201,7 +231,27 @@ class PluginManager:
     # --- First-party pre-loaded plugins (PLUG-060) ----------------------
 
     def initialize_preloaded(self) -> None:
-        """Load the first-party bundled plugins."""
+        """Load the first-party bundled plugins (idempotent: a plugin already
+        loaded, e.g. by an earlier call on this same manager, is skipped rather
+        than re-activated)."""
         from galileo.plugins.vstarget import VSTPlugin, VSTAnalysisPlugin
-        self.load(VSTPlugin)
-        self.load(VSTAnalysisPlugin)
+        for plugin_cls in (VSTPlugin, VSTAnalysisPlugin):
+            if not self.is_loaded(plugin_cls.name):
+                self.load(plugin_cls)
+
+
+# ---------------------------------------------------------------------------
+# Process-wide plugin manager (singleton)
+# ---------------------------------------------------------------------------
+
+_manager: PluginManager | None = None
+
+
+def get_plugin_manager() -> PluginManager:
+    """Return the process-wide :class:`PluginManager`, pre-loading the
+    first-party bundled plugins (e.g. VSTarget) on first use."""
+    global _manager
+    if _manager is None:
+        _manager = PluginManager()
+        _manager.initialize_preloaded()
+    return _manager

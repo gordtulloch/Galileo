@@ -50,6 +50,7 @@ from ._focuser_page import AppWindowFocuserPageMixin
 from ._mount_page import AppWindowMountPageMixin
 from ._rotator_page import AppWindowRotatorPageMixin
 from ._filter_wheel_page import AppWindowFilterWheelPageMixin
+from ._flat_panel_page import AppWindowFlatPanelPageMixin
 from ._optics_page import AppWindowOpticsPageMixin
 from ._misc_device_pages import AppWindowMiscDevicePagesMixin
 from ._device_config_page import AppWindowDeviceConfigMixin
@@ -96,6 +97,7 @@ class AppWindow(
     AppWindowMountPageMixin,
     AppWindowRotatorPageMixin,
     AppWindowFilterWheelPageMixin,
+    AppWindowFlatPanelPageMixin,
     AppWindowOpticsPageMixin,
     AppWindowMiscDevicePagesMixin,
     AppWindowDeviceConfigMixin,

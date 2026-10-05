@@ -125,6 +125,9 @@ class AppWindowState(Protocol):
     # _filter_wheel_page.py
     def _build_filter_wheel_page(self) -> QWidget: ...
 
+    # _flat_panel_page.py
+    def _build_flat_panel_page(self) -> QWidget: ...
+
     # _focuser_page.py
     def _build_focuser_page(self) -> QWidget: ...
 

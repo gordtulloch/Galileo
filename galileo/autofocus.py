@@ -44,6 +44,25 @@ class AutofocusResult:
     curve_coefficients: tuple | None = None
 
 
+@dataclass
+class FilterOffset:
+    """One filter's saved offset state from the Focus screen's Filter Offsets
+    dialog (EQP-FW-020): up to four measured best-focus positions and the
+    resulting offset relative to the Pier's Primary filter — ``None`` until
+    an offset has actually been computed for this filter (e.g. no Primary
+    filter's average was available yet when it was measured)."""
+    filter_name: str
+    is_primary: bool = False
+    measurements: tuple[int | None, int | None, int | None, int | None] = (None, None, None, None)
+    offset_steps: int | None = None
+
+    @property
+    def average_position(self) -> int | None:
+        """Mean of whichever measurements are present, or ``None`` if there are none."""
+        values = [m for m in self.measurements if m is not None]
+        return round(sum(values) / len(values)) if values else None
+
+
 # ---------------------------------------------------------------------------
 # Curve fitting
 # ---------------------------------------------------------------------------
@@ -79,6 +98,7 @@ class AutofocusService:
         exposure_s: float = AutofocusParams.exposure_s,
         backlash_compensation: int = AutofocusParams.backlash_compensation,
         pier_key=None,
+        filter_offsets: dict[str, int] | None = None,
     ) -> None:
         self._camera = camera
         self._focuser = focuser
@@ -90,7 +110,10 @@ class AutofocusService:
         self.pier_key = pier_key
         self.exposure_s = exposure_s
         self.backlash_compensation = backlash_compensation
-        self._filter_offsets: dict[str, int] = {}
+        # filter_name -> offset_steps, consumed by apply_filter_offset (FOC-060).
+        # Seeded from the Pier's saved Filter Offsets (galileo.observatory.get_filter_offset_steps)
+        # by whichever caller is applying an offset outside of a sweep's own run.
+        self._filter_offsets: dict[str, int] = dict(filter_offsets or {})
         self._current_position: int = 5000
         self._last_best_position: int | None = None
         self._cancelled = False

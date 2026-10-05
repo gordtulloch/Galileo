@@ -147,6 +147,8 @@ class _RotatorBackend(Protocol):
 class _FlatPanelBackend(Protocol):
     async def open_cover(self) -> None: ...
     async def close_cover(self) -> None: ...
+    async def light_on(self) -> None: ...
+    async def light_off(self) -> None: ...
     async def set_brightness(self, level: int) -> None: ...
 
 
@@ -481,8 +483,21 @@ class FlatPanelController(DeviceController):
     async def close_cover(self) -> None:
         await cast(_FlatPanelBackend, self._backend).close_cover()
 
+    async def light_on(self) -> None:
+        await cast(_FlatPanelBackend, self._backend).light_on()
+
+    async def light_off(self) -> None:
+        await cast(_FlatPanelBackend, self._backend).light_off()
+
     async def set_brightness(self, level: int) -> None:
         await cast(_FlatPanelBackend, self._backend).set_brightness(level)
+
+    def get_status(self) -> dict:
+        return {
+            "cover_state": getattr(self._backend, "cover_state", None),
+            "is_light_on": getattr(self._backend, "is_light_on", None),
+            "brightness": getattr(self._backend, "brightness", None),
+        }
 
 
 class WeatherController(DeviceController):

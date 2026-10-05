@@ -65,6 +65,8 @@ class AppWindowLibraryEquipmentMixin:
                 page_widget = self._build_filter_wheel_page()
             elif cat_id == "rotator":
                 page_widget = self._build_rotator_page()
+            elif cat_id == "flat_panel":
+                page_widget = self._build_flat_panel_page()
             elif cat_id == "optics":
                 page_widget = self._build_optics_page()
             else:

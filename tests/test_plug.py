@@ -93,6 +93,82 @@ def test_tc_plug_030_in_app_plugin_manager_ui():
     assert hasattr(mgr, "remove")
 
 
+@pytest.mark.requirement("TC-PLUG-030")
+@pytest.mark.priority("P2")
+def test_tc_plug_030_list_plugins_snapshot_for_options_page(plugin_manager):
+    """PLUG-030: the Options > Plugins page reads its rows from list_plugins(),
+    a name/version/panel/active/faulted snapshot of every loaded or faulted plugin."""
+    pytest.importorskip("galileo.plugins")
+    plugin_manager.initialize_preloaded()
+
+    infos = {info.name: info for info in plugin_manager.list_plugins()}
+    assert infos["VSTPlugin"].panel_label == "Variable Stars"
+    assert infos["VSTPlugin"].version == "1.0.0"
+    assert infos["VSTPlugin"].active is True
+    assert infos["VSTPlugin"].faulted is False
+
+    plugin_manager.disable("VSTPlugin")
+    infos = {info.name: info for info in plugin_manager.list_plugins()}
+    assert infos["VSTPlugin"].active is False
+
+
+@pytest.mark.requirement("TC-PLUG-030")
+@pytest.mark.priority("P2")
+def test_tc_plug_030_options_plugins_page_lists_and_toggles_vstarget():
+    """PLUG-030: the actual Options > Plugins widget lists VSTarget's plugins and its
+    Enable/Disable control calls through to the real PluginManager."""
+    qtwidgets = pytest.importorskip("PySide6.QtWidgets")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qtwidgets.QApplication.instance() or qtwidgets.QApplication([])
+
+    from galileo.ui.app_window._settings_pages import AppWindowSettingsPagesMixin
+    from galileo.plugins import get_plugin_manager
+
+    class _Dummy(AppWindowSettingsPagesMixin):
+        pass
+
+    page = _Dummy()._build_plugins_settings_page()
+    table = page.findChild(qtwidgets.QTableWidget, "PluginTable")
+    names = [table.item(r, 0).text() for r in range(table.rowCount())]
+    assert "VSTPlugin" in names
+    assert "VSTAnalysisPlugin" in names
+
+    mgr = get_plugin_manager()
+    row = names.index("VSTPlugin")
+    table.selectRow(row)
+    toggle_btn = next(b for b in page.findChildren(qtwidgets.QPushButton)
+                       if b.text() == "Enable / Disable Selected")
+    was_active = mgr.is_active("VSTPlugin")
+    toggle_btn.click()
+    assert mgr.is_active("VSTPlugin") is not was_active
+    assert table.item(row, 3).text() == ("Enabled" if mgr.is_active("VSTPlugin") else "Disabled")
+
+    # restore state so this test doesn't leak into others via the process-wide singleton
+    if mgr.is_active("VSTPlugin") != was_active:
+        toggle_btn.click()
+
+
+@pytest.mark.requirement("TC-PLUG-060")
+@pytest.mark.priority("MVP")
+def test_tc_plug_060_process_wide_manager_preloads_vstarget():
+    """PLUG-060: get_plugin_manager() is the process-wide singleton the UI shares;
+    it pre-loads VSTarget's two first-party plugins on first use, idempotently."""
+    plugins = pytest.importorskip("galileo.plugins")
+    mgr1 = plugins.get_plugin_manager()
+    mgr2 = plugins.get_plugin_manager()
+    assert mgr1 is mgr2
+    assert mgr1.is_loaded("VSTPlugin")
+    assert mgr1.is_loaded("VSTAnalysisPlugin")
+
+    # Calling initialize_preloaded() again must not re-activate an already-loaded plugin.
+    mgr1.disable("VSTPlugin")
+    mgr1.initialize_preloaded()
+    assert mgr1.is_loaded("VSTPlugin")
+    assert not mgr1.is_active("VSTPlugin")
+    mgr1.enable("VSTPlugin")
+
+
 # ---------------------------------------------------------------------------
 # TC-PLUG-040
 # ---------------------------------------------------------------------------

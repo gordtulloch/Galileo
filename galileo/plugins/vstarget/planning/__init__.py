@@ -3,7 +3,7 @@
 
 """galileo.plugins.vstarget.planning package."""
 
-from galileo.plugins.vstarget.planning.aavso_client import AavsoTargetToolClient
+from galileo.plugins.vstarget.planning.aavso_client import AavsoTargetToolClient, AavsoVspClient
 from galileo.plugins.vstarget.planning.models import (
     AavsoTarget,
     FilterConfig,
@@ -17,6 +17,7 @@ from galileo.plugins.vstarget.planning.script_exporter import export_acp_script
 __all__ = [
     "AavsoTarget",
     "AavsoTargetToolClient",
+    "AavsoVspClient",
     "FilterConfig",
     "ObservationPlan",
     "SimbadClient",
