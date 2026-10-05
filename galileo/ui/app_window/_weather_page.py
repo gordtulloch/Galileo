@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Equipment > Weather device-category page (EQP-WX-010, EQP-WX-020)."""
+"""Equipment > Safety device-category page (EQP-WX-010, EQP-WX-020).
+
+One tab per safety device — weather stations and safety monitors — each with
+its own connection and its own per-reading rules for what makes the dome
+unsafe to open. A "+" button adds a device in a new tab."""
 
 from __future__ import annotations
 
@@ -22,44 +26,78 @@ if TYPE_CHECKING:
     # actual base stays plain `object`.
     from ._state import AppWindowState
 
-# How long a Pier's weather-reading trend history is kept for the Safety
-# Monitor screen's graphs (EQP-SAFE-020) — capped by count, not wall-clock
-# time, since the poll interval is itself user-configurable.
+# How long a Pier's weather-reading trend history is kept — capped by count,
+# not wall-clock time, since the poll interval is itself user-configurable.
 _HISTORY_MAX_SAMPLES = 1000
 
 
+#: Safety-device types a tab can hold: type id (also its device-config
+#: category) -> (tab/menu label, driver choices).
+_SAFETY_DEVICE_TYPES = {
+    "weather": ("Weather Station", ["Alpaca", "INDI"]),
+    "safety_monitor": ("Safety Monitor", ["Alpaca"]),
+}
+
+#: The one reading a Safety Monitor device has: its own SAFE/NOT-SAFE verdict.
+_SAFETY_MONITOR_PARAMETER_INFO = {"is_safe": ("Device reports safe", "bool")}
+
+
+def _safety_parameter_info(device_type: str) -> dict:
+    from galileo.safety import WEATHER_PARAMETER_INFO
+    return _SAFETY_MONITOR_PARAMETER_INFO if device_type == "safety_monitor" else WEATHER_PARAMETER_INFO
+
+
+def _default_safety_rules(device_type: str) -> list:
+    from galileo.safety import WeatherSafetyRule, default_weather_safety_rules
+    if device_type == "safety_monitor":
+        # Unsafe whenever the device reports not-safe (is_safe is 1.0/0.0).
+        return [WeatherSafetyRule("is_safe", safety_related=True, operator="<", threshold=1.0,
+                                  label="Device reports safe", unit="bool")]
+    return default_weather_safety_rules()
+
+
 class AppWindowWeatherPageMixin:
-    def _build_weather_page(self: AppWindowState) -> QWidget:
-        """Weather device-category page: the usual Driver/Server/Port/Scan +
+    def _build_safety_device_panel(self: AppWindowState, device_type: str = "weather", slot: str = "primary"):
+        """One safety device's tab: the usual Driver/Server/Port/Scan +
         Device/Connect connection row, a live readings table, and — per
-        reading — whether it counts toward safety and what crossing it means
-        (EQP-WX-020, e.g. Rain is YES, Wind Speed >= 20 km/h). This
-        evaluation is advisory/display-only: it never drives an automated
-        abort itself (only a connected Safety Monitor device is authoritative
-        for that, EQP-SAFE-010) — the readings marked safety-related here,
-        and their trend over time, are instead surfaced read-only on the
-        Equipment > Safety Monitor screen (EQP-SAFE-020)."""
+        reading — whether it makes the dome unsafe to open and what crossing
+        it means (EQP-WX-020, e.g. Rain is YES, Wind Speed >= 20 km/h).
+        *device_type* picks the device category and which readings exist (a
+        weather station has many, a safety monitor just its own SAFE
+        verdict); *slot* is the device-config/rule key within the Pier.
+        Returns ``(widget, api)``."""
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout,
             QLabel, QTableWidget, QTableWidgetItem, QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox,
             QPushButton, QHeaderView, QMessageBox, QCheckBox, QAbstractItemView,
         )
         from PySide6.QtCore import Qt
-        from galileo.safety import UNSAFE_OPERATORS, WEATHER_PARAMETER_INFO
+        from galileo.core.devices import DeviceCategory
+        from galileo.safety import UNSAFE_OPERATORS
+
+        param_info = _safety_parameter_info(device_type)
+        kind_label, driver_choices = _SAFETY_DEVICE_TYPES[device_type]
+        category_enum = (
+            DeviceCategory.SAFETY_MONITOR if device_type == "safety_monitor" else DeviceCategory.WEATHER_STATION
+        )
 
         page = QWidget()
-        page.setObjectName("WeatherPage")
+        page.setObjectName("SafetyDevicePage")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(10)
 
-        heading = QLabel("Weather")
-        heading.setObjectName("PageTitle")
-        layout.addWidget(heading)
-        subtitle = QLabel(
-            "Connect a Weather Station device (e.g. an INDI ADS-WS1 or RG-11 rain sensor, or an "
-            "Alpaca ObservingConditions device) and mark which readings count toward safety."
-        )
+        if device_type == "safety_monitor":
+            subtitle_text = (
+                "Connect a Safety Monitor device (e.g. an Alpaca SafetyMonitor such as a rain sensor "
+                "or roof-position switch). The dome is treated as unsafe to open while it reports not safe."
+            )
+        else:
+            subtitle_text = (
+                "Connect a Weather Station device (e.g. an INDI ADS-WS1 or RG-11 rain sensor, or an "
+                "Alpaca ObservingConditions device) and mark which readings make the dome unsafe to open."
+            )
+        subtitle = QLabel(subtitle_text)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
@@ -76,7 +114,7 @@ class AppWindowWeatherPageMixin:
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
 
         driver_combo = QComboBox()
-        driver_combo.addItems(["Alpaca", "INDI"])
+        driver_combo.addItems(driver_choices)
         table.setCellWidget(0, 0, driver_combo)
 
         server_edit = QLineEdit()
@@ -127,9 +165,9 @@ class AppWindowWeatherPageMixin:
         layout.addWidget(banner)
 
         # --- readings + per-measure safety rules --------------------------
-        parameters = list(WEATHER_PARAMETER_INFO.keys())
+        parameters = list(param_info.keys())
         rules_table = QTableWidget(len(parameters), 5)
-        rules_table.setHorizontalHeaderLabels(["Measure", "Current", "Safety-Related", "Unsafe When", "Threshold"])
+        rules_table.setHorizontalHeaderLabels(["Measure", "Current", "Blocks Dome Opening", "Unsafe When", "Threshold"])
         rules_table.verticalHeader().setVisible(False)
         rules_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         rules_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -140,7 +178,7 @@ class AppWindowWeatherPageMixin:
 
         row_widgets: dict[str, dict] = {}
         for row, parameter in enumerate(parameters):
-            label, unit = WEATHER_PARAMETER_INFO[parameter]
+            label, unit = param_info[parameter]
             name_item = QTableWidgetItem(f"{label} ({unit})" if unit and unit != "bool" else label)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             rules_table.setItem(row, 0, name_item)
@@ -214,11 +252,13 @@ class AppWindowWeatherPageMixin:
             if not readings:
                 banner.setText("Not connected.")
             elif status.is_safe:
-                banner.setText("Weather: SAFE (advisory only — see Safety Monitor for the authoritative state)")
+                banner.setText(f"{kind_label}: SAFE")
             else:
-                banner.setText("Weather: UNSAFE — " + "; ".join(status.violations))
+                banner.setText(f"{kind_label}: UNSAFE — " + "; ".join(status.violations))
 
         def _record_reading(readings: dict) -> None:
+            if device_type != "weather":
+                return
             from galileo.current_object import pier_key
             key = pier_key(self._current_pier)
             history = self._weather_history_by_pier.setdefault(key, [])
@@ -227,21 +267,23 @@ class AppWindowWeatherPageMixin:
                 del history[: len(history) - _HISTORY_MAX_SAMPLES]
 
         def _poll_once() -> dict | None:
-            """Poll the connected adapter, update this page's display, and
-            record the reading into this Pier's trend history — called by
-            this page's own timer, and by the Safety Monitor page's timer
-            when *it* is the one on screen (see _device_pages["weather"])."""
+            """Poll the connected adapter, update this tab's display, and
+            record the reading into this Pier's trend history."""
             adapter = state.get("adapter")
             if adapter is None:
                 return None
             import asyncio
             from galileo.core.devices import WeatherController
             try:
-                controller = WeatherController(adapter)
-                asyncio.run(controller.poll())
-                readings = controller.get_readings()
+                if device_type == "safety_monitor":
+                    asyncio.run(adapter.poll())
+                    readings = {"is_safe": 1.0 if adapter.is_safe else 0.0}
+                else:
+                    controller = WeatherController(adapter)
+                    asyncio.run(controller.poll())
+                    readings = controller.get_readings()
             except Exception:
-                logger.exception("Could not poll weather station")
+                logger.exception("Could not poll %s", kind_label.lower())
                 return None
             _apply_readings(readings)
             _record_reading(readings)
@@ -255,33 +297,31 @@ class AppWindowWeatherPageMixin:
 
         # --- connection: connect / scan ------------------------------------
         def _do_connect(device_name: str) -> None:
-            from galileo.core.devices import DeviceCategory
             adapter = self._connect_device_adapter(
-                DeviceCategory.WEATHER_STATION, driver_combo.currentText(),
+                category_enum, driver_combo.currentText(),
                 server_edit.text().strip() or "localhost", port_spin.value(), device_name,
             )
             if adapter is None:
-                self._window.statusBar().showMessage(f"Could not connect to Weather station {device_name!r} — see log.", 6000)
+                self._window.statusBar().showMessage(f"Could not connect to {kind_label} {device_name!r} — see log.", 6000)
                 return
             from galileo.current_object import pier_key
             state["adapter"] = adapter
             adapters_by_pier[pier_key(self._current_pier)] = adapter
-            self._window.statusBar().showMessage(f"Connected to Weather station {device_name!r}.", 4000)
+            self._window.statusBar().showMessage(f"Connected to {kind_label} {device_name!r}.", 4000)
             _poll_once()
 
         def _connect_clicked() -> None:
             device_name = device_combo.currentText().strip()
             if not device_name:
-                QMessageBox.information(self._window, "No device selected", "Select a weather station device first.")
+                QMessageBox.information(self._window, "No device selected", f"Select a {kind_label.lower()} device first.")
                 return
             _do_connect(device_name)
 
         connect_btn.clicked.connect(_connect_clicked)
 
         def _device_picked() -> None:
-            from galileo.core.devices import DeviceCategory
             apply_driver_info(self._lookup_driver_info(
-                DeviceCategory.WEATHER_STATION, driver_combo.currentText(), server_edit.text().strip(),
+                category_enum, driver_combo.currentText(), server_edit.text().strip(),
                 port_spin.value(), device_combo.currentText().strip(),
             ))
 
@@ -291,7 +331,6 @@ class AppWindowWeatherPageMixin:
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
             driver = driver_combo.currentText()
-            from galileo.core.devices import DeviceCategory
             devices: list[str] = []
             try:
                 import asyncio
@@ -299,11 +338,11 @@ class AppWindowWeatherPageMixin:
                     from galileo.adapters.indi import get_adapter_class
                 else:
                     from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.WEATHER_STATION)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.WEATHER_STATION))
+                adapter = get_adapter_class(category_enum)(host=server, port=port)
+                devices = asyncio.run(adapter.list_available_devices(category_enum))
             except Exception:
-                logger.exception("Weather station scan failed on %s:%s", server, port)
-                self._window.statusBar().showMessage("Weather station scan failed — see log.", 6000)
+                logger.exception("%s scan failed on %s:%s", kind_label, server, port)
+                self._window.statusBar().showMessage(f"{kind_label} scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
             device_combo.blockSignals(True)
@@ -318,13 +357,13 @@ class AppWindowWeatherPageMixin:
             device_combo.blockSignals(False)
             if devices:
                 logger.info(
-                    "Detected %d %s weather device(s) at %s:%s: %s",
-                    len(devices), driver, server, port, ", ".join(devices),
+                    "Detected %d %s %s device(s) at %s:%s: %s",
+                    len(devices), driver, kind_label.lower(), server, port, ", ".join(devices),
                 )
-                self._window.statusBar().showMessage(f"Found {len(devices)} weather device(s) — see log.", 4000)
+                self._window.statusBar().showMessage(f"Found {len(devices)} {kind_label.lower()} device(s) — see log.", 4000)
             else:
-                logger.info("No %s weather devices found at %s:%s.", driver, server, port)
-                self._window.statusBar().showMessage(f"No {driver} weather devices found at {server}:{port}.", 4000)
+                logger.info("No %s %s devices found at %s:%s.", driver, kind_label.lower(), server, port)
+                self._window.statusBar().showMessage(f"No {driver} {kind_label.lower()} devices found at {server}:{port}.", 4000)
 
         scan_btn.clicked.connect(run_scan)
 
@@ -358,19 +397,19 @@ class AppWindowWeatherPageMixin:
                 return
             from galileo.observatory import save_device_config, save_weather_safety_rule
             save_device_config(
-                self._current_pier, "weather",
+                self._current_pier, device_type, slot=slot,
                 driver=driver_combo.currentText(), server=server_edit.text().strip(),
                 port=port_spin.value(), device_name=device_combo.currentText().strip() or None,
             )
             for rule in _current_rules():
-                save_weather_safety_rule(self._current_pier, rule)
+                save_weather_safety_rule(self._current_pier, rule, slot=slot)
             logger.info(
-                "Saved weather settings for Pier %r: %s %s:%s, device: %s, poll interval: %ds",
-                self._current_pier.name, driver_combo.currentText(), server_edit.text().strip(),
+                "Saved %s settings for Pier %r: %s %s:%s, device: %s, poll interval: %ds",
+                kind_label.lower(), self._current_pier.name, driver_combo.currentText(), server_edit.text().strip(),
                 port_spin.value(), device_combo.currentText().strip() or "(none)", poll_spin.value(),
             )
             self._window.statusBar().showMessage(
-                f"Saved weather settings for Pier {self._current_pier.name!r}.", 4000
+                f"Saved {kind_label.lower()} settings for Pier {self._current_pier.name!r}.", 4000
             )
 
         save_btn.clicked.connect(save_weather_config)
@@ -381,14 +420,13 @@ class AppWindowWeatherPageMixin:
             if self._current_pier is not None:
                 from galileo.observatory import get_device_config, get_weather_safety_rules
                 try:
-                    cfg = get_device_config(self._current_pier, "weather")
-                    rules = get_weather_safety_rules(self._current_pier)
+                    cfg = get_device_config(self._current_pier, device_type, slot=slot)
+                    rules = get_weather_safety_rules(self._current_pier, slot=slot)
                 except Exception:
-                    logger.exception("Could not load saved weather config")
+                    logger.exception("Could not load saved %s config", kind_label.lower())
 
             if not rules and self._current_pier is not None:
-                from galileo.safety import default_weather_safety_rules
-                rules = default_weather_safety_rules()
+                rules = _default_safety_rules(device_type)
             rules_by_parameter = {rule.parameter: rule for rule in rules}
 
             driver_combo.blockSignals(True)
@@ -457,28 +495,167 @@ class AppWindowWeatherPageMixin:
             try:
                 asyncio.run(adapter.disconnect())
             except Exception:
-                logger.exception("Could not disconnect Weather station")
+                logger.exception("Could not disconnect %s", kind_label)
             state["adapter"] = None
             _apply_readings({})
-            self._window.statusBar().showMessage("Weather station disconnected.", 4000)
+            self._window.statusBar().showMessage(f"{kind_label} disconnected.", 4000)
 
         from PySide6.QtCore import QTimer
         status_timer = QTimer(page)
         status_timer.timeout.connect(_when_visible(page, _refresh_display))
         status_timer.start(poll_spin.value() * 1000)
 
-        self._device_pages["weather"] = {
+        api = {
             "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
             "connected": lambda: state.get("adapter") is not None,
-            # Read-only accessors the Safety Monitor page uses (EQP-SAFE-020)
-            # to surface the safety-related subset of these readings, and
-            # their trend, without owning a second connection to the device.
             "poll_once": _poll_once,
             "get_rules": _current_rules,
             "get_latest_readings": lambda: state.get("latest_readings", {}),
+            "device_type": device_type, "slot": slot,
         }
         reload_page()
         if self._startup_autoconnect_allowed():
             autoconnect_page()
+
+        return page, api
+
+    def _build_weather_page(self: AppWindowState) -> QWidget:
+        """Equipment > Safety page: a tab per safety device (the first is the
+        Pier's weather station), and a "+" button that adds another — a
+        further weather station or a Safety Monitor — in a new tab. The dome
+        is unsafe to open when any connected device breaks a rule marked
+        "Blocks Dome Opening" on its tab."""
+        from PySide6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, QPushButton, QMenu, QMessageBox, QTabBar,
+        )
+
+        page = QWidget()
+        page.setObjectName("WeatherPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        heading = QLabel("Safety")
+        heading.setObjectName("PageTitle")
+        header.addWidget(heading)
+        header.addStretch(1)
+        add_btn = QPushButton("+")
+        add_btn.setToolTip("Add a safety device (weather station or safety monitor) in a new tab")
+        add_btn.setFixedWidth(34)
+        header.addWidget(add_btn)
+        layout.addLayout(header)
+
+        tabs = QTabWidget()
+        tabs.setTabsClosable(True)
+        layout.addWidget(tabs, 1)
+
+        panels: list[dict] = []  # api dicts, parallel to tabs
+
+        def _add_panel(device_type: str, slot: str) -> None:
+            widget, api = self._build_safety_device_panel(device_type, slot)
+            api["widget"] = widget
+            panels.append(api)
+            index = tabs.addTab(widget, _SAFETY_DEVICE_TYPES[device_type][0])
+            if slot == "primary":  # the Pier's own weather station can't be closed
+                tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
+            tabs.setCurrentIndex(index)
+
+        def _next_slot(device_type: str) -> str:
+            used = {panel["slot"] for panel in panels}
+            n = 2
+            while f"{device_type}_{n}" in used:
+                n += 1
+            return f"{device_type}_{n}"
+
+        add_menu = QMenu(add_btn)
+        for type_id, (label, _drivers) in _SAFETY_DEVICE_TYPES.items():
+            add_menu.addAction(label).triggered.connect(
+                lambda _checked=False, type_id=type_id: _add_panel(type_id, _next_slot(type_id))
+            )
+        add_btn.setMenu(add_menu)
+
+        def _close_tab(index: int) -> None:
+            if not 0 <= index < len(panels):
+                return
+            api = panels[index]
+            if api["slot"] == "primary":
+                return
+            if QMessageBox.question(
+                self._window, "Remove safety device", "Remove this device and its saved settings?",
+            ) != QMessageBox.StandardButton.Yes:
+                return
+            api["disconnect"]()
+            if self._current_pier is not None:
+                from galileo.observatory import delete_device_config, delete_weather_safety_rules
+                delete_device_config(self._current_pier, api["device_type"], slot=api["slot"])
+                delete_weather_safety_rules(self._current_pier, api["slot"])
+            panels.pop(index)
+            tabs.removeTab(index)
+            api["widget"].deleteLater()
+
+        tabs.tabCloseRequested.connect(_close_tab)
+
+        def _saved_extra_slots() -> list[tuple[str, str]]:
+            if self._current_pier is None:
+                return []
+            from galileo.observatory import list_device_config_slots
+            extra = []
+            for type_id in _SAFETY_DEVICE_TYPES:
+                try:
+                    slots = list_device_config_slots(self._current_pier, type_id)
+                except Exception:
+                    logger.exception("Could not list saved %s devices", type_id)
+                    continue
+                extra += [(type_id, s) for s in slots if s != "primary"]
+            return extra
+
+        def reload_page() -> None:
+            # Rebuild the extra tabs from what the selected Pier has saved;
+            # the primary weather tab is permanent and just reloads.
+            for api in panels[1:]:
+                api["widget"].deleteLater()
+            for index in range(tabs.count() - 1, 0, -1):
+                tabs.removeTab(index)
+            del panels[1:]
+            for type_id, slot in _saved_extra_slots():
+                _add_panel(type_id, slot)
+            tabs.setCurrentIndex(0)
+            panels[0]["reload"]()
+
+        def autoconnect_page() -> None:
+            for api in panels:
+                api["autoconnect"]()
+
+        def disconnect_page() -> None:
+            for api in panels:
+                api["disconnect"]()
+
+        def evaluate() -> tuple[bool, bool, list[str]]:
+            """``(any device connected, dome safe to open, reasons it is not)`` across every tab."""
+            from galileo.safety import evaluate_weather_safety
+            connected = False
+            violations: list[str] = []
+            for api in panels:
+                if not api["connected"]():
+                    continue
+                connected = True
+                rules = [r for r in api["get_rules"]() if r.safety_related]
+                violations += evaluate_weather_safety(api["get_latest_readings"](), rules).violations
+            return connected, not violations, violations
+
+        _add_panel("weather", "primary")
+
+        primary = panels[0]
+        self._device_pages["weather"] = {
+            "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
+            "connected": lambda: any(api["connected"]() for api in panels),
+            "evaluate": evaluate,
+            # The first tab's accessors, kept for callers that predate tabs.
+            "poll_once": primary["poll_once"],
+            "get_rules": primary["get_rules"],
+            "get_latest_readings": primary["get_latest_readings"],
+        }
+        reload_page()
 
         return page

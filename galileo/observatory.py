@@ -434,10 +434,11 @@ def get_filter_offset_steps(pier: PierRecord | None) -> dict[str, int]:
     }
 
 
-def get_weather_safety_rules(pier: PierRecord | None) -> list[WeatherSafetyRule]:
-    """Return *pier*'s saved per-reading weather safety rules (Equipment >
-    Weather screen, EQP-WX-020) — one entry per reading the user has
-    configured. Empty if none have been saved yet or no Pier is selected."""
+def get_weather_safety_rules(pier: PierRecord | None, slot: str = "primary") -> list[WeatherSafetyRule]:
+    """Return *pier*'s saved per-reading safety rules for the safety device in
+    *slot* (Equipment > Safety screen, EQP-WX-020) — one entry per reading the
+    user has configured. Empty if none have been saved yet or no Pier is
+    selected."""
     from galileo.safety import WeatherSafetyRule
     if pier is None:
         return []
@@ -447,11 +448,13 @@ def get_weather_safety_rules(pier: PierRecord | None) -> list[WeatherSafetyRule]
             parameter=record.parameter, label=record.label, unit=record.unit,
             safety_related=record.safety_related, operator=record.operator, threshold=record.threshold,
         )
-        for record in WeatherSafetyRuleRecord.select().where(WeatherSafetyRuleRecord.pier == pier)
+        for record in WeatherSafetyRuleRecord.select().where(
+            (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        )
     ]
 
 
-def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule) -> None:
+def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule, slot: str = "primary") -> None:
     """Create or update *pier*'s saved rule for ``rule.parameter`` (Equipment >
     Weather screen's Save button, EQP-WX-020)."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
@@ -460,22 +463,32 @@ def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule) -> None:
         operator=rule.operator, threshold=rule.threshold,
     )
     record = WeatherSafetyRuleRecord.get_or_none(
-        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.parameter == rule.parameter)
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        & (WeatherSafetyRuleRecord.parameter == rule.parameter)
     )
     if record is None:
-        WeatherSafetyRuleRecord.create(pier=pier, parameter=rule.parameter, **fields)
+        WeatherSafetyRuleRecord.create(pier=pier, slot=slot, parameter=rule.parameter, **fields)
         return
     for key, value in fields.items():
         setattr(record, key, value)
     record.save()
 
 
-def delete_weather_safety_rule(pier: PierRecord, parameter: str) -> None:
-    """Delete *pier*'s saved rule for *parameter*, if any (Weather screen's
-    per-row Remove control)."""
+def delete_weather_safety_rule(pier: PierRecord, parameter: str, slot: str = "primary") -> None:
+    """Delete *pier*'s saved rule for *parameter* on the safety device in
+    *slot*, if any."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     WeatherSafetyRuleRecord.delete().where(
-        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.parameter == parameter)
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        & (WeatherSafetyRuleRecord.parameter == parameter)
+    ).execute()
+
+
+def delete_weather_safety_rules(pier: PierRecord, slot: str) -> None:
+    """Delete every saved rule of the safety device in *slot* (its tab was removed)."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    WeatherSafetyRuleRecord.delete().where(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
     ).execute()
 
 

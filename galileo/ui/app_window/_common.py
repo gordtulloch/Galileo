@@ -114,9 +114,8 @@ EQUIPMENT_CATEGORIES = [
     ("optics", "Optics", "optics"),
     ("switch", "Switches", "switch"),
     ("flat_panel", "Flat Panel", "flat_panel"),
-    ("weather", "Weather", "weather"),
+    ("weather", "Safety", "safety"),
     ("dome", "Dome", "dome"),
-    ("safety_monitor", "Safety Monitor", "safety_monitor"),
     ("aux", "Aux", "aux"),
 ]
 
@@ -134,7 +133,6 @@ def _category_enum_map() -> dict:
         "flat_panel": DeviceCategory.FLAT_PANEL,
         "weather": DeviceCategory.WEATHER_STATION,
         "dome": DeviceCategory.DOME,
-        "safety_monitor": DeviceCategory.SAFETY_MONITOR,
         "aux": DeviceCategory.AUX,
     }
 

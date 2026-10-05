@@ -255,7 +255,7 @@ def _texts(page):
 @pytest.mark.priority("MVP")
 @pytest.mark.parametrize("cat_id,label", [
     ("switch", "Switches"), ("flat_panel", "Flat Panel"),
-    ("weather", "Weather"), ("dome", "Dome"), ("safety_monitor", "Safety Monitor"),
+    ("weather", "Weather"), ("dome", "Dome"),
 ])
 def test_tc_eqp_070_scan_pages_show_driver_info_for_the_picked_device(window, cat_id, label):
     """EQP-070: on the scan-only pages, picking a device from the results fills Driver info / version."""

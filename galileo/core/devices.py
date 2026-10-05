@@ -163,6 +163,7 @@ class _DomeBackend(Protocol):
     async def open_shutter(self) -> None: ...
     async def close_shutter(self) -> None: ...
     async def park(self) -> None: ...
+    async def unpark(self) -> None: ...
     async def abort_slew(self) -> None: ...
 
 
@@ -620,6 +621,9 @@ class DomeController(DeviceController):
 
     async def park(self) -> None:
         await cast(_DomeBackend, self._backend).park()
+
+    async def unpark(self) -> None:
+        await cast(_DomeBackend, self._backend).unpark()
 
     async def abort_slew(self) -> None:
         await cast(_DomeBackend, self._backend).abort_slew()

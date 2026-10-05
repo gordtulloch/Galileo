@@ -351,20 +351,7 @@ def _aux(painter, r):
         painter.drawLine(QLineF(body.right(), y, r.right(), y))
 
 
-def _weather(painter, r):
-    from PySide6.QtCore import QRectF
-    painter.drawEllipse(QRectF(r.left(), r.top() + r.height() * 0.15, r.width() * 0.55, r.height() * 0.45))
-    painter.drawRoundedRect(QRectF(r.left() + r.width() * 0.15, r.top() + r.height() * 0.35, r.width() * 0.75, r.height() * 0.4), 4, 4)
-
-
-def _dome(painter, r):
-    from PySide6.QtCore import QLineF, QRectF
-    rect = QRectF(r.left(), r.top(), r.width(), r.height() * 1.6)
-    painter.drawArc(rect, 0, 180 * 16)
-    painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.5, r.right(), r.top() + r.height() * 0.5))
-
-
-def _safety_monitor(painter, r):
+def _safety(painter, r):
     from PySide6.QtGui import QPolygonF
     from PySide6.QtCore import QPointF
     painter.drawPolygon(QPolygonF([
@@ -375,6 +362,13 @@ def _safety_monitor(painter, r):
         QPointF(r.left(), r.top() + r.height() * 0.6),
         QPointF(r.left(), r.top() + r.height() * 0.22),
     ]))
+
+
+def _dome(painter, r):
+    from PySide6.QtCore import QLineF, QRectF
+    rect = QRectF(r.left(), r.top(), r.width(), r.height() * 1.6)
+    painter.drawArc(rect, 0, 180 * 16)
+    painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.5, r.right(), r.top() + r.height() * 0.5))
 
 
 def _images(painter, r):
@@ -499,9 +493,8 @@ ICONS: dict[str, DrawFn] = {
     "optics": _optics,
     "switch": _switch,
     "flat_panel": _flat_panel,
-    "weather": _weather,
+    "safety": _safety,
     "dome": _dome,
-    "safety_monitor": _safety_monitor,
     "aux": _aux,
     "images": _images,
     "sessions": _sessions,

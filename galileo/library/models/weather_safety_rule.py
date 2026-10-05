@@ -23,6 +23,7 @@ class WeatherSafetyRuleRecord(BaseModel):
     """One Pier's saved safety rule for one Weather Station reading (EQP-WX-020)."""
 
     pier = pw.ForeignKeyField(PierRecord, backref="weather_safety_rules", on_delete="CASCADE")
+    slot = pw.TextField(default="primary")
     parameter = pw.TextField()
     label = pw.TextField(default="")
     unit = pw.TextField(default="")
@@ -32,4 +33,4 @@ class WeatherSafetyRuleRecord(BaseModel):
 
     class Meta:
         table_name = "weather_safety_rules"
-        indexes = ((("pier", "parameter"), True),)
+        indexes = ((("pier", "slot", "parameter"), True),)

@@ -53,7 +53,6 @@ from ._filter_wheel_page import AppWindowFilterWheelPageMixin
 from ._flat_panel_page import AppWindowFlatPanelPageMixin
 from ._aux_page import AppWindowAuxPageMixin
 from ._weather_page import AppWindowWeatherPageMixin
-from ._safety_monitor_page import AppWindowSafetyMonitorPageMixin
 from ._dome_page import AppWindowDomePageMixin
 from ._optics_page import AppWindowOpticsPageMixin
 from ._misc_device_pages import AppWindowMiscDevicePagesMixin
@@ -106,7 +105,6 @@ class AppWindow(
     AppWindowFlatPanelPageMixin,
     AppWindowAuxPageMixin,
     AppWindowWeatherPageMixin,
-    AppWindowSafetyMonitorPageMixin,
     AppWindowDomePageMixin,
     AppWindowOpticsPageMixin,
     AppWindowMiscDevicePagesMixin,

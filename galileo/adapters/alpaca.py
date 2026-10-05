@@ -1047,9 +1047,43 @@ class AlpacaDomeAdapter(AlpacaAdapter):
 
     async def park(self) -> None:
         await self._put("park")
+        self.is_at_park = True
+
+    async def unpark(self) -> None:
+        # ASCOM IDome has no Unpark: a dome leaves park on its next slew, so
+        # there is nothing to send — just clear the cached flag until
+        # get_status() reads AtPark back.
+        self.is_at_park = False
 
     async def abort_slew(self) -> None:
         await self._put("abortslew")
+
+    _SHUTTER_STATE = {0: "Open", 1: "Closed", 2: "Opening", 3: "Closing", 4: "Error"}
+
+    async def get_status(self) -> dict:
+        """Live status: ``ShutterStatus``, ``Azimuth`` and ``AtPark``, each
+        read defensively (a dome may not implement all three)."""
+        status: dict[str, Any] = dict(await self.get_driver_info())
+        try:
+            raw_shutter = await self._get("shutterstatus")
+            if raw_shutter is not None:
+                self.shutter_state = self._SHUTTER_STATE.get(int(raw_shutter), "Unknown")
+        except Exception:
+            logger.exception("Could not read ShutterStatus from %s", self.base_url)
+        try:
+            raw_az = await self._get("azimuth")
+            if raw_az is not None:
+                self.azimuth = float(raw_az)
+        except Exception:
+            logger.exception("Could not read Azimuth from %s", self.base_url)
+        try:
+            raw_park = await self._get("atpark")
+            if raw_park is not None:
+                self.is_at_park = bool(raw_park)
+        except Exception:
+            logger.exception("Could not read AtPark from %s", self.base_url)
+        status.update(shutter_state=self.shutter_state, azimuth=self.azimuth, is_at_park=self.is_at_park)
+        return status
 
 
 class AlpacaSafetyMonitorAdapter(AlpacaAdapter):
@@ -1060,7 +1094,8 @@ class AlpacaSafetyMonitorAdapter(AlpacaAdapter):
         self.tier = 1
 
     async def poll(self) -> None:
-        self.is_safe = await self._get("issafe") or True
+        value = await self._get("issafe")
+        self.is_safe = True if value is None else bool(value)
 
 
 class AlpacaSwitchAdapter(AlpacaAdapter):

@@ -16,7 +16,8 @@ from peewee_migrate import Migrator
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
-    existing = {c.name for c in database.get_columns("observatories")}
+    # With ``fake`` set, ``database`` is a mock and can't be introspected; every column is declared.
+    existing = set() if fake else {c.name for c in database.get_columns("observatories")}
     if fake or "notification_type" not in existing:
         migrator.sql("ALTER TABLE observatories ADD COLUMN notification_type TEXT")
     if fake or "email_address" not in existing:

@@ -142,6 +142,9 @@ class DiagnosticsService:
         # for "all runtime information" to actually reach the file/tail
         # buffer rather than being silently dropped before any handler sees it.
         root_logger.setLevel(logging.DEBUG)
+        # asyncio's DEBUG chatter (e.g. "Using proactor: IocpProactor" on every
+        # event-loop creation) is noise that would bloat the log in 24/7 use.
+        logging.getLogger("asyncio").setLevel(logging.INFO)
 
         # mode="w" (not the logging default "a") so the datestamped file
         # resets on every run rather than accumulating across same-day runs.

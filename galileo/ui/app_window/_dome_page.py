@@ -222,16 +222,20 @@ class AppWindowDomePageMixin:
             if not weather_connected:
                 _set_indicator(weather_swatch, weather_status_label, "Not configured", _UNKNOWN_COLOR)
             else:
-                get_readings = weather_state.get("get_latest_readings")
-                get_rules = weather_state.get("get_rules")
-                readings = get_readings() if get_readings else {}
-                rules = [r for r in (get_rules() if get_rules else []) if r.safety_related]
-                from galileo.safety import evaluate_weather_safety
-                status = evaluate_weather_safety(readings, rules)
-                weather_ready = status.is_safe
+                evaluate = weather_state.get("evaluate")
+                if evaluate:  # every Safety-screen device, not just the first tab
+                    _any, weather_ready, violations = evaluate()
+                else:
+                    get_readings = weather_state.get("get_latest_readings")
+                    get_rules = weather_state.get("get_rules")
+                    readings = get_readings() if get_readings else {}
+                    rules = [r for r in (get_rules() if get_rules else []) if r.safety_related]
+                    from galileo.safety import evaluate_weather_safety
+                    status = evaluate_weather_safety(readings, rules)
+                    weather_ready, violations = status.is_safe, status.violations
                 _set_indicator(
                     weather_swatch, weather_status_label,
-                    "Safe" if weather_ready else "Unsafe — " + "; ".join(status.violations),
+                    "Safe" if weather_ready else "Unsafe — " + "; ".join(violations),
                     _READY_COLOR if weather_ready else _NOT_READY_COLOR,
                 )
 
@@ -274,6 +278,8 @@ class AppWindowDomePageMixin:
             azimuth = status.get("azimuth")
             azimuth_value.setText("—" if azimuth is None else f"{azimuth:.1f}°")
             at_park = status.get("is_at_park")
+            state["parked"] = bool(at_park)
+            park_btn.setText("Unpark" if at_park else "Park")
             if at_park is None:
                 park_chip.setText("—")
                 park_chip.setStyleSheet("")
@@ -311,8 +317,9 @@ class AppWindowDomePageMixin:
                 _refresh_status()
 
         def _park_clicked() -> None:
-            if _call("park", action="park"):
-                logger.info("Dome: parked")
+            unparking = bool(state.get("parked"))
+            if _call("unpark" if unparking else "park", action="unpark" if unparking else "park"):
+                logger.info("Dome: %s", "unparked" if unparking else "parked")
                 _refresh_status()
 
         def _abort_clicked() -> None:
