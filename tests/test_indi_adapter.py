@@ -393,6 +393,32 @@ async def test_tc_eqp_fw_010_names_and_zero_based_position(server):
         await wheel.disconnect()
 
 
+@pytest.mark.requirement("TC-EQP-FW-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_fw_010_move_waits_for_a_slow_driver_to_acknowledge(server):
+    """EQP-FW-010: ``move_to`` returns only once the change is done, even if the driver's Busy reply
+    arrives late (a loaded machine or a slow network). Before the fix it saw the old Ok state and
+    returned straight away, leaving ``position`` reading the old slot."""
+    import time
+    original = server._on_command
+
+    def slow(sock, elem):
+        if elem.get("name") == "FILTER_SLOT":
+            time.sleep(0.4)
+        original(sock, elem)
+
+    server._on_command = slow
+    wheel = make(indi.IndiFWAdapter, server, WHEEL)
+    await wheel.connect()
+    try:
+        await wheel.move_to(2)
+        status = await wheel.get_status()
+        assert status["position"] == 2
+        assert not wheel.is_moving
+    finally:
+        await wheel.disconnect()
+
+
 @pytest.mark.requirement("TC-EQP-FOC-010")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_foc_010_absolute_relative_moves_and_limits(server):
