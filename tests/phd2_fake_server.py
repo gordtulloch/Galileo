@@ -53,6 +53,12 @@ class FakePhd2Server:
         with self._lock:
             clients, self._clients = self._clients, []
         for client in clients:
+            # shutdown() first: on Linux, close() alone does not hang up while the server's own thread
+            # is blocked reading this socket, so the client would never see the disconnect.
+            try:
+                client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             client.close()
 
     def wait_for_request(self, method: str, timeout: float = 3.0) -> bool:

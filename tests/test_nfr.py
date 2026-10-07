@@ -452,15 +452,12 @@ def test_tc_nfr_sec_010_no_credentials_or_location_leak():
 def test_tc_nfr_sec_020_indi_alpaca_wan_security_documentation():
     """NFR-SEC-020: WAN security implications for INDI/Alpaca are documented; app does not weaken auth."""
     # Verification: Inspection — this TC passes by confirming the docs asset exists.
-    import importlib.util
-    docs_spec = importlib.util.find_spec("galileo")
-    if docs_spec:
-        from pathlib import Path
-        pkg_root = Path(docs_spec.submodule_search_locations[0]).parent
-        security_docs = list(pkg_root.rglob("*security*")) + list(pkg_root.rglob("*WAN*"))
-        assert security_docs, "Security documentation for WAN exposure must exist in the repository"
-    else:
-        pytest.skip("galileo package not yet installed")
+    from pathlib import Path
+    docs_dir = Path(__file__).resolve().parent.parent / "docs"
+    # Case-insensitive on purpose (Linux file systems are case-sensitive, so rglob("*security*") misses
+    # SECURITY.md), and limited to docs/ so a virtualenv's own "security" files can never satisfy it.
+    security_docs = [p for p in docs_dir.rglob("*") if p.is_file() and any(w in p.name.lower() for w in ("security", "wan"))]
+    assert security_docs, "Security documentation for WAN exposure must exist in the repository"
 
 
 @pytest.mark.requirement("TC-NFR-SEC-030")
