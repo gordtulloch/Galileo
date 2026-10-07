@@ -24,7 +24,7 @@ from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
-from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
+from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, DeviceTimeoutError, MountParkedError
 
 logger = logging.getLogger(__name__)
 
@@ -331,9 +331,23 @@ class IndiAdapter(DeviceBackend):
         finally:
             ic.release_client(client)
 
-    async def _wait_not_busy(self, prop: str, timeout: float, what: str) -> None:
-        """Wait for a commanded operation (property state Busy) to finish."""
+    _ACK_GRACE_S = 2.0   # how long to wait for a driver to acknowledge a command before assuming it finished
+
+    async def _wait_not_busy(self, prop: str, timeout: float, what: str, after_seq: int | None = None) -> None:
+        """Wait for a commanded operation (property state Busy) to finish.
+
+        Pass *after_seq* (``blob_seq`` taken just before the command was sent) so the wait first sees the
+        driver's reply. Without it, a state still reading Ok from before the command (its Busy update
+        not yet received) makes this return at once, before the operation has even started."""
         client = self._c()
+        if after_seq is not None:
+            try:
+                await asyncio.to_thread(
+                    client.wait_for, lambda: client.blob_seq(self.device_name, prop) > after_seq,
+                    min(timeout, self._ACK_GRACE_S), what,
+                )
+            except DeviceTimeoutError:
+                pass  # a driver that never replies: fall through to the plain state check
         await asyncio.to_thread(
             client.wait_for,
             lambda: (p := client.get_property(self.device_name, prop)) is None or p.state != ic.BUSY,
@@ -746,9 +760,10 @@ class IndiFWAdapter(IndiAdapter):
 
     async def move_to(self, index: int) -> None:
         self._log_interaction("move_to", index=index)
+        seq0 = self._c().blob_seq(self.device_name, "FILTER_SLOT")
         self._set_num("FILTER_SLOT", {"FILTER_SLOT_VALUE": index + 1})
         self.position = index
-        await self._wait_not_busy("FILTER_SLOT", 60.0, "filter change")
+        await self._wait_not_busy("FILTER_SLOT", 60.0, "filter change", after_seq=seq0)
 
     async def get_status(self) -> dict:
         self._refresh()
