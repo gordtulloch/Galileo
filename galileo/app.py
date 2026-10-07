@@ -27,6 +27,13 @@ def main() -> None:
     import multiprocessing
     multiprocessing.freeze_support()
 
+    # `Galileo --selftest [REPORT_FILE]`: headless check of an installed/frozen build (CI runs it).
+    if "--selftest" in sys.argv:
+        from galileo.selftest import run
+        idx = sys.argv.index("--selftest")
+        report = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
+        sys.exit(run(report))
+
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QIcon

@@ -3,6 +3,6 @@
 
 """Galileo — Cross-Platform Astrophotography Imaging Suite."""
 
-__version__ = "0.2.0alpha"
+__version__ = "0.9.0alpha"
 __author__ = "Gord Tulloch"
 __license__ = "GPL-3.0-or-later"

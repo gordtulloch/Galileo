@@ -564,3 +564,20 @@ def test_tc_nfr_install_020_macos_signed_dmg_exists():
 def test_tc_nfr_install_030_linux_appimage_exists():
     """NFR-INSTALL-030: Linux AppImage or Flatpak produced by build pipeline requiring no manual deps."""
     pytest.skip("Demonstration: verify Linux AppImage/Flatpak artifact launches cleanly on a reference Debian/Ubuntu CI runner.")
+
+
+@pytest.mark.requirement("TC-NFR-INSTALL-030")
+@pytest.mark.priority("MVP")
+def test_tc_nfr_install_030_selftest_passes_from_source(tmp_path):
+    """NFR-INSTALL-010/020/030: ``Galileo --selftest`` (run by the installer CI against each frozen
+    build) passes headlessly, so the check itself stays in step with the code it verifies."""
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "GALILEO_CPU_WORKERS"}  # the pool check needs the real pool
+    report = tmp_path / "selftest.txt"
+    result = subprocess.run([sys.executable, "-m", "galileo.app", "--selftest", str(report)],
+                            env=env, capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "SELFTEST OK" in report.read_text(encoding="utf-8")

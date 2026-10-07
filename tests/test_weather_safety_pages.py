@@ -161,8 +161,8 @@ def _tabs(page):
 
 
 def _add_device(page, window, label):
-    """Pick *label* from the "+" button's menu."""
-    menu = _button(page, "+").menu()
+    """Pick *label* from the "+" button's menu (a child of the button, popped up on click rather than set via setMenu)."""
+    menu = _button(page, "+").findChild(QtWidgets.QMenu)
     [a for a in menu.actions() if a.text() == label][0].trigger()
 
 

@@ -320,6 +320,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
 | `PLT-070` | MVP | SDD 4.12 `galileo.platesolve`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PLT-070` |
+| `PLT-080` | P2 | SDD 4.12 `galileo.polaralign`; `galileo.ui.solve` | Test | `TC-PLT-080` |
 
 ### `MFLIP` — Meridian Flip
 

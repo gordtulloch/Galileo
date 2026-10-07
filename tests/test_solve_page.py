@@ -607,3 +607,94 @@ def test_tc_plt_070_page_stops_listening_once_deleted(window, page):
     window.app.processEvents()
     assert not any(h in bus._handlers[t] for t, h in handlers)
     bus.publish(SolveStartedEvent(source="test", fits_path="x.fits"))          # nothing left to call into
+
+
+# ---------------------------------------------------------------------------
+# Polar alignment tab (PLT-080)
+# ---------------------------------------------------------------------------
+
+_POLAR_LAT, _POLAR_LON = 51.0, -114.0
+
+
+def _lst_now() -> float:
+    import datetime as dt
+
+    from galileo.planning.star_atlas import julian_date, local_sidereal_deg
+    return local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), _POLAR_LON)
+
+
+def _polar_solutions(count: int) -> list[SolveResult]:
+    """*count* solves of a camera 35° from an axis 12′ too high and 0.3° east of the pole at the test site,
+    turned 30° about it between solves (the last repeated)."""
+    from galileo.planning.star_atlas import horizontal_to_equatorial
+    from galileo.polaralign import _rotate_about, altaz_vector, vector_altaz
+
+    axis = altaz_vector(_POLAR_LAT + 0.2, 0.3)
+    perpendicular = np.cross(axis, [0.0, 0.0, 1.0])
+    perpendicular /= np.linalg.norm(perpendicular)
+    start = _rotate_about(axis, perpendicular, 35.0)
+    lst = _lst_now()
+    results = []
+    for i in range(count):
+        alt, az = vector_altaz(_rotate_about(start, axis, 30.0 * min(i, 2)))
+        ra, dec = horizontal_to_equatorial(alt, az, lst, _POLAR_LAT)
+        j2000 = mount_frame_to_j2000(ra, dec, None)
+        results.append(SolveResult(success=True, ra_deg=j2000[0], dec_deg=j2000[1], rotation_deg=0.0, scale_arcsec_px=3.0))
+    return results
+
+
+def test_tc_plt_080_polar_alignment_tab_has_its_controls(page):
+    """PLT-080: The Polar Alignment tab offers a start button, the rotation step and direction and the refraction option, and starts idle."""
+    assert page.polar_start_btn.isEnabled() and page.polar_start_btn.text() == "Start Polar Alignment"
+    assert page.polar_step_spin.value() == 30
+    assert [page.polar_direction.itemData(i) for i in range(page.polar_direction.count())] == ["east", "west"]
+    assert page.polar_refraction.isChecked()
+    assert page.polar_status.text() == "Not started." and page.polar_total.text() == "—"
+
+
+def test_tc_plt_080_polar_alignment_needs_a_camera_mount_and_site(window, page):
+    """PLT-080: Without a camera, a mount, or a site location the start button says what is missing instead of running."""
+    page.polar_start_btn.click()
+    assert window.boxes == ["No camera connected"] and not page._running.get(page._pier_key())
+    window.boxes.clear()
+
+    _Devices(window, page, _polar_solutions(3))
+    window._device_pages["mount"]["adapter"] = None
+    page.polar_start_btn.click()
+    assert window.boxes == ["No mount connected"]
+    window.boxes.clear()
+
+    window._device_pages["mount"]["adapter"] = MagicMock()
+    page.polar_start_btn.click()
+    assert window.boxes == ["Site location unknown"]
+    assert not page._running.get(page._pier_key())
+
+
+def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page, tmp_path):
+    """PLT-080: Start Polar Alignment turns the mount, solves, and shows the measured error with plain advice; Stop ends it."""
+    window.observatory.latitude, window.observatory.longitude = _POLAR_LAT, _POLAR_LON
+    window.observatory.save()
+    devices = _Devices(window, page, _polar_solutions(8))
+    # Pointing well before the meridian wherever the test happens to run, so turning west doesn't cross it.
+    devices.mount.get_status = AsyncMock(side_effect=lambda: {
+        "right_ascension": ((_lst_now() + 90.0) % 360.0) / 15.0, "declination": 70.0,
+        "equatorial_system": "JNOW", "slewing": False})
+    page.settle_spin.setValue(0)
+    page.exposure_spin.setValue(0.1)
+    page.polar_direction.setCurrentIndex(1)
+    page.polar_refraction.setChecked(False)
+    _open(window, "solve")
+
+    page.polar_start_btn.click()
+    assert not page.polar_start_btn.isEnabled() and page.stop_btn.isEnabled()
+    assert _pump(window, lambda: page.polar_total.text() != "—"), page.polar_status.text()
+
+    assert page.polar_total.text().startswith("16′")        # 12′ high and 0.3°·cos(51°) east: 16.5′ from the pole
+    assert re.match(r"Lower the polar axis by 1[123]′", page.polar_altitude.text())
+    assert page.polar_azimuth.text().startswith("Move the polar axis west by")
+    start = (_lst_now() + 90.0) % 360.0
+    assert [round((start - call[1]) % 360.0) for call in devices.calls if call[0] == "slew"] == [30, 60]
+
+    page.stop()
+    assert _pump(window, lambda: page.polar_start_btn.isEnabled())
+    assert not page.stop_btn.isEnabled()

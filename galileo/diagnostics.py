@@ -8,6 +8,7 @@ from __future__ import annotations
 import collections
 import logging
 import socket
+import sys
 import threading
 import traceback
 from enum import IntEnum
@@ -20,7 +21,12 @@ _APP_ROOT = Path(__file__).resolve().parent.parent
 
 def default_log_dir() -> Path:
     """``.\\logs\\`` under the application root (not the per-user platform
-    log directory) — the location Galileo's own log file lives in."""
+    log directory) — the location Galileo's own log file lives in. A frozen
+    (installed) build lives in a read-only location (Program Files, a .app,
+    an AppImage mount), so there it uses the per-user log directory."""
+    if getattr(sys, "frozen", False):
+        from galileo.platform import get_log_dir
+        return get_log_dir()
     return _APP_ROOT / "logs"
 
 

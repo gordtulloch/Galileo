@@ -144,7 +144,7 @@ async def test_tc_eqp_070_alpaca_mount_status_reads_fixed_properties_once():
     assert first["site_elevation"] is None and first["equatorial_system"] == "JNOW"
     assert second == first
     live = ["siderealtime", "rightascension", "declination", "altitude", "azimuth", "tracking", "slewing", "atpark",
-           "sideofpier"]
+           "sideofpier", "trackingrate"]
     assert reads[reads_first:] == live
     assert reads.count("siteelevation") == 1  # an unimplemented optional property isn't retried every poll
 
