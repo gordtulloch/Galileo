@@ -52,6 +52,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "perf: wall-clock performance budget that depends on the machine's speed; excluded from the CI release gate",
+    )
+    config.addinivalue_line(
+        "markers",
         "hardware: requires physical INDI/Alpaca hardware on the LAN",
     )
     config.addinivalue_line(

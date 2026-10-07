@@ -192,6 +192,7 @@ async def test_tc_guide_050_phd2_quitting_is_a_recoverable_error(phd2, event_bus
     service = GuidingService("127.0.0.1", phd2.port)
     service._event_bus = event_bus
     await service.connect()
+    assert phd2.wait_for_client()
     phd2.drop_clients()
     assert _wait_until(lambda: event_bus.publish.called)
     published = event_bus.publish.call_args[0][0]

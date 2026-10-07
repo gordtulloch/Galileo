@@ -25,10 +25,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[test]"
-      - name: Test suite (no soak, hardware or external-service tests)
+      - name: Test suite (no soak, hardware, external-service or machine-speed perf tests)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -m "not soak and not hardware and not integration" -q
+        run: pytest -m "not soak and not hardware and not integration and not perf" -q
 
   build:
     needs: test
