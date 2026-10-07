@@ -38,7 +38,7 @@ jobs:
         include:
           - { os: windows-latest, name: windows-x64 }
           - { os: macos-14, name: macos-arm64 }
-          - { os: macos-13, name: macos-x86_64 }
+          - { os: macos-15-intel, name: macos-x86_64 }
           - { os: ubuntu-22.04, name: linux-x86_64 }
           - { os: ubuntu-22.04-arm, name: linux-aarch64 }
     runs-on: ${{ matrix.os }}
@@ -93,10 +93,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: packaging/macos/build_dmg.sh "${{ steps.ver.outputs.v }}"
+        run: bash packaging/macos/build_dmg.sh "${{ steps.ver.outputs.v }}"
       - name: Linux AppImage
         if: runner.os == 'Linux'
-        run: packaging/linux/build_appimage.sh "${{ steps.ver.outputs.v }}"
+        run: bash packaging/linux/build_appimage.sh "${{ steps.ver.outputs.v }}"
       - uses: actions/upload-artifact@v4
         with:
           name: galileo-${{ matrix.name }}
