@@ -144,16 +144,12 @@ class AppWindowWhatsUpPageMixin:
         def _fetch_advisories(night_date: str) -> tuple[dict | None, float | None, float | None]:
             """Weather forecast / aurora Kp / smoke AQI for *night_date*
             (WUT-100), each ``None`` when unavailable. Only fetched for
-            today: the Open-Meteo forecast client has no historical/future-
-            date support (``forecast_days=1``), and there is no concrete
-            aurora/smoke client wired in yet (``SAFE-090``/``SAFE-100`` are
-            P3, not yet implemented) — so any other date, and every
-            advisory, is simply "unavailable for this date," which is
+            today: the forecast, NOAA Kp (``SAFE-090``) and NOAA HMS smoke
+            (``SAFE-100``) clients all report current conditions only — so
+            any other date is simply "unavailable for this date," which is
             exactly WUT-030's existing missing-data degradation, not a
             special case. Reuses ``galileo.safety.SafetyMonitorService``
-            (not a second weather/aurora/smoke path) so this starts
-            returning real aurora/smoke data the moment those clients are
-            wired up elsewhere, with no change needed here. Passes this
+            (not a second weather/aurora/smoke path). Passes this
             page's own Observatory location into ``get_forecast_advisory``
             (fixed alongside this docstring — it previously called the
             client with no coordinates at all, silently fetching the
@@ -165,9 +161,11 @@ class AppWindowWhatsUpPageMixin:
             if location is None:
                 return None, None, None
             import asyncio
-            from galileo.safety import OpenMeteoClient, SafetyMonitorService
+            from galileo.safety import NoaaKpClient, NoaaSmokeClient, OpenMeteoClient, SafetyMonitorService
             service = SafetyMonitorService()
             service.set_forecast_client(OpenMeteoClient())
+            service.set_kp_client(NoaaKpClient())
+            service.set_smoke_client(NoaaSmokeClient(location.latitude, location.longitude))
             try:
                 forecast = asyncio.run(service.get_forecast_advisory(location.latitude, location.longitude))
             except Exception:
@@ -254,9 +252,10 @@ class AppWindowWhatsUpPageMixin:
                 missing.append("no horizon profile configured for this location")
             if not o.weather_available:
                 missing.append("no weather forecast for this date")
-            if not o.aurora_available:
+            from galileo.planning.recommend import AURORA_SMOKE_SOURCES_WIRED
+            if AURORA_SMOKE_SOURCES_WIRED and not o.aurora_available:
                 missing.append("no aurora estimate for this date")
-            if not o.smoke_available:
+            if AURORA_SMOKE_SOURCES_WIRED and not o.smoke_available:
                 missing.append("no smoke/transparency estimate for this date")
             if o.moon_separation_deg is None:
                 missing.append("Moon position unavailable")
@@ -320,7 +319,12 @@ class AppWindowWhatsUpPageMixin:
 
             mag_text = f"mag {obj.magnitude:.1f}" if obj.magnitude < 90.0 else "mag unknown"
             size_text = f"  ·  {obj.size_arcmin:.1f}′" if obj.size_arcmin > 0 else ""
-            subtitle = QLabel(f"{mag_text}{size_text}  ·  best {rec.observability.max_altitude_deg:.0f}° tonight")
+            try:
+                from galileo.planning.sky_atlas import constellation_for
+                constellation_text = f"  ·  {constellation_for(obj.ra_deg, obj.dec_deg)}"
+            except Exception:
+                constellation_text = ""
+            subtitle = QLabel(f"{mag_text}{size_text}{constellation_text}  ·  best {rec.observability.max_altitude_deg:.0f}° tonight")
             subtitle.setObjectName("StatusHint")
             subtitle.setWordWrap(True)
             left_col.addWidget(subtitle)
@@ -585,6 +589,9 @@ class AppWindowWhatsUpPageMixin:
                 atlas = SkyAtlas()
                 selected_catalogs = {cat for cat, cb in catalog_checks.items() if cb.isChecked()} or None
                 candidates = atlas.filter(max_magnitude=max_mag.value(), catalogs=selected_catalogs)
+                # Single stars aren't imaging targets here (double stars are); drop them before the cap.
+                from galileo.planning.sky_atlas import ObjectType
+                candidates = [o for o in candidates if o.object_type != ObjectType.STAR]
                 candidates = candidates[:_MAX_CANDIDATES]
 
                 forecast, aurora, smoke = _fetch_advisories(night_date)

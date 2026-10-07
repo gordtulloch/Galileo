@@ -1112,3 +1112,204 @@ def test_tc_eqp_010_saving_camera_config_auto_connects_a_newly_configured_device
     # Saving again (nothing changed) must not reconnect an already-connected device.
     save_btn.click()
     assert len(connect_calls) == 1
+
+
+# --- Mount meridian flip and limits (EQP-MNT-060 / EQP-MNT-070) --------------------------------
+
+def _limits(**kw):
+    from galileo.mount_limits import MountLimits
+    return MountLimits(**kw)
+
+
+@pytest.mark.requirement("TC-EQP-MNT-060")
+@pytest.mark.priority("P2")
+def test_tc_eqp_mnt_060_flip_is_due_only_past_the_limit_on_the_west_side():
+    """EQP-MNT-060: with the flip requested, a tracking mount still on the west side of the pier is
+    flipped once the hour angle passes the configured limit, and not otherwise."""
+    from galileo.mount_limits import evaluate, flip_due
+    on = _limits(flip_enabled=True, flip_ha_deg=5.0)
+    assert flip_due(on, 5.0 / 15.0 + 0.01, "West")
+    assert not flip_due(on, 4.0 / 15.0, "West")                     # not far enough past the meridian
+    assert not flip_due(on, 1.0, "East")                            # already flipped
+    assert not flip_due(_limits(flip_enabled=False), 1.0, "West")   # not requested
+    assert not flip_due(on, -1.0, "West")                           # still east of the meridian
+
+    base = dict(alt_deg=50.0, ha_hours=1.0, side_of_pier="West", slewing=False)
+    assert evaluate(on, tracking=True, **base).flip
+    assert not evaluate(on, tracking=False, **base).flip            # only flips while tracking
+
+
+@pytest.mark.requirement("TC-EQP-MNT-070")
+@pytest.mark.priority("P2")
+def test_tc_eqp_mnt_070_limits_stop_a_tracking_or_slewing_mount():
+    """EQP-MNT-070: altitude and hour-angle limits stop a mount that is tracking or slewing; an
+    idle mount is left alone, and "Tracking only" spares a slew from the altitude limits."""
+    from galileo.mount_limits import evaluate
+    lim = _limits(alt_limits_enabled=True, min_alt=20.0, max_alt=85.0, ha_limits_enabled=True, max_ha_hours=2.0)
+    ok = dict(alt_deg=45.0, ha_hours=0.5, side_of_pier="East", slewing=False)
+    assert not evaluate(lim, tracking=True, **ok).stop
+    assert evaluate(lim, tracking=True, **{**ok, "alt_deg": 10.0}).stop
+    assert evaluate(lim, tracking=True, **{**ok, "alt_deg": 88.0}).stop
+    assert evaluate(lim, tracking=True, **{**ok, "ha_hours": -2.5}).stop        # either side of the meridian
+    assert evaluate(lim, tracking=False, **{**ok, "alt_deg": 10.0, "slewing": True}).stop
+    assert not evaluate(lim, tracking=False, **{**ok, "alt_deg": 10.0}).stop     # idle / parked
+    assert not evaluate(_limits(), tracking=True, **{**ok, "alt_deg": 10.0}).stop  # nothing enabled
+
+    track_only = _limits(alt_limits_enabled=True, min_alt=20.0, alt_tracking_only=True)
+    low = {**ok, "alt_deg": 10.0}
+    assert evaluate(track_only, tracking=True, **low).stop
+    assert not evaluate(track_only, tracking=False, **{**low, "slewing": True}).stop
+
+
+@pytest.mark.requirement("TC-EQP-MNT-070")
+@pytest.mark.priority("P2")
+def test_tc_eqp_mnt_070_slews_beyond_the_limits_are_refused():
+    """EQP-MNT-070: the slew guard refuses an RA/Dec or Alt/Az slew whose target breaks the limits,
+    even when the horizon-obstruction check is switched off."""
+    import datetime as dt
+    from galileo.core.slew_guard import SlewGuard
+    from galileo.exceptions import MountLimitError
+    from galileo.planning import star_atlas as sa
+
+    guard = SlewGuard()
+    guard.latitude, guard.longitude = 45.0, -75.0
+    guard.limits = _limits(alt_limits_enabled=True, min_alt=30.0, max_alt=80.0)
+    guard.check_altaz(50.0, 180.0)
+    with pytest.raises(MountLimitError):
+        guard.check_altaz(10.0, 180.0)
+
+    # An RA/Dec that is on the meridian at declination 45 is at the zenith from latitude 45: too high.
+    when = dt.datetime(2026, 1, 1, 6, 0, tzinfo=dt.UTC)
+    lst = float(sa.local_sidereal_deg(sa.julian_date(when), guard.longitude))
+    with pytest.raises(MountLimitError):
+        guard.check_radec(lst, 45.0, when)
+
+    guard.limits = _limits(ha_limits_enabled=True, max_ha_hours=1.0)
+    guard.check_radec(lst, 45.0, when)                              # on the meridian: fine
+    with pytest.raises(MountLimitError):
+        guard.check_radec((lst - 60.0) % 360.0, 45.0, when)         # 4 h west of the meridian
+    with pytest.raises(MountLimitError):
+        guard.check_altaz(10.0, 270.0)                              # due west on the horizon: far from the meridian
+
+
+@pytest.mark.requirement("TC-EQP-MNT-060")
+@pytest.mark.priority("P2")
+def test_tc_eqp_mnt_060_pier_side_text():
+    """EQP-MNT-060: the Mount page spells out which way the telescope points for each pier side."""
+    from galileo.mount_limits import pier_side_text
+    assert pier_side_text("East") == "East (pointing West)"
+    assert pier_side_text("West") == "West (pointing East)"
+    assert pier_side_text(None) == "Unknown"
+
+
+@pytest.mark.requirement("TC-EQP-MNT-060")
+@pytest.mark.priority("P2")
+def test_tc_eqp_mnt_060_flip_and_limit_settings_are_saved_per_pier(window):
+    """EQP-MNT-060/070: the Mount page's flip and limit settings round-trip through Save, reach the
+    Pier's slew guard immediately, and come back when the page is reloaded."""
+    from PySide6 import QtWidgets
+    from galileo.core.slew_guard import get_slew_guard
+    from galileo.current_object import pier_key
+    from galileo.observatory import get_device_config, mount_limits_from_config
+
+    page = window._build_mount_page()
+    checks = {c.text(): c for c in page.findChildren(QtWidgets.QCheckBox)}
+    spins = page.findChildren(QtWidgets.QDoubleSpinBox)
+    flip_ha = next(s for s in spins if s.suffix() == "" and s.value() == 5.0)
+    checks["Flip if HA >:"].setChecked(True)
+    checks["Enable Alt limits"].setChecked(True)
+    checks["Enable HA limits"].setChecked(True)
+    flip_ha.setValue(7.5)
+
+    guard = get_slew_guard(pier_key(window._current_pier))
+    assert guard.limits.flip_enabled and guard.limits.alt_limits_enabled and guard.limits.flip_ha_deg == 7.5
+
+    next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Save").click()
+    saved = mount_limits_from_config(get_device_config(window._current_pier, "mount"))
+    assert saved.flip_enabled and saved.alt_limits_enabled and saved.ha_limits_enabled
+    assert saved.flip_ha_deg == 7.5 and saved.max_alt == 90.0
+
+    checks["Flip if HA >:"].setChecked(False)
+    window._device_pages["mount"]["reload"]()
+    assert checks["Flip if HA >:"].isChecked() and flip_ha.value() == 7.5
+
+
+@pytest.mark.requirement("TC-EQP-MNT-060")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_mnt_060_monitor_flips_a_tracking_mount_and_stops_one_out_of_limits():
+    """EQP-MNT-060/070: one monitor pass flips a tracking mount that is past its flip limit and
+    resumes tracking, and aborts + stops tracking on a mount that has broken a limit."""
+    pytest.importorskip("PySide6")
+    from galileo.ui.app_window._threads import _MountGuardThread
+
+    def mount(status):
+        m = MagicMock()
+        m.get_status = AsyncMock(return_value=status)
+        for name in ("abort_slew", "set_tracking", "move_axis", "slew_to_coordinates"):
+            setattr(m, name, AsyncMock())
+        return m
+
+    # LST 10h, RA 9h -> HA +1h (15 deg) west of the meridian, still on the west side of the pier.
+    status = {"sidereal_time": 10.0, "right_ascension": 9.0, "declination": 30.0, "altitude": 50.0,
+              "side_of_pier": "West", "tracking": True, "slewing": False}
+
+    flipper = mount(status)
+    result: dict = {}
+    await _MountGuardThread(flipper, _limits(flip_enabled=True, flip_ha_deg=5.0))._guard(result)
+    assert result["kind"] == "flipped"
+    flipper.slew_to_coordinates.assert_awaited_once_with(ra=135.0, dec=30.0)
+
+    stopper = mount({**status, "altitude": 5.0})
+    result = {}
+    await _MountGuardThread(stopper, _limits(alt_limits_enabled=True, min_alt=15.0))._guard(result)
+    assert result["kind"] == "stopped" and "below the minimum" in result["reasons"][0]
+    stopper.abort_slew.assert_awaited_once()
+    stopper.set_tracking.assert_awaited_once_with(False)
+
+
+@pytest.mark.requirement("TC-EQP-MNT-020")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_020_park_and_tracking_controls_and_status_text(window):
+    """EQP-MNT-020/010: the Mount page has separate Park/Unpark and Tracking On/Off buttons, and
+    shows the park status and the tracking state with its rate."""
+    from PySide6 import QtWidgets
+    page = window._build_mount_page()
+    buttons = {b.text(): b for b in page.findChildren(QtWidgets.QPushButton)}
+    assert {"Park", "Unpark", "Tracking On", "Tracking Off", "Set tracking rate"} <= set(buttons)
+
+    mount = MagicMock()
+    mount.get_status = AsyncMock(return_value={"tracking": True, "tracking_rate": "Lunar", "at_park": False})
+    for name in ("set_tracking", "unpark", "park"):
+        setattr(mount, name, AsyncMock())
+    window._device_pages["mount"]["adapter"] = mount
+
+    labels = lambda: {l.text() for l in page.findChildren(QtWidgets.QLabel)}  # noqa: E731
+    buttons["Tracking Off"].click()
+    mount.set_tracking.assert_awaited_once_with(False)
+    assert "Tracking: On (Lunar rate)" in labels() and "Park status: Unparked" in labels()
+    assert buttons["Park"].isEnabled() and not buttons["Unpark"].isEnabled()
+
+    mount.get_status.return_value = {"tracking": False, "tracking_rate": "Sidereal", "at_park": True}
+    buttons["Tracking On"].click()          # any action refreshes the status
+    buttons["Unpark"].click()
+    mount.unpark.assert_awaited_once()
+    assert "Tracking: Off (Sidereal rate selected)" in labels() and "Park status: Parked" in labels()
+    assert not buttons["Park"].isEnabled()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window):
+    """EQP-MNT-010: the N/S/E/W pad has a Fine/Medium/Coarse rate drop-down, and a jog moves the
+    mount at the selected rate (0.2 / 2 / 10 deg/s)."""
+    from PySide6 import QtWidgets
+    page = window._build_mount_page()
+    rate = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.findData(10.0) >= 0)
+    assert [rate.itemData(i) for i in range(rate.count())] == [0.2, 2.0, 10.0]
+    mount = MagicMock()
+    mount.get_status = AsyncMock(return_value={})
+    mount.move_axis = AsyncMock()
+    window._device_pages["mount"]["adapter"] = mount
+    rate.setCurrentIndex(rate.findData(10.0))
+    next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E").click()
+    mount.move_axis.assert_awaited_once_with(0, 10.0)

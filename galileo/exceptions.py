@@ -36,6 +36,9 @@ class SlewObstructedError(DeviceError):
     def __init__(self, message: str = "Unable to slew to that area, it is obstructed") -> None:
         super().__init__(message)
 
+class MountLimitError(DeviceError):
+    """A slew was refused because the target is outside the mount's configured altitude/hour-angle limits."""
+
 
 # --- Profile errors --------------------------------------------------------
 

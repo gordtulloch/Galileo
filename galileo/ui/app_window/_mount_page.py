@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from galileo.exceptions import MountParkedError, SlewObstructedError
+from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
 
 from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget
 
@@ -39,7 +39,7 @@ class AppWindowMountPageMixin:
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QFrame,
             QLabel, QTableWidget, QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox,
-            QPushButton, QCheckBox, QHeaderView, QMessageBox, QScrollArea,
+            QPushButton, QCheckBox, QHeaderView, QMessageBox, QScrollArea, QGroupBox,
         )
         from PySide6.QtCore import QTimer
 
@@ -145,7 +145,71 @@ class AppWindowMountPageMixin:
         azimuth_value = _status_row(form_right, "Azimuth")
         tracking_value = _status_row(form_right, "Tracking")
 
-        main_row.addWidget(status_frame, 1)
+        left_col = QVBoxLayout()
+        left_col.addWidget(status_frame)
+
+        # --- Meridian Flip + Limits (EQP-MNT-060 / EQP-MNT-070) --------------
+        flip_box = QGroupBox("Meridian Flip")
+        flip_layout = QVBoxLayout(flip_box)
+        flip_row = QHBoxLayout()
+        flip_check = QCheckBox("Flip if HA >:")
+        flip_check.setToolTip(
+            "While the mount is tracking, flip it to the other side of the pier once the target is "
+            "this far past the meridian."
+        )
+        flip_ha_spin = QDoubleSpinBox()
+        flip_ha_spin.setRange(0.0, 90.0)
+        flip_ha_spin.setDecimals(2)
+        flip_ha_spin.setValue(5.0)
+        flip_row.addWidget(flip_check)
+        flip_row.addWidget(flip_ha_spin)
+        flip_row.addWidget(QLabel("deg"))
+        flip_row.addStretch(1)
+        flip_layout.addLayout(flip_row)
+        flip_state_label = QLabel("Meridian flip inactive (flip not requested)")
+        flip_layout.addWidget(flip_state_label)
+        pier_side_label = QLabel("Pier Side: —")
+        flip_layout.addWidget(pier_side_label)
+        left_col.addWidget(flip_box)
+
+        limits_box = QGroupBox("Limits")
+        limits_layout = QVBoxLayout(limits_box)
+        alt_row = QHBoxLayout()
+        alt_limits_check = QCheckBox("Enable Alt limits")
+        alt_tracking_only_check = QCheckBox("Tracking only")
+        alt_tracking_only_check.setToolTip(
+            "Only enforce the altitude limits while tracking; a slew in progress is not interrupted. "
+            "A slew command whose target is outside the limits is still refused."
+        )
+        alt_row.addWidget(alt_limits_check)
+        alt_row.addStretch(1)
+        alt_row.addWidget(alt_tracking_only_check)
+        limits_layout.addLayout(alt_row)
+        alt_form = QFormLayout()
+        min_alt_spin = QDoubleSpinBox()
+        min_alt_spin.setRange(-90.0, 90.0)
+        min_alt_spin.setDecimals(2)
+        min_alt_spin.setValue(0.0)
+        max_alt_spin = QDoubleSpinBox()
+        max_alt_spin.setRange(-90.0, 90.0)
+        max_alt_spin.setDecimals(2)
+        max_alt_spin.setValue(90.0)
+        alt_form.addRow("Min. Alt:", min_alt_spin)
+        alt_form.addRow("Max. Alt:", max_alt_spin)
+        limits_layout.addLayout(alt_form)
+        ha_limits_check = QCheckBox("Enable HA limits")
+        limits_layout.addWidget(ha_limits_check)
+        ha_form = QFormLayout()
+        max_ha_spin = QDoubleSpinBox()
+        max_ha_spin.setRange(0.0, 12.0)
+        max_ha_spin.setDecimals(2)
+        max_ha_spin.setValue(2.0)
+        ha_form.addRow("Max. HA (hours):", max_ha_spin)
+        limits_layout.addLayout(ha_form)
+        left_col.addWidget(limits_box)
+        left_col.addStretch(1)
+
+        main_row.addLayout(left_col, 1)
 
         controls_col = QVBoxLayout()
         controls_col.setSpacing(4)
@@ -209,18 +273,26 @@ class AppWindowMountPageMixin:
         tracking_rate_row.addStretch(1)
         controls_col.addLayout(tracking_rate_row)
 
+        tracking_onoff_row = QHBoxLayout()
+        tracking_on_btn = QPushButton("Tracking On")
+        tracking_on_btn.setObjectName("AccentButton")
+        tracking_off_btn = QPushButton("Tracking Off")
+        tracking_status_value = QLabel("Tracking: —")
+        tracking_onoff_row.addWidget(tracking_on_btn)
+        tracking_onoff_row.addWidget(tracking_off_btn)
+        tracking_onoff_row.addWidget(tracking_status_value)
+        tracking_onoff_row.addStretch(1)
+        controls_col.addLayout(tracking_onoff_row)
+
         rates_form = QFormLayout()
         rates_form.setVerticalSpacing(2)
-        primary_rate_spin = QDoubleSpinBox()
-        primary_rate_spin.setRange(0.01, 10.0)
-        primary_rate_spin.setDecimals(2)
-        primary_rate_spin.setValue(1.0)
-        rates_form.addRow("Primary rate", primary_rate_spin)
-        secondary_rate_spin = QDoubleSpinBox()
-        secondary_rate_spin.setRange(0.01, 10.0)
-        secondary_rate_spin.setDecimals(2)
-        secondary_rate_spin.setValue(1.0)
-        rates_form.addRow("Secondary rate", secondary_rate_spin)
+        from galileo.ui.imaging import NUDGE_RATES
+        jog_rate_combo = QComboBox()
+        for rate_name, rate_value in NUDGE_RATES.items():
+            jog_rate_combo.addItem(f"{rate_name} ({rate_value:g}°/s)", rate_value)
+        jog_rate_combo.setCurrentIndex(1)
+        jog_rate_combo.setToolTip("How fast the N/S/E/W buttons move the mount (same speeds as the Imaging page's nudge).")
+        rates_form.addRow("Rate", jog_rate_combo)
         controls_col.addLayout(rates_form)
 
         pad_row = QHBoxLayout()
@@ -244,8 +316,12 @@ class AppWindowMountPageMixin:
         home_btn = QPushButton("Home")
         park_btn = QPushButton("Park")
         park_btn.setObjectName("AccentButton")
+        unpark_btn = QPushButton("Unpark")
+        park_status_value = QLabel("Park status: —")
         home_park_col.addWidget(home_btn)
         home_park_col.addWidget(park_btn)
+        home_park_col.addWidget(unpark_btn)
+        home_park_col.addWidget(park_status_value)
         home_park_col.addStretch(1)
         pad_row.addLayout(home_park_col)
         controls_col.addLayout(pad_row)
@@ -281,6 +357,117 @@ class AppWindowMountPageMixin:
         # now"'s adapter, kept in sync with this on every reload (see reload_page()).
         adapters_by_pier: dict = {}
 
+        import time as _time
+        from galileo.mount_limits import MountLimits, pier_side_text
+
+        FLIP_COOLDOWN_S = 600.0         # don't re-attempt a flip the driver didn't carry out
+        NOTE_SHOW_S = 120.0
+        guard_state: dict = {"thread": None, "last_flip": None, "note": None}
+
+        def _current_limits() -> MountLimits:
+            return MountLimits(
+                flip_enabled=flip_check.isChecked(), flip_ha_deg=flip_ha_spin.value(),
+                alt_limits_enabled=alt_limits_check.isChecked(),
+                min_alt=min_alt_spin.value(), max_alt=max_alt_spin.value(),
+                alt_tracking_only=alt_tracking_only_check.isChecked(),
+                ha_limits_enabled=ha_limits_check.isChecked(), max_ha_hours=max_ha_spin.value(),
+            )
+
+        limit_widgets = (flip_check, alt_limits_check, alt_tracking_only_check, ha_limits_check,
+                         flip_ha_spin, min_alt_spin, max_alt_spin, max_ha_spin)
+
+        def _show_limits(limits: MountLimits) -> None:
+            for widget, value in (
+                (flip_check, limits.flip_enabled), (alt_limits_check, limits.alt_limits_enabled),
+                (alt_tracking_only_check, limits.alt_tracking_only), (ha_limits_check, limits.ha_limits_enabled),
+            ):
+                widget.setChecked(bool(value))
+            for widget, value in (
+                (flip_ha_spin, limits.flip_ha_deg), (min_alt_spin, limits.min_alt),
+                (max_alt_spin, limits.max_alt), (max_ha_spin, limits.max_ha_hours),
+            ):
+                widget.setValue(float(value))
+
+        def _update_flip_label(tracking: bool | None = None) -> None:
+            note = guard_state["note"]
+            if note is not None and _time.monotonic() - note[1] < NOTE_SHOW_S:
+                flip_state_label.setText(note[0])
+            elif not flip_check.isChecked():
+                flip_state_label.setText("Meridian flip inactive (flip not requested)")
+            elif tracking:
+                flip_state_label.setText(f"Meridian flip armed — flips at HA > {flip_ha_spin.value():.2f} deg")
+            else:
+                flip_state_label.setText("Meridian flip requested — waiting for the mount to track")
+
+        def _limits_changed(*_args) -> None:
+            """Apply the page's limits to this Pier's slew guard right away, so slews are
+            checked against what is on screen (Save only makes them survive a restart)."""
+            from galileo.core.slew_guard import get_slew_guard
+            from galileo.current_object import pier_key
+            for widget, enabled in (
+                (alt_tracking_only_check, alt_limits_check.isChecked()),
+                (min_alt_spin, alt_limits_check.isChecked()), (max_alt_spin, alt_limits_check.isChecked()),
+                (max_ha_spin, ha_limits_check.isChecked()), (flip_ha_spin, flip_check.isChecked()),
+            ):
+                widget.setEnabled(enabled)
+            get_slew_guard(pier_key(self._current_pier)).limits = _current_limits()
+            _update_flip_label(state.get("tracking"))
+
+        def _flip_toggled(*_args) -> None:
+            guard_state["note"] = None
+            _limits_changed()
+
+        for check in (alt_limits_check, ha_limits_check, alt_tracking_only_check):
+            check.toggled.connect(_limits_changed)
+        flip_check.toggled.connect(_flip_toggled)
+        for spin in (flip_ha_spin, min_alt_spin, max_alt_spin, max_ha_spin):
+            spin.valueChanged.connect(_limits_changed)
+
+        def _guard_tick() -> None:
+            """Every few seconds, off the UI thread: stop the mount if it is outside its limits
+            while tracking or slewing, and flip it when a requested flip is due."""
+            adapter = state.get("adapter")
+            limits = _current_limits()
+            if adapter is None or guard_state["thread"] is not None:
+                return
+            if not (limits.flip_enabled or limits.alt_limits_enabled or limits.ha_limits_enabled):
+                return
+            last_flip = guard_state["last_flip"]
+            if last_flip is not None and _time.monotonic() - last_flip < FLIP_COOLDOWN_S:
+                import dataclasses
+                limits = dataclasses.replace(limits, flip_enabled=False)
+            from ._threads import _MountGuardThread
+            thread = _MountGuardThread(adapter, limits, self._window)
+            thread.finished_with.connect(_guard_done)
+            guard_state["thread"] = thread
+            thread.start()
+
+        def _guard_done(result: dict) -> None:
+            guard_state["thread"] = None
+            status = result.get("status")
+            if status:
+                _apply_status(status)
+            reasons = "; ".join(result.get("reasons") or ())
+            kind = result.get("kind")
+            if kind == "stopped":
+                message = f"Mount stopped — {reasons}."
+                logger.warning("Mount: %s", message)
+                guard_state["note"] = (message, _time.monotonic())
+                self._window.statusBar().showMessage(message, 10000)
+            elif kind == "flipped":
+                guard_state["last_flip"] = _time.monotonic()
+                if result.get("error"):
+                    message = "Meridian flip failed — see log."
+                    logger.error("Mount: meridian flip failed: %s", result["error"])
+                else:
+                    message = "Meridian flip completed."
+                    logger.info("Mount: meridian flip completed (%s)", reasons)
+                guard_state["note"] = (message, _time.monotonic())
+                self._window.statusBar().showMessage(message, 8000)
+            elif result.get("error"):
+                logger.error("Mount limit monitor error: %s", result["error"])
+            _update_flip_label(bool(status.get("tracking")) if status else None)
+
         def _apply_status(status: dict) -> None:
             name_value.setText(status.get("name") or "—")
             description_value.setText(status.get("description") or "—")
@@ -302,9 +489,21 @@ class AppWindowMountPageMixin:
             tracking = status.get("tracking")
             tracking_value.setText("—" if tracking is None else ("Tracking" if tracking else "Stopped"))
             meridian_in_value.setText(_format_hms((ra - lst) % 24.0) if ra is not None and lst is not None else "—")
+            pier_side_label.setText("Pier Side: " + pier_side_text(status.get("side_of_pier")))
+            state["tracking"] = bool(tracking) if tracking is not None else None
+            _update_flip_label(state["tracking"])
             at_park = status.get("at_park")
             state["at_park"] = at_park
-            park_btn.setText("Unpark" if at_park else "Park")
+            park_status_value.setText("Park status: —" if at_park is None else ("Park status: Parked" if at_park else "Park status: Unparked"))
+            park_btn.setEnabled(not at_park)
+            unpark_btn.setEnabled(at_park is not False)
+            rate = status.get("tracking_rate")
+            if tracking is None:
+                tracking_status_value.setText("Tracking: —")
+            elif tracking:
+                tracking_status_value.setText(f"Tracking: On ({rate} rate)" if rate else "Tracking: On")
+            else:
+                tracking_status_value.setText("Tracking: Off" + (f" ({rate} rate selected)" if rate else ""))
 
         def _refresh_status() -> dict | None:
             adapter = state.get("adapter")
@@ -427,6 +626,9 @@ class AppWindowMountPageMixin:
             except SlewObstructedError:
                 self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
                 return
+            except MountLimitError as exc:
+                self._window.statusBar().showMessage(str(exc), 8000)
+                return
             except Exception:
                 logger.exception("Mount slew-to-coordinates failed")
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
@@ -452,6 +654,9 @@ class AppWindowMountPageMixin:
             except SlewObstructedError:
                 self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
                 return
+            except MountLimitError as exc:
+                self._window.statusBar().showMessage(str(exc), 8000)
+                return
             except Exception:
                 logger.exception("Mount slew-to-altaz failed")
                 self._window.statusBar().showMessage("Slew failed — see log.", 6000)
@@ -475,8 +680,9 @@ class AppWindowMountPageMixin:
                 logger.exception("Mount move_axis failed (axis=%s rate=%s)", axis, rate)
 
         def _jog(direction: str) -> None:
-            primary_rate = primary_rate_spin.value() * (-1.0 if primary_reversed_check.isChecked() else 1.0)
-            secondary_rate = secondary_rate_spin.value() * (-1.0 if secondary_reversed_check.isChecked() else 1.0)
+            rate = float(jog_rate_combo.currentData())
+            primary_rate = rate * (-1.0 if primary_reversed_check.isChecked() else 1.0)
+            secondary_rate = rate * (-1.0 if secondary_reversed_check.isChecked() else 1.0)
             if direction == "N":
                 _move_axis(1, secondary_rate)
             elif direction == "S":
@@ -533,19 +739,53 @@ class AppWindowMountPageMixin:
                 return
             import asyncio
             try:
-                if state.get("at_park"):
-                    asyncio.run(adapter.unpark())
-                    logger.info("Mount: Unpark requested")
-                else:
-                    asyncio.run(adapter.park())
-                    logger.info("Mount: Park requested")
+                asyncio.run(adapter.park())
+                logger.info("Mount: Park requested")
             except Exception:
-                logger.exception("Mount park/unpark failed")
-                self._window.statusBar().showMessage("Park/Unpark failed — see log.", 6000)
+                logger.exception("Mount park failed")
+                self._window.statusBar().showMessage("Park failed — see log.", 6000)
                 return
             _refresh_status()
 
         park_btn.clicked.connect(_park_clicked)
+
+        def _unpark_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.unpark())
+                logger.info("Mount: Unpark requested")
+            except Exception:
+                logger.exception("Mount unpark failed")
+                self._window.statusBar().showMessage("Unpark failed — see log.", 6000)
+                return
+            _refresh_status()
+
+        unpark_btn.clicked.connect(_unpark_clicked)
+
+        def _set_tracking_clicked(enabled: bool) -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.set_tracking(enabled))
+                logger.info("Mount: tracking %s requested", "on" if enabled else "off")
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
+            except Exception:
+                logger.exception("Mount set_tracking failed")
+                self._window.statusBar().showMessage("Tracking change failed — see log.", 6000)
+                return
+            _refresh_status()
+
+        tracking_on_btn.clicked.connect(lambda: _set_tracking_clicked(True))
+        tracking_off_btn.clicked.connect(lambda: _set_tracking_clicked(False))
 
         def _set_tracking_rate_clicked() -> None:
             adapter = state.get("adapter")
@@ -591,6 +831,7 @@ class AppWindowMountPageMixin:
                 self._current_pier, "mount",
                 driver=driver_combo.currentText(), server=server_edit.text().strip(),
                 port=port_spin.value(), device_name=device_combo.currentText().strip() or None,
+                mount_limits=_current_limits(),
             )
             logger.info(
                 "Saved mount settings for Pier %r: %s %s:%s, device: %s",
@@ -638,6 +879,17 @@ class AppWindowMountPageMixin:
                 port_spin.blockSignals(False)
                 device_combo.blockSignals(False)
             from galileo.current_object import pier_key
+            from galileo.observatory import mount_limits_from_config
+            guard_state["note"] = None
+            guard_state["last_flip"] = None
+            for widget in limit_widgets:
+                widget.blockSignals(True)
+            try:
+                _show_limits(mount_limits_from_config(cfg))
+            finally:
+                for widget in limit_widgets:
+                    widget.blockSignals(False)
+            _limits_changed()
             adapter = adapters_by_pier.get(pier_key(self._current_pier))
             state["adapter"] = adapter
             if adapter is not None:
@@ -669,6 +921,12 @@ class AppWindowMountPageMixin:
         status_timer = QTimer(page)
         status_timer.timeout.connect(_when_visible(page, _refresh_status))
         status_timer.start(2000)
+
+        # Unlike the status display above, the limit/flip monitor must keep watching while another
+        # page (Imaging, Sessions) is in front, so it is not gated on this page being visible.
+        guard_timer = QTimer(page)
+        guard_timer.timeout.connect(_guard_tick)
+        guard_timer.start(5000)
 
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page

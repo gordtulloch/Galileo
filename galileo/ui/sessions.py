@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -67,10 +67,17 @@ def _safe_filename(text: str) -> str:
 # Action blocks (SES-130, SES-140)
 # ---------------------------------------------------------------------------
 
+@dataclass
 class SessionBlock:
     """Base for every action block. Subclasses are plain dataclasses; ``label`` is
-    the palette's display text for that block type (a class attribute, not a field)."""
+    the palette's display text for that block type (a class attribute, not a field).
+
+    ``indent`` is the block's nesting depth: a block indented one level deeper than
+    the loop block (``LoopBlock``) above it is that loop's body. It is keyword-only so
+    it never disturbs a subclass's own positional fields, and ``SessionRegion``
+    keeps it consistent (no indent without a loop above to own it)."""
     label: ClassVar[str] = "Block"
+    indent: int = field(default=0, kw_only=True)
 
     @property
     def display_text(self) -> str:
@@ -215,15 +222,37 @@ class DitherBlock(SessionBlock):
 
 @dataclass
 class FlatCaptureBlock(SessionBlock):
+    """Same parameters as the Imaging page's Flats Assistant (CAL-060): flat method,
+    exposure (0 = calculate), frame count, filter ("All" = every filter in turn),
+    ADU method and exposure increment."""
     label: ClassVar[str] = "Flat Capture"
-    count: int = 1
-    target_adu: float = 0.0
+    method: str = "Sky Flats"
+    exposure: float = 0.0
+    count: int = 10
+    filter: str = "All"
+    adu_method: str = "Average"
+    exposure_increment: float = 0.1
 
     @property
     def display_text(self) -> str:
-        bits = [f"{self.count}×"]
-        if self.target_adu:
-            bits.append(f"target {self.target_adu:g} ADU")
+        bits = [f"{self.count}×", self.filter or "All", self.method]
+        bits.append(f"{self.exposure:g}s" if self.exposure else "auto exposure")
+        return f"{self.label}: {' '.join(bits)}"
+
+
+@dataclass
+class DarkCaptureBlock(SessionBlock):
+    """Same parameters as the Imaging page's Darks Assistant: one dark frame at each
+    exposure length, optionally selecting a filter first."""
+    label: ClassVar[str] = "Dark Capture"
+    filter: str = ""
+    exposures: list[float] = field(default_factory=lambda: [10.0, 20.0, 30.0, 60.0])
+
+    @property
+    def display_text(self) -> str:
+        bits = [", ".join(f"{e:g}" for e in self.exposures) + " s"]
+        if self.filter:
+            bits.append(self.filter)
         return f"{self.label}: {' '.join(bits)}"
 
 
@@ -257,6 +286,39 @@ class DomeSyncBlock(SessionBlock):
     label: ClassVar[str] = "Dome Sync"
 
 
+class LoopBlock(SessionBlock):
+    """Marker base for blocks that repeat the blocks indented beneath them."""
+    label: ClassVar[str] = "Loop"
+
+
+@dataclass
+class ForFilterBlock(LoopBlock):
+    """FOR [filter] in <list>: repeat the indented blocks once per filter."""
+    label: ClassVar[str] = "FOR Filter"
+    filters: list[str] = field(default_factory=list)
+
+    @property
+    def display_text(self) -> str:
+        return f"FOR Filter in [{', '.join(self.filters)}]" if self.filters else self.label
+
+
+@dataclass
+class ForObjectBlock(LoopBlock):
+    """FOR [object] in <list>: repeat the indented blocks once per object."""
+    label: ClassVar[str] = "FOR Object"
+    # Each entry: {"name": str, "ra_deg": float, "dec_deg": float} — coordinates
+    # are kept so the loop can slew to each object without a second lookup.
+    objects: list[dict] = field(default_factory=list)
+
+    @property
+    def display_text(self) -> str:
+        if not self.objects:
+            return self.label
+        text = ", ".join(o["name"] for o in self.objects)
+        text = text if len(text) <= 40 else text[:37] + "…"
+        return f"FOR Object in [{text}]"
+
+
 @dataclass
 class NotificationBlock(SessionBlock):
     label: ClassVar[str] = "Notification"
@@ -284,6 +346,7 @@ _BLOCK_CLASSES: dict[str, type] = {
         AutofocusBlock, PlateSolveBlock, GuideStartBlock, GuideStopBlock, DitherBlock,
         FlatCaptureBlock, ParkMountBlock, UnparkMountBlock, MeridianFlipBlock,
         DomeOpenBlock, DomeCloseBlock, DomeSyncBlock, NotificationBlock,
+        ForFilterBlock, ForObjectBlock, DarkCaptureBlock,
     )
 }
 
@@ -302,7 +365,10 @@ def _block_to_dict(block: SessionBlock) -> dict:
 def _block_from_dict(d: dict) -> SessionBlock:
     d = dict(d)
     cls = _BLOCK_CLASSES[d.pop("_type")]
-    return cls(**d)
+    # Drop fields a saved template has that the block no longer defines (e.g. an
+    # older Flat Capture's target_adu), so old templates still load.
+    known = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in d.items() if k in known})
 
 
 # ---------------------------------------------------------------------------
@@ -375,21 +441,70 @@ class SessionRegion:
             isinstance(b, TargetBlock) for b in self.blocks[:index]
         ):
             raise BlockOrderError(f"{type(block).__name__} requires a preceding Target block.")
+        # A block dropped under a loop (or under one of its body blocks) joins
+        # that body; the user drags it left to unindent.
+        prev = self.blocks[index - 1] if index > 0 else None
+        if prev is not None:
+            block.indent = prev.indent + (1 if isinstance(prev, LoopBlock) else 0)
+        else:
+            block.indent = 0
         self.blocks.insert(index, block)
+        self._normalize_indents()
+
+    def _max_indent(self, index: int) -> int:
+        """Deepest indent the block at *index* may have: one level inside a loop
+        directly above it, otherwise no deeper than the block above."""
+        if index <= 0:
+            return 0
+        prev = self.blocks[index - 1]
+        return prev.indent + (1 if isinstance(prev, LoopBlock) else 0)
+
+    def _normalize_indents(self) -> None:
+        for i, b in enumerate(self.blocks):
+            b.indent = max(0, min(b.indent, self._max_indent(i)))
+
+    def body_of(self, block: SessionBlock) -> list[SessionBlock]:
+        """The blocks nested beneath *block* (empty unless it's a loop)."""
+        start = self.blocks.index(block) + 1
+        body = []
+        for b in self.blocks[start:]:
+            if b.indent <= block.indent:
+                break
+            body.append(b)
+        return body
 
     def reorder_block(self, block: SessionBlock, index: int) -> None:
+        """Move *block* (and, if it's a loop, its whole body) to *index*."""
         if not self.is_editable:
             raise RegionLockedError(f"Session {self.name!r} is scheduled and read-only.")
-        self.blocks.remove(block)
-        self.blocks.insert(index, block)
+        group = [block, *self.body_of(block)]
+        for b in group:
+            self.blocks.remove(b)
+        index = min(index, len(self.blocks))
+        self.blocks[index:index] = group
+        self._normalize_indents()
+
+    def set_indent(self, block: SessionBlock, indent: int) -> None:
+        """Indent/unindent *block* (clamped to what's valid at its position). A
+        loop's body shifts with it so the nesting under it is preserved."""
+        if not self.is_editable:
+            raise RegionLockedError(f"Session {self.name!r} is scheduled and read-only.")
+        index = self.blocks.index(block)
+        new = max(0, min(indent, self._max_indent(index)))
+        delta = new - block.indent
+        for b in (block, *self.body_of(block)):
+            b.indent += delta
+        self._normalize_indents()
 
     def remove_block(self, block: SessionBlock) -> None:
         """Delete *block* from this region (e.g. dragged outside the session
         panel to remove it) — a scheduled/locked region refuses, same as
-        every other authoring mutation."""
+        every other authoring mutation. A removed loop's body stays, moved
+        out one level."""
         if not self.is_editable:
             raise RegionLockedError(f"Session {self.name!r} is scheduled and read-only.")
         self.blocks.remove(block)
+        self._normalize_indents()
 
     # --- Persistence (SES-060, SES-180, SES-190) ---------------------------
 
@@ -439,6 +554,7 @@ class SessionRegion:
             else list(template.blocks)
         )
         self.blocks = self.blocks + remaining
+        self._normalize_indents()
 
     # --- Scheduling (SES-200, SES-210) --------------------------------------
 
@@ -546,10 +662,15 @@ class SessionsScreen:
 
 _PALETTE_BLOCK_TYPES: tuple[type[SessionBlock], ...] = (
     TargetBlock, ImageBlock, FilterChangeBlock, CoolCameraBlock, WarmCameraBlock,
-    AutofocusBlock, PlateSolveBlock, GuideStartBlock, GuideStopBlock, DitherBlock,
-    FlatCaptureBlock, ParkMountBlock, UnparkMountBlock, MeridianFlipBlock,
-    DomeOpenBlock, DomeCloseBlock, DomeSyncBlock,
+    AutofocusBlock, PlateSolveBlock, GuideStartBlock, GuideStopBlock,
+    FlatCaptureBlock, ParkMountBlock, UnparkMountBlock,
+    DomeOpenBlock, DomeCloseBlock, DomeSyncBlock, ForFilterBlock, ForObjectBlock,
+    DarkCaptureBlock,
 )
+# DitherBlock and MeridianFlipBlock are deliberately not offered in the palette (dither
+# and meridian flips are handled elsewhere) but stay in _BLOCK_CLASSES so sessions and
+# templates saved with them still load.
+_INDENT_PX = 28  # horizontal width of one indent level in a region's block list
 _BLOCK_ROLE = Qt.ItemDataRole.UserRole
 
 # A fixed hue (0-359) per block *type*, evenly spaced around the wheel, so every
@@ -659,10 +780,23 @@ class BlockListWidget(QListWidget):
             item = QListWidgetItem(block.display_text)
             item.setData(_BLOCK_ROLE, block)
             self.addItem(item)
-            widget = _block_item_widget(block.display_text, type(block).__name__, self._window)
-            item.setSizeHint(widget.sizeHint())
-            self.setItemWidget(item, widget)
+            self._set_item_widget(item, block)
         self._fit_height_to_contents()
+
+    def _set_item_widget(self, item: QListWidgetItem, block: SessionBlock) -> None:
+        """Tile for *block*, inset by its indent level so a loop's body reads as nested."""
+        tile = _block_item_widget(block.display_text, type(block).__name__, self._window)
+        if block.indent:
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(block.indent * _INDENT_PX, 0, 0, 0)
+            row.setSpacing(0)
+            row.addWidget(tile)
+            widget: QWidget = holder
+        else:
+            widget = tile
+        item.setSizeHint(widget.sizeHint())
+        self.setItemWidget(item, widget)
 
     def _on_right_click(self, pos) -> None:
         """Right-click a dragged-in block to open its own parameter dialog
@@ -682,9 +816,7 @@ class BlockListWidget(QListWidget):
             return
         if open_block_parameter_dialog(self, block, self._region, self._window):
             item.setText(block.display_text)
-            widget = _block_item_widget(block.display_text, type(block).__name__, self._window)
-            item.setSizeHint(widget.sizeHint())
-            self.setItemWidget(item, widget)
+            self._set_item_widget(item, block)
 
     def _fit_height_to_contents(self) -> None:
         height = 2 * self.frameWidth()
@@ -719,6 +851,9 @@ class BlockListWidget(QListWidget):
             return
         from PySide6.QtCore import QMimeData
         from PySide6.QtGui import QCursor, QDrag
+        # Where the drag began, so dropEvent can read horizontal travel as an
+        # indent (right) / unindent (left) request.
+        self._drag_start_x = self.viewport().mapFromGlobal(QCursor.pos()).x()
         drag = QDrag(self)
         mime_data = self.model().mimeData(self.selectedIndexes()) or QMimeData()
         drag.setMimeData(mime_data)
@@ -768,7 +903,19 @@ class BlockListWidget(QListWidget):
                 item = self.currentItem()
                 if item is None:
                     return
-                self._region.reorder_block(item.data(_BLOCK_ROLE), index=drop_row)
+                moved = item.data(_BLOCK_ROLE)
+                old_index = self._region.blocks.index(moved)
+                # Dropping onto its own row or the gap right after it is a pure
+                # indent change; otherwise it's a move (the extra step down the
+                # list is because the block's own slot disappears first).
+                group_len = 1 + len(self._region.body_of(moved))
+                if not old_index <= drop_row <= old_index + group_len:
+                    if drop_row > old_index:
+                        drop_row -= group_len
+                    self._region.reorder_block(moved, index=drop_row)
+                dx = event.pos().x() - getattr(self, "_drag_start_x", event.pos().x())
+                if abs(dx) >= _INDENT_PX // 2:
+                    self._region.set_indent(moved, moved.indent + round(dx / _INDENT_PX))
             else:
                 return
         except (BlockOrderError, RegionLockedError) as exc:

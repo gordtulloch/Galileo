@@ -636,13 +636,13 @@ class AlpacaMountAdapter(AlpacaAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         await self._refuse_if_parked("slew_to_coordinates")
-        get_slew_guard().check_radec(ra, dec)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_radec(ra, dec)
         await self._put("slewtocoordinatesasync", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         await self._refuse_if_parked("slew_to_altaz")
-        get_slew_guard().check_altaz(alt, az)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_altaz(alt, az)
         await self._put("slewtoaltazasync", Azimuth=az, Altitude=alt)
         self.altitude, self.azimuth = alt, az
 
@@ -767,6 +767,13 @@ class AlpacaMountAdapter(AlpacaAdapter):
         except Exception:
             logger.exception("Could not read SideOfPier from %s", self.base_url)
             status["side_of_pier"] = None
+        try:
+            raw_rate = await self._get("trackingrate")
+            idx = int(raw_rate) if raw_rate is not None else -1
+            status["tracking_rate"] = self.TRACKING_RATE_NAMES[idx] if 0 <= idx < len(self.TRACKING_RATE_NAMES) else None
+        except Exception:
+            logger.debug("Could not read TrackingRate from %s", self.base_url, exc_info=True)
+            status["tracking_rate"] = None
 
         if status.get("right_ascension") is not None:
             self.ra = status["right_ascension"] * 15.0

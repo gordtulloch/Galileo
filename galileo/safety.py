@@ -365,7 +365,8 @@ class OpenMeteoClient:
             "latitude": latitude,
             "longitude": longitude,
             "hourly": "precipitation,cloudcover,windspeed_10m",
-            "forecast_days": 1,
+            "forecast_days": 2,       # tonight spans today's evening into tomorrow's morning
+            "timezone": "auto",       # hourly times in the site's local time, so night hours can be picked out
         })
         url = f"https://api.open-meteo.com/v1/forecast?{params}"
         def _fetch() -> dict:
@@ -377,3 +378,116 @@ class OpenMeteoClient:
             return await asyncio.to_thread(_fetch)
         except Exception:
             return {}
+
+
+# ---------------------------------------------------------------------------
+# Aurora (SAFE-090) and smoke (SAFE-100) advisory clients
+# ---------------------------------------------------------------------------
+# Ported from the author's MCP project (mcpAurora/mcpSmoke, themselves derived from indi-allsky),
+# using only the standard library so they add no dependencies (no numpy/shapely/lxml).
+
+_KP_INDEX_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+_HMS_KML_URL = ("https://satepsanone.nesdis.noaa.gov/pub/FIRE/web/HMS/Smoke_Polygons/KML/"
+                "{now:%Y}/{now:%m}/hms_smoke{now:%Y}{now:%m}{now:%d}.kml")
+
+# HMS smoke density → AQI-equivalent, so the existing smoke-AQI ranking scale (good <= 50,
+# fully degraded at 200) applies. HMS gives only three density bands, not a measured AQI.
+_HMS_FOLDER_AQI = (("Smoke (Heavy)", 200.0), ("Smoke (Medium)", 125.0), ("Smoke (Light)", 75.0))
+_HMS_CLEAR_AQI = 25.0
+
+
+def _http_get(url: str) -> bytes:
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return resp.read()
+
+
+class NoaaKpClient:
+    """Latest planetary Kp index from NOAA SWPC (SAFE-090). Global, so no location needed."""
+
+    async def get_kp_index(self) -> float | None:
+        import json
+        try:
+            rows = json.loads(await asyncio.to_thread(_http_get, _KP_INDEX_URL))
+            # First row is the column header; the last row is the most recent 3-hour value.
+            return float(rows[-1][1])
+        except Exception:
+            logger.debug("NOAA Kp index unavailable", exc_info=True)
+            return None
+
+
+def _segments_intersect_box(poly: list[tuple[float, float]], box: tuple[float, float, float, float]) -> bool:
+    """Whether a polygon (lon, lat vertices) overlaps an axis-aligned (min_lon, min_lat,
+    max_lon, max_lat) box: any vertex inside the box, any box corner inside the polygon,
+    or any polygon edge crossing a box edge."""
+    min_x, min_y, max_x, max_y = box
+    if len(poly) < 3:
+        return False
+    if any(min_x <= x <= max_x and min_y <= y <= max_y for x, y in poly):
+        return True
+
+    def inside(px: float, py: float) -> bool:
+        hit = False
+        for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1], strict=True):
+            if (y1 > py) != (y2 > py) and px < (x2 - x1) * (py - y1) / (y2 - y1) + x1:
+                hit = not hit
+        return hit
+
+    corners = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+    if any(inside(x, y) for x, y in corners):
+        return True
+
+    def ccw(a, b, c) -> bool:
+        return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
+
+    def cross(a, b, c, d) -> bool:
+        return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
+
+    for p1, p2 in zip(poly, poly[1:] + poly[:1], strict=True):
+        for c1, c2 in zip(corners, corners[1:] + corners[:1], strict=True):
+            if cross(p1, p2, c1, c2):
+                return True
+    return False
+
+
+class NoaaSmokeClient:
+    """Wildfire-smoke estimate for a location from NOAA's Hazard Mapping System (SAFE-100).
+
+    HMS covers North America only (northern + western hemisphere); elsewhere this returns
+    ``None`` ("no data"). Smoke within ~0.5° (~35 miles) of the site counts."""
+
+    def __init__(self, latitude: float, longitude: float) -> None:
+        self.latitude = latitude
+        self.longitude = longitude
+
+    async def get_smoke_aqi(self) -> float | None:
+        if not (self.latitude > 0 and self.longitude < 0):
+            return None
+        import datetime
+        try:
+            url = _HMS_KML_URL.format(now=datetime.datetime.now(datetime.UTC))
+            return await asyncio.to_thread(self._rate, await asyncio.to_thread(_http_get, url))
+        except Exception:
+            logger.debug("NOAA HMS smoke data unavailable", exc_info=True)
+            return None
+
+    def _rate(self, kml: bytes) -> float | None:
+        import xml.etree.ElementTree as ET
+        KML = "http://www.opengis.net/kml/2.2"
+        root = ET.fromstring(kml)  # noqa: S314 -- fixed NOAA endpoint
+        box = (self.longitude - 0.5, self.latitude - 0.5, self.longitude + 0.5, self.latitude + 0.5)
+        found_folder = False
+        for folder_name, aqi in _HMS_FOLDER_AQI:  # heaviest first: first match wins
+            folder = next((f for f in root.iter(f"{{{KML}}}Folder")
+                           if folder_name in "".join(f.itertext())), None)
+            if folder is None:
+                continue
+            found_folder = True
+            for coords in folder.iter(f"{{{KML}}}coordinates"):
+                poly = []
+                for line in (coords.text or "").split():
+                    lon, lat = line.split(",")[:2]
+                    poly.append((float(lon), float(lat)))
+                if _segments_intersect_box(poly, box):
+                    return aqi
+        return _HMS_CLEAR_AQI if found_folder else None

@@ -87,20 +87,6 @@ class AppWindowWeatherPageMixin:
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(10)
 
-        if device_type == "safety_monitor":
-            subtitle_text = (
-                "Connect a Safety Monitor device (e.g. an Alpaca SafetyMonitor such as a rain sensor "
-                "or roof-position switch). The dome is treated as unsafe to open while it reports not safe."
-            )
-        else:
-            subtitle_text = (
-                "Connect a Weather Station device (e.g. an INDI ADS-WS1 or RG-11 rain sensor, or an "
-                "Alpaca ObservingConditions device) and mark which readings make the dome unsafe to open."
-            )
-        subtitle = QLabel(subtitle_text)
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
-
         # --- connection row (same as every other Equipment page) --------
         table = QTableWidget(1, 5)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", "Poll (s)", ""])
@@ -308,6 +294,7 @@ class AppWindowWeatherPageMixin:
             state["adapter"] = adapter
             adapters_by_pier[pier_key(self._current_pier)] = adapter
             self._window.statusBar().showMessage(f"Connected to {kind_label} {device_name!r}.", 4000)
+            _device_picked()
             _poll_once()
 
         def _connect_clicked() -> None:
@@ -542,7 +529,8 @@ class AppWindowWeatherPageMixin:
         header.addStretch(1)
         add_btn = QPushButton("+")
         add_btn.setToolTip("Add a safety device (weather station or safety monitor) in a new tab")
-        add_btn.setFixedWidth(34)
+        add_btn.setObjectName("AccentButton")
+        add_btn.setFixedWidth(28)
         header.addWidget(add_btn)
         layout.addLayout(header)
 
@@ -573,7 +561,9 @@ class AppWindowWeatherPageMixin:
             add_menu.addAction(label).triggered.connect(
                 lambda _checked=False, type_id=type_id: _add_panel(type_id, _next_slot(type_id))
             )
-        add_btn.setMenu(add_menu)
+        # Popped up on click rather than via setMenu(): a menu button reserves
+        # room for a drop-down arrow, which squeezes the "+" out of a 28px button.
+        add_btn.clicked.connect(lambda: add_menu.exec(add_btn.mapToGlobal(add_btn.rect().bottomLeft())))
 
         def _close_tab(index: int) -> None:
             if not 0 <= index < len(panels):

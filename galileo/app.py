@@ -60,6 +60,7 @@ def main() -> None:
         splash.finish(getattr(window, "_window", None))
 
     _schedule_registration_ping()
+    _schedule_library_preload()
 
     exit_code = app.exec()
     # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
@@ -117,6 +118,28 @@ def _schedule_registration_ping() -> None:
         QTimer.singleShot(0, start_startup_ping)
     except Exception:
         logger.debug("Could not schedule the registration ping", exc_info=True)
+
+
+def _schedule_library_preload() -> None:
+    """Import the Library's heavy modules (scipy, astropy) on a background thread once the window is up.
+
+    The Library screens are built the first time the section is opened, on the UI thread; most of that
+    time is these imports, not the catalog, so doing them early removes the pause on first open.
+    """
+    def _preload() -> None:
+        try:
+            import galileo.library.core  # noqa: F401
+            import galileo.ui.library.pages  # noqa: F401
+        except Exception:
+            logger.debug("Library preload failed", exc_info=True)
+
+    try:
+        import threading
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(
+            500, lambda: threading.Thread(target=_preload, name="library-preload", daemon=True).start())
+    except Exception:
+        logger.debug("Could not schedule the Library preload", exc_info=True)
 
 
 if __name__ == "__main__":

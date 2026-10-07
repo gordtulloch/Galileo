@@ -601,7 +601,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         self._refuse_if_parked("slew_to_coordinates")
-        get_slew_guard().check_radec(ra, dec)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_radec(ra, dec)
         self._log_interaction("slew_to_coordinates", ra=ra, dec=dec)
         self._select("ON_COORD_SET", "TRACK")
         self._set_num("EQUATORIAL_EOD_COORD", {"RA": ra / 15.0, "DEC": dec})
@@ -609,7 +609,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         self._refuse_if_parked("slew_to_altaz")
-        get_slew_guard().check_altaz(alt, az)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_altaz(alt, az)
         self._log_interaction("slew_to_altaz", alt=alt, az=az)
         self._set_num("HORIZONTAL_COORD", {"ALT": alt, "AZ": az})
         self.altitude, self.azimuth = alt, az
@@ -699,6 +699,8 @@ class IndiMountAdapter(IndiAdapter):
             "tracking": self._sw("TELESCOPE_TRACK_STATE", "TRACK_ON"),
             "slewing": (self._state("EQUATORIAL_EOD_COORD") == ic.BUSY) if self._has("EQUATORIAL_EOD_COORD") else None,
             "at_park": self._sw("TELESCOPE_PARK", "PARK"),
+            "tracking_rate": next((n for n, el in self._TRACK_MODES.items() if self._sw("TELESCOPE_TRACK_MODE", el)),
+                                  "Custom" if self._sw("TELESCOPE_TRACK_MODE", "TRACK_CUSTOM") else None),
         }
         if status["right_ascension"] is not None:
             self.ra = status["right_ascension"] * 15.0

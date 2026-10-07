@@ -88,6 +88,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-MNT-030` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-MNT-030` |
 | `EQP-MNT-040` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-MNT-040` |
 | `EQP-MNT-050` | MVP | SDD 4.1 `galileo.core.devices` / `galileo.tracking`; SDD 4.4b `galileo.ui.app_window` (per-Pier slew guard) | Test | `TC-EQP-MNT-050` |
+| `EQP-MNT-060` | P2 | SDD 4.1 `galileo.core.devices` / `galileo.mount_limits`; `galileo.meridianflip` | Test | `TC-EQP-MNT-060` |
+| `EQP-MNT-070` | P2 | SDD 4.1 `galileo.core.devices` / `galileo.mount_limits`; `galileo.core.slew_guard` | Test | `TC-EQP-MNT-070` |
 | `EQP-FW-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-010` |
 | `EQP-FW-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-020` |
 | `EQP-FOC-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-010` |

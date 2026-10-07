@@ -10,6 +10,7 @@ scoped at either the Observatory (shared) or Pier (independent) level.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from galileo.library.models.observatory import ObservatoryRecord, PierRecord
     from galileo.library.models.optical_tube import OpticalTubeRecord
     from galileo.autofocus import AutofocusParams, FilterOffset
+    from galileo.mount_limits import MountLimits
     from galileo.platesolve import SolverParams
     from galileo.safety import WeatherSafetyRule
 
@@ -298,13 +300,14 @@ def save_device_config(
     bayer_pattern: str | None = None,
     max_well_depth: int | None = None,
     panel_type: str | None = None,
+    mount_limits: MountLimits | None = None,
 ) -> DeviceConfigRecord:
     """Create or update the saved device configuration for *category*/*slot*
     on *pier* (the Equipment page's per-device Save button). *bayer_pattern*
     (cameras only) is left as it was when omitted, and starts as ``RGGB``.
     *max_well_depth* (cameras only, electrons) feeds the Flat Assistant.
     *panel_type* (flat panel only) is left as it was when omitted, and starts
-    as ``"Flat Panel"``."""
+    as ``"Flat Panel"``. *mount_limits* (mount only) is left as it was when omitted."""
     from galileo.library.models.device_config import DeviceConfigRecord
     record = DeviceConfigRecord.get_or_none(
         (DeviceConfigRecord.pier == pier)
@@ -321,12 +324,22 @@ def save_device_config(
     if panel_type is not None:
         fields["panel_type"] = panel_type
     fields["max_well_depth"] = max_well_depth
+    if mount_limits is not None:
+        fields.update(dataclasses.asdict(mount_limits))
     if record is None:
         return DeviceConfigRecord.create(pier=pier, category=category, slot=slot, **fields)
     for key, value in fields.items():
         setattr(record, key, value)
     record.save()
     return record
+
+
+def mount_limits_from_config(record: DeviceConfigRecord | None) -> MountLimits:
+    """The Mount page's saved flip/limit settings from a mount's device config (defaults if none)."""
+    from galileo.mount_limits import MountLimits
+    if record is None:
+        return MountLimits()
+    return MountLimits(**{f.name: getattr(record, f.name) for f in dataclasses.fields(MountLimits)})
 
 
 def delete_device_config(pier: PierRecord, category: str, slot: str = "primary") -> None:

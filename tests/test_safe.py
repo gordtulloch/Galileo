@@ -278,3 +278,51 @@ async def test_tc_safe_100_smoke_advisory_is_none_not_zero_when_unconfigured(saf
     0.0 ("measured clear") — same "no data" vs. "measured clear" distinction as aurora
     (SAFE-090), needed by What's Up Tonight (WUT-100) to degrade confidence correctly."""
     assert await safety_service.get_smoke_advisory() is None
+
+
+# ---------------------------------------------------------------------------
+# NOAA aurora / smoke clients (SAFE-090 / SAFE-100)
+# ---------------------------------------------------------------------------
+
+_HMS_KML = b"""<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Folder><name>Smoke (Light)</name><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
+-115,50,0 -113,50,0 -113,52,0 -115,52,0 -115,50,0
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Folder>
+<Folder><name>Smoke (Heavy)</name><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
+-100,40,0 -99,40,0 -99,41,0 -100,41,0 -100,40,0
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Folder>
+</Document></kml>"""
+
+
+@pytest.mark.requirement("TC-SAFE-090")
+@pytest.mark.priority("P3")
+async def test_tc_safe_090_noaa_kp_client_reads_latest_row(monkeypatch):
+    """SAFE-090: the NOAA client reports the most recent Kp row, and None (not 0) on failure."""
+    import json
+    safe_mod = pytest.importorskip("galileo.safety")
+    rows = [["time_tag", "Kp"], ["2026-10-07 00:00:00", "2.33"], ["2026-10-07 03:00:00", "5.00"]]
+    monkeypatch.setattr(safe_mod, "_http_get", lambda url: json.dumps(rows).encode())
+    assert await safe_mod.NoaaKpClient().get_kp_index() == 5.0
+
+    def boom(url):
+        raise OSError("offline")
+    monkeypatch.setattr(safe_mod, "_http_get", boom)
+    assert await safe_mod.NoaaKpClient().get_kp_index() is None
+
+
+@pytest.mark.requirement("TC-SAFE-100")
+@pytest.mark.priority("P3")
+async def test_tc_safe_100_noaa_smoke_client_rates_location(monkeypatch):
+    """SAFE-100: HMS smoke polygons near the site map to an AQI-equivalent; elsewhere is clear;
+    outside North America (or offline) is None."""
+    safe_mod = pytest.importorskip("galileo.safety")
+    monkeypatch.setattr(safe_mod, "_http_get", lambda url: _HMS_KML)
+    assert await safe_mod.NoaaSmokeClient(51.0, -114.0).get_smoke_aqi() == 75.0    # inside light smoke
+    assert await safe_mod.NoaaSmokeClient(51.0, -113.2).get_smoke_aqi() == 75.0    # box overlaps edge only
+    assert await safe_mod.NoaaSmokeClient(45.0, -90.0).get_smoke_aqi() == 25.0     # clear
+    assert await safe_mod.NoaaSmokeClient(-33.0, 151.0).get_smoke_aqi() is None    # outside HMS coverage
+
+    def boom(url):
+        raise OSError("offline")
+    monkeypatch.setattr(safe_mod, "_http_get", boom)
+    assert await safe_mod.NoaaSmokeClient(51.0, -114.0).get_smoke_aqi() is None

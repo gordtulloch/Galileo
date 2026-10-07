@@ -215,8 +215,9 @@ def compute_observability(
             reasons.append(f"Low altitude — best only {max_alt:.0f}°")
         if moon_factor < 1.0 and moon_sep is not None:
             reasons.append(f"Close to the Moon ({moon_sep:.0f}° separation)")
-        if weather_factor < 1.0:
-            reasons.append("Forecast cloud cover reduces tonight's usable window")
+        if weather_factor < _WEATHER_NOTE_THRESHOLD:
+            reasons.append(
+                f"Forecast cloud cover (~{(1.0 - weather_factor) * 100:.0f}% tonight) reduces the usable window")
         if aurora_factor < 1.0:
             reasons.append("Elevated aurora activity may wash out contrast")
         if smoke_factor < 1.0:
@@ -225,8 +226,7 @@ def compute_observability(
         confidence_reduced = (
             horizon is None
             or not weather_available
-            or not aurora_available
-            or not smoke_available
+            or (AURORA_SMOKE_SOURCES_WIRED and not (aurora_available and smoke_available))
             or moon_pos is None
         )
 
@@ -260,8 +260,38 @@ def _weather_factor(forecast: dict | None) -> tuple[float, bool]:
     cloudcover = hourly.get("cloudcover")
     if not cloudcover:
         return 1.0, False
-    avg_cover = sum(cloudcover) / len(cloudcover)
+    avg_cover = _night_cloud_average(hourly.get("time"), cloudcover)
     return max(0.0, 1.0 - avg_cover / 100.0), True
+
+
+# The NOAA Kp (SAFE-090) and HMS smoke (SAFE-100) clients are wired into What's Up Tonight, so a missing
+# estimate (offline, or outside HMS's North-America coverage) degrades the confidence indicator (WUT-030/WUT-100).
+AURORA_SMOKE_SOURCES_WIRED = True
+
+_NIGHT_START_HOUR = 21
+_NIGHT_END_HOUR = 4
+# A reduction smaller than this isn't worth telling the user about in the "Why:" note.
+_WEATHER_NOTE_THRESHOLD = 0.85
+
+
+def _night_cloud_average(times: list | None, cloudcover: list) -> float:
+    """Mean cloud cover (%) over the night hours (``_NIGHT_START_HOUR`` evening to
+    ``_NIGHT_END_HOUR`` morning, local) of the hourly series. Daytime cloud is
+    irrelevant to imaging, so averaging the whole day made a clear night look cloudy.
+    Falls back to the whole series if the times are missing or none fall at night."""
+    if times and len(times) == len(cloudcover):
+        night = []
+        for stamp, cover in zip(times, cloudcover):
+            try:
+                hour = int(str(stamp)[11:13])
+            except ValueError:
+                continue
+            if (hour >= _NIGHT_START_HOUR or hour <= _NIGHT_END_HOUR) and cover is not None:
+                night.append(cover)
+        if night:
+            return sum(night) / len(night)
+    valid = [c for c in cloudcover if c is not None]
+    return sum(valid) / len(valid) if valid else 0.0
 
 
 def _advisory_factor(value: float | None, threshold: float, severe: float) -> tuple[float, bool]:

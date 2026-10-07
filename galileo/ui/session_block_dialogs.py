@@ -19,6 +19,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,12 +27,17 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from galileo.ui import sessions as sessions_mod
@@ -290,16 +296,25 @@ def _edit_filter_change_block(parent, block, region, window) -> bool:
     dialog = QDialog(parent)
     dialog.setWindowTitle("Filter Change Parameters")
     form = QFormLayout(dialog)
-    filter_edit = QLineEdit(block.filter)
-    filter_edit.setObjectName("filter_edit")
-    form.addRow("Filter", filter_edit)
+    wheel_getter = getattr(window, "_active_filter_wheel", None)
+    wheel = wheel_getter() if callable(wheel_getter) else None
+    names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])] if wheel is not None else []
+    filter_combo = QComboBox()
+    filter_combo.setObjectName("filter_combo")
+    filter_combo.setEditable(True)  # still typeable when no wheel is connected / for a template's filter
+    filter_combo.addItems(names)
+    filter_combo.setCurrentText(block.filter)
+    filter_combo.setToolTip(
+        "Filters on the active imager's filter wheel." if names
+        else "No filter wheel connected — type a filter name.")
+    form.addRow("Filter", filter_combo)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     form.addRow(buttons)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return False
-    block.filter = filter_edit.text().strip()
+    block.filter = filter_combo.currentText().strip()
     return True
 
 
@@ -365,28 +380,232 @@ def _edit_guide_start_block(parent, block, region, window) -> bool:
     return True
 
 
+def _wheel_filter_names(window) -> list[str]:
+    wheel_getter = getattr(window, "_active_filter_wheel", None)
+    wheel = wheel_getter() if callable(wheel_getter) else None
+    return [str(n) for n in (getattr(wheel, "filter_names", None) or [])] if wheel is not None else []
+
+
 def _edit_flat_capture_block(parent, block, region, window) -> bool:
+    """Mirrors the Imaging page's Flats Assistant fields (CAL-060)."""
+    from galileo.calibration import ADU_METHODS, FLAT_METHODS
+
     dialog = QDialog(parent)
     dialog.setWindowTitle("Flat Capture Parameters")
     form = QFormLayout(dialog)
+    method_combo = QComboBox()
+    method_combo.setObjectName("method_combo")
+    method_combo.addItems(FLAT_METHODS)
+    method_combo.setCurrentText(block.method)
+    form.addRow("Flat Method", method_combo)
+    exposure_spin = QDoubleSpinBox()
+    exposure_spin.setObjectName("exposure_spin")
+    exposure_spin.setRange(0.0, 3600.0)
+    exposure_spin.setDecimals(3)
+    exposure_spin.setSuffix(" s")
+    exposure_spin.setSpecialValueText("Calculate")
+    exposure_spin.setValue(block.exposure)
+    exposure_spin.setToolTip("Leave at Calculate to work the exposure out from the camera's Max Well Depth.")
+    form.addRow("Exposure", exposure_spin)
     count_spin = QSpinBox()
     count_spin.setObjectName("count_spin")
-    count_spin.setRange(1, 9999)
+    count_spin.setRange(1, 999)
     count_spin.setValue(block.count)
-    form.addRow("Count", count_spin)
-    adu_spin = QDoubleSpinBox()
-    adu_spin.setObjectName("adu_spin")
-    adu_spin.setRange(0.0, 65535.0)
-    adu_spin.setValue(block.target_adu)
-    form.addRow("Target ADU", adu_spin)
+    form.addRow("Number of Frames", count_spin)
+    filter_combo = QComboBox()
+    filter_combo.setObjectName("filter_combo")
+    filter_combo.setEditable(True)
+    names = _wheel_filter_names(window)
+    filter_combo.addItems(["All"] + [n for n in names if n != "All"])
+    filter_combo.setCurrentText(block.filter or "All")
+    filter_combo.setToolTip("All repeats the run for every filter in turn.")
+    form.addRow("Filter", filter_combo)
+    adu_combo = QComboBox()
+    adu_combo.setObjectName("adu_method_combo")
+    adu_combo.addItems(ADU_METHODS)
+    adu_combo.setCurrentText(block.adu_method)
+    form.addRow("Method", adu_combo)
+    increment_spin = QDoubleSpinBox()
+    increment_spin.setObjectName("increment_spin")
+    increment_spin.setRange(0.001, 10.0)
+    increment_spin.setDecimals(3)
+    increment_spin.setSuffix(" s")
+    increment_spin.setValue(block.exposure_increment)
+    form.addRow("Exposure Increment", increment_spin)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     form.addRow(buttons)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return False
+    block.method = method_combo.currentText()
+    block.exposure = exposure_spin.value()
     block.count = count_spin.value()
-    block.target_adu = adu_spin.value()
+    block.filter = filter_combo.currentText().strip() or "All"
+    block.adu_method = adu_combo.currentText()
+    block.exposure_increment = increment_spin.value()
+    return True
+
+
+def _edit_dark_capture_block(parent, block, region, window) -> bool:
+    """Mirrors the Imaging page's Darks Assistant fields: an optional filter and a
+    comma-separated list of exposure lengths."""
+    from galileo.ui.app_window._darks import _parse_exposures
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Dark Capture Parameters")
+    form = QFormLayout(dialog)
+    filter_combo = QComboBox()
+    filter_combo.setObjectName("filter_combo")
+    filter_combo.setEditable(True)
+    filter_combo.addItem("(none)")
+    filter_combo.addItems(_wheel_filter_names(window))
+    filter_combo.setCurrentText(block.filter or "(none)")
+    form.addRow("Filter", filter_combo)
+    exposures_edit = QLineEdit(", ".join(f"{e:g}" for e in block.exposures))
+    exposures_edit.setObjectName("exposures_edit")
+    exposures_edit.setToolTip("Comma-separated exposure lengths in seconds; one dark per value. Example: 10,20,30,60")
+    form.addRow("Exposures (s)", exposures_edit)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    form.addRow(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False
+    exposures = _parse_exposures(exposures_edit.text())
+    if not exposures:
+        return False
+    chosen = filter_combo.currentText().strip()
+    block.filter = "" if chosen == "(none)" else chosen
+    block.exposures = exposures
+    return True
+
+
+def _edit_for_filter_block(parent, block, region, window) -> bool:
+    """Pick the filters the loop iterates over, from the active filter wheel's own
+    names (plus any already on the block, e.g. from a template made on other kit)."""
+    wheel_getter = getattr(window, "_active_filter_wheel", None)
+    wheel = wheel_getter() if callable(wheel_getter) else None
+    wheel_names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])] if wheel is not None else []
+    names = wheel_names + [f for f in block.filters if f not in wheel_names]
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("FOR Filter Parameters")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel(
+        "Repeat the indented blocks for each checked filter, in this order."
+        if names else "No filter wheel connected — enter filter names below."))
+    filter_list = QListWidget()
+    filter_list.setObjectName("filter_list")
+    for name in names:
+        item = QListWidgetItem(name)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if name in block.filters else Qt.CheckState.Unchecked)
+        filter_list.addItem(item)
+    layout.addWidget(filter_list)
+    extra_edit = QLineEdit()
+    extra_edit.setObjectName("extra_edit")
+    extra_edit.setPlaceholderText("Other filters, comma-separated")
+    layout.addWidget(extra_edit)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False
+    chosen = [filter_list.item(i).text() for i in range(filter_list.count())
+              if filter_list.item(i).checkState() == Qt.CheckState.Checked]
+    for extra in (e.strip() for e in extra_edit.text().split(",")):
+        if extra and extra not in chosen:
+            chosen.append(extra)
+    block.filters = chosen
+    return True
+
+
+_MAX_SEARCH_RESULTS = 25
+
+
+def _edit_for_object_block(parent, block, region, window) -> bool:
+    """Build the loop's object list: search the sky atlas catalog, pick a result to
+    add it, and remove entries with the ✕ beside each."""
+    atlas_getter = getattr(window, "_shared_sky_atlas", None)
+    if callable(atlas_getter):
+        atlas = atlas_getter()
+    else:
+        from galileo.planning.sky_atlas import SkyAtlas
+        atlas = SkyAtlas()
+    objects: list[dict] = [dict(o) for o in block.objects]
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("FOR Object Parameters")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel("Search for an object, then pick a result to add it. "
+                            "The indented blocks repeat for each object, in order."))
+    search_edit = QLineEdit()
+    search_edit.setObjectName("search_edit")
+    search_edit.setPlaceholderText("Search objects (e.g. M31, NGC 7000, Veil)…")
+    search_edit.setClearButtonEnabled(True)
+    layout.addWidget(search_edit)
+
+    results_list = QListWidget()
+    results_list.setObjectName("results_list")
+    results_list.setMaximumHeight(130)
+    layout.addWidget(results_list)
+
+    layout.addWidget(QLabel("Objects"))
+    objects_list = QListWidget()
+    objects_list.setObjectName("objects_list")
+    layout.addWidget(objects_list)
+
+    def refresh_objects() -> None:
+        objects_list.clear()
+        for obj in objects:
+            item = QListWidgetItem()
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(6, 2, 6, 2)
+            row_layout.addWidget(QLabel(obj["name"]), 1)
+            remove_btn = QToolButton()
+            remove_btn.setText("✕")
+            remove_btn.setToolTip(f"Remove {obj['name']}")
+            remove_btn.clicked.connect(lambda _=False, o=obj: (objects.remove(o), refresh_objects()))
+            row_layout.addWidget(remove_btn)
+            item.setSizeHint(row.sizeHint())
+            objects_list.addItem(item)
+            objects_list.setItemWidget(item, row)
+
+    def refresh_results() -> None:
+        results_list.clear()
+        query = search_edit.text().strip()
+        if not query:
+            return
+        for found in atlas.search(query)[:_MAX_SEARCH_RESULTS]:
+            item = QListWidgetItem(found.primary_name)
+            item.setData(Qt.ItemDataRole.UserRole, found)
+            results_list.addItem(item)
+
+    def add_result(item: QListWidgetItem | None) -> None:
+        if item is None:
+            return
+        found = item.data(Qt.ItemDataRole.UserRole)
+        if not any(o["name"] == found.primary_name for o in objects):
+            objects.append({"name": found.primary_name, "ra_deg": found.ra_deg, "dec_deg": found.dec_deg})
+            refresh_objects()
+        search_edit.clear()
+
+    search_edit.textChanged.connect(lambda _: refresh_results())
+    search_edit.returnPressed.connect(lambda: add_result(results_list.currentItem() or results_list.item(0)))
+    results_list.itemActivated.connect(add_result)
+    results_list.itemClicked.connect(add_result)
+    refresh_objects()
+
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False
+    block.objects = objects
     return True
 
 
@@ -419,7 +638,10 @@ _EDITORS: dict[type, Callable[..., bool]] = {
     sessions_mod.AutofocusBlock: _edit_autofocus_block,
     sessions_mod.GuideStartBlock: _edit_guide_start_block,
     sessions_mod.FlatCaptureBlock: _edit_flat_capture_block,
+    sessions_mod.DarkCaptureBlock: _edit_dark_capture_block,
     sessions_mod.NotificationBlock: _edit_notification_block,
+    sessions_mod.ForFilterBlock: _edit_for_filter_block,
+    sessions_mod.ForObjectBlock: _edit_for_object_block,
 }
 
 
