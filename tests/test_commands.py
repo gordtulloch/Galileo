@@ -420,7 +420,7 @@ def test_tc_lib_130_register_existing_dry_run_changes_nothing(library, cli, monk
     from galileo.commands import register_existing
 
     called = []
-    monkeypatch.setattr("galileo.library.core.fitsProcessing.registerExistingFiles", lambda self, **kw: called.append(kw), raising=False)
+    monkeypatch.setattr("galileo.library.core.fitsProcessing.registerExistingFiles", lambda self, **kw: called.append(kw))
     assert cli.run(register_existing, "--dry-run", "--log-file", str(cli.logs / "r.log")) == 0
     assert called == []
 
@@ -438,7 +438,7 @@ def test_tc_lib_130_register_existing_exit_code_follows_errors(library, cli, mon
         return {"summary": {"total_files_processed": 3, "master_frames": {"found": 1}, "calibrated_lights": {"found": 2},
                             "database_changes": 3}, "errors": seen.get("errors", [])}
 
-    monkeypatch.setattr("galileo.library.core.fitsProcessing.registerExistingFiles", fake, raising=False)
+    monkeypatch.setattr("galileo.library.core.fitsProcessing.registerExistingFiles", fake)
     log = str(cli.logs / "r.log")
     assert cli.run(register_existing, "--no-subdirs", "--no-header-verify", "--log-file", log) == 0
     assert seen == {"subdirs": False, "verify": False}
@@ -447,15 +447,76 @@ def test_tc_lib_130_register_existing_exit_code_follows_errors(library, cli, mon
     assert cli.run(register_existing, "--log-file", log) == 1
 
 
+def _repo_with_existing_files(library):
+    """A repository holding two light frames, a master dark, a generated cal_ light and one frame in a sub-folder."""
+    write_light_frames(library.repo, count=2)
+    write_frame(library.repo, "master_dark.fits", "Master Dark", "Dark", 60, 40, level=100)
+    write_frame(library.repo, "cal_light_9.fits", "Light Frame", "M42", 60, 9, filt="Ha", date="2026-09-16T23:59:00")
+    (library.repo / "older").mkdir()
+    write_frame(library.repo / "older", "light_old.fits", "Light Frame", "M31", 60, 50, filt="Ha", date="2026-08-01T22:00:00")
+
+
 @pytest.mark.requirement("TC-LIB-130")
 @pytest.mark.priority("P2")
-@pytest.mark.xfail(strict=True, reason="galileo-register-existing calls fitsProcessing.registerExistingFiles, which exists neither in "
-                                       "Galileo nor in AstroFiler, so the command can only fail outside --dry-run (CODE_REVIEW.md)")
-def test_tc_lib_130_register_existing_is_backed_by_the_library():
-    """LIB-130: the registration the register_existing command drives exists on the Library's processor."""
+def test_tc_lib_130_register_existing_catalogs_what_is_in_the_repository_in_place(library, cli):
+    """LIB-130: register-existing catalogs the repository's masters and light frames where they are (the registration Regenerate does, without clearing anything), and a second run adds nothing."""
+    from galileo.commands import register_existing
+    from galileo.library.models import Masters, fitsFile
+
+    _repo_with_existing_files(library)
+    on_disk = sorted(p for p in library.repo.rglob("*.fits"))
+
+    assert cli.run(register_existing, "--log-file", str(cli.logs / "r.log")) == 0
+    names = {Path(r.fitsFileName).name for r in fitsFile.select()}
+    assert {"light_0.fits", "light_1.fits", "cal_light_9.fits", "light_old.fits"} <= names
+    assert Masters.select().count() == 1
+    assert sorted(library.repo.rglob("*.fits")) == on_disk, "nothing is moved, renamed or removed"
+
+    rows = fitsFile.select().count()
+    assert cli.run(register_existing, "--log-file", str(cli.logs / "r.log")) == 0
+    assert fitsFile.select().count() == rows and Masters.select().count() == 1, "already-catalogued files are not added twice"
+
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+def test_tc_lib_130_register_existing_reports_what_it_found(library):
+    """LIB-130: the processor's registerExistingFiles summarises masters found, generated cal_ lights found and catalog rows added."""
     from galileo.library.core import fitsProcessing
 
-    assert callable(getattr(fitsProcessing, "registerExistingFiles", None))
+    _repo_with_existing_files(library)
+    result = fitsProcessing().registerExistingFiles()
+
+    summary = result["summary"]
+    assert result["errors"] == []
+    assert summary["master_frames"]["found"] == 1 and summary["calibrated_lights"]["found"] == 1
+    assert summary["total_files_processed"] >= 5 and summary["database_changes"] >= 5
+
+    assert fitsProcessing().registerExistingFiles()["summary"]["database_changes"] == 0
+
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+def test_tc_lib_130_register_existing_no_subdirs_stays_at_the_top_level(library, cli):
+    """LIB-130: --no-subdirs leaves the repository's sub-folders alone."""
+    from galileo.commands import register_existing
+    from galileo.library.models import fitsFile
+
+    _repo_with_existing_files(library)
+    assert cli.run(register_existing, "--no-subdirs", "--log-file", str(cli.logs / "r.log")) == 0
+    names = {Path(r.fitsFileName).name for r in fitsFile.select()}
+    assert "light_0.fits" in names and "light_old.fits" not in names
+
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+def test_tc_lib_130_register_existing_can_be_cancelled_from_the_progress_callback(library):
+    """LIB-130: a progress callback that returns False stops the scan, as the Regenerate dialog's Cancel does."""
+    from galileo.library.core import fitsProcessing
+
+    write_light_frames(library.repo, count=3)
+    seen = []
+    fitsProcessing().registerExistingFiles(progress_callback=lambda current, total, name: seen.append(name) or False)
+    assert len(seen) <= 2, "scanning stopped at the first refusal (once for masters, once for images)"
 
 
 @pytest.mark.requirement("TC-LIB-130")

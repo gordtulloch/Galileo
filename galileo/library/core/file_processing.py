@@ -75,6 +75,7 @@ class FileProcessor:
         moveFiles: bool = False,
         destination_folder: str | None = None,
         precount: bool = False,
+        recursive: bool = True,
     ) -> list[str]:
         """Scan a folder for existing master calibration FITS files and register them.
 
@@ -85,6 +86,7 @@ class FileProcessor:
             progress_callback: Optional callback(current, total, filename) -> bool.
                 If it returns False, scanning stops.
             source_folder: Folder to scan; defaults to configured sourceFolder.
+            recursive: Also scan sub-folders (default); False looks only at *source_folder* itself.
 
         Returns:
             List of registered master IDs.
@@ -115,6 +117,8 @@ class FileProcessor:
 
         current_file = 0
         for root, _dirs, files in os.walk(scan_folder):
+            if not recursive:
+                _dirs[:] = []
             for file in files:
                 file_path = os.path.join(root, file)
                 # Allow externally compressed FITS (e.g. .fits.gz / .fits.zip) by

@@ -131,7 +131,7 @@ is typed `QCoreApplication`; it is now cast to the `QApplication` that code crea
 ## Coverage gaps (57 % overall at review time)
 
 **Closed:** the XISF converter (0 % → 90 %, `tests/test_xisf.py`, 43 tests) and the `galileo.commands` batch utilities (16 % → 58 %
-for the package, `tests/test_commands.py`, 47 tests plus 3 documented `xfail`s). Writing them found six defects, listed below.
+for the package, `tests/test_commands.py`, 50 tests plus 2 documented `xfail`s). Writing them found six defects (five fixed), listed below.
 
 **Defects the new tests found**
 1. **Colour XISF images could not be converted at all.** `XISFGeometry.channel_size()` multiplied *every* dimension, so it returned
@@ -146,9 +146,14 @@ for the package, `tests/test_commands.py`, 47 tests plus 3 documented `xfail`s).
    file is filed by a fresh `RepositoryManager()` built from `library.ini`, so everything still went to the configured repository.
    The facade's folders now forward to the components that do the work, and the file processor passes its folder to the manager.
    Fixed.
-5. **`galileo-register-existing` cannot work.** It calls `fitsProcessing.registerExistingFiles`, which exists neither in Galileo nor
-   in AstroFiler, so outside `--dry-run` it always fails. Not fixed — it is a missing feature (what "register existing masters and
-   calibrated lights" should do is a design decision). Pinned by a strict `xfail`.
+5. ~~**`galileo-register-existing` cannot work.**~~ **Fixed.** It called `fitsProcessing.registerExistingFiles`, which did not exist.
+   The intended behaviour is what the Images screen's **Regenerate** does after emptying the catalog — register the repository's
+   master frames, then every other FITS file, in place. `registerExistingFiles` now does exactly that (without the emptying),
+   returns the summary the command prints (masters found, generated `cal_` lights found, catalog rows added), supports the
+   progress/cancel callback, and honours `--no-subdirs` (a new `recursive` option on `registerMasters`/`registerFitsImages`).
+   `--no-header-verify` is accepted but changes nothing, since registration always reads headers. The UI's Regenerate still
+   carries its own copy of the two steps (it needs its two-phase progress dialog); folding it onto this method is a possible
+   clean-up. Also worth knowing: the `galileo-sync-repo` command does *not* register masters, whereas Regenerate does.
 6. **"Only duplicates" runs report success.** `load_repo` and `sync_repo` are written for a `(files, duplicate_count)` return, but
    `registerFitsImages` returns a plain list, so the "No new files … N duplicates skipped" branch and its exit code 1 are
    unreachable. Not fixed (the catalog is correct — duplicates are not re-added; only the exit code is wrong). Pinned by two strict `xfail`s.
@@ -164,5 +169,5 @@ those services (the commands' own argument handling, routing and exit codes are 
 2. F5 (`safety.py` blocking call) and F6 (dropped task).
 3. F9 (the two `app.py` errors), F4 (SFTP error visibility), F7 (`defusedxml`).
 4. F3/F10: bring stale tests in line or `xfail` them so the suite is green and informative.
-5. ~~Tests for the `commands/*` batch utilities and the XISF converter~~ — done (see Coverage gaps); remaining: defects 5 and 6 there.
+5. ~~Tests for the `commands/*` batch utilities and the XISF converter~~ — done (see Coverage gaps); remaining: defect 6 there.
 6. Mechanical ruff/mypy clean-up (F8, F12–F14).

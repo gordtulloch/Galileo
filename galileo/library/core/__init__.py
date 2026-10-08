@@ -94,6 +94,7 @@ class fitsProcessing:
         moveFiles: bool = False,
         destination_folder: str | None = None,
         precount: bool = False,
+        recursive: bool = True,
     ):
         """Scan for existing master FITS files and register them in the Masters table."""
         return self.file_processor.registerMasters(
@@ -102,10 +103,67 @@ class fitsProcessing:
             moveFiles=moveFiles,
             destination_folder=destination_folder,
             precount=precount,
+            recursive=recursive,
         )
 
-    def registerFitsImages(self, moveFiles=True, progress_callback=None, source_folder=None):
-        """Register multiple FITS images from source folder."""
+    def registerExistingFiles(self, progress_callback=None, scan_subdirectories=True, verify_headers=True) -> dict:
+        """Catalog what is already in the repository folder, where it is: master calibration frames first, then every
+        other FITS file. Nothing is moved, renamed or cleared.
+
+        This is the registration the Images screen's Regenerate button performs after it has emptied the catalog
+        (and what ``galileo-register-existing`` runs), minus the emptying — so it can also be pointed at a catalog that
+        is merely out of date. Files already catalogued are recognised by content hash and not added twice.
+
+        Args:
+            progress_callback: ``callback(current, total, filename) -> bool``; returning False stops the scan.
+            scan_subdirectories: Walk the repository's sub-folders too (default).
+            verify_headers: Accepted for command-line compatibility. Registration always reads each file's headers
+                (that is how it is catalogued), so there is no cheaper mode to switch to.
+
+        Returns:
+            ``{"summary": {"total_files_processed", "master_frames": {"found"}, "calibrated_lights": {"found"},
+            "database_changes"}, "errors": [...]}``. ``database_changes`` is the net number of catalog rows added.
+        """
+        from galileo.library.models import Masters, fitsFile
+
+        def row_count() -> int:
+            return fitsFile.select().count() + Masters.select().count()
+
+        errors: list[str] = []
+        before = row_count()
+        folder = self.repoFolder
+
+        master_ids: list[str] = []
+        try:
+            master_ids = self.registerMasters(
+                progress_callback=progress_callback, source_folder=folder, precount=False,
+                recursive=scan_subdirectories,
+            ) or []
+        except Exception as exc:
+            errors.append(f"Registering master frames failed: {exc}")
+
+        registered: list[str] = []
+        try:
+            registered = self.registerFitsImages(
+                moveFiles=False, progress_callback=progress_callback, source_folder=folder,
+                recursive=scan_subdirectories,
+            ) or []
+        except Exception as exc:
+            errors.append(f"Registering images failed: {exc}")
+
+        calibrated = [p for p in registered if os.path.basename(str(p)).lower().startswith("cal_")]
+        return {
+            "summary": {
+                "total_files_processed": len(master_ids) + len(registered),
+                "master_frames": {"found": len(master_ids)},
+                "calibrated_lights": {"found": len(calibrated)},
+                "database_changes": row_count() - before,
+            },
+            "errors": errors,
+        }
+
+    def registerFitsImages(self, moveFiles=True, progress_callback=None, source_folder=None, recursive=True):
+        """Register multiple FITS images from source folder (sub-folders too unless *recursive* is False)."""
         import os
         processed_files = []
 
@@ -130,6 +188,8 @@ class fitsProcessing:
                 return False
 
         for root, dirs, files in os.walk(scan_folder):
+            if not recursive:
+                dirs[:] = []
             for file in files:
                 # Use the comprehensive FITS file detection that includes compressed files
                 file_path = os.path.join(root, file)
@@ -140,6 +200,8 @@ class fitsProcessing:
 
         current_file = 0
         for root, dirs, files in os.walk(scan_folder):
+            if not recursive:
+                dirs[:] = []
             for file in files:
                 # Use the comprehensive FITS file detection that includes compressed files
                 file_path = os.path.join(root, file)
