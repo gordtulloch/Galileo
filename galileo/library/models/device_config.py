@@ -53,6 +53,22 @@ class DeviceConfigRecord(BaseModel):
     # Full-well capacity in electrons, set by hand on the Camera page. Feeds
     # the Flat Assistant's target-ADU calculation (CAL-010).
     max_well_depth = pw.IntegerField(null=True)
+    # Flat-panel-only: "Flat Panel" (motorized cover + light, Alnitak
+    # Flip-Flat style) or "Observatory Panel" (a fixed, light-only panel with
+    # no motorized cover) -- the same two names galileo.calibration's
+    # FLAT_METHODS uses for these sources on the Flats Assistant. Set by hand
+    # on the Flat Panel page; toggles whether its Park/Unpark controls are
+    # shown (EQP-FP-010).
+    panel_type = pw.TextField(default="Flat Panel")
+    # Mount-only: the Mount page's "Meridian Flip" and "Limits" sections (EQP-MNT-060/070).
+    flip_enabled = pw.BooleanField(default=False)
+    flip_ha_deg = pw.FloatField(default=5.0)
+    alt_limits_enabled = pw.BooleanField(default=False)
+    min_alt = pw.FloatField(default=0.0)
+    max_alt = pw.FloatField(default=90.0)
+    alt_tracking_only = pw.BooleanField(default=False)
+    ha_limits_enabled = pw.BooleanField(default=False)
+    max_ha_hours = pw.FloatField(default=2.0)
 
     class Meta:
         table_name = "device_configs"

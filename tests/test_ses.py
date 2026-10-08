@@ -1149,3 +1149,100 @@ async def test_tc_ses_360_edit_remaining_blocks_while_running(adv_ses):
 
     await run_task
     assert new_instr in adv_ses.executed_instructions or new_instr in root.instructions
+
+
+# ---------------------------------------------------------------------------
+# Loop blocks (FOR Filter / FOR Object) and indentation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SES-140")
+@pytest.mark.priority("P2")
+def test_loop_blocks_nest_indent_and_unindent():
+    """FOR Filter / FOR Object own the blocks indented beneath them; indent is
+    only valid under a loop, and a loop moves/indents together with its body."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    region = ui_mod.SessionRegion(name="Loops")
+    loop = ui_mod.ForFilterBlock(filters=["L", "R"])
+    image = ui_mod.ImageBlock()
+    dither = ui_mod.DitherBlock()
+    region.insert_block(loop)
+    region.insert_block(image)           # dropped under a loop -> in its body
+    assert image.indent == 1 and region.body_of(loop) == [image]
+    region.insert_block(dither)          # inherits the body's depth
+    assert dither.indent == 1
+    region.set_indent(dither, 0)         # unindent
+    assert dither.indent == 0 and region.body_of(loop) == [image]
+    region.set_indent(dither, 5)         # clamped to the body block above it
+    assert dither.indent == 1
+    region.set_indent(dither, 0)
+    outer = ui_mod.ForObjectBlock(objects=[{"name": "M31", "ra_deg": 10.68, "dec_deg": 41.27}])
+    region.insert_block(outer, before=loop)
+    region.set_indent(loop, 1)           # loop and body shift together
+    assert (loop.indent, image.indent) == (1, 2)
+    assert "L, R" in loop.display_text and "M31" in outer.display_text
+    region.remove_block(outer)           # body stays, clamped back out
+    assert (loop.indent, image.indent) == (0, 1)
+
+
+@pytest.mark.requirement("TC-SES-140")
+@pytest.mark.priority("P2")
+def test_loop_blocks_in_palette_and_round_trip_indent():
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    assert ui_mod.ForFilterBlock in ui_mod._PALETTE_BLOCK_TYPES
+    assert ui_mod.ForObjectBlock in ui_mod._PALETTE_BLOCK_TYPES
+    loop = ui_mod.ForFilterBlock(filters=["Ha"], indent=0)
+    child = ui_mod.ImageBlock(indent=1)
+    for b in (loop, child):
+        restored = ui_mod._block_from_dict(ui_mod._block_to_dict(b))
+        assert restored == b
+
+
+def test_flat_and_dark_capture_blocks_mirror_imaging_assistants():
+    """Flat Capture carries the Flats Assistant's fields, Dark Capture the Darks
+    Assistant's; both are on the palette and round-trip, and a template saved with
+    the old Flat Capture shape (target_adu) still loads."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    assert ui_mod.DarkCaptureBlock in ui_mod._PALETTE_BLOCK_TYPES
+    flat = ui_mod.FlatCaptureBlock(method="Sky Flats", exposure=0.5, count=5, filter="L",
+                                   adu_method="Median", exposure_increment=0.2)
+    dark = ui_mod.DarkCaptureBlock(filter="Ha", exposures=[5.0, 30.0])
+    for b in (flat, dark):
+        assert ui_mod._block_from_dict(ui_mod._block_to_dict(b)) == b
+    old = ui_mod._block_from_dict({"_type": "FlatCaptureBlock", "count": 3, "target_adu": 30000.0, "indent": 0})
+    assert old.count == 3 and old.filter == "All"
+
+
+def test_for_object_dialog_search_adds_and_x_removes(qapp, monkeypatch):
+    """FOR Object's dialog: typing searches the catalog, picking a result adds
+    it to the list (once), and its ✕ removes it."""
+    from PySide6.QtWidgets import QDialog, QLineEdit, QListWidget, QToolButton
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
+    block = ui_mod.ForObjectBlock()
+    region = ui_mod.SessionRegion(name="T")
+    region.insert_block(block)
+
+    def fake_exec(self):
+        search = self.findChild(QLineEdit, "search_edit")
+        results = self.findChild(QListWidget, "results_list")
+        objects = self.findChild(QListWidget, "objects_list")
+        for query in ("M31", "M42", "M31"):
+            search.setText(query)
+            assert results.count() > 0
+            results.itemClicked.emit(results.item(0))
+        assert objects.count() == 2  # duplicate M31 ignored
+        objects.itemWidget(objects.item(0)).findChild(QToolButton).click()
+        assert objects.count() == 1
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    assert dlg_mod.open_block_parameter_dialog(None, block, region, window=None) is True
+    assert len(block.objects) == 1 and {"name", "ra_deg", "dec_deg"} <= block.objects[0].keys()
+
+
+def test_palette_omits_dither_and_meridian_flip_but_old_sessions_still_load():
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    assert ui_mod.DitherBlock not in ui_mod._PALETTE_BLOCK_TYPES
+    assert ui_mod.MeridianFlipBlock not in ui_mod._PALETTE_BLOCK_TYPES
+    for cls in (ui_mod.DitherBlock, ui_mod.MeridianFlipBlock):
+        assert isinstance(ui_mod._block_from_dict(ui_mod._block_to_dict(cls())), cls)

@@ -437,17 +437,19 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
 @pytest.mark.priority("P2")
 def test_options_has_a_settings_placeholder_for_each_primary_section(window):
     """Options opens onto one settings page per primary sidebar section, in the same order,
-    each a titled placeholder until its real settings are built (Library's are real: see test_lib.py)."""
+    each a titled placeholder until its real settings are built (Library's and Plugins' are
+    real: see test_lib.py / test_plug.py). Plugins is an Options-only entry appended after
+    the primary sections — it isn't itself a primary sidebar section."""
     from PySide6 import QtWidgets
     from galileo.ui.app_window import OPTIONS_ITEMS, PRIMARY_SECTIONS
-    # one page per primary section, in order, then Plugins (Options > Plugins manages installed plugins)
-    assert [i[:2] for i in OPTIONS_ITEMS] == [s[:2] for s in PRIMARY_SECTIONS] + [("plugins", "Plugins")]
+    assert [i[:2] for i in OPTIONS_ITEMS[:len(PRIMARY_SECTIONS)]] == [s[:2] for s in PRIMARY_SECTIONS]
+    assert OPTIONS_ITEMS[len(PRIMARY_SECTIONS):] == [("plugins", "Plugins", "plugins")]
 
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert [i[1] for i in OPTIONS_ITEMS] in menus
+    assert [s[1] for s in PRIMARY_SECTIONS] + ["Plugins"] in menus
 
     titles = {w.text() for w in window._window.findChildren(QtWidgets.QLabel, "PageTitle")}
     for section_id, label, _icon in PRIMARY_SECTIONS:

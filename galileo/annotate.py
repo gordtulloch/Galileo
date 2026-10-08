@@ -149,10 +149,13 @@ def find_annotations(solve: SolveResult | None, width: int, height: int,
     ]
 
 
+_LABEL_FONT_SIZE = 42   # 200% of the original 14px — small labels were hard to read on the preview
+
+
 def _label_font():
     from PIL import ImageFont
     try:
-        return ImageFont.load_default(size=14)
+        return ImageFont.load_default(size=_LABEL_FONT_SIZE)
     except TypeError:      # Pillow < 10.1 has no `size` argument to the built-in bitmap font
         return ImageFont.load_default()
 
@@ -173,15 +176,18 @@ def render_annotations(preview, objects: list[Annotation]):
     draw = ImageDraw.Draw(img)
     font = _label_font()
     width, _height = img.size
+    sin45 = math.sqrt(2) / 2.0   # leader runs up-and-right at 45°, not straight up
     for obj in objects:
         x, y, r = obj.x, obj.y, max(obj.radius, MIN_RADIUS_PX)
         draw.ellipse((x - r, y - r, x + r, y + r), outline=_OVERLAY_COLOR, width=2)
-        line_y = y - r - r * 0.5
-        if (y - r) - line_y < 15:
-            line_y = y - r - 15
-        draw.line((x, y - r, x, line_y), fill=_OVERLAY_COLOR, width=2)
-        text_y = max(0.0, line_y - 16)
-        text_x = min(max(0.0, x - len(obj.name) * 3.5), max(0.0, width - len(obj.name) * 7))
+        min_leader = _LABEL_FONT_SIZE * (15 / 14)
+        leader_len = max(r * 0.5, min_leader)
+        start_x, start_y = x + r * sin45, y - r * sin45
+        end_x, end_y = start_x + leader_len * sin45, start_y - leader_len * sin45
+        draw.line((start_x, start_y, end_x, end_y), fill=_OVERLAY_COLOR, width=2)
+        text_y = max(0.0, end_y - _LABEL_FONT_SIZE * (16 / 14) / 2.0)
+        max_char_w = _LABEL_FONT_SIZE * (7 / 14)
+        text_x = min(max(0.0, end_x + 2.0), max(0.0, width - len(obj.name) * max_char_w))
         draw.text((text_x, text_y), obj.name, font=font, fill=_OVERLAY_COLOR)
     return np.array(img.convert("RGB"))
 

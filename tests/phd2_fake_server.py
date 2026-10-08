@@ -48,11 +48,29 @@ class FakePhd2Server:
                 except OSError:
                     pass
 
+    def wait_for_client(self, timeout: float = 3.0) -> bool:
+        """Wait until the accept thread has registered a client. ``Phd2Adapter.open`` returns as soon as
+        the TCP handshake completes, which can be before this server's thread has run, and a
+        ``drop_clients`` in that gap would hang up on nobody."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self._clients:
+                    return True
+            time.sleep(0.01)
+        return False
+
     def drop_clients(self) -> None:
         """Hang up on every client, as if PHD2 had quit."""
         with self._lock:
             clients, self._clients = self._clients, []
         for client in clients:
+            # shutdown() first: on Linux, close() alone does not hang up while the server's own thread
+            # is blocked reading this socket, so the client would never see the disconnect.
+            try:
+                client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             client.close()
 
     def wait_for_request(self, method: str, timeout: float = 3.0) -> bool:

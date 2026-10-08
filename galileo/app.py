@@ -27,6 +27,13 @@ def main() -> None:
     import multiprocessing
     multiprocessing.freeze_support()
 
+    # `Galileo --selftest [REPORT_FILE]`: headless check of an installed/frozen build (CI runs it).
+    if "--selftest" in sys.argv:
+        from galileo.selftest import run
+        idx = sys.argv.index("--selftest")
+        report = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
+        sys.exit(run(report))
+
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QIcon
@@ -58,6 +65,9 @@ def main() -> None:
 
     if splash is not None:
         splash.finish(getattr(window, "_window", None))
+
+    _schedule_registration_ping()
+    _schedule_library_preload()
 
     exit_code = app.exec()
     # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
@@ -93,7 +103,7 @@ def _show_splash(app):
     font.setPointSize(16)
     splash.setFont(font)
     splash.showMessage(
-        FULL_NOTICE,
+        f"v{_version()}\n{FULL_NOTICE}",
         Qt.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
         QColor("white"),
     )
@@ -105,6 +115,38 @@ def _show_splash(app):
 def _version() -> str:
     from galileo import __version__
     return __version__
+
+
+def _schedule_registration_ping() -> None:
+    """Fire the usage-tracking registration ping once the event loop is spinning (never blocks startup)."""
+    try:
+        from PySide6.QtCore import QTimer
+        from galileo.registration import start_startup_ping
+        QTimer.singleShot(0, start_startup_ping)
+    except Exception:
+        logger.debug("Could not schedule the registration ping", exc_info=True)
+
+
+def _schedule_library_preload() -> None:
+    """Import the Library's heavy modules (scipy, astropy) on a background thread once the window is up.
+
+    The Library screens are built the first time the section is opened, on the UI thread; most of that
+    time is these imports, not the catalog, so doing them early removes the pause on first open.
+    """
+    def _preload() -> None:
+        try:
+            import galileo.library.core  # noqa: F401
+            import galileo.ui.library.pages  # noqa: F401
+        except Exception:
+            logger.debug("Library preload failed", exc_info=True)
+
+    try:
+        import threading
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(
+            500, lambda: threading.Thread(target=_preload, name="library-preload", daemon=True).start())
+    except Exception:
+        logger.debug("Could not schedule the Library preload", exc_info=True)
 
 
 if __name__ == "__main__":

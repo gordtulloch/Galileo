@@ -22,9 +22,9 @@ from typing import Any
 
 from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
-from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
-from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
+from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, DeviceTimeoutError, MountParkedError
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ def get_adapter_class(category: DeviceCategory) -> type[DeviceBackend]:
         DeviceCategory.SAFETY_MONITOR: IndiSafetyMonitorAdapter,
         DeviceCategory.GUIDER: IndiGuiderAdapter,
         DeviceCategory.SWITCH: IndiSwitchAdapter,
+        DeviceCategory.AUX: IndiAuxAdapter,
     }
     cls = _MAP.get(category)
     if cls is None:
@@ -330,9 +331,23 @@ class IndiAdapter(DeviceBackend):
         finally:
             ic.release_client(client)
 
-    async def _wait_not_busy(self, prop: str, timeout: float, what: str) -> None:
-        """Wait for a commanded operation (property state Busy) to finish."""
+    _ACK_GRACE_S = 2.0   # how long to wait for a driver to acknowledge a command before assuming it finished
+
+    async def _wait_not_busy(self, prop: str, timeout: float, what: str, after_seq: int | None = None) -> None:
+        """Wait for a commanded operation (property state Busy) to finish.
+
+        Pass *after_seq* (``blob_seq`` taken just before the command was sent) so the wait first sees the
+        driver's reply. Without it, a state still reading Ok from before the command (its Busy update
+        not yet received) makes this return at once, before the operation has even started."""
         client = self._c()
+        if after_seq is not None:
+            try:
+                await asyncio.to_thread(
+                    client.wait_for, lambda: client.blob_seq(self.device_name, prop) > after_seq,
+                    min(timeout, self._ACK_GRACE_S), what,
+                )
+            except DeviceTimeoutError:
+                pass  # a driver that never replies: fall through to the plain state check
         await asyncio.to_thread(
             client.wait_for,
             lambda: (p := client.get_property(self.device_name, prop)) is None or p.state != ic.BUSY,
@@ -600,7 +615,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         self._refuse_if_parked("slew_to_coordinates")
-        get_slew_guard().check_radec(ra, dec)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_radec(ra, dec)
         self._log_interaction("slew_to_coordinates", ra=ra, dec=dec)
         self._select("ON_COORD_SET", "TRACK")
         self._set_num("EQUATORIAL_EOD_COORD", {"RA": ra / 15.0, "DEC": dec})
@@ -608,7 +623,7 @@ class IndiMountAdapter(IndiAdapter):
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         self._refuse_if_parked("slew_to_altaz")
-        get_slew_guard().check_altaz(alt, az)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_altaz(alt, az)
         self._log_interaction("slew_to_altaz", alt=alt, az=az)
         self._set_num("HORIZONTAL_COORD", {"ALT": alt, "AZ": az})
         self.altitude, self.azimuth = alt, az
@@ -698,6 +713,8 @@ class IndiMountAdapter(IndiAdapter):
             "tracking": self._sw("TELESCOPE_TRACK_STATE", "TRACK_ON"),
             "slewing": (self._state("EQUATORIAL_EOD_COORD") == ic.BUSY) if self._has("EQUATORIAL_EOD_COORD") else None,
             "at_park": self._sw("TELESCOPE_PARK", "PARK"),
+            "tracking_rate": next((n for n, el in self._TRACK_MODES.items() if self._sw("TELESCOPE_TRACK_MODE", el)),
+                                  "Custom" if self._sw("TELESCOPE_TRACK_MODE", "TRACK_CUSTOM") else None),
         }
         if status["right_ascension"] is not None:
             self.ra = status["right_ascension"] * 15.0
@@ -743,9 +760,10 @@ class IndiFWAdapter(IndiAdapter):
 
     async def move_to(self, index: int) -> None:
         self._log_interaction("move_to", index=index)
+        seq0 = self._c().blob_seq(self.device_name, "FILTER_SLOT")
         self._set_num("FILTER_SLOT", {"FILTER_SLOT_VALUE": index + 1})
         self.position = index
-        await self._wait_not_busy("FILTER_SLOT", 60.0, "filter change")
+        await self._wait_not_busy("FILTER_SLOT", 60.0, "filter change", after_seq=seq0)
 
     async def get_status(self) -> dict:
         self._refresh()
@@ -918,6 +936,7 @@ class IndiFlatPanelAdapter(IndiAdapter):
         super().__init__(DeviceCategory.FLAT_PANEL, host, port, **kwargs)
         self.cover_state = "Closed"
         self.brightness = 0
+        self.is_light_on = False
 
     async def open_cover(self) -> None:
         self._log_interaction("open_cover")
@@ -929,12 +948,43 @@ class IndiFlatPanelAdapter(IndiAdapter):
         self._set_sw("CAP_PARK", {"PARK": True, "UNPARK": False})
         self.cover_state = "Closed"
 
+    async def light_on(self) -> None:
+        self._log_interaction("light_on")
+        self._set_sw("FLAT_LIGHT_CONTROL", {"FLAT_LIGHT_ON": True, "FLAT_LIGHT_OFF": False})
+        self.is_light_on = True
+
+    async def light_off(self) -> None:
+        self._log_interaction("light_off")
+        self._set_sw("FLAT_LIGHT_CONTROL", {"FLAT_LIGHT_ON": False, "FLAT_LIGHT_OFF": True})
+        self.is_light_on = False
+
     async def set_brightness(self, level: int) -> None:
         self._log_interaction("set_brightness", level=level)
-        if self._has("FLAT_LIGHT_CONTROL"):
-            self._set_sw("FLAT_LIGHT_CONTROL", {"FLAT_LIGHT_ON": level > 0, "FLAT_LIGHT_OFF": level <= 0})
         self._set_num("FLAT_LIGHT_INTENSITY", {"FLAT_LIGHT_INTENSITY_VALUE": level})
         self.brightness = level
+
+    async def get_status(self) -> dict:
+        """Live status from ``CAP_PARK`` (cover), ``FLAT_LIGHT_CONTROL``
+        (light on/off) and ``FLAT_LIGHT_INTENSITY`` (brightness) — each read
+        defensively, since a dust-cap-only or light-only panel won't have
+        every property."""
+        parked = self._sw("CAP_PARK", "PARK")
+        if parked is not None:
+            self.cover_state = "Closed" if parked else "Open"
+        light_on = self._sw("FLAT_LIGHT_CONTROL", "FLAT_LIGHT_ON")
+        if light_on is not None:
+            self.is_light_on = light_on
+        brightness = self._num("FLAT_LIGHT_INTENSITY", "FLAT_LIGHT_INTENSITY_VALUE")
+        if brightness is not None:
+            self.brightness = brightness
+        return {
+            **self._driver_info(),
+            "cover_state": self.cover_state,
+            "is_light_on": self.is_light_on,
+            "brightness": self.brightness,
+            "cover_supported": self._has("CAP_PARK"),
+            "light_supported": self._has("FLAT_LIGHT_CONTROL"),
+        }
 
 
 class IndiWeatherAdapter(IndiAdapter):
@@ -945,14 +995,29 @@ class IndiWeatherAdapter(IndiAdapter):
         super().__init__(DeviceCategory.WEATHER_STATION, host, port, **kwargs)
         self.cloud_cover = 0.0
         self.wind_speed = 0.0
+        self.wind_gust = 0.0
         self.humidity = 50.0
         self.temperature = 15.0
+        self.dew_point = 0.0
+        self.pressure = 1013.0
         self.rain_rate = 0.0
+        self.rain = 0.0
         self.is_safe = True
 
     async def poll(self) -> None:
-        for attr, element in (("temperature", "WEATHER_TEMPERATURE"), ("humidity", "WEATHER_HUMIDITY"),
-                              ("wind_speed", "WEATHER_WIND_SPEED"), ("rain_rate", "WEATHER_RAIN_HOUR")):
+        # Element names cover both reference drivers EQP-WX-010/EQP-WX-020
+        # target: indi-argentweather's ADS-WS1 (temperature, humidity,
+        # dewpoint, barometer, wind_speed/gust, rain_hour) and indi-hydreon's
+        # RG-11 (WEATHER_RAIN, a 0/1 "raining now" flag, distinct from
+        # WEATHER_RAIN_HOUR's running total) — a driver missing an element
+        # simply leaves that attribute at its last value (``_num`` returns
+        # ``None`` for one it doesn't define).
+        for attr, element in (
+            ("temperature", "WEATHER_TEMPERATURE"), ("humidity", "WEATHER_HUMIDITY"),
+            ("dew_point", "WEATHER_DEWPOINT"), ("pressure", "WEATHER_BAROMETER"),
+            ("wind_speed", "WEATHER_WIND_SPEED"), ("wind_gust", "WEATHER_WIND_GUST"),
+            ("rain_rate", "WEATHER_RAIN_HOUR"), ("rain", "WEATHER_RAIN"),
+        ):
             value = self._num("WEATHER_PARAMETERS", element)
             if value is not None:
                 setattr(self, attr, value)
@@ -988,6 +1053,35 @@ class IndiDomeAdapter(IndiAdapter):
         self._set_sw("DOME_PARK", {"PARK": True, "UNPARK": False})
         self.is_at_park = True
 
+    async def unpark(self) -> None:
+        self._log_interaction("unpark")
+        self._set_sw("DOME_PARK", {"PARK": False, "UNPARK": True})
+        self.is_at_park = False
+
+    async def abort_slew(self) -> None:
+        self._log_interaction("abort_slew")
+        self._set_sw("DOME_ABORT_MOTION", {"ABORT": True})
+
+    async def get_status(self) -> dict:
+        """Live status from ``DOME_SHUTTER``, ``ABS_DOME_POSITION`` and
+        ``DOME_PARK`` — each read defensively, since a shutter-less or
+        non-absolute-positioning dome won't define every property."""
+        shutter_open = self._sw("DOME_SHUTTER", "SHUTTER_OPEN")
+        if shutter_open is not None:
+            self.shutter_state = "Open" if shutter_open else "Closed"
+        azimuth = self._num("ABS_DOME_POSITION", "DOME_ABSOLUTE_POSITION")
+        if azimuth is not None:
+            self.azimuth = azimuth
+        parked = self._sw("DOME_PARK", "PARK")
+        if parked is not None:
+            self.is_at_park = parked
+        return {
+            **self._driver_info(),
+            "shutter_state": self.shutter_state,
+            "azimuth": self.azimuth,
+            "is_at_park": self.is_at_park,
+        }
+
 
 class IndiSafetyMonitorAdapter(IndiAdapter):
     """INDI defines no safety-monitor device interface, so there is nothing
@@ -1018,3 +1112,69 @@ class IndiSwitchAdapter(IndiAdapter):
         for sw in self.switches:
             if sw.name == name:
                 sw.state = value
+
+
+class IndiAuxAdapter(IndiAdapter):
+    """Generic control-panel adapter for a miscellaneous INDI driver
+    (EQP-AUX-010). Unlike every other category adapter, this one doesn't
+    translate a fixed set of standard properties into typed port methods —
+    it exposes whatever properties the connected driver defines, grouped
+    exactly as the driver groups them (its own INDI tabs), for
+    ``AuxController``/the Equipment > Aux page to render generically."""
+
+    def __init__(self, host: str = "localhost", port: int = 7624, **kwargs) -> None:
+        super().__init__(DeviceCategory.AUX, host, port, **kwargs)
+
+    async def list_available_devices(self, category: DeviceCategory) -> list[str]:
+        """Every device the server currently has, unfiltered by
+        ``DRIVER_INTERFACE`` — Aux is the deliberate catch-all for a driver
+        that doesn't fit one of the other categories' guided pages, or that
+        the user wants to drive directly rather than through one."""
+        return await asyncio.to_thread(self._list_all_devices_sync)
+
+    def _list_all_devices_sync(self) -> list[str]:
+        client = ic.acquire_client(self.host, self.port)
+        try:
+            return client.device_names()
+        finally:
+            ic.release_client(client)
+
+    async def get_property_groups(self) -> list[AuxPropertyGroup]:
+        return await asyncio.to_thread(self._get_property_groups_sync)
+
+    def _get_property_groups_sync(self) -> list[AuxPropertyGroup]:
+        client = self._c()
+        groups: dict[str, AuxPropertyGroup] = {}
+        for prop in client.device_properties(self.device_name):
+            if prop.kind == "blob":
+                continue  # image/data payloads aren't a control-panel field
+            group_name = prop.group or "Main Control"
+            group = groups.setdefault(group_name, AuxPropertyGroup(name=group_name))
+            group.properties.append(AuxProperty(
+                name=prop.name, label=prop.label or prop.name, kind=prop.kind,
+                group=group_name, perm=prop.perm, rule=prop.rule, state=prop.state,
+                elements=[
+                    AuxElement(name=el.name, label=el.label or el.name, value=el.value,
+                               min=el.min, max=el.max, step=el.step)
+                    for el in prop.elements.values()
+                ],
+            ))
+        return list(groups.values())
+
+    async def write_property(self, name: str, values: dict[str, Any]) -> None:
+        self._log_interaction("write_property", name=name, values=values)
+        await asyncio.to_thread(self._write_property_sync, name, values)
+
+    def _write_property_sync(self, name: str, values: dict[str, Any]) -> None:
+        client = self._c()
+        prop = client.get_property(self.device_name, name)
+        if prop is None:
+            raise DevicePropertyError(f"INDI property {name!r} is not defined on {self.device_name!r}.")
+        if prop.kind == "number":
+            client.send_number(self.device_name, name, {k: float(v) for k, v in values.items()})
+        elif prop.kind == "switch":
+            client.send_switch(self.device_name, name, {k: bool(v) for k, v in values.items()})
+        elif prop.kind == "text":
+            client.send_text(self.device_name, name, {k: str(v) for k, v in values.items()})
+        else:
+            raise DevicePropertyError(f"INDI property {name!r} ({prop.kind}) is not writable from the Aux panel.")

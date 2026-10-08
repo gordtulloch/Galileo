@@ -33,6 +33,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -67,6 +69,7 @@ from galileo.platesolve import (
     mount_frame_to_j2000,
     nearest_object_name,
 )
+from galileo.polaralign import PolarAlignProgress, PolarAlignSettings, PolarAlignWorkflow, format_angle
 from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
 from galileo.ui.guider import _PlotBase
 
@@ -77,6 +80,8 @@ _LOG_REFRESH_MS = 1000
 _MAX_PREVIEW_PX = 2400          # larger frames are shown subsampled; the solver always gets the full frame
 _MOUNT_POLL_MS = 3000
 _ARCSEC_PER_RAD_UM_MM = 206.265  # plate scale in ″/px = 206.265 × pixel size (µm) / focal length (mm)
+_POLAR_GOOD_ARCSEC = 60.0        # polar error readout: green below this,
+_POLAR_FAIR_ARCSEC = 300.0       # amber below this, red above
 
 
 @dataclass
@@ -238,6 +243,7 @@ class SolvePage(QWidget):
     preview_ready = Signal(object)
     mount_position = Signal(object, object)
     run_finished = Signal(object)
+    polar_progress = Signal(object, object)       # pier key, PolarAlignProgress
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -270,6 +276,7 @@ class SolvePage(QWidget):
         self.preview_ready.connect(self._on_preview_ready)
         self.mount_position.connect(self._on_mount_position)
         self.run_finished.connect(self._on_run_finished)
+        self.polar_progress.connect(self._on_polar_progress)
 
         self._mount_timer = QTimer(self)
         self._mount_timer.timeout.connect(self.poll_mount)
@@ -483,14 +490,64 @@ class SolvePage(QWidget):
         layout.addWidget(splitter, 1)
         tabs.addTab(results, "Solution Results")
 
-        polar = QWidget()
-        polar_layout = QVBoxLayout(polar)
-        message = QLabel("Polar alignment is not implemented yet.")
-        message.setObjectName("PageSubtitle")
-        polar_layout.addWidget(message)
-        polar_layout.addStretch(1)
+        polar = self._build_polar_tab()
         tabs.addTab(polar, "Polar Alignment")
         return tabs
+
+    def _build_polar_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(6, 6, 6, 6)
+        intro = QLabel(
+            "Point the mount's polar axis roughly at the pole first, then start. Galileo solves three frames while "
+            "turning the mount in RA to find where the axis really points, then keeps solving so the error updates "
+            "as you turn the altitude and azimuth adjusters. The mount must be level, and should not be near the "
+            "meridian, where it would flip.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        controls = QHBoxLayout()
+        self.polar_start_btn = QPushButton("Start Polar Alignment")
+        self.polar_start_btn.setObjectName("AccentButton")
+        self.polar_start_btn.setToolTip("Uses the exposure under Plate Solve Capture Options. Stop ends it.")
+        self.polar_start_btn.clicked.connect(self.start_polar_alignment)
+        controls.addWidget(self.polar_start_btn)
+        controls.addWidget(QLabel("Rotate:"))
+        self.polar_step_spin = QSpinBox()
+        self.polar_step_spin.setRange(10, 90)
+        self.polar_step_spin.setValue(30)
+        self.polar_step_spin.setSuffix("°")
+        self.polar_step_spin.setToolTip("How far the mount turns in RA between the three measuring frames.")
+        controls.addWidget(self.polar_step_spin)
+        self.polar_direction = QComboBox()
+        self.polar_direction.addItem("East", "east")
+        self.polar_direction.addItem("West", "west")
+        self.polar_direction.setToolTip("Which way the RA axis turns. Pick the side with clear sky and room before a mount limit.")
+        controls.addWidget(self.polar_direction)
+        self.polar_refraction = QCheckBox("Refraction")
+        self.polar_refraction.setChecked(True)
+        self.polar_refraction.setToolTip(
+            "Allow for the atmosphere raising stars, so the mount is aimed where it must point to see them. The "
+            "target stays the geometric pole.")
+        controls.addWidget(self.polar_refraction)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.polar_status = QLabel("Not started.")
+        self.polar_status.setWordWrap(True)
+        layout.addWidget(self.polar_status)
+        self.polar_total = QLabel("—")
+        font = self.polar_total.font()
+        font.setPointSize(font.pointSize() + 8)
+        font.setBold(True)
+        self.polar_total.setFont(font)
+        layout.addWidget(self.polar_total)
+        self.polar_altitude = QLabel("")
+        self.polar_azimuth = QLabel("")
+        layout.addWidget(self.polar_altitude)
+        layout.addWidget(self.polar_azimuth)
+        layout.addStretch(1)
+        return tab
 
     def _build_log_pane(self) -> QWidget:
         """The live log tail, the full width of the page. It is refreshed by a timer that only runs
@@ -838,6 +895,7 @@ class SolvePage(QWidget):
             return
         self.capture_btn.setEnabled(not running)
         self.load_btn.setEnabled(not running)
+        self.polar_start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.busy.setVisible(running)
 
@@ -849,7 +907,7 @@ class SolvePage(QWidget):
         log, so this is all it takes for a line to appear there."""
         logger.info("%s", message)
 
-    def _begin(self, run, use_current_object: bool = False) -> None:
+    def _begin(self, run, use_current_object: bool = False, make_workflow=None) -> None:
         # Re-entrancy is enforced by capture_and_solve()/load_and_slew() (the
         # only production entry points), not here — matching the original
         # single-Pier code, where _begin() itself never checked _running either.
@@ -857,13 +915,13 @@ class SolvePage(QWidget):
         solver = self.make_solver()
         if solver is None:
             return
-        workflow = self._workflows[key] = SolveWorkflow(
+        workflow = self._workflows[key] = (make_workflow or SolveWorkflow)(
             solver, camera=self._camera(), mount=self._mount(), log=self._post,
             frame_metadata=self._frame_metadata())
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
             workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)
-        self._run_target_active[key] = True
+        self._run_target_active[key] = make_workflow is None      # a polar-alignment run has no target to measure against
         self._set_running(True, key)
 
         def work() -> None:
@@ -896,6 +954,69 @@ class SolvePage(QWidget):
         if not path:
             return
         self._begin(lambda workflow: workflow.solve_file(path, slew=True))
+
+    def _site(self) -> tuple[float, float] | None:
+        """``(latitude, longitude)`` of the Pier's Observatory, or ``None`` if it has none set. (Read from the record, not
+        the mount: a device call here would block the UI thread.)"""
+        try:
+            observatory = self._window._current_pier.observatory
+            if observatory.latitude is not None and observatory.longitude is not None:
+                return float(observatory.latitude), float(observatory.longitude)
+        except Exception:
+            logger.debug("Could not read the Observatory's location", exc_info=True)
+        return None
+
+    def start_polar_alignment(self) -> None:
+        key = self._pier_key()
+        if self._running.get(key):
+            return
+        if self._camera() is None:
+            QMessageBox.information(self._window._window, "No camera connected",
+                                    self._window.camera_not_connected_message())
+            return
+        if self._mount() is None:
+            QMessageBox.information(self._window._window, "No mount connected",
+                                    "Polar alignment turns the mount to take its measurements, so it needs a connected mount.")
+            return
+        site = self._site()
+        if site is None:
+            QMessageBox.information(
+                self._window._window, "Site location unknown",
+                "Polar alignment needs the site's latitude and longitude. Set them on the Observatory.")
+            return
+        settings = PolarAlignSettings(
+            exposure_s=self.exposure_spin.value(), settle_s=self.settle_spin.value() / 1000.0,
+            scale_hint_arcsec_px=self._scale_hint(),
+            step_deg=float(self.polar_step_spin.value()), direction=self.polar_direction.currentData(),
+            refraction=self.polar_refraction.isChecked())
+
+        def make(solver, **kwargs):
+            return PolarAlignWorkflow(solver, latitude=site[0], longitude=site[1],
+                                      on_progress=lambda progress: self._emit("polar_progress", key, progress), **kwargs)
+
+        self.polar_status.setText("Starting…")
+        self.polar_total.setText("—")
+        self.polar_total.setStyleSheet("")
+        self.polar_altitude.clear()
+        self.polar_azimuth.clear()
+        self._begin(lambda workflow: workflow.align(settings), make_workflow=make)
+
+    def _on_polar_progress(self, key, progress: PolarAlignProgress) -> None:
+        if key != self._pier_key():
+            return
+        if progress.phase == "measuring" and progress.step:
+            self.polar_status.setText(f"Measuring ({progress.step} of {progress.steps}): {progress.message}")
+        else:
+            self.polar_status.setText(progress.message)
+        error = progress.error
+        if error is None:
+            return
+        self.polar_total.setText(format_angle(error.total_arcsec))
+        color = ("#31c24a" if error.total_arcsec < _POLAR_GOOD_ARCSEC
+                 else "#e0c030" if error.total_arcsec < _POLAR_FAIR_ARCSEC else "#d63a3a")
+        self.polar_total.setStyleSheet(f"color: {color};")
+        self.polar_altitude.setText(error.altitude_advice())
+        self.polar_azimuth.setText(error.azimuth_advice())
 
     def stop(self) -> None:
         # Stops whichever Pier is currently displayed's own run — a different

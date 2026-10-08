@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from galileo.exceptions import MountParkedError, SlewObstructedError
+from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
 
 from ._common import _camera_slot_label, _camera_backend_key_for_slot, _parse_alpaca_device_number, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE
 
@@ -145,6 +145,9 @@ class AppWindowImagingSupportMixin:
             return False
         except SlewObstructedError:
             self._window.statusBar().showMessage(f"{verb}: {_OBSTRUCTED_MESSAGE}", 6000)
+            return False
+        except MountLimitError as exc:
+            self._window.statusBar().showMessage(f"{verb}: {exc}", 8000)
             return False
         except Exception:
             logger.exception("Mount %s to %s failed", action, obj["name"])

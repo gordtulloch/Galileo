@@ -52,6 +52,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "perf: wall-clock performance budget that depends on the machine's speed; excluded from the CI release gate",
+    )
+    config.addinivalue_line(
+        "markers",
         "hardware: requires physical INDI/Alpaca hardware on the LAN",
     )
     config.addinivalue_line(
@@ -216,6 +220,7 @@ def mock_dome():
     dome.open_shutter = AsyncMock()
     dome.close_shutter = AsyncMock()
     dome.park = AsyncMock()
+    dome.abort_slew = AsyncMock()
     return dome
 
 
@@ -249,6 +254,30 @@ def mock_switch_device():
     ]
     sw.set_switch = AsyncMock()
     return sw
+
+
+@pytest.fixture
+def mock_aux_device():
+    from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup
+
+    aux = MagicMock(name="SimAux")
+    aux.device_type = "Aux"
+    aux.name = "SimAux"
+    aux.is_connected = True
+    aux.get_property_groups = AsyncMock(return_value=[
+        AuxPropertyGroup(name="Main Control", properties=[
+            AuxProperty(
+                name="CAP_PARK", label="Dust Cover", kind="switch", group="Main Control",
+                rule="OneOfMany", state="Ok",
+                elements=[
+                    AuxElement(name="PARK", label="Park", value=False),
+                    AuxElement(name="UNPARK", label="Unpark", value=True),
+                ],
+            ),
+        ]),
+    ])
+    aux.write_property = AsyncMock()
+    return aux
 
 
 # ---------------------------------------------------------------------------

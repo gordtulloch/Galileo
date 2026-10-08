@@ -350,6 +350,7 @@ def test_tc_guide_090_rejected_command_is_visible_in_the_log(window, phd2):
 def test_tc_guide_050_page_shows_a_lost_connection(window, phd2):
     """GUIDE-050: if PHD2 goes away the page goes back to Not connected and offers Connect again."""
     page, service = _connect(window, phd2)
+    assert phd2.wait_for_client()
     phd2.drop_clients()
     assert _pump(window, lambda: not service.is_connected and not service.model.snapshot().connected)
     page._tick()

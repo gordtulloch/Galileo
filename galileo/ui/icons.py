@@ -339,20 +339,19 @@ def _flat_panel(painter, r):
     painter.drawEllipse(c, r.width() * 0.14, r.width() * 0.14)
 
 
-def _weather(painter, r):
-    from PySide6.QtCore import QRectF
-    painter.drawEllipse(QRectF(r.left(), r.top() + r.height() * 0.15, r.width() * 0.55, r.height() * 0.45))
-    painter.drawRoundedRect(QRectF(r.left() + r.width() * 0.15, r.top() + r.height() * 0.35, r.width() * 0.75, r.height() * 0.4), 4, 4)
-
-
-def _dome(painter, r):
+def _aux(painter, r):
     from PySide6.QtCore import QLineF, QRectF
-    rect = QRectF(r.left(), r.top(), r.width(), r.height() * 1.6)
-    painter.drawArc(rect, 0, 180 * 16)
-    painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.5, r.right(), r.top() + r.height() * 0.5))
+    # A generic IC/board glyph: a chip body with pin legs, for a
+    # miscellaneous/catch-all driver that isn't one of the other categories.
+    body = QRectF(r.left() + r.width() * 0.2, r.top() + r.height() * 0.2, r.width() * 0.6, r.height() * 0.6)
+    painter.drawRoundedRect(body, 2, 2)
+    for frac in (0.3, 0.5, 0.7):
+        y = r.top() + r.height() * frac
+        painter.drawLine(QLineF(r.left(), y, body.left(), y))
+        painter.drawLine(QLineF(body.right(), y, r.right(), y))
 
 
-def _safety_monitor(painter, r):
+def _safety(painter, r):
     from PySide6.QtGui import QPolygonF
     from PySide6.QtCore import QPointF
     painter.drawPolygon(QPolygonF([
@@ -363,6 +362,13 @@ def _safety_monitor(painter, r):
         QPointF(r.left(), r.top() + r.height() * 0.6),
         QPointF(r.left(), r.top() + r.height() * 0.22),
     ]))
+
+
+def _dome(painter, r):
+    from PySide6.QtCore import QLineF, QRectF
+    rect = QRectF(r.left(), r.top(), r.width(), r.height() * 1.6)
+    painter.drawArc(rect, 0, 180 * 16)
+    painter.drawLine(QLineF(r.left(), r.top() + r.height() * 0.5, r.right(), r.top() + r.height() * 0.5))
 
 
 def _images(painter, r):
@@ -440,22 +446,22 @@ def _merge(painter, r):
 
 
 def _plugins(painter, r):
-    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtCore import QRectF
     from PySide6.QtGui import QPainterPath
-    # A puzzle piece: rectangular body with a tab bump on the right and a notch on the bottom.
-    bx, by = r.left(), r.top() + r.height() * 0.12
-    bw, bh = r.width() * 0.72, r.height() * 0.72
-    tab_r = r.width() * 0.14
+    # A single puzzle piece: a square outline with one knob bump (top edge)
+    # and one matching notch (left edge).
+    x, y, w, h = r.left(), r.top(), r.width(), r.height()
+    knob = w * 0.2
     path = QPainterPath()
-    path.moveTo(bx, by)
-    path.lineTo(bx + bw * 0.5 - tab_r, by)
-    path.arcTo(QRectF(bx + bw * 0.5 - tab_r, by - tab_r * 2, tab_r * 2, tab_r * 2), 180, -180)
-    path.lineTo(bx + bw, by)
-    path.lineTo(bx + bw, by + bh * 0.5 - tab_r)
-    path.arcTo(QRectF(bx + bw, by + bh * 0.5 - tab_r, tab_r * 2, tab_r * 2), 180, 180)
-    path.lineTo(bx + bw, by + bh)
-    path.lineTo(bx, by + bh)
-    path.closeSubpath()
+    path.moveTo(x, y)
+    path.lineTo(x + w * 0.42, y)
+    path.arcTo(QRectF(x + w * 0.42 - knob, y - knob, knob * 2, knob * 2), 180, -180)
+    path.lineTo(x + w, y)
+    path.lineTo(x + w, y + h)
+    path.lineTo(x, y + h)
+    path.lineTo(x, y + h * 0.58)
+    path.arcTo(QRectF(x - knob, y + h * 0.58 - knob, knob * 2, knob * 2), 270, 180)
+    path.lineTo(x, y)
     painter.drawPath(path)
 
 
@@ -487,14 +493,15 @@ ICONS: dict[str, DrawFn] = {
     "optics": _optics,
     "switch": _switch,
     "flat_panel": _flat_panel,
-    "weather": _weather,
+    "safety": _safety,
     "dome": _dome,
-    "safety_monitor": _safety_monitor,
+    "aux": _aux,
     "images": _images,
     "sessions": _sessions,
     "mappings": _mappings,
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,
+    "plugins": _plugins,
     "plugins": _plugins,
 }

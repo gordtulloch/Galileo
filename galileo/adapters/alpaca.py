@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 from galileo.core.capabilities import DeviceCapabilities
-from galileo.core.devices import DeviceBackend, DeviceCategory
+from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
 from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
@@ -47,6 +47,9 @@ _ALPACA_WIRE_TYPE: dict[DeviceCategory, str] = {
     DeviceCategory.MOUNT: "telescope",
     DeviceCategory.WEATHER_STATION: "observingconditions",
     DeviceCategory.FLAT_PANEL: "covercalibrator",
+    # Aux has no device type of its own on the wire — it's scoped to ASCOM's
+    # own generic/auxiliary-hardware interface, ISwitchV2 (see AlpacaAuxAdapter).
+    DeviceCategory.AUX: "switch",
 }
 
 
@@ -64,6 +67,7 @@ def get_adapter_class(category: DeviceCategory) -> type[DeviceBackend]:
         DeviceCategory.WEATHER_STATION: AlpacaWeatherAdapter,
         DeviceCategory.GUIDER: AlpacaGuiderAdapter,
         DeviceCategory.FLAT_PANEL: AlpacaFlatPanelAdapter,
+        DeviceCategory.AUX: AlpacaAuxAdapter,
     }
     cls = _MAP.get(category)
     if cls is None:
@@ -314,14 +318,16 @@ class AlpacaAdapter(DeviceBackend):
             f"Alpaca server is running."
         )
 
-    async def _get(self, attribute: str, timeout: float = 10.0) -> Any:
-        """HTTP GET an Alpaca device attribute."""
+    async def _get(self, attribute: str, timeout: float = 10.0, **extra: Any) -> Any:
+        """HTTP GET an Alpaca device attribute. *extra* adds device-specific
+        query parameters (e.g. ISwitchV2's ``Id`` channel index)."""
         await self._ensure_resolved()
         self._transaction_id += 1
         url = f"{self.base_url}/{attribute}"
         params = {
             "ClientID": self._client_id,
             "ClientTransactionID": self._transaction_id,
+            **extra,
         }
         try:
             try:
@@ -630,13 +636,13 @@ class AlpacaMountAdapter(AlpacaAdapter):
 
     async def slew_to_coordinates(self, ra: float, dec: float) -> None:
         await self._refuse_if_parked("slew_to_coordinates")
-        get_slew_guard().check_radec(ra, dec)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_radec(ra, dec)
         await self._put("slewtocoordinatesasync", RightAscension=ra / 15.0, Declination=dec)
         self.ra, self.dec = ra, dec
 
     async def slew_to_altaz(self, alt: float, az: float) -> None:
         await self._refuse_if_parked("slew_to_altaz")
-        get_slew_guard().check_altaz(alt, az)
+        (getattr(self, "slew_guard", None) or get_slew_guard()).check_altaz(alt, az)
         await self._put("slewtoaltazasync", Azimuth=az, Altitude=alt)
         self.altitude, self.azimuth = alt, az
 
@@ -761,6 +767,13 @@ class AlpacaMountAdapter(AlpacaAdapter):
         except Exception:
             logger.exception("Could not read SideOfPier from %s", self.base_url)
             status["side_of_pier"] = None
+        try:
+            raw_rate = await self._get("trackingrate")
+            idx = int(raw_rate) if raw_rate is not None else -1
+            status["tracking_rate"] = self.TRACKING_RATE_NAMES[idx] if 0 <= idx < len(self.TRACKING_RATE_NAMES) else None
+        except Exception:
+            logger.debug("Could not read TrackingRate from %s", self.base_url, exc_info=True)
+            status["tracking_rate"] = None
 
         if status.get("right_ascension") is not None:
             self.ra = status["right_ascension"] * 15.0
@@ -1041,6 +1054,43 @@ class AlpacaDomeAdapter(AlpacaAdapter):
 
     async def park(self) -> None:
         await self._put("park")
+        self.is_at_park = True
+
+    async def unpark(self) -> None:
+        # ASCOM IDome has no Unpark: a dome leaves park on its next slew, so
+        # there is nothing to send — just clear the cached flag until
+        # get_status() reads AtPark back.
+        self.is_at_park = False
+
+    async def abort_slew(self) -> None:
+        await self._put("abortslew")
+
+    _SHUTTER_STATE = {0: "Open", 1: "Closed", 2: "Opening", 3: "Closing", 4: "Error"}
+
+    async def get_status(self) -> dict:
+        """Live status: ``ShutterStatus``, ``Azimuth`` and ``AtPark``, each
+        read defensively (a dome may not implement all three)."""
+        status: dict[str, Any] = dict(await self.get_driver_info())
+        try:
+            raw_shutter = await self._get("shutterstatus")
+            if raw_shutter is not None:
+                self.shutter_state = self._SHUTTER_STATE.get(int(raw_shutter), "Unknown")
+        except Exception:
+            logger.exception("Could not read ShutterStatus from %s", self.base_url)
+        try:
+            raw_az = await self._get("azimuth")
+            if raw_az is not None:
+                self.azimuth = float(raw_az)
+        except Exception:
+            logger.exception("Could not read Azimuth from %s", self.base_url)
+        try:
+            raw_park = await self._get("atpark")
+            if raw_park is not None:
+                self.is_at_park = bool(raw_park)
+        except Exception:
+            logger.exception("Could not read AtPark from %s", self.base_url)
+        status.update(shutter_state=self.shutter_state, azimuth=self.azimuth, is_at_park=self.is_at_park)
+        return status
 
 
 class AlpacaSafetyMonitorAdapter(AlpacaAdapter):
@@ -1051,7 +1101,8 @@ class AlpacaSafetyMonitorAdapter(AlpacaAdapter):
         self.tier = 1
 
     async def poll(self) -> None:
-        self.is_safe = await self._get("issafe") or True
+        value = await self._get("issafe")
+        self.is_safe = True if value is None else bool(value)
 
 
 class AlpacaSwitchAdapter(AlpacaAdapter):
@@ -1066,18 +1117,100 @@ class AlpacaSwitchAdapter(AlpacaAdapter):
                 sw.state = value
 
 
+def _is_boolean_switch_range(min_value: Any, max_value: Any, step_value: Any) -> bool:
+    """Whether an ISwitchV2 channel's declared range (``MinSwitchValue``/
+    ``MaxSwitchValue``/``SwitchStep``) is really just a boolean On/Off rather
+    than a variable analog value — the ASCOM spec defines a boolean switch as
+    one with range 0..1 and step 1."""
+    try:
+        return float(min_value) == 0.0 and float(max_value) == 1.0 and float(step_value) == 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+class AlpacaAuxAdapter(AlpacaAdapter):
+    """Generic control-panel adapter for a miscellaneous Alpaca device
+    (EQP-AUX-010). Alpaca has no cross-device-type generic property
+    introspection — unlike INDI, each DeviceType's property set is a fixed,
+    separately-specified interface — so this adapter is scoped to the one
+    ASCOM interface meant for this purpose, ISwitchV2 (the Alpaca "Switch"
+    DeviceType), which the ASCOM spec itself describes as being for
+    arbitrary/auxiliary hardware (a power box, a flip mirror, a relay
+    board, ...) rather than a specific instrument. Every channel becomes one
+    property with one element: a boolean On/Off pair when its declared range
+    is 0..1 step 1 (:func:`_is_boolean_switch_range`), or a numeric
+    slider/spinbox otherwise — both in a single "Switches" group/tab, since
+    ISwitchV2 has no grouping concept of its own."""
+
+    def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
+        super().__init__(DeviceCategory.AUX, host, port, **kwargs)
+
+    async def get_property_groups(self) -> list[AuxPropertyGroup]:
+        max_switch = int(await self._get("maxswitch") or 0)
+        group = AuxPropertyGroup(name="Switches")
+        for i in range(max_switch):
+            name = str(await self._get("getswitchname", Id=i) or f"Switch {i}")
+            description = await self._get("getswitchdescription", Id=i)
+            can_write = bool(await self._get("canwrite", Id=i))
+            min_value = await self._get("minswitchvalue", Id=i)
+            max_value = await self._get("maxswitchvalue", Id=i)
+            step = await self._get("switchstep", Id=i)
+            if _is_boolean_switch_range(min_value, max_value, step):
+                value: Any = bool(await self._get("getswitch", Id=i))
+                kind = "switch"
+                element = AuxElement(name=str(i), label=name, value=value)
+            else:
+                value = await self._get("getswitchvalue", Id=i)
+                kind = "number"
+                element = AuxElement(
+                    name=str(i), label=name, value=value,
+                    min=float(min_value) if min_value is not None else None,
+                    max=float(max_value) if max_value is not None else None,
+                    step=float(step) if step is not None else None,
+                )
+            group.properties.append(AuxProperty(
+                name=str(i), label=str(description) if description else name, kind=kind,
+                group="Switches", perm="rw" if can_write else "ro", elements=[element],
+            ))
+        return [group]
+
+    async def write_property(self, name: str, values: dict[str, Any]) -> None:
+        index = int(name)
+        value = next(iter(values.values()))
+        if isinstance(value, bool):
+            await self._put("setswitch", Id=index, State=value)
+        else:
+            await self._put("setswitchvalue", Id=index, Value=float(value))
+
+
 class AlpacaWeatherAdapter(AlpacaAdapter):
+    """Weather station via ASCOM ``ObservingConditions``. Any property the
+    driver doesn't implement comes back as the ASCOM "not implemented" error,
+    which ``_get`` already turns into ``None`` (EQP-WX-010/EQP-WX-020) —
+    this attribute is then simply left at its last value."""
+
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.WEATHER_STATION, host, port, **kwargs)
         self.cloud_cover = 0.0
         self.wind_speed = 0.0
+        self.wind_gust = 0.0
         self.humidity = 50.0
         self.temperature = 15.0
+        self.dew_point = 0.0
+        self.pressure = 1013.0
         self.rain_rate = 0.0
         self.is_safe = True
 
     async def poll(self) -> None:
-        pass
+        for attr, prop in (
+            ("cloud_cover", "cloudcover"), ("humidity", "humidity"),
+            ("temperature", "temperature"), ("dew_point", "dewpoint"),
+            ("pressure", "pressure"), ("wind_speed", "windspeed"),
+            ("wind_gust", "windgust"), ("rain_rate", "rainrate"),
+        ):
+            value = await self._get(prop)
+            if value is not None:
+                setattr(self, attr, float(value))
 
 
 class AlpacaGuiderAdapter(AlpacaAdapter):
@@ -1086,10 +1219,17 @@ class AlpacaGuiderAdapter(AlpacaAdapter):
 
 
 class AlpacaFlatPanelAdapter(AlpacaAdapter):
+    # ASCOM ICoverCalibratorV1's CoverState/CalibratorState are integer enums
+    # on the wire — normalized to strings here, same convention as
+    # AlpacaMountAdapter's SideOfPier/EquatorialSystem.
+    _COVER_STATE = {0: "NotPresent", 1: "Closed", 2: "Moving", 3: "Open", 4: "Unknown"}
+    _CALIBRATOR_STATE = {0: "NotPresent", 1: "Off", 2: "NotReady", 3: "Ready", 4: "Unknown", 5: "Error"}
+
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.FLAT_PANEL, host, port, **kwargs)
         self.cover_state = "Closed"
         self.brightness = 0
+        self.is_light_on = False
 
     async def open_cover(self) -> None:
         await self._put("opencover")
@@ -1099,6 +1239,41 @@ class AlpacaFlatPanelAdapter(AlpacaAdapter):
         await self._put("closecover")
         self.cover_state = "Closed"
 
+    async def light_on(self) -> None:
+        """``ICoverCalibratorV1.CalibratorOn`` at the panel's current brightness."""
+        await self._put("calibratoron", Brightness=self.brightness)
+        self.is_light_on = True
+
+    async def light_off(self) -> None:
+        await self._put("calibratoroff")
+        self.is_light_on = False
+
     async def set_brightness(self, level: int) -> None:
         await self._put("brightness", Brightness=level)
         self.brightness = level
+
+    async def get_status(self) -> dict:
+        """Live status: ``CoverState``/``CalibratorState`` (both read
+        defensively — a cover-only or calibrator-only panel lacks one side)
+        plus ``Brightness``."""
+        status: dict[str, Any] = dict(await self.get_driver_info())
+        try:
+            raw_cover = await self._get("coverstate")
+            if raw_cover is not None:
+                self.cover_state = self._COVER_STATE.get(int(raw_cover), "Unknown")
+        except Exception:
+            logger.exception("Could not read CoverState from %s", self.base_url)
+        try:
+            raw_cal = await self._get("calibratorstate")
+            if raw_cal is not None:
+                self.is_light_on = self._CALIBRATOR_STATE.get(int(raw_cal)) in ("Ready", "NotReady")
+        except Exception:
+            logger.exception("Could not read CalibratorState from %s", self.base_url)
+        try:
+            raw_brightness = await self._get("brightness")
+            if raw_brightness is not None:
+                self.brightness = int(raw_brightness)
+        except Exception:
+            logger.exception("Could not read Brightness from %s", self.base_url)
+        status.update(cover_state=self.cover_state, is_light_on=self.is_light_on, brightness=self.brightness)
+        return status

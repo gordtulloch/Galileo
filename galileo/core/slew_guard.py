@@ -17,7 +17,7 @@ import datetime as _dt
 import logging
 from typing import Any
 
-from galileo.exceptions import SlewObstructedError
+from galileo.exceptions import MountLimitError, SlewObstructedError
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,14 @@ class SlewGuard:
         self.horizon: Any = None
         self.latitude: float | None = None
         self.longitude: float | None = None
+        # The Pier's Mount-page altitude / hour-angle limits (EQP-MNT-070). Unlike the horizon
+        # they are enforced whenever a limit is enabled, whatever ``enabled`` says.
+        self.limits: Any = None
 
     def check_altaz(self, altitude_deg: float, azimuth_deg: float) -> None:
-        """Raise :class:`SlewObstructedError` if that direction is obstructed and the guard is on."""
+        """Raise :class:`SlewObstructedError` if that direction is obstructed and the guard is on,
+        or :class:`MountLimitError` if it breaks the mount's limits."""
+        self._check_limits(altitude_deg, azimuth_deg)
         if not self.enabled or self.horizon is None:
             return
         if self.horizon.is_obstructed(altitude_deg, azimuth_deg % 360.0):
@@ -47,16 +52,36 @@ class SlewGuard:
     def check_radec(self, ra_deg: float, dec_deg: float, when: _dt.datetime | None = None) -> None:
         """As :meth:`check_altaz`, for coordinates of date (what the mount adapters are
         handed) as seen from the site now, or at *when* (UTC)."""
-        if not self.enabled or self.horizon is None:
+        need_limits = self.limits is not None and (self.limits.alt_limits_enabled or self.limits.ha_limits_enabled)
+        if not need_limits and (not self.enabled or self.horizon is None):
             return
         if self.latitude is None or self.longitude is None:
-            logger.warning("Horizon check skipped: the Observatory has no latitude/longitude set")
+            logger.warning("Horizon/limit check skipped: the Observatory has no latitude/longitude set")
             return
         from galileo.planning import star_atlas as sa
         when = when or _dt.datetime.now(_dt.UTC)
         lst = sa.local_sidereal_deg(sa.julian_date(when), self.longitude)
         alt, az = sa.equatorial_to_horizontal(ra_deg, dec_deg, lst, self.latitude)
+        if need_limits:
+            self._raise_if_limited(float(alt), ((lst - ra_deg) / 15.0 + 12.0) % 24.0 - 12.0)
         self.check_altaz(float(alt), float(az))
+
+    def _check_limits(self, altitude_deg: float, azimuth_deg: float) -> None:
+        if self.limits is None or not (self.limits.alt_limits_enabled or self.limits.ha_limits_enabled):
+            return
+        ha = None
+        if self.latitude is not None:
+            from galileo.mount_limits import hour_angle_from_altaz
+            ha = hour_angle_from_altaz(altitude_deg, azimuth_deg, self.latitude)
+        self._raise_if_limited(altitude_deg, ha)
+
+    def _raise_if_limited(self, altitude_deg: float, ha_hours: float | None) -> None:
+        from galileo.mount_limits import check_target
+        found = check_target(self.limits, altitude_deg, ha_hours)
+        if found:
+            message = "Unable to slew there: " + "; ".join(found)
+            logger.warning("Slew refused: %s", message)
+            raise MountLimitError(message)
 
 
 _guards: dict[Any, SlewGuard] = {}

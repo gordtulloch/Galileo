@@ -18,7 +18,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 281 requirements (267 counted in the SRS's own domain-summary total; the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
+**Coverage:** 283 requirements (267 counted in the SRS's own domain-summary total as of that count's last update — see Section 6's own note on rows that have since drifted ahead of it — the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md). `KASA` (5 requirements) and `RELAY` (5 requirements) are likewise traced in their own plugins' RTMs, not counted here: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md), [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md).
+
+**`EQP-WX-020`/`EQP-SAFE-020` added:** this revision adds per-reading Weather-Station safety configuration (Equipment > Weather screen) and its read-only, trend-graphed surfacing on the Equipment > Safety Monitor screen — tracing to SDD 4.16 `galileo.safety` (the rule model/evaluation) and SDD 4.4b `galileo.ui.app_window` (the two new Equipment pages).
 
 **`IMG-050` removed:** the star-overlay toggle had no on-preview overlay renderer behind it; the checkbox and `ImagingService.set_star_overlay`/`star_overlay_enabled` were removed together, and the row below no longer appears.
 
@@ -86,6 +88,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-MNT-030` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-MNT-030` |
 | `EQP-MNT-040` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-MNT-040` |
 | `EQP-MNT-050` | MVP | SDD 4.1 `galileo.core.devices` / `galileo.tracking`; SDD 4.4b `galileo.ui.app_window` (per-Pier slew guard) | Test | `TC-EQP-MNT-050` |
+| `EQP-MNT-060` | P2 | SDD 4.1 `galileo.core.devices` / `galileo.mount_limits`; `galileo.meridianflip` | Test | `TC-EQP-MNT-060` |
+| `EQP-MNT-070` | P2 | SDD 4.1 `galileo.core.devices` / `galileo.mount_limits`; `galileo.core.slew_guard` | Test | `TC-EQP-MNT-070` |
 | `EQP-FW-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-010` |
 | `EQP-FW-020` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FW-020` |
 | `EQP-FOC-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-010` |
@@ -96,8 +100,11 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-SW-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SW-010` |
 | `EQP-FP-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FP-010` |
 | `EQP-WX-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-WX-010` |
+| `EQP-WX-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-WX-020` |
 | `EQP-DOME-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-DOME-010` |
 | `EQP-SAFE-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SAFE-010` |
+| `EQP-SAFE-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-SAFE-020` |
+| `EQP-AUX-010` | P2 | SDD 4.1 `galileo.core.devices`; SDD 4.2 `galileo.adapters.indi`; SDD 4.3 `galileo.adapters.alpaca`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-AUX-010` |
 
 ### `PROF` — Equipment Profiles (Piers)
 
@@ -313,6 +320,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
 | `PLT-070` | MVP | SDD 4.12 `galileo.platesolve`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PLT-070` |
+| `PLT-080` | P2 | SDD 4.12 `galileo.polaralign`; `galileo.ui.solve` | Test | `TC-PLT-080` |
 
 ### `MFLIP` — Meridian Flip
 
@@ -450,6 +458,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 Variable Star Target Planning and Variable Star Analysis & Photometry are the VSTarget plugin's own requirements and are traced in its own RTM: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md).
 
+### `KASA` / `RELAY` — Plugin-Owned, Not Core
+
+Kasa smart-plug/power-strip control and generic HTTP relay-board control are, likewise, not core requirements — they are the Kasa Switch and Generic Relay plugins' own, traced in their own RTMs: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md) and [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md). Both consume core's `EQP-SW-010` Switch device-port contract and the `PLUG` framework by reference rather than redefining either here.
+
 ### `NFR-PERF` — Performance
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
@@ -524,7 +536,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 |---|---|---|---|---|
 | `EXT` | 14 | 9 | 4 | 1 |
 | `ARCH` | 8 | 6 | 2 | 0 |
-| `EQP` | 27 | 19 | 8 | 0 |
+| `EQP` | 28 | 19 | 9 | 0 |
 | `PROF` | 12 | 11 | 1 | 0 |
 | `OBS` | 9 | 0 | 9 | 0 |
 | `IMG` | 20 | 10 | 10 | 0 |

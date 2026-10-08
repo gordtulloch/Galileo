@@ -585,16 +585,16 @@ def test_tc_img_130_nudge_pad_drives_the_connected_mount(window):
     mount = _FakeMount()
     window._device_pages["mount"]["adapter"] = mount
     window._device_pages["mount"]["axis_reversed"] = lambda: (False, False)
-    ui["nudge_rate"].setCurrentIndex(ui["nudge_rate"].findData(1.0))
+    ui["nudge_rate"].setCurrentIndex(ui["nudge_rate"].findData(10.0))
     ui["nudge_duration"].setValue(0.1)
 
     _click_nudge(window, "E")
-    assert mount.calls == [(0, 1.0), (0, 0.0)]
+    assert mount.calls == [(0, 10.0), (0, 0.0)]
     assert ui["nudge_state"]["thread"] is None and all(b.isEnabled() for b in ui["nudge_buttons"].values())
 
     window._device_pages["mount"]["axis_reversed"] = lambda: (True, False)
     _click_nudge(window, "E")
-    assert mount.calls[2:] == [(0, -1.0), (0, 0.0)]
+    assert mount.calls[2:] == [(0, -10.0), (0, 0.0)]
 
 
 @pytest.mark.requirement("TC-IMG-130")

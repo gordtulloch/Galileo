@@ -136,10 +136,56 @@ class ThemeManager:
             round(b0 * (1 - mix) + tb * 255 * mix),
         )
 
+    def _arrow_images(self, color: str) -> dict[str, str]:
+        """Render up/down arrow PNGs for spin boxes and return ``{"up": path, "down": path}``.
+
+        Styling a spin box's border in a stylesheet makes Qt drop its native arrows, so the
+        arrows must be supplied as images. Returns ``{}`` when Qt/a ``QApplication`` isn't available.
+        """
+        try:
+            from PySide6.QtCore import Qt, QPointF
+            from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap, QPolygonF
+            if QGuiApplication.instance() is None:
+                return {}
+            from galileo.platform import get_cache_dir
+            folder = get_cache_dir() / "theme"
+            folder.mkdir(parents=True, exist_ok=True)
+            paths: dict[str, str] = {}
+            for name, tip, base in (("up", 2.0, 8.0), ("down", 8.0, 2.0)):
+                path = folder / f"spin_{name}_{color.lstrip('#')}.png"
+                pix = QPixmap(10, 10)
+                pix.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(pix)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(color))
+                painter.drawPolygon(QPolygonF([QPointF(5, tip), QPointF(1, base), QPointF(9, base)]))
+                painter.end()
+                pix.save(str(path))
+                paths[name] = path.as_posix()
+            return paths
+        except Exception:
+            return {}
+
     def stylesheet(self) -> str:
         """Build the Qt stylesheet for the current theme + accent colour."""
         p = self.palette()
         accent = self.accent_color
+        arrows = self._arrow_images(p['text'])
+        spin_arrows = ""
+        if arrows:
+            spin_arrows = f"""
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-origin: border; subcontrol-position: top right; width: 16px;
+            border-left: 1px solid {p['border']};
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border; subcontrol-position: bottom right; width: 16px;
+            border-left: 1px solid {p['border']};
+        }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({arrows['up']}); width: 10px; height: 10px; }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({arrows['down']}); width: 10px; height: 10px; }}
+        """
         return f"""
         QWidget {{
             background: {p['bg']};
@@ -235,6 +281,7 @@ class ThemeManager:
             border-radius: 3px;
             padding: 3px 6px;
         }}
+        {spin_arrows}
         QRadioButton::indicator {{
             width: 12px;
             height: 12px;

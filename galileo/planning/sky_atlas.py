@@ -329,6 +329,43 @@ def _search_simbad_sync(query: str) -> list[DeepSkyObject]:
     return objects
 
 
+class SimbadClient:
+    """Queries the CDS Simbad database for a single target's coordinates and
+    V magnitude (EXT-110) — genuinely shared infrastructure, not specific to
+    any one caller: this is the same lookup :meth:`SkyAtlas.search_online`
+    falls back to for SKY-100, and what ``galileo.plugins.vstarget.planning``
+    uses to resolve a variable-star target's position (its own
+    ``simbad_client`` module re-exports this class rather than keeping a
+    second copy of the same query)."""
+
+    async def lookup(self, target_name: str) -> dict:
+        """Return ``{"ra_deg": …, "dec_deg": …, "magnitude_v": …}`` for
+        *target_name*, or ``{}`` if Simbad has no match or the lookup fails."""
+        try:
+            from astroquery.simbad import Simbad  # type: ignore[import]
+
+            custom_simbad = Simbad()
+            custom_simbad.add_votable_fields("flux(V)")
+
+            result_table = await asyncio.to_thread(custom_simbad.query_object, target_name)
+            if result_table is None or len(result_table) == 0:
+                return {}
+
+            row = result_table[0]
+            from astropy.coordinates import SkyCoord
+            coord = SkyCoord(
+                ra=row["RA"], dec=row["DEC"], unit=("hourangle", "deg"), frame="icrs",
+            )
+            return {
+                "ra_deg": float(coord.ra.deg),
+                "dec_deg": float(coord.dec.deg),
+                "magnitude_v": float(row["FLUX_V"]) if row["FLUX_V"] else None,
+            }
+        except Exception as exc:
+            logger.debug("Simbad lookup failed for %r: %s", target_name, exc)
+            return {}
+
+
 class TelescopiusNotConfiguredError(Exception):
     """A Telescopius operation (SKY-120) was requested with no user-supplied
     API key configured (:meth:`SkyAtlas.set_telescopius_api_key`) — Telescopius

@@ -48,7 +48,6 @@ async def test_tc_notif_010_in_app_notifications_for_key_events(notif_service, e
 
 @pytest.mark.requirement("TC-NOTIF-020")
 @pytest.mark.priority("P3")
-@pytest.mark.xfail(strict=True, raises=AttributeError, reason="NOTIF-020 is not implemented yet: no EmailChannel/SmsChannel in galileo.notify")
 async def test_tc_notif_020_external_delivery_via_email_and_sms(notif_service):
     """NOTIF-020: Support external delivery via email and/or text message (SMS), configurable by the user, delivering the same event set as NOTIF-010."""
     notify_mod = pytest.importorskip("galileo.notify")
@@ -73,7 +72,6 @@ async def test_tc_notif_020_external_delivery_via_email_and_sms(notif_service):
 
 @pytest.mark.requirement("TC-NOTIF-030")
 @pytest.mark.priority("P3")
-@pytest.mark.xfail(strict=True, raises=AttributeError, reason="NOTIF-030 is not implemented yet: no EmailChannel in galileo.notify")
 async def test_tc_notif_030_per_event_per_channel_enable_disable(notif_service):
     """NOTIF-030: Allow notification events to be individually enabled/disabled per channel."""
     notify_mod = pytest.importorskip("galileo.notify")
@@ -98,7 +96,6 @@ async def test_tc_notif_030_per_event_per_channel_enable_disable(notif_service):
 
 @pytest.mark.requirement("TC-NOTIF-040")
 @pytest.mark.priority("P3")
-@pytest.mark.xfail(strict=True, raises=AttributeError, reason="NOTIF-040 is not implemented yet: NotificationService has no set_owning_observatory")
 async def test_tc_notif_040_reads_contact_details_from_owning_observatory(notif_service):
     """NOTIF-040: Read external-delivery contact details (email address, phone/SMS number, and which channel(s) to use) from the Observatory record (OBS-090) that owns the Pier/session raising the event, rather than maintaining a separate per-notification contact configuration."""
     pytest.importorskip("galileo.notify")

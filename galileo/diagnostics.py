@@ -8,6 +8,7 @@ from __future__ import annotations
 import collections
 import logging
 import socket
+import sys
 import threading
 import traceback
 from enum import IntEnum
@@ -20,7 +21,12 @@ _APP_ROOT = Path(__file__).resolve().parent.parent
 
 def default_log_dir() -> Path:
     """``.\\logs\\`` under the application root (not the per-user platform
-    log directory) — the location Galileo's own log file lives in."""
+    log directory) — the location Galileo's own log file lives in. A frozen
+    (installed) build lives in a read-only location (Program Files, a .app,
+    an AppImage mount), so there it uses the per-user log directory."""
+    if getattr(sys, "frozen", False):
+        from galileo.platform import get_log_dir
+        return get_log_dir()
     return _APP_ROOT / "logs"
 
 
@@ -142,6 +148,9 @@ class DiagnosticsService:
         # for "all runtime information" to actually reach the file/tail
         # buffer rather than being silently dropped before any handler sees it.
         root_logger.setLevel(logging.DEBUG)
+        # asyncio's DEBUG chatter (e.g. "Using proactor: IocpProactor" on every
+        # event-loop creation) is noise that would bloat the log in 24/7 use.
+        logging.getLogger("asyncio").setLevel(logging.INFO)
 
         # mode="w" (not the logging default "a") so the datestamped file
         # resets on every run rather than accumulating across same-day runs.
@@ -218,6 +227,30 @@ class DiagnosticsService:
         logger.log(py_level, message)
         if stack_trace:
             logger.log(py_level, "Stack trace:\n%s", stack_trace)
+
+
+class RecentLogPane:
+    """Non-UI view onto a :class:`DiagnosticsService`'s recent entries,
+    backing the scrollable "last N lines" pane every Equipment
+    device-category screen shows (LOG-060) — the same relationship
+    :class:`LogViewer` (LOG-020) has to a full log-viewer dialog. The actual
+    on-screen widget (``galileo.ui.app_window``'s ``_build_log_pane``) polls
+    the separate process-wide :func:`get_recent_log_lines` tail buffer
+    instead, since it renders formatted lines from *every* logger, not just
+    one service's own ``log_*()`` calls; this class is the equivalent
+    logic-level view for callers (and tests) that hold a specific
+    ``DiagnosticsService`` instance."""
+
+    def __init__(self, service: DiagnosticsService, min_visible_lines: int = 10) -> None:
+        self._service = service
+        self.min_visible_lines = min_visible_lines
+
+    def get_visible_entries(self) -> list[LogEntry]:
+        """The most recent entries, at least ``min_visible_lines`` of them
+        (fewer only if the service hasn't logged that many yet), oldest
+        first — so the last element is always the most recent."""
+        entries = self._service.get_entries()
+        return entries[-self.min_visible_lines:]
 
 
 class LogViewer:

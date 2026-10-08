@@ -297,6 +297,62 @@ class _MountPositionThread(QThread if _HAS_QT else object):
         self.position.emit(status)
 
 
+class _MountGuardThread(QThread if _HAS_QT else object):
+    """One pass of the Mount page's limit/flip monitor (EQP-MNT-060/070), off the Qt UI thread:
+    read the mount, and if it has broken a limit stop it, or if a requested flip is due perform it
+    (a flip slews, so it can run for minutes)."""
+
+    finished_with = Signal(object) if _HAS_QT else None      # {"status", "kind", "reasons", "error"}
+
+    def __init__(self, mount, limits, parent=None) -> None:
+        super().__init__(parent)
+        self._mount = mount
+        self._limits = limits
+
+    def run(self) -> None:
+        import asyncio
+        result: dict = {"status": None, "kind": "", "reasons": (), "error": ""}
+        try:
+            asyncio.run(self._guard(result))
+        except Exception as exc:
+            logger.exception("Mount limit/flip monitor failed")
+            result["error"] = str(exc)
+        self.finished_with.emit(result)
+
+    async def _guard(self, result: dict) -> None:
+        from galileo.mount_limits import evaluate, hour_angle_hours
+        status = await self._mount.get_status() or {}
+        result["status"] = status
+        lst, ra = status.get("sidereal_time"), status.get("right_ascension")
+        ha = hour_angle_hours(lst, ra) if lst is not None and ra is not None else None
+        action = evaluate(
+            self._limits, alt_deg=status.get("altitude"), ha_hours=ha,
+            side_of_pier=status.get("side_of_pier"),
+            tracking=bool(status.get("tracking")), slewing=bool(status.get("slewing")),
+        )
+        result["reasons"] = action.reasons
+        if action.stop:
+            result["kind"] = "stopped"
+            await self._mount.abort_slew()
+            for axis in (0, 1):             # a held jog isn't a slew; stop it too
+                try:
+                    await self._mount.move_axis(axis, 0.0)
+                except Exception:
+                    logger.debug("Could not stop axis %d", axis, exc_info=True)
+            await self._mount.set_tracking(False)
+        elif action.flip:
+            from galileo.meridianflip import MeridianFlipConfig, MeridianFlipService
+            from galileo.tracking import resume_tracking
+            result["kind"] = "flipped"
+            service = MeridianFlipService(
+                mount=self._mount,
+                config=MeridianFlipConfig(post_flip_recenter=False, post_flip_restart_guiding=False),
+            )
+            await service.execute_flip(target_ra=ra * 15.0, target_dec=status.get("declination") or 0.0)
+            await resume_tracking(self._mount, None)
+            result["status"] = await self._mount.get_status() or status
+
+
 class _NudgeThread(QThread if _HAS_QT else object):
     """Runs one mount nudge (IMG-130) off the Qt UI thread: the mount moves for
     the nudge's duration, and blocking the UI for that long would freeze the

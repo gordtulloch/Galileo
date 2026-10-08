@@ -890,3 +890,269 @@ async def test_tc_plt_070_a_solver_rejecting_the_file_says_what_it_was_given(tmp
     assert result.success is False
     assert "Error reading the image file" in result.failure_reason
     assert "100x100" in result.failure_reason and "BITPIX" in result.failure_reason
+
+
+# ---------------------------------------------------------------------------
+# PLT-080 — polar alignment from plate solves
+# ---------------------------------------------------------------------------
+
+LATITUDE, LONGITUDE = 51.0, -114.0
+
+
+def _axis_off_pole(alt_error_deg, az_error_deg, latitude=LATITUDE):
+    """The horizon-frame unit vector of an axis *alt_error_deg* above the pole's altitude and
+    *az_error_deg* east of north."""
+    from galileo.polaralign import altaz_vector
+    return altaz_vector(abs(latitude) + alt_error_deg, az_error_deg)
+
+
+def _swing(axis, separation_deg, step_deg, count):
+    """Where a camera *separation_deg* from *axis* points as the mount turns *step_deg* about it, *count* times."""
+    import numpy as np
+
+    from galileo.polaralign import _rotate_about
+    perpendicular = np.cross(axis, [0.0, 0.0, 1.0])
+    perpendicular /= np.linalg.norm(perpendicular)
+    start = _rotate_about(axis, perpendicular, separation_deg)
+    return [_rotate_about(start, axis, step_deg * i) for i in range(count)]
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+@pytest.mark.parametrize("separation", [5.0, 35.0, 70.0])
+def test_tc_plt_080_three_solves_recover_the_axis_and_its_altitude_azimuth_error(separation):
+    """PLT-080: The mount's RA axis is found from three solves at different RA positions, wherever the camera
+    points, and its error against the pole is split into altitude (positive = too high) and azimuth (positive = east)."""
+    import numpy as np
+
+    from galileo.polaralign import fit_rotation_axis, polar_error
+    truth = _axis_off_pole(0.2, 0.3)                            # 12′ too high and 0.3° east
+    axis = fit_rotation_axis(_swing(truth, separation, 30.0, 3), LATITUDE)
+    assert np.degrees(np.arccos(np.clip(axis @ truth, -1, 1))) * 3600 < 1.0          # to the arcsecond
+
+    error = polar_error(axis, LATITUDE)
+    cos_lat = np.cos(np.radians(LATITUDE))
+    assert error.altitude_arcsec == pytest.approx(0.2 * 3600, abs=2)
+    assert error.azimuth_arcsec == pytest.approx(0.3 * cos_lat * 3600, abs=2)          # along the sky
+    assert error.azimuth_rotation_arcsec == pytest.approx(0.3 * 3600, abs=2)           # as the mount turns
+    assert error.total_arcsec == pytest.approx(np.hypot(0.2, 0.3 * cos_lat) * 3600, abs=2)
+    assert "Lower the polar axis by 12′00″" in error.altitude_advice()
+    assert "Move the polar axis west by" in error.azimuth_advice() and "in azimuth" in error.azimuth_advice()
+
+    low_west = polar_error(fit_rotation_axis(_swing(_axis_off_pole(-0.1, -0.2), separation, 30.0, 3), LATITUDE), LATITUDE)
+    assert "Raise" in low_west.altitude_advice() and "Move the polar axis east" in low_west.azimuth_advice()
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_southern_hemisphere_aligns_to_the_south_pole():
+    """PLT-080: South of the equator the target is the south celestial pole, and east is still east."""
+    import numpy as np
+
+    from galileo.polaralign import altaz_vector, fit_rotation_axis, polar_error
+    lat = -33.0
+    # Az 180 is due south; the axis is 0.1° high and 0.2° east of it, i.e. at azimuth 180 - 0.2/cos(alt).
+    truth = altaz_vector(33.1, 180.0 - 0.2 / np.cos(np.radians(33.0)))
+    axis = fit_rotation_axis(_swing(truth, 35.0, 30.0, 3), lat)
+    error = polar_error(axis, lat)
+    assert axis @ truth > 0.99999
+    assert error.altitude_arcsec == pytest.approx(0.1 * 3600, abs=3)
+    assert error.azimuth_arcsec == pytest.approx(0.2 * 3600, abs=3)           # east of the pole, as built
+    assert "west" in error.azimuth_advice()                                    # so it has to go west
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_positions_too_close_together_are_refused():
+    """PLT-080: Solves that cannot fix a circle (all but on top of each other) raise PolarAlignError rather than a wild answer."""
+    from galileo.polaralign import PolarAlignError, altaz_vector, fit_rotation_axis
+    close = [altaz_vector(50.0, 10.0 + 0.01 * i) for i in range(3)]
+    with pytest.raises(PolarAlignError, match="too close"):
+        fit_rotation_axis(close, LATITUDE)
+    with pytest.raises(PolarAlignError, match="at least 3"):
+        fit_rotation_axis(close[:2], LATITUDE)
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_angles_read_naturally():
+    """PLT-080: Errors are shown as ″, ′″ or °′″, whichever fits."""
+    from galileo.polaralign import format_angle
+    assert [format_angle(x) for x in (0, 45, -45, 192, 3725)] == ["0″", "45″", "45″", "3′12″", "1°02′05″"]
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_knob_turns_are_recovered_for_a_field_anywhere():
+    """PLT-080: The altitude-then-azimuth turns that carried one position to another are found exactly, however far
+    from the pole the camera points — so the live figure needs no near-pole caveat."""
+    import numpy as np
+
+    from galileo.polaralign import _rotate_y, _rotate_z, altaz_vector, knob_adjustment
+    for alt, az in ((80.0, 10.0), (51.0, 0.0), (30.0, 120.0), (15.0, 250.0)):
+        start = altaz_vector(alt, az)
+        goal = _rotate_z(_rotate_y(start, -0.25), 0.4)
+        turns = knob_adjustment(start, goal)
+        assert turns is not None
+        assert np.allclose(_rotate_z(_rotate_y(start, turns[0]), turns[1]), goal, atol=1e-9)
+        assert abs(turns[0]) < 1.0 and abs(turns[1]) < 1.0
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+@pytest.mark.parametrize("latitude", [51.0, -33.0])
+def test_tc_plt_080_tracking_turns_the_field_about_the_axis_at_the_sidereal_rate(latitude):
+    """PLT-080: A star fixed in the sky turns about the pole at the sidereal rate in the Earth-fixed frame, in the
+    direction tracking_angle gives — in either hemisphere."""
+    import datetime as dt
+
+    import numpy as np
+
+    from galileo.polaralign import _rotate_about, horizon_vector, pole_vector, tracking_angle
+    t0 = dt.datetime(2026, 10, 7, 4, 0, tzinfo=dt.UTC)
+    before = horizon_vector(100.0, 20.0, t0, latitude, LONGITUDE, refract=False)
+    after = horizon_vector(100.0, 20.0, t0 + dt.timedelta(seconds=600), latitude, LONGITUDE, refract=False)
+    predicted = _rotate_about(before, pole_vector(latitude), tracking_angle(600.0, latitude))
+    assert np.degrees(np.arccos(np.clip(predicted @ after, -1, 1))) * 3600 < 1.0
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_adjusting_the_knobs_moves_the_axis_with_the_field():
+    """PLT-080: After the user turns the knobs, with the mount tracking meanwhile, the axis estimate follows from where
+    the field now is — exactly, for a camera well away from the pole."""
+    import numpy as np
+
+    from galileo.polaralign import (
+        _rotate_about,
+        _rotate_y,
+        _rotate_z,
+        axis_after_adjustment,
+        fit_rotation_axis,
+        polar_error,
+        tracking_angle,
+    )
+    truth = _axis_off_pole(0.2, 0.3)
+    anchor = _swing(truth, 35.0, 30.0, 3)[2]
+    axis = fit_rotation_axis(_swing(truth, 35.0, 30.0, 3), LATITUDE)
+
+    seconds = 180.0
+    tracked = _rotate_about(anchor, axis, tracking_angle(seconds, LATITUDE))
+    assert np.allclose(axis_after_adjustment(axis, anchor, tracked, seconds, LATITUDE), axis, atol=1e-9)   # nothing touched
+
+    # The user lowers the axis 0.15° and swings it 0.1° west; the camera goes with the mount.
+    moved_axis = _rotate_z(_rotate_y(truth, 0.15), -0.1)
+    moved_camera = _rotate_z(_rotate_y(tracked, 0.15), -0.1)
+    after = axis_after_adjustment(axis, anchor, moved_camera, seconds, LATITUDE)
+    assert after is not None
+    assert np.degrees(np.arccos(np.clip(after @ moved_axis, -1, 1))) * 3600 < 1.0
+    assert polar_error(after, LATITUDE).total_arcsec < polar_error(axis, LATITUDE).total_arcsec
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_refraction_raises_altitudes_by_about_a_minute_at_45_degrees():
+    """PLT-080: Solved altitudes are raised by refraction (about 1′ at 45°, growing towards the horizon, negligible overhead)."""
+    from galileo.polaralign import refracted_altitude
+    assert (refracted_altitude(45.0) - 45.0) * 60 == pytest.approx(1.0, abs=0.05)
+    assert (refracted_altitude(10.0) - 10.0) * 60 > 4.5
+    assert (refracted_altitude(89.0) - 89.0) * 60 < 0.05
+
+
+def _lst_now():
+    import datetime as dt
+
+    from galileo.planning.star_atlas import julian_date, local_sidereal_deg
+    return local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), LONGITUDE)
+
+
+def _sky_solutions(vectors):
+    """Plate-solver results (J2000) for cameras at the given horizon-frame positions, now."""
+    from galileo.planning.star_atlas import horizontal_to_equatorial
+    from galileo.platesolve import SolveResult, mount_frame_to_j2000
+    from galileo.polaralign import vector_altaz
+    lst = _lst_now()
+    results = []
+    for v in vectors:
+        alt, az = vector_altaz(v)
+        ra, dec = horizontal_to_equatorial(alt, az, lst, LATITUDE)
+        ra, dec = mount_frame_to_j2000(ra, dec, None)
+        results.append(SolveResult(success=True, ra_deg=ra, dec_deg=dec, rotation_deg=0.0, scale_arcsec_px=3.0))
+    return results
+
+
+def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0):
+    """A PolarAlignWorkflow on a fake camera and mount (pointing at *hour_angle_deg*, dec 70), with a solver
+    that returns *results* in turn."""
+    import numpy as np
+
+    from galileo.platesolve import PlateSolver
+    from galileo.polaralign import PolarAlignWorkflow
+    camera = MagicMock()
+    camera.start_exposure = AsyncMock()
+    camera.get_image_array = AsyncMock(return_value=np.full((40, 50), 500, dtype="uint16"))
+    camera.abort_exposure = AsyncMock()
+    mount = MagicMock()
+    start_ra = (_lst_now() - hour_angle_deg) % 360.0
+    mount.get_status = AsyncMock(return_value={"right_ascension": start_ra / 15.0, "declination": 70.0,
+                                               "equatorial_system": "JNOW", "slewing": False})
+    slews: list = []
+    mount.slew_to_coordinates = AsyncMock(side_effect=lambda ra, dec: slews.append((ra, dec)))
+    mount.abort_slew = AsyncMock()
+    solver = PlateSolver(backend="astap", executable="unused")
+    solver._run_solver = AsyncMock(side_effect=results)
+    workflow = PolarAlignWorkflow(solver, camera=camera, mount=mount, latitude=LATITUDE, longitude=LONGITUDE,
+                                  work_dir=tmp_path, on_progress=on_progress)
+    return workflow, slews, start_ra
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(tmp_path):
+    """PLT-080: The workflow solves, turns the mount in RA between solves, reports the measured error, and then keeps
+    reporting as the field moves, until stopped."""
+    from galileo.polaralign import PolarAlignSettings
+    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
+    results = _sky_solutions(vectors) + _sky_solutions(vectors[2:])      # then a solve with nothing touched
+    seen: list = []
+
+    def on_progress(progress):
+        seen.append(progress)
+        if sum(p.error is not None for p in seen) >= 2:
+            workflow.stop()
+
+    workflow, slews, start_ra = _polar_rig(tmp_path, results, on_progress)
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
+                                            refraction=False))
+
+    assert [round((start_ra - ra) % 360.0) for ra, _ in slews] == [30, 60]       # turned west by 30° twice
+    assert all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews)
+    measured = [p.error for p in seen if p.error is not None]
+    assert len(measured) >= 2 and workflow.stopped
+    assert measured[0].altitude_arcsec == pytest.approx(0.2 * 3600, abs=60)
+    assert measured[1].total_arcsec == pytest.approx(measured[0].total_arcsec, abs=15)
+    assert [p.step for p in seen if p.phase == "measuring" and p.message.startswith("Solving")] == [1, 2, 3]
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_workflow_refuses_a_rotation_across_the_meridian(tmp_path):
+    """PLT-080: Turning a GEM across the meridian would flip it mid-measurement, so the run says so and does not move the mount."""
+    from galileo.polaralign import PolarAlignSettings
+    seen: list = []
+    workflow, slews, _ = _polar_rig(tmp_path, [], seen.append, hour_angle_deg=-10.0)
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west"))
+    assert slews == [] and "meridian" in seen[-1].message and workflow.error is None
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_workflow_stops_when_a_solve_fails(tmp_path):
+    """PLT-080: A failed measuring solve ends the run and says so, rather than fitting an axis to missing data."""
+    from galileo.platesolve import SolveResult
+    from galileo.polaralign import PolarAlignSettings
+    seen: list = []
+    workflow, _, _ = _polar_rig(tmp_path, [SolveResult(success=False, failure_reason="No stars.")], seen.append)
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, direction="west"))
+    assert workflow.error is None
+    assert "did not solve" in seen[-1].message and seen[-1].error is None

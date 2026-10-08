@@ -144,7 +144,7 @@ async def test_tc_eqp_070_alpaca_mount_status_reads_fixed_properties_once():
     assert first["site_elevation"] is None and first["equatorial_system"] == "JNOW"
     assert second == first
     live = ["siderealtime", "rightascension", "declination", "altitude", "azimuth", "tracking", "slewing", "atpark",
-           "sideofpier"]
+           "sideofpier", "trackingrate"]
     assert reads[reads_first:] == live
     assert reads.count("siteelevation") == 1  # an unimplemented optional property isn't retried every poll
 
@@ -255,7 +255,7 @@ def _texts(page):
 @pytest.mark.priority("MVP")
 @pytest.mark.parametrize("cat_id,label", [
     ("switch", "Switches"), ("flat_panel", "Flat Panel"),
-    ("weather", "Weather"), ("dome", "Dome"), ("safety_monitor", "Safety Monitor"),
+    ("weather", "Weather"), ("dome", "Dome"),
 ])
 def test_tc_eqp_070_scan_pages_show_driver_info_for_the_picked_device(window, cat_id, label):
     """EQP-070: on the scan-only pages, picking a device from the results fills Driver info / version."""

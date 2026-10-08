@@ -650,11 +650,9 @@ class StarAtlasView(QWidget):
             if text:
                 p.drawText(QPointF(x + self._star_radius(self._stars.mag[i]) + 3, y - 2), text)
         p.setPen(_DSO_COLOR)
-        if vp.fov_deg <= 60:
-            idx, xs, ys = sets["dsos"]
-            for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
-                if self._dso_mag[i] <= min(self.dso_mag_limit, 8.5):
-                    p.drawText(QPointF(x + 7, y - 4), self._dsos[i].primary_name)
+        idx, xs, ys = sets["dsos"]       # every drawn deep-sky object is labelled
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+            p.drawText(QPointF(x + 7, y - 4), self._dsos[i].primary_name)
         p.setPen(_BODY_COLOR)
         idx, xs, ys = sets["bodies"]
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):

@@ -393,6 +393,32 @@ async def test_tc_eqp_fw_010_names_and_zero_based_position(server):
         await wheel.disconnect()
 
 
+@pytest.mark.requirement("TC-EQP-FW-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_fw_010_move_waits_for_a_slow_driver_to_acknowledge(server):
+    """EQP-FW-010: ``move_to`` returns only once the change is done, even if the driver's Busy reply
+    arrives late (a loaded machine or a slow network). Before the fix it saw the old Ok state and
+    returned straight away, leaving ``position`` reading the old slot."""
+    import time
+    original = server._on_command
+
+    def slow(sock, elem):
+        if elem.get("name") == "FILTER_SLOT":
+            time.sleep(0.4)
+        original(sock, elem)
+
+    server._on_command = slow
+    wheel = make(indi.IndiFWAdapter, server, WHEEL)
+    await wheel.connect()
+    try:
+        await wheel.move_to(2)
+        status = await wheel.get_status()
+        assert status["position"] == 2
+        assert not wheel.is_moving
+    finally:
+        await wheel.disconnect()
+
+
 @pytest.mark.requirement("TC-EQP-FOC-010")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_foc_010_absolute_relative_moves_and_limits(server):
@@ -462,6 +488,92 @@ async def test_tc_eqp_rot_010_backlash_unsupported_is_reported(server):
             await rot.set_backlash(2.0)
     finally:
         await rot.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_aux_010_lists_every_device_unfiltered(server):
+    """EQP-AUX-010: Aux discovery lists every device on the server, not filtered by DRIVER_INTERFACE."""
+    aux = indi.get_adapter_class(DeviceCategory.AUX)(host="127.0.0.1", port=server.port)
+    names = await aux.list_available_devices(DeviceCategory.AUX)
+    assert set(names) == {CCD, MOUNT, WHEEL, FOCUSER, ROTATOR}
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_aux_010_property_groups_and_writes(server):
+    """EQP-AUX-010: the Aux adapter exposes a connected driver's own properties, grouped by INDI group
+    (one tab per group), and a write lands as the matching vector kind (number/switch/text)."""
+    aux = make(indi.IndiAuxAdapter, server, FOCUSER)
+    await aux.connect()
+    try:
+        groups = await aux.get_property_groups()
+        assert [g.name for g in groups] == ["Main"]  # the fake server's focuser puts everything in one group
+        by_name = {p.name: p for p in groups[0].properties}
+        assert set(by_name) >= {"DRIVER_INFO", "CONNECTION", "ABS_FOCUS_POSITION", "FOCUS_MOTION", "FOCUS_TEMPERATURE"}
+        assert by_name["DRIVER_INFO"].kind == "text"
+        assert by_name["ABS_FOCUS_POSITION"].kind == "number" and by_name["ABS_FOCUS_POSITION"].perm == "rw"
+        assert by_name["FOCUS_MOTION"].kind == "switch" and by_name["FOCUS_MOTION"].rule == "OneOfMany"
+        assert by_name["FOCUS_TEMPERATURE"].perm == "ro"
+
+        await aux.write_property("ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": 5200})
+        await sent(server, FOCUSER, "ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": "5200"})
+        await aux.write_property("FOCUS_MOTION", {"FOCUS_INWARD": True})
+        await sent(server, FOCUSER, "FOCUS_MOTION", {"FOCUS_INWARD": "On"}, exact=False)
+
+        with pytest.raises(DevicePropertyError, match="NOPE"):
+            await aux.write_property("NOPE", {"x": 1})
+    finally:
+        await aux.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_aux_010_alpaca_switch_channels_and_writes():
+    """EQP-AUX-010: the Alpaca Aux adapter reads ISwitchV2 channels, splitting a boolean 0..1 step-1
+    range from an analog one, and a write lands on the matching endpoint (setswitch/setswitchvalue)."""
+    from unittest.mock import AsyncMock
+
+    from galileo.adapters import alpaca
+
+    aux = alpaca.AlpacaAuxAdapter(host="127.0.0.1", port=11111)
+    values = {
+        ("maxswitch", ()): 2,
+        ("getswitchname", (("Id", 0),)): "Power-Cam",
+        ("getswitchdescription", (("Id", 0),)): "Camera power relay",
+        ("canwrite", (("Id", 0),)): True,
+        ("minswitchvalue", (("Id", 0),)): 0.0,
+        ("maxswitchvalue", (("Id", 0),)): 1.0,
+        ("switchstep", (("Id", 0),)): 1.0,
+        ("getswitch", (("Id", 0),)): True,
+        ("getswitchname", (("Id", 1),)): "Dew-Heater",
+        ("getswitchdescription", (("Id", 1),)): "Dew heater power level",
+        ("canwrite", (("Id", 1),)): True,
+        ("minswitchvalue", (("Id", 1),)): 0.0,
+        ("maxswitchvalue", (("Id", 1),)): 100.0,
+        ("switchstep", (("Id", 1),)): 5.0,
+        ("getswitchvalue", (("Id", 1),)): 25.0,
+    }
+
+    async def fake_get(attribute, timeout=10.0, **extra):
+        return values[(attribute, tuple(sorted(extra.items())))]
+
+    aux._get = fake_get
+    aux._put = AsyncMock()
+
+    groups = await aux.get_property_groups()
+    assert len(groups) == 1 and groups[0].name == "Switches"
+    by_label = {p.label: p for p in groups[0].properties}
+    assert by_label["Camera power relay"].kind == "switch"
+    assert by_label["Camera power relay"].elements[0].value is True
+    assert by_label["Dew heater power level"].kind == "number"
+    dew = by_label["Dew heater power level"].elements[0]
+    assert (dew.min, dew.max, dew.step) == (0.0, 100.0, 5.0)
+
+    await aux.write_property("0", {"0": False})
+    aux._put.assert_awaited_with("setswitch", Id=0, State=False)
+    await aux.write_property("1", {"1": 50.0})
+    aux._put.assert_awaited_with("setswitchvalue", Id=1, Value=50.0)
 
 
 @pytest.mark.requirement("TC-EQP-ROT-010")

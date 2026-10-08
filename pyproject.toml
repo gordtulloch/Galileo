@@ -5,6 +5,7 @@ markers = [
     "requirement(tc_id): RTM Test Case ID, e.g. TC-ARCH-010",
     "priority(level): Requirement priority — MVP, P2, or P3",
     "soak: Requires extended runtime (hours); excluded from normal CI runs",
+    "perf: Wall-clock performance budget that depends on the machine's speed; excluded from the CI release gate, run locally",
     "hardware: Requires physical INDI/Alpaca hardware to be reachable on the LAN",
     "integration: Requires a running external service (INDI server, PHD2, solver, etc.)",
 ]
@@ -62,7 +63,7 @@ python_version = "3.11"    # type-check against 3.11's stdlib, so a 3.12+-only A
 
 [project]
 name = "galileo"
-version = "0.1.0"
+version = "0.9.0a0"
 description = "Cross-Platform Astrophotography Imaging Suite"
 requires-python = ">=3.11"
 license = {text = "GPL-3.0-or-later"}

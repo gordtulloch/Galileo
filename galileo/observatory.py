@@ -10,6 +10,7 @@ scoped at either the Observatory (shared) or Pier (independent) level.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -20,8 +21,10 @@ if TYPE_CHECKING:
     from galileo.library.models.device_config import DeviceConfigRecord
     from galileo.library.models.observatory import ObservatoryRecord, PierRecord
     from galileo.library.models.optical_tube import OpticalTubeRecord
-    from galileo.autofocus import AutofocusParams
+    from galileo.autofocus import AutofocusParams, FilterOffset
+    from galileo.mount_limits import MountLimits
     from galileo.platesolve import SolverParams
+    from galileo.safety import WeatherSafetyRule
 
 logger = logging.getLogger(__name__)
 
@@ -296,11 +299,15 @@ def save_device_config(
     sensor_name: str | None = None,
     bayer_pattern: str | None = None,
     max_well_depth: int | None = None,
+    panel_type: str | None = None,
+    mount_limits: MountLimits | None = None,
 ) -> DeviceConfigRecord:
     """Create or update the saved device configuration for *category*/*slot*
     on *pier* (the Equipment page's per-device Save button). *bayer_pattern*
     (cameras only) is left as it was when omitted, and starts as ``RGGB``.
-    *max_well_depth* (cameras only, electrons) feeds the Flat Assistant."""
+    *max_well_depth* (cameras only, electrons) feeds the Flat Assistant.
+    *panel_type* (flat panel only) is left as it was when omitted, and starts
+    as ``"Flat Panel"``. *mount_limits* (mount only) is left as it was when omitted."""
     from galileo.library.models.device_config import DeviceConfigRecord
     record = DeviceConfigRecord.get_or_none(
         (DeviceConfigRecord.pier == pier)
@@ -314,13 +321,25 @@ def save_device_config(
     )
     if bayer_pattern is not None:
         fields["bayer_pattern"] = bayer_pattern
+    if panel_type is not None:
+        fields["panel_type"] = panel_type
     fields["max_well_depth"] = max_well_depth
+    if mount_limits is not None:
+        fields.update(dataclasses.asdict(mount_limits))
     if record is None:
         return DeviceConfigRecord.create(pier=pier, category=category, slot=slot, **fields)
     for key, value in fields.items():
         setattr(record, key, value)
     record.save()
     return record
+
+
+def mount_limits_from_config(record: DeviceConfigRecord | None) -> MountLimits:
+    """The Mount page's saved flip/limit settings from a mount's device config (defaults if none)."""
+    from galileo.mount_limits import MountLimits
+    if record is None:
+        return MountLimits()
+    return MountLimits(**{f.name: getattr(record, f.name) for f in dataclasses.fields(MountLimits)})
 
 
 def delete_device_config(pier: PierRecord, category: str, slot: str = "primary") -> None:
@@ -365,6 +384,125 @@ def save_autofocus_params(pier: PierRecord, params: AutofocusParams) -> None:
     for key, value in fields.items():
         setattr(record, key, value)
     record.save()
+
+
+def get_filter_offsets(pier: PierRecord | None) -> list[FilterOffset]:
+    """Return *pier*'s saved per-filter offset state (Focus screen's Filter
+    Offsets dialog, EQP-FW-020) — one entry per filter that has ever been
+    measured or marked Primary on this Pier. Empty if none have been saved
+    yet or no Pier is selected."""
+    from galileo.autofocus import FilterOffset
+    if pier is None:
+        return []
+    from galileo.library.models.filter_offset import FilterOffsetRecord
+    return [
+        FilterOffset(
+            filter_name=record.filter_name, is_primary=record.is_primary,
+            measurements=(record.measurement_1, record.measurement_2, record.measurement_3, record.measurement_4),
+            offset_steps=record.offset_steps,
+        )
+        for record in FilterOffsetRecord.select().where(FilterOffsetRecord.pier == pier)
+    ]
+
+
+def get_primary_filter(pier: PierRecord | None) -> FilterOffset | None:
+    """The one filter marked Primary on *pier*, or ``None`` if none is set."""
+    return next((offset for offset in get_filter_offsets(pier) if offset.is_primary), None)
+
+
+def save_filter_offset(pier: PierRecord, offset: FilterOffset) -> None:
+    """Create or update *pier*'s saved offset state for ``offset.filter_name``.
+
+    Marking a filter Primary (``offset.is_primary``) clears the flag from
+    every other filter on this Pier first — FOC-060's offset calculation
+    assumes exactly one Primary filter per Pier."""
+    from galileo.library.models.filter_offset import FilterOffsetRecord
+    if offset.is_primary:
+        FilterOffsetRecord.update(is_primary=False).where(
+            (FilterOffsetRecord.pier == pier) & (FilterOffsetRecord.filter_name != offset.filter_name)
+        ).execute()
+    m1, m2, m3, m4 = (list(offset.measurements) + [None, None, None, None])[:4]
+    fields = dict(
+        is_primary=offset.is_primary, measurement_1=m1, measurement_2=m2,
+        measurement_3=m3, measurement_4=m4, offset_steps=offset.offset_steps,
+    )
+    record = FilterOffsetRecord.get_or_none(
+        (FilterOffsetRecord.pier == pier) & (FilterOffsetRecord.filter_name == offset.filter_name)
+    )
+    if record is None:
+        FilterOffsetRecord.create(pier=pier, filter_name=offset.filter_name, **fields)
+        return
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+
+
+def get_filter_offset_steps(pier: PierRecord | None) -> dict[str, int]:
+    """``{filter_name: offset_steps}`` for *pier*, skipping filters with no
+    offset computed yet — ready to feed ``AutofocusService(filter_offsets=...)``
+    for a filter-change focus compensation (FOC-060)."""
+    return {
+        offset.filter_name: offset.offset_steps
+        for offset in get_filter_offsets(pier) if offset.offset_steps is not None
+    }
+
+
+def get_weather_safety_rules(pier: PierRecord | None, slot: str = "primary") -> list[WeatherSafetyRule]:
+    """Return *pier*'s saved per-reading safety rules for the safety device in
+    *slot* (Equipment > Safety screen, EQP-WX-020) — one entry per reading the
+    user has configured. Empty if none have been saved yet or no Pier is
+    selected."""
+    from galileo.safety import WeatherSafetyRule
+    if pier is None:
+        return []
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    return [
+        WeatherSafetyRule(
+            parameter=record.parameter, label=record.label, unit=record.unit,
+            safety_related=record.safety_related, operator=record.operator, threshold=record.threshold,
+        )
+        for record in WeatherSafetyRuleRecord.select().where(
+            (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        )
+    ]
+
+
+def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule, slot: str = "primary") -> None:
+    """Create or update *pier*'s saved rule for ``rule.parameter`` (Equipment >
+    Weather screen's Save button, EQP-WX-020)."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    fields = dict(
+        label=rule.label, unit=rule.unit, safety_related=rule.safety_related,
+        operator=rule.operator, threshold=rule.threshold,
+    )
+    record = WeatherSafetyRuleRecord.get_or_none(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        & (WeatherSafetyRuleRecord.parameter == rule.parameter)
+    )
+    if record is None:
+        WeatherSafetyRuleRecord.create(pier=pier, slot=slot, parameter=rule.parameter, **fields)
+        return
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+
+
+def delete_weather_safety_rule(pier: PierRecord, parameter: str, slot: str = "primary") -> None:
+    """Delete *pier*'s saved rule for *parameter* on the safety device in
+    *slot*, if any."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    WeatherSafetyRuleRecord.delete().where(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        & (WeatherSafetyRuleRecord.parameter == parameter)
+    ).execute()
+
+
+def delete_weather_safety_rules(pier: PierRecord, slot: str) -> None:
+    """Delete every saved rule of the safety device in *slot* (its tab was removed)."""
+    from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
+    WeatherSafetyRuleRecord.delete().where(
+        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+    ).execute()
 
 
 def get_solver_settings(pier: PierRecord | None) -> tuple[str, SolverParams]:

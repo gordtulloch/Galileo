@@ -62,6 +62,12 @@ class AppWindowCoreMixin:
         self._pier_pointing: dict = {}
         self._pier_poll_threads: dict = {}
         self._tracking_threads: dict = {}     # per-Pier: waits for a slew to end, then starts tracking (EQP-MNT-050)
+        # Per-Pier weather-reading trend history for the Safety Monitor
+        # screen's graphs (EQP-SAFE-020): {pier key: [(unix timestamp,
+        # readings dict), ...]}, capped in _weather_page.py's _record_reading.
+        # Populated whenever either the Weather or Safety Monitor page polls
+        # the connected weather station while it is the one on screen.
+        self._weather_history_by_pier: dict = {}
         self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
@@ -71,8 +77,9 @@ class AppWindowCoreMixin:
         self._plugin_manager.initialize_from_disk()
 
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
+        from galileo import __version__
         self._window = QMainWindow()
-        self._window.setWindowTitle("Galileo")
+        self._window.setWindowTitle(f"Galileo {__version__}")
         self._window.resize(1400, 900)
 
         # Set up before the Equipment page is built below, since building it
@@ -155,9 +162,13 @@ class AppWindowCoreMixin:
         self._observatory_combo.activated.connect(self._on_observatory_activated)
         layout.addWidget(self._observatory_combo)
 
-        self._observatory_delete_btn = QPushButton("✕")
+        self._observatory_delete_btn = QPushButton("X")
         self._observatory_delete_btn.setFixedWidth(26)
         self._observatory_delete_btn.setEnabled(False)
+        self._observatory_delete_btn.setStyleSheet(
+            "QPushButton { color: #e74c3c; font-weight: bold; padding: 0px; } "
+            "QPushButton:disabled { color: #888888; }"
+        )
         self._observatory_delete_btn.setToolTip("Delete this Observatory and every Pier under it")
         self._observatory_delete_btn.clicked.connect(self._on_delete_observatory_clicked)
         layout.addWidget(self._observatory_delete_btn)
@@ -172,9 +183,13 @@ class AppWindowCoreMixin:
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
 
-        self._pier_delete_btn = QPushButton("✕")
+        self._pier_delete_btn = QPushButton("X")
         self._pier_delete_btn.setFixedWidth(26)
         self._pier_delete_btn.setEnabled(False)
+        self._pier_delete_btn.setStyleSheet(
+            "QPushButton { color: #e74c3c; font-weight: bold; padding: 0px; } "
+            "QPushButton:disabled { color: #888888; }"
+        )
         self._pier_delete_btn.setToolTip("Delete this Pier")
         self._pier_delete_btn.clicked.connect(self._on_delete_pier_clicked)
         layout.addWidget(self._pier_delete_btn)

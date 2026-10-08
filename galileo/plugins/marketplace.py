@@ -24,7 +24,7 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 # URL of the plugins.json index in the Galileo-Plugins GitHub repository.
-# Override in tests by passing a different base_url to MarketplaceClient().
+# Override in tests by passing a different index_url to MarketplaceClient().
 MARKETPLACE_INDEX_URL = (
     "https://raw.githubusercontent.com/gordtulloch/Galileo-Plugins/main/plugins.json"
 )

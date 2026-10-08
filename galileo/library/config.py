@@ -12,7 +12,8 @@ did in AstroFiler, so ``config.get("DEFAULT", "repo")`` keeps working.
 Recognised keys (all optional): ``source`` (incoming folder), ``repo``
 (repository folder), ``temp_folder``, ``refresh_on_startup``, ``min_files_per_master``,
 the ``cloud_*`` / ``bucket_url`` / ``auth_file_path`` / ``sync_profile`` group, the
-``compress_*`` group, and the smart-telescope host/credential keys.
+``compress_*`` group, the smart-telescope host/credential keys, and ``Registration``
+(set ``False`` to opt out of the startup registration ping, see ``galileo.registration``).
 """
 
 from __future__ import annotations
