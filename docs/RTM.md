@@ -169,12 +169,12 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 |---|---|---|---|---|
 | `SES-010` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-010` |
 | `SES-020` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-020` |
-| `SES-030` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-030` |
-| `SES-040` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-040` |
-| `SES-050` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-050` |
+| `SES-030` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-030` |
+| `SES-040` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-040` |
+| `SES-050` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-050` |
 | `SES-060` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-060` |
 | `SES-070` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-070` |
-| `SES-080` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-080` |
+| `SES-080` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-080` |
 | `SES-090` | P3 | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-090` |
 | `SES-100` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-100` |
 | `SES-110` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-110` |

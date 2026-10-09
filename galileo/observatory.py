@@ -218,6 +218,32 @@ def create_pier(observatory: ObservatoryRecord, name: str) -> PierRecord:
     return PierRecord.create(observatory=observatory, name=name)
 
 
+#: The user-editable ObservatoryRecord columns (everything but the primary key).
+OBSERVATORY_FIELDS = (
+    "name", "latitude", "longitude", "elevation_m", "timezone", "physical_address",
+    "owner", "notification_type", "email_address", "cell_number",
+)
+
+
+def update_observatory(observatory: ObservatoryRecord, **fields) -> ObservatoryRecord:
+    """Persist edited *fields* on *observatory* (the same instance is updated in place,
+    so anything holding it sees the change). Unknown field names raise ``ValueError``."""
+    unknown = set(fields) - set(OBSERVATORY_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown Observatory field(s): {', '.join(sorted(unknown))}")
+    for key, value in fields.items():
+        setattr(observatory, key, value)
+    observatory.save()
+    return observatory
+
+
+def rename_pier(pier: PierRecord, name: str) -> PierRecord:
+    """Persist a new *name* for *pier*, updating the instance in place."""
+    pier.name = name
+    pier.save()
+    return pier
+
+
 def set_pier_connect_on_startup(pier: PierRecord, connect_on_startup: bool) -> None:
     """Persist *pier*'s "Connect on Startup" top-bar checkbox state."""
     pier.connect_on_startup = connect_on_startup

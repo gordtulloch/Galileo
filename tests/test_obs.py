@@ -366,3 +366,68 @@ def test_clicking_delete_observatory_removes_it_and_falls_back_to_no_observatory
     finally:
         win._window.close()
         db.close()
+
+
+def test_update_observatory_persists_every_field_and_rename_pier_persists_name(tmp_path):
+    """Editing an Observatory saves all of its fields; renaming a Pier saves its name; both survive a reload."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import (
+        OBSERVATORY_FIELDS, create_observatory, create_pier, list_observatories, list_piers,
+        rename_pier, update_observatory,
+    )
+    init_db(tmp_path / "edit.db")
+    try:
+        obs = create_observatory("Backyard")
+        pier = create_pier(obs, "Pier A")
+        edited = dict(
+            name="Dark Site", latitude=44.5, longitude=-79.25, elevation_m=250.0, timezone="America/Toronto",
+            physical_address="1 Rural Rd", owner="Gord", notification_type="Both",
+            email_address="a@example.com", cell_number="+1-555-555-5555",
+        )
+        assert set(edited) == set(OBSERVATORY_FIELDS)
+        update_observatory(obs, **edited)
+        rename_pier(pier, "Pier B")
+
+        reloaded = list_observatories()[0]
+        for key, value in edited.items():
+            assert getattr(reloaded, key) == value
+        assert [p.name for p in list_piers(reloaded)] == ["Pier B"]
+        with pytest.raises(ValueError):
+            update_observatory(obs, bogus=1)
+    finally:
+        db.close()
+
+
+def test_edit_buttons_follow_the_selection_and_edits_update_the_selectors(tmp_path, monkeypatch):
+    """The pencil buttons enable with a selection, and editing an Observatory/renaming a Pier updates the DB and the combo boxes."""
+    from galileo.library.database import db
+    win = _built_window(tmp_path, monkeypatch)
+    try:
+        assert win._observatory_edit_btn.isEnabled() is False
+        assert win._pier_edit_btn.isEnabled() is False
+
+        from galileo.observatory import create_observatory, create_pier, list_observatories, list_piers
+        observatory = create_observatory("Backyard", latitude=10.0)
+        create_pier(observatory, "Pier A")
+        win._load_observatories()
+        assert win._observatory_edit_btn.isEnabled() is True
+        assert win._pier_edit_btn.isEnabled() is True
+
+        monkeypatch.setattr(win, "_prompt_new_observatory", lambda record=None: {
+            "name": "Dark Site", "latitude": 44.5, "longitude": -79.0, "elevation_m": 5.0, "timezone": None,
+            "physical_address": None, "owner": "Gord", "notification_type": None,
+            "email_address": None, "cell_number": None,
+        })
+        win._on_edit_observatory_clicked()
+        assert win._observatory_combo.findText("Dark Site") >= 0
+        assert win._observatory_combo.findText("Backyard") < 0
+        saved = list_observatories()[0]
+        assert (saved.name, saved.latitude, saved.owner) == ("Dark Site", 44.5, "Gord")
+
+        monkeypatch.setattr(win, "_prompt_new_name", lambda *a, **k: "Pier B")
+        win._on_edit_pier_clicked()
+        assert win._pier_combo.findText("Pier B") >= 0
+        assert [p.name for p in list_piers(saved)] == ["Pier B"]
+    finally:
+        win._window.close()
+        db.close()

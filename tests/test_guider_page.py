@@ -119,7 +119,7 @@ def test_tc_guide_070_equipment_page_uses_the_guider_page(window):
     assert "guider" not in [c[0] for c in EQUIPMENT_CATEGORIES]
     from galileo.ui.guider import GuiderPage
     state = window._device_pages["guider"]
-    assert set(state) == {"reload", "autoconnect", "disconnect", "connected"}
+    assert set(state) == {"reload", "autoconnect", "disconnect", "connected", "get_service"}
     pages = [w for w in window._window.findChildren(GuiderPage)]
     assert len(pages) == 1
 

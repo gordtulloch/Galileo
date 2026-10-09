@@ -72,6 +72,7 @@ class AppWindowState(Protocol):
     _nav_columns: Any
     _observatories: Any
     _observatory_combo: Any
+    _observatory_edit_btn: Any
     _observatory_delete_btn: Any
     _optics_combo: Any
     _optics_label: Any
@@ -80,6 +81,7 @@ class AppWindowState(Protocol):
     _plugin_manager: Any
     _pier_connect_btn: Any
     _pier_connect_startup_check: Any
+    _pier_edit_btn: Any
     _pier_delete_btn: Any
     _pier_label: Any
     _pier_pointing: Any

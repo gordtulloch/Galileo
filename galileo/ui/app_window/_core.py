@@ -162,6 +162,14 @@ class AppWindowCoreMixin:
         self._observatory_combo.activated.connect(self._on_observatory_activated)
         layout.addWidget(self._observatory_combo)
 
+        self._observatory_edit_btn = QPushButton("✎")
+        self._observatory_edit_btn.setFixedWidth(26)
+        self._observatory_edit_btn.setEnabled(False)
+        self._observatory_edit_btn.setStyleSheet("QPushButton { padding: 0px; } QPushButton:disabled { color: #888888; }")
+        self._observatory_edit_btn.setToolTip("Edit this Observatory")
+        self._observatory_edit_btn.clicked.connect(self._on_edit_observatory_clicked)
+        layout.addWidget(self._observatory_edit_btn)
+
         self._observatory_delete_btn = QPushButton("X")
         self._observatory_delete_btn.setFixedWidth(26)
         self._observatory_delete_btn.setEnabled(False)
@@ -182,6 +190,14 @@ class AppWindowCoreMixin:
         self._pier_combo.setEnabled(False)
         self._pier_combo.activated.connect(self._on_pier_activated)
         layout.addWidget(self._pier_combo)
+
+        self._pier_edit_btn = QPushButton("✎")
+        self._pier_edit_btn.setFixedWidth(26)
+        self._pier_edit_btn.setEnabled(False)
+        self._pier_edit_btn.setStyleSheet("QPushButton { padding: 0px; } QPushButton:disabled { color: #888888; }")
+        self._pier_edit_btn.setToolTip("Rename this Pier")
+        self._pier_edit_btn.clicked.connect(self._on_edit_pier_clicked)
+        layout.addWidget(self._pier_edit_btn)
 
         self._pier_delete_btn = QPushButton("X")
         self._pier_delete_btn.setFixedWidth(26)
@@ -339,7 +355,7 @@ class AppWindowCoreMixin:
             self._current_primary_section = section_id
             stack.setCurrentIndex(pages[section_id])
             # The library is about the whole catalog, not any one Pier's equipment.
-            for widget in (self._pier_label, self._pier_combo, self._pier_delete_btn,
+            for widget in (self._pier_label, self._pier_combo, self._pier_edit_btn, self._pier_delete_btn,
                            self._pier_connect_startup_check, self._pier_connect_btn):
                 widget.setVisible(section_id != "library")
             self._refresh_optics_combo()

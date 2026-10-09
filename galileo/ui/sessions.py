@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galileo.ui.session_runner import get_session_controller
+
 logger = logging.getLogger(__name__)
 
 _SESSION_SUFFIX = ".gses"
@@ -334,7 +336,10 @@ class NotificationBlock(SessionBlock):
     async def execute(self, context: Any) -> None:
         """Send this block's message via the owning Observatory's configured contact
         channel(s) (SES-150, traces to NOTIF-010/OBS-090)."""
-        await context.notify_service.emit(self.message)
+        if context.notify_service is None:
+            raise RuntimeError("no notification service is configured")
+        from galileo.notify import NotificationEvent
+        await context.notify_service.emit(NotificationEvent.SESSION_MESSAGE, self.message)
 
 
 # The v1 action-block catalog (SES-130 MVP tier + SES-140 P2 tier), keyed by class
@@ -560,14 +565,17 @@ class SessionRegion:
 
     def _make_job(self):
         from galileo.scheduler import SchedulerJob
+        from galileo.sequencer.session_exec import build_tree, estimate_frames
         target = next((b for b in self.blocks if isinstance(b, TargetBlock)), None)
-        return SchedulerJob(
+        job = SchedulerJob(
             name=self.name,
             sequence=self,
             pier_name=self._pier_name or "",
             target_ra=target.ra_deg if target else 0.0,
             target_dec=target.dec_deg if target else 0.0,
         )
+        job.total_required = estimate_frames(build_tree(self.blocks))
+        return job
 
     def schedule(self) -> None:
         """Submit this session to the Scheduler (SES-200) — the only control with a
@@ -702,21 +710,24 @@ def _block_color(kind_name: str, window: Any = None) -> QColor:
     return QColor(r, g, b)
 
 
-def _block_item_widget(label_text: str, kind_name: str, window: Any = None) -> QLabel:
+def _block_item_widget(label_text: str, kind_name: str, window: Any = None,
+                       running: bool = False) -> QLabel:
     """A colour-coded, theme-bordered, padded tile for one block — used as the
     item widget for both the palette and a region's block list so a block's
-    colour is consistent wherever it appears."""
+    colour is consistent wherever it appears. *running* marks the block the
+    session is executing right now (SES-350) with a heavy accent border."""
     color = _block_color(kind_name, window)
     luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
     text_color = "#000000" if luminance > 140 else "#ffffff"
     theme_mgr = getattr(window, "_theme", None)
     border_color = theme_mgr.palette()["border"] if theme_mgr is not None else "#555555"
-    widget = QLabel(label_text)
+    border = "3px solid #2e9e3f" if running else f"1px solid {border_color}"
+    widget = QLabel(f"▶ {label_text}" if running else label_text)
     widget.setStyleSheet(
         f"QLabel {{"
         f" background-color: {color.name()};"
         f" color: {text_color};"
-        f" border: 1px solid {border_color};"
+        f" border: {border};"
         f" border-radius: 4px;"
         f" padding: 6px 10px;"
         f" }}"
@@ -763,6 +774,7 @@ class BlockListWidget(QListWidget):
         self._palette = palette
         self._on_changed = on_changed
         self._window = window
+        self._running_block: SessionBlock | None = None
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAcceptDrops(True)
@@ -783,9 +795,20 @@ class BlockListWidget(QListWidget):
             self._set_item_widget(item, block)
         self._fit_height_to_contents()
 
+    def set_running_block(self, block: SessionBlock | None) -> None:
+        """Mark *block* as the one executing now (SES-350); ``None`` clears the marker."""
+        if block is self._running_block:
+            return
+        self._running_block = block
+        for row in range(self.count()):
+            item = self.item(row)
+            candidate = item.data(_BLOCK_ROLE)
+            self._set_item_widget(item, candidate)
+
     def _set_item_widget(self, item: QListWidgetItem, block: SessionBlock) -> None:
         """Tile for *block*, inset by its indent level so a loop's body reads as nested."""
-        tile = _block_item_widget(block.display_text, type(block).__name__, self._window)
+        tile = _block_item_widget(block.display_text, type(block).__name__, self._window,
+                                  running=block is self._running_block)
         if block.indent:
             holder = QWidget()
             row = QHBoxLayout(holder)
@@ -953,18 +976,34 @@ class _RegionWidget(QFrame):
         self._schedule_btn = QPushButton("Schedule")
         self._schedule_btn.clicked.connect(self._toggle_schedule)
         self._run_btn = QPushButton("Run")
-        self._run_btn.setToolTip("Schedule this session to start now (SCHED-150).")
+        self._run_btn.setToolTip("Execute this session's blocks now (SES-030); also places it on the "
+                                 "Schedule timeline starting now (SCHED-150).")
         self._run_btn.clicked.connect(self._run_now)
+        self._pause_btn = QPushButton("Pause")
+        self._pause_btn.setToolTip("Hold before the next block or frame (SES-040).")
+        self._pause_btn.clicked.connect(self._toggle_pause)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Stop the running session and abort the current exposure or slew (SES-040).")
+        self._stop_btn.clicked.connect(self._stop_run)
         self._delete_btn = QPushButton("Delete")
         self._delete_btn.clicked.connect(self._delete)
-        for btn in (self._save_btn, self._template_btn, self._load_btn,
-                    self._schedule_btn, self._run_btn, self._delete_btn):
+        for btn in (self._save_btn, self._template_btn, self._load_btn, self._schedule_btn,
+                    self._run_btn, self._pause_btn, self._stop_btn, self._delete_btn):
             header.addWidget(btn)
         layout.addLayout(header)
 
+        # Live progress while the session runs (SES-050): state, current block, frame N of M.
+        self._progress_label = QLabel("")
+        self._progress_label.setObjectName("StatusHint")
+        self._progress_label.setWordWrap(True)
+        self._progress_label.setVisible(False)
+        layout.addWidget(self._progress_label)
+
         self._blocks_list = BlockListWidget(region, palette, self._on_block_change, window)
         layout.addWidget(self._blocks_list)
+        self._controller = get_session_controller(window)
         self._apply_boundary_style()
+        self.refresh_run_state()
 
     def _on_block_change(self, error: str | None) -> None:
         self._blocks_list.refresh()
@@ -980,6 +1019,38 @@ class _RegionWidget(QFrame):
         self._schedule_btn.setText("Deschedule" if scheduled else "Schedule")
         self._template_btn.setEnabled(not scheduled)
         self._load_btn.setEnabled(not scheduled and self._region.can_load_from_template())
+
+    def refresh_run_state(self) -> None:
+        """Reflect this session's run (if any) in its controls, progress line, and the
+        highlighted block (SES-040, SES-050, SES-350)."""
+        from galileo.sequencer.session_exec import RunState
+        run = self._controller.run_for(self._region)
+        running = run is not None
+        # While running, nothing that edits or withdraws the session is available.
+        for btn in (self._save_btn, self._template_btn, self._load_btn, self._schedule_btn,
+                    self._delete_btn, self._run_btn):
+            btn.setEnabled(not running)
+        if not running:
+            self._apply_boundary_style()
+        self._pause_btn.setVisible(running)
+        self._stop_btn.setVisible(running)
+        self._progress_label.setVisible(running)
+        if not running:
+            self._blocks_list.set_running_block(None)
+            return
+        progress = run.progress
+        paused = progress.state == RunState.PAUSED
+        self._pause_btn.setText("Resume" if paused else "Pause")
+        self._blocks_list.set_running_block(progress.block)
+        bits = ["Paused" if paused else "Running"]
+        if progress.block_total:
+            bits.append(f"block {progress.block_index} of {progress.block_total}")
+        if progress.frames_total:
+            bits.append(f"frame {progress.frames_done} of {progress.frames_total}")
+        text = " · ".join(bits)
+        if progress.message:
+            text += f" — {progress.message}"
+        self._progress_label.setText(text)
 
     def _save(self) -> None:
         self._region.save()
@@ -1016,13 +1087,32 @@ class _RegionWidget(QFrame):
         self._apply_boundary_style()
 
     def _run_now(self) -> None:
-        conflicts = self._region.run_now()
+        """Execute this session immediately (SES-030). The run is also positioned on the
+        Schedule timeline starting now (SCHED-150), so any overlap with other entries is
+        reported — but not resolved — here."""
+        problems, conflicts = self._controller.start_region(self._region)
+        if problems:
+            QMessageBox.warning(self, "Can't run session", "\n".join(f"• {p}" for p in problems))
+            return
         self._apply_boundary_style()
+        self.refresh_run_state()
         if conflicts:
             names = ", ".join(c.name for c in conflicts)
             QMessageBox.warning(
-                self, "Run", f"{self._region.name!r} is scheduled to start now, but overlaps: {names}. "
-                              "Resolve the conflict on the Schedule screen.")
+                self, "Run", f"{self._region.name!r} is running now, but overlaps: {names}. "
+                             "Resolve the conflict on the Schedule screen.")
+
+    def _toggle_pause(self) -> None:
+        if self._controller.run_for(self._region) is None:
+            return
+        if self._pause_btn.text() == "Resume":
+            self._controller.resume(self._region)
+        else:
+            self._controller.pause(self._region)
+
+    def _stop_run(self) -> None:
+        self._controller.stop(self._region)
+        self._progress_label.setText("Stopping…")
 
     def _delete(self) -> None:
         self._region.delete()
@@ -1041,6 +1131,11 @@ class SessionsPageWidget(QWidget):
         self._window = window
         self.screen = SessionsScreen()
         self._local_schedulers: dict[str, Any] = {}  # fallback when window lacks _scheduler_for_pier
+        self._controller = get_session_controller(window)
+        self._controller.changed.connect(self._on_run_changed)
+        if hasattr(window, "_scheduler_for_pier"):
+            self._controller.start_ticking()      # fire scheduled sessions as their start time arrives
+            self.destroyed.connect(self._controller.stop_ticking)
         self._build()
         self.reload()
 
@@ -1112,6 +1207,17 @@ class SessionsPageWidget(QWidget):
         self._scheduler_for(pier_name).reap_completed_jobs()
         self.screen.set_active_pier(pier_name)
         self._rebuild_regions()
+
+    def _on_run_changed(self, _pier_key=None) -> None:
+        """A run started, progressed, or finished: update the cards in place, and rebuild once
+        no run is left (a completed session is reaped and its card must go — SES-210)."""
+        if not self._controller.is_running():
+            self.reload()
+            return
+        for i in range(self._regions_layout.count()):
+            widget = self._regions_layout.itemAt(i).widget()
+            if isinstance(widget, _RegionWidget):
+                widget.refresh_run_state()
 
     def _rebuild_regions(self, status: str | None = None) -> None:
         while self._regions_layout.count() > 1:

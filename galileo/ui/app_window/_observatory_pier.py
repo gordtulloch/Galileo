@@ -48,35 +48,38 @@ class AppWindowObservatoryPierMixin:
         else:
             self._refresh_pier_combo()
 
-    def _prompt_new_name(self: AppWindowState, title: str, label_text: str) -> str | None:
-        """Modal Name / OK / Cancel dialog used for New Pier."""
+    def _prompt_new_name(self: AppWindowState, title: str, label_text: str, initial: str = "") -> str | None:
+        """Modal Name / OK / Cancel dialog used for New Pier and Edit Pier."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
 
         dialog = QDialog(self._window)
         dialog.setWindowTitle(title)
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(label_text))
-        name_edit = QLineEdit()
+        name_edit = QLineEdit(initial)
         layout.addWidget(name_edit)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         name_edit.setFocus()
+        name_edit.selectAll()
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             name = name_edit.text().strip()
             return name or None
         return None
 
-    def _prompt_new_observatory(self: AppWindowState) -> dict | None:
-        """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner/Notification dialog for New Observatory."""
+    def _prompt_new_observatory(self: AppWindowState, record=None) -> dict | None:
+        """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner/Notification dialog
+        for New Observatory — or, given an existing *record*, Edit Observatory with its
+        saved values filled in. Returns every ``ObservatoryRecord`` field, or None if cancelled."""
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox, QComboBox,
         )
 
         dialog = QDialog(self._window)
-        dialog.setWindowTitle("New Observatory")
+        dialog.setWindowTitle("Edit Observatory" if record is not None else "New Observatory")
         outer = QVBoxLayout(dialog)
         form = _new_form_layout()
         outer.addLayout(form)
@@ -128,6 +131,18 @@ class AppWindowObservatoryPierMixin:
         outer.addWidget(buttons)
         name_edit.setFocus()
 
+        if record is not None:
+            name_edit.setText(record.name or "")
+            lat_edit.setValue(record.latitude or 0.0)
+            long_edit.setValue(record.longitude or 0.0)
+            elevation_edit.setValue(record.elevation_m or 0.0)
+            tz_edit.setText(record.timezone or "")
+            address_edit.setText(record.physical_address or "")
+            owner_edit.setText(record.owner or "")
+            notif_combo.setCurrentText(record.notification_type or "None")
+            email_edit.setText(record.email_address or "")
+            cell_edit.setText(record.cell_number or "")
+
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         name = name_edit.text().strip()
@@ -174,6 +189,43 @@ class AppWindowObservatoryPierMixin:
             return combo.count() - 1
         idx = combo.findText(self._current_observatory.name)
         return idx if idx >= 0 else combo.count() - 1
+
+    def _on_edit_observatory_clicked(self: AppWindowState) -> None:
+        """Pencil-button next to the Observatory selector: edit every saved field of
+        the current Observatory, renaming it in the selector if the name changed."""
+        from PySide6.QtWidgets import QMessageBox
+        from galileo.observatory import update_observatory
+
+        observatory = self._current_observatory
+        if observatory is None:
+            return
+        fields = self._prompt_new_observatory(observatory)
+        if not fields:
+            return
+        old_name = observatory.name
+        if fields["name"] != old_name and fields["name"] in self._observatories:
+            QMessageBox.warning(self._window, "Edit Observatory",
+                                f"An Observatory named “{fields['name']}” already exists.")
+            return
+        try:
+            update_observatory(observatory, **fields)
+        except Exception:
+            logger.exception("Could not save Observatory %r", old_name)
+            QMessageBox.warning(self._window, "Edit Observatory", "Could not save this Observatory.")
+            return
+
+        if observatory.name != old_name:
+            self._observatories.pop(old_name, None)
+            self._observatories[observatory.name] = observatory
+            combo = self._observatory_combo
+            idx = combo.findText(old_name)
+            if idx >= 0:
+                combo.setItemText(idx, observatory.name)
+        # Location and horizon feed the Star Atlas and the slew guard.
+        refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
+        if refresh_star_atlas_site is not None:
+            refresh_star_atlas_site()
+        self._apply_horizon()
 
     def _on_delete_observatory_clicked(self: AppWindowState) -> None:
         """Delete-button next to the Observatory selector: confirms, then
@@ -280,6 +332,32 @@ class AppWindowObservatoryPierMixin:
             return combo.count() - 1
         idx = combo.findText(self._current_pier.name)
         return idx if idx >= 0 else combo.count() - 1
+
+    def _on_edit_pier_clicked(self: AppWindowState) -> None:
+        """Pencil-button next to the Pier selector: rename the current Pier."""
+        from PySide6.QtWidgets import QMessageBox
+        from galileo.observatory import list_piers, rename_pier
+
+        pier = self._current_pier
+        if pier is None:
+            return
+        name = self._prompt_new_name("Edit Pier", "Pier name:", pier.name)
+        if not name or name == pier.name:
+            return
+        if name in {p.name for p in list_piers(self._current_observatory)}:
+            QMessageBox.warning(self._window, "Edit Pier", f"A Pier named “{name}” already exists.")
+            return
+        old_name = pier.name
+        try:
+            rename_pier(pier, name)
+        except Exception:
+            logger.exception("Could not rename Pier %r", old_name)
+            QMessageBox.warning(self._window, "Edit Pier", "Could not save this Pier.")
+            return
+        combo = self._pier_combo
+        idx = combo.findText(old_name)
+        if idx >= 0:
+            combo.setItemText(idx, name)
 
     def _on_delete_pier_clicked(self: AppWindowState) -> None:
         """Delete-button next to the Pier selector: confirms, then permanently
@@ -391,7 +469,9 @@ class AppWindowObservatoryPierMixin:
         a Pier switch blocks the UI until the last device has connected."""
         import time
 
+        self._observatory_edit_btn.setEnabled(self._current_observatory is not None)
         self._observatory_delete_btn.setEnabled(self._current_observatory is not None)
+        self._pier_edit_btn.setEnabled(self._current_pier is not None)
         self._pier_delete_btn.setEnabled(self._current_pier is not None)
 
         timings: list[tuple[str, float]] = []

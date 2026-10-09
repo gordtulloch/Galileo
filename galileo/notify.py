@@ -19,6 +19,7 @@ class NotificationEvent(str, Enum):
     SAFETY_ABORT = "safety_abort"
     AUTOFOCUS_COMPLETE = "autofocus_complete"
     MERIDIAN_FLIP = "meridian_flip"
+    SESSION_MESSAGE = "session_message"      # a session's Notification block (SES-150)
 
 
 class _Notification:

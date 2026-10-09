@@ -30,6 +30,7 @@ class AppWindowMiscDevicePagesMixin:
         self._device_pages["guider"] = {
             "reload": page.reload, "autoconnect": page.autoconnect,
             "disconnect": page.disconnect_from_phd2,
+            "get_service": page._service,     # this Pier's GuidingService, for session execution
             "connected": lambda: (page._service() is not None and page._service().is_connected),
         }
         page.reload()

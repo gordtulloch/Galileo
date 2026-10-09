@@ -157,8 +157,11 @@ class SchedulerJob:
         self.scheduled_start_utc: str | None = None
         self.scheduled_end_utc: str | None = None
         self.duration_minutes: float | None = None
-        self.run_state: str = "pending"  # pending | running | completed | error
+        self.run_state: str = "pending"  # pending | running | completed | error | stopped
         self.run_log: list[str] = []
+        # Completed executions of the session this run (not persisted: a restart
+        # starts counting a RepeatNTimes job's runs again).
+        self.runs_completed: int = 0
 
     @property
     def frames_captured(self) -> int:
@@ -167,13 +170,15 @@ class SchedulerJob:
     @property
     def is_complete(self) -> bool:
         """Whether this job has satisfied its completion condition (SCHED-050) and
-        should be reaped from the queue. Only ``RunOnce`` is evaluated against real
-        progress today — ``RepeatNTimes``/``RepeatIndefinitely`` need a per-run
-        counter that has no real driver yet, since nothing feeds actual capture
-        progress into ``record_frames_captured`` until session-block execution
-        (out of scope here — see TODO.md) exists."""
+        should be reaped from the queue. ``RunOnce`` is satisfied by a successful
+        execution of the session (``run_state == "completed"``, set by
+        ``ObservatoryScheduler.run_job``) or by capturing ``total_required`` frames;
+        ``RepeatNTimes`` by *n* successful executions; ``RepeatIndefinitely`` never."""
         if isinstance(self.completion_condition, RunOnce):
-            return self.total_required > 0 and self._frames_captured >= self.total_required
+            return self.run_state == "completed" or (
+                self.total_required > 0 and self._frames_captured >= self.total_required)
+        if isinstance(self.completion_condition, RepeatNTimes):
+            return self.runs_completed >= self.completion_condition.n
         return False
 
     def __str__(self) -> str:
@@ -309,6 +314,72 @@ class ObservatoryScheduler:
         if self._safety_monitor and not self._safety_monitor.is_safe:
             return False
         return True
+
+    def due_jobs(self, now: datetime.datetime | None = None) -> list[SchedulerJob]:
+        """Session jobs ready to start at *now*, in priority order: positioned on the
+        timeline with a start at or before *now*, not yet run (or between repeats), and
+        carrying a session to execute. A job whose ``scheduled_end_utc`` has already
+        passed is not due — it missed its window (SCHED-110). Constraint evaluation
+        (altitude, moon separation, twilight; SCHED-030) is not applied here."""
+        now = now or datetime.datetime.now(datetime.UTC)
+        due = []
+        for job in self.get_ordered_jobs():
+            if job.kind != "session" or job.sequence is None or job.run_state != "pending":
+                continue
+            window = job.effective_window()
+            if window is None:
+                continue
+            start, end = window
+            if start <= now < end:
+                due.append(job)
+        return due
+
+    async def run_job(self, job: SchedulerJob, runner) -> str:
+        """Execute *job*'s session now and record the outcome (SCHED-060, SES-030).
+
+        *runner* is an async callable taking the job and returning a
+        ``galileo.sequencer.session_exec.SessionRunResult`` — injected so this domain
+        module does not import the executor's device wiring. Returns the job's new
+        ``run_state``: ``"completed"`` (or ``"pending"`` again if its completion
+        condition wants more runs), ``"error"``, or ``"pending"`` after a user stop /
+        a refusal to start (unsafe conditions). Frames captured are added to the job's
+        progress (SCHED-090) and the session log is kept on ``run_log``."""
+        if self.active_job is not None and self.active_job is not job:
+            raise RuntimeError(f"{self.active_job.name!r} is already running on this scheduler")
+        if not await self.can_start_job(job):
+            job.run_log.append("Not started: conditions are unsafe.")
+            self.save()
+            return job.run_state
+        self.active_job = job
+        job._state = "running"
+        job.run_state = "running"
+        job.run_log = []
+        self.save()
+        try:
+            result = await runner(job)
+        except Exception as exc:
+            logger.exception("Scheduler job %r crashed", job.name)
+            job.run_log.append(f"Crashed: {exc}")
+            job.run_state = "error"
+        else:
+            job.run_log = list(result.log)
+            if result.frames_captured:
+                job._frames_captured += result.frames_captured
+            state = getattr(result.state, "value", result.state)
+            if state == "completed":
+                job.runs_completed += 1
+                job.run_state = "completed"
+                if not job.is_complete:      # wants more runs: eligible again
+                    job.run_state = "pending"
+            elif state == "error":
+                job.run_state = "error"
+            else:                            # stopped by the user: not retried by the scheduler
+                job.run_state = "stopped"
+        finally:
+            job._state = "pending"
+            self.active_job = None
+            self.save()
+        return job.run_state
 
     async def replan(self) -> None:
         """Replan the queue using priority-based preemption (SCHED-070)."""
