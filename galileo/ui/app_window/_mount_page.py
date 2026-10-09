@@ -161,6 +161,7 @@ class AppWindowMountPageMixin:
         flip_ha_spin.setRange(0.0, 90.0)
         flip_ha_spin.setDecimals(2)
         flip_ha_spin.setValue(5.0)
+        flip_ha_spin.setProperty("helpKey", "flip if ha")
         flip_row.addWidget(flip_check)
         flip_row.addWidget(flip_ha_spin)
         flip_row.addWidget(QLabel("deg"))
@@ -269,6 +270,7 @@ class AppWindowMountPageMixin:
         tracking_rate_row.addWidget(set_rate_btn)
         tracking_rate_combo = QComboBox()
         tracking_rate_combo.addItems(["Sidereal", "Lunar", "Solar", "King"])
+        tracking_rate_combo.setProperty("helpKey", "tracking rate")
         tracking_rate_row.addWidget(tracking_rate_combo)
         tracking_rate_row.addStretch(1)
         controls_col.addLayout(tracking_rate_row)
@@ -305,6 +307,8 @@ class AppWindowMountPageMixin:
         for btn in (north_btn, west_btn, stop_btn, east_btn, south_btn):
             btn.setObjectName("AccentButton")
             btn.setFixedSize(44, 44)
+            if len(btn.text()) == 1:
+                btn.setProperty("helpKey", "n s e w")
         pad_grid.addWidget(north_btn, 0, 1)
         pad_grid.addWidget(west_btn, 1, 0)
         pad_grid.addWidget(stop_btn, 1, 1)

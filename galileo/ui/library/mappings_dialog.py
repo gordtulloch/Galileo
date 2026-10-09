@@ -145,6 +145,7 @@ class MappingsWidget(QWidget):
         apply_button = QPushButton("✓")
         apply_button.setMaximumWidth(30)
         apply_button.setToolTip("Apply this mapping immediately")
+        apply_button.setProperty("helpKey", "apply mapping")
         apply_button.setStyleSheet("""
             QPushButton {
                 background-color: #2d2d2d;
@@ -170,6 +171,7 @@ class MappingsWidget(QWidget):
         delete_button = QPushButton("🗑")
         delete_button.setMaximumWidth(30)
         delete_button.setToolTip("Delete this mapping")
+        delete_button.setProperty("helpKey", "delete mapping")
         delete_button.setStyleSheet("""
             QPushButton {
                 background-color: #2d2d2d;

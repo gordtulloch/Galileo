@@ -133,6 +133,8 @@ class AppWindowFilterWheelPageMixin:
 
         current_row = QHBoxLayout()
         filter_combo = QComboBox()
+        filter_combo.setProperty("helpKey", "current filter")
+        filter_combo.setProperty("helpKey", "current filter")
         current_row.addWidget(filter_combo, 1)
         change_btn = QPushButton("Change")
         change_btn.setObjectName("AccentButton")

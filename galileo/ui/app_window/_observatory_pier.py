@@ -74,6 +74,7 @@ class AppWindowObservatoryPierMixin:
         """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner/Notification dialog
         for New Observatory — or, given an existing *record*, Edit Observatory with its
         saved values filled in. Returns every ``ObservatoryRecord`` field, or None if cancelled."""
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox, QComboBox,
         )
@@ -103,8 +104,35 @@ class AppWindowObservatoryPierMixin:
         elevation_edit.setSuffix(" m")
         form.addRow("Elevation (m)", elevation_edit)
 
-        tz_edit = QLineEdit()
-        tz_edit.setPlaceholderText("e.g. America/Toronto")
+        # Country first, then only that country's zones (a full ~600-entry list is slow to
+        # build). Editable so typing filters; a saved zone outside the list is kept as text.
+        from galileo.timezones import countries, country_of_zone, zones_for_country
+
+        country_combo = QComboBox()
+        country_combo.setEditable(True)
+        country_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        country_names = countries()
+        for code, cname in sorted(country_names.items(), key=lambda kv: kv[1]):
+            country_combo.addItem(cname, code)
+        country_combo.setCurrentIndex(-1)
+        country_combo.lineEdit().setPlaceholderText("Type to find a country")
+        form.addRow("Country", country_combo)
+
+        tz_edit = QComboBox()
+        tz_edit.setEditable(True)
+        tz_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        tz_edit.lineEdit().setPlaceholderText("e.g. America/Toronto")
+
+        def _fill_zones() -> None:
+            idx = country_combo.findText(country_combo.currentText(), Qt.MatchFlag.MatchFixedString)
+            if idx < 0:
+                return
+            tz_edit.clear()
+            tz_edit.addItems(zones_for_country(country_combo.itemData(idx)))
+            tz_edit.setCurrentIndex(0 if tz_edit.count() == 1 else -1)
+
+        country_combo.activated.connect(lambda _i: _fill_zones())
+        country_combo.lineEdit().editingFinished.connect(_fill_zones)
         form.addRow("Timezone", tz_edit)
 
         address_edit = QLineEdit()
@@ -136,7 +164,11 @@ class AppWindowObservatoryPierMixin:
             lat_edit.setValue(record.latitude or 0.0)
             long_edit.setValue(record.longitude or 0.0)
             elevation_edit.setValue(record.elevation_m or 0.0)
-            tz_edit.setText(record.timezone or "")
+            saved_code = country_of_zone(record.timezone or "")
+            if saved_code in country_names:
+                country_combo.setCurrentIndex(country_combo.findData(saved_code))
+                _fill_zones()
+            tz_edit.setCurrentText(record.timezone or "")
             address_edit.setText(record.physical_address or "")
             owner_edit.setText(record.owner or "")
             notif_combo.setCurrentText(record.notification_type or "None")
@@ -154,7 +186,7 @@ class AppWindowObservatoryPierMixin:
             "latitude": lat_edit.value(),
             "longitude": long_edit.value(),
             "elevation_m": elevation_edit.value(),
-            "timezone": tz_edit.text().strip() or None,
+            "timezone": tz_edit.currentText().strip() or None,
             "physical_address": address_edit.text().strip() or None,
             "owner": owner_edit.text().strip() or None,
             "notification_type": notif_type if notif_type != "None" else None,

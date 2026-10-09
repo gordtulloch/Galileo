@@ -262,6 +262,7 @@ class FocusPage(QWidget):
         title.setObjectName("PageTitle")
         layout.addWidget(title)
         self.status_label = QLabel(_IDLE_STATUS)
+        self.status_label.setProperty("helpKey", "status")
         layout.addWidget(self.status_label)
 
         content = QHBoxLayout()
@@ -286,9 +287,11 @@ class FocusPage(QWidget):
         grid = QGridLayout(focuser)
         grid.addWidget(QLabel("Position:"), 0, 0)
         self.position_label = QLabel("—")
+        self.position_label.setProperty("helpKey", "position")
         grid.addWidget(self.position_label, 0, 1)
         grid.addWidget(QLabel("Temp.:"), 0, 2)
         self.temperature_label = QLabel("—")
+        self.temperature_label.setProperty("helpKey", "temp")
         grid.addWidget(self.temperature_label, 0, 3)
         grid.addWidget(QLabel("Step size:"), 1, 0)
         self.step_spin = QSpinBox()
@@ -337,6 +340,7 @@ class FocusPage(QWidget):
         grid = QGridLayout(camera)
         grid.addWidget(QLabel("Camera:"), 0, 0)
         self.camera_label = QLabel("—")
+        self.camera_label.setProperty("helpKey", "camera")
         grid.addWidget(self.camera_label, 0, 1)
         grid.addWidget(QLabel("Exp:"), 1, 0)
         self.exposure_spin = QDoubleSpinBox()
@@ -382,6 +386,7 @@ class FocusPage(QWidget):
         column = QVBoxLayout()
         column.setSpacing(8)
         self.image_view = FocusImageView()
+        self.image_view.setProperty("helpKey", "frame")
         column.addLayout(build_zoom_toolbar(self.image_view))
         column.addWidget(self.image_view, 3)
 
@@ -389,6 +394,7 @@ class FocusPage(QWidget):
         stats.addWidget(_heading("V-Curve"))
         stats.addStretch(1)
         self.stats_label = QLabel(_NO_STATS)
+        self.stats_label.setProperty("helpKey", "statistics")
         stats.addWidget(self.stats_label)
         stats.addStretch(1)
         self.clear_btn = QPushButton("Clear")
@@ -398,6 +404,7 @@ class FocusPage(QWidget):
         column.addLayout(stats)
 
         self.plot = VCurvePlot()
+        self.plot.setProperty("helpKey", "v-curve")
         column.addWidget(self.plot, 2)
         return column
 

@@ -36,6 +36,8 @@ def main() -> None:
         "--add-data", f"{ROOT / 'assets' / 'images'}{SEP}assets/images",
         # peewee-migrate loads these .py files from a directory at run time, so they are data, not imports.
         "--add-data", f"{ROOT / 'galileo' / 'library' / 'migrations'}{SEP}galileo/library/migrations",
+        # In-app help is Markdown read from disk at run time (galileo/help/__init__.py).
+        "--add-data", f"{ROOT / 'galileo' / 'help' / 'content'}{SEP}galileo/help/content",
         "--collect-submodules", "galileo",
         "--collect-submodules", "peewee_migrate",
         "--collect-data", "astropy",

@@ -88,8 +88,14 @@ class _LazyPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-    def showEvent(self, event) -> None:
+    def fill(self) -> None:
+        """Adopt the real screen now (also what the first show does)."""
         if not self._filled:
             self._filled = True
             self.layout().addWidget(self._screens.widget(self._item_id))
+            from galileo.ui.help import add_title_buttons
+            add_title_buttons(self)  # the screen did not exist yet when this page was tagged
+
+    def showEvent(self, event) -> None:
+        self.fill()
         super().showEvent(event)

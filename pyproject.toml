@@ -71,6 +71,7 @@ dependencies = [
     # Core scientific stack
     "numpy>=1.24",
     "astropy>=5.0",
+    "tzdata",  # IANA zone database for the Observatory timezone list (Windows has none)
     # Device protocols
     # INDI needs no extra package: galileo.adapters.indi_client is a native Python INDI-protocol client
     # (pyindi-client cannot be built on Windows because libindi has no Windows port).
@@ -135,3 +136,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["galileo*"]
+
+[tool.setuptools.package-data]
+"galileo.help" = ["content/*.md"]

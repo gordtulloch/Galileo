@@ -62,6 +62,9 @@ def _check_data_files() -> None:
         raise FileNotFoundError(f"icon missing: {app._ICON_PATH}")
     if not list(Path(MIGRATIONS_DIR).glob("[0-9][0-9][0-9]_*.py")):
         raise FileNotFoundError(f"no migrations in {MIGRATIONS_DIR}")
+    from galileo import help as help_content
+    if not help_content.screen_ids():
+        raise FileNotFoundError("no in-app help content found (galileo/help/content/*.md)")
 
 
 def _check_qt() -> None:

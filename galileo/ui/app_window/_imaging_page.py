@@ -117,6 +117,7 @@ class AppWindowImagingPageMixin:
         settings_layout.addWidget(capture_group)
 
         mosaic_indicator = QLabel("")
+        mosaic_indicator.setProperty("helpKey", "mosaic")
         mosaic_indicator.setObjectName("StatusHint")
         mosaic_indicator.setWordWrap(True)
         mosaic_indicator.setVisible(False)
@@ -204,6 +205,8 @@ class AppWindowImagingPageMixin:
         nudge_stop_btn = QPushButton("Stop")
         nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
         nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn}
+        for key, btn in nudge_dir_buttons.items():
+            btn.setProperty("helpKey", "n s e w")
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
             btn.setObjectName("AccentButton")
             btn.setFixedSize(44, 44)
@@ -258,6 +261,7 @@ class AppWindowImagingPageMixin:
 
         preview_view = ImagePreviewView()
         preview_view.setObjectName("ImagingPreview")
+        preview_view.setProperty("helpKey", "preview")
         annotate_btn = QPushButton("Annotate")
         annotate_btn.setCheckable(True)
         annotate_btn.setEnabled(False)
@@ -300,6 +304,7 @@ class AppWindowImagingPageMixin:
         stretch_row.addWidget(QLabel("Stretch"))
         stretch_slider = QSlider(Qt.Orientation.Horizontal)
         stretch_slider.setRange(0, 100)
+        stretch_slider.setProperty("helpKey", "stretch")
         stretch_slider.setValue(DEFAULT_STRETCH_LEVEL)
         stretch_slider.setToolTip(
             "How hard the preview's auto-stretch clips each end of the pixel data before "
@@ -313,6 +318,7 @@ class AppWindowImagingPageMixin:
 
         histogram = _HistogramWidget()
         histogram.setFixedHeight(80)
+        histogram.setProperty("helpKey", "histogram")
         histogram.set_color(self._theme.accent_color)
         content_layout.addWidget(histogram)
 
@@ -324,6 +330,8 @@ class AppWindowImagingPageMixin:
         progress_row.addWidget(status_label)
         progress_bar = QProgressBar()
         progress_bar.setRange(0, 1000)
+        progress_bar.setProperty("helpKey", "progress")
+        status_label.setProperty("helpKey", "progress")
         progress_bar.setValue(0)
         progress_bar.setTextVisible(False)
         progress_row.addWidget(progress_bar, 1)

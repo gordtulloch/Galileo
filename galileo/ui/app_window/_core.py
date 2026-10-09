@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
 from ._widgets import _NavColumn
+from galileo.ui.help import HelpController, tag_help_screen
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class AppWindowCoreMixin:
         self._window = QMainWindow()
         self._window.setWindowTitle(f"Galileo {__version__}")
         self._window.resize(1400, 900)
+        self._help = HelpController(self._window, _MANUAL_URL)
 
         # Set up before the Equipment page is built below, since building it
         # can immediately show a camera auto-connect result there.
@@ -316,9 +318,10 @@ class AppWindowCoreMixin:
                 PLANNING_ITEMS, {"whats_up": self._build_whats_up_page,
                                   "targets": self._build_sky_atlas_page,
                                   "sessions": self._build_sessions_page,
-                                  "schedule": self._build_schedule_page}),
+                                  "schedule": self._build_schedule_page}, help_prefix="planning"),
             "science": lambda: self._build_submenu_page(
-                _effective_science_items + _science_plugin_items, _science_plugin_builders
+                _effective_science_items + _science_plugin_items, _science_plugin_builders,
+                help_prefix="science",
             ),
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,
@@ -332,6 +335,7 @@ class AppWindowCoreMixin:
         for section_id, label, icon_name in PRIMARY_SECTIONS:
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
+            tag_help_screen(page, section_id)
             pages[section_id] = stack.addWidget(page)
             if section_id == "science":
                 self._science_nav = getattr(page, "_secondary_nav", None)
@@ -347,7 +351,8 @@ class AppWindowCoreMixin:
         option_builders["focus"] = self._build_focus_settings_page
         option_builders["solve"] = self._build_solve_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
-        options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders)
+        options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders, help_prefix="options")
+        tag_help_screen(options_page, "options")
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
 
@@ -381,6 +386,8 @@ class AppWindowCoreMixin:
             power_action=self._request_quit,
             utility_actions=[
                 ("theme", "Cycle theme (light / dark / red night-vision)", self._toggle_theme),
+                ("help", "Help — F1 for this screen, Shift+F1 then click a control for help on it",
+                 self._help.help_for_screen),
                 ("manual", "Open online manual", self._open_manual),
                 ("about", "About Galileo", self._show_about),
             ],
@@ -420,7 +427,9 @@ class AppWindowCoreMixin:
             f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>",
         )
 
-    def _build_submenu_page(self: AppWindowState, items: list, builders: dict) -> QWidget:
+    def _build_submenu_page(
+        self: AppWindowState, items: list, builders: dict, help_prefix: str = "",
+    ) -> QWidget:
         """A primary section with a secondary icon menu down its left edge
         (the same layout as Equipment): one page per ``(id, label, icon)`` in
         ``items``, built by ``builders[id]`` or, if none is given, a
@@ -437,7 +446,10 @@ class AppWindowCoreMixin:
         indexes: dict[str, int] = {}
         for item_id, label, _icon in items:
             builder = builders.get(item_id)
-            indexes[item_id] = stack.addWidget(builder() if builder else self._build_placeholder_page(label))
+            sub = builder() if builder else self._build_placeholder_page(label)
+            if help_prefix:
+                tag_help_screen(sub, f"{help_prefix}.{item_id}")
+            indexes[item_id] = stack.addWidget(sub)
 
         secondary = _NavColumn(
             object_name="SecondarySidebar",

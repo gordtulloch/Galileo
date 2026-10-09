@@ -88,7 +88,8 @@ class AppWindowFlatsMixin:
             QMessageBox.information(self._window, "No camera connected", self.camera_not_connected_message())
             return
 
-        dialog = _FlatsDialog(self._window)
+        from galileo.ui.help import tag_help_screen
+        dialog = tag_help_screen(_FlatsDialog(self._window), "imaging.flats")
         dialog.setWindowTitle("Flats Assistant")
         outer = QVBoxLayout(dialog)
         form = _new_form_layout()

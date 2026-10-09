@@ -479,6 +479,7 @@ class GuiderPage(QWidget):
         form.addWidget(QLabel("Dec:"), 1, 0)
         self.dec_combo = QComboBox()
         self.dec_combo.addItems(DEC_GUIDE_MODES)
+        self.dec_combo.setProperty("helpKey", "dec guide mode")
         self.dec_combo.setToolTip("Which Dec corrections PHD2 may send: Off, Auto (both), or North / South only.")
         self.dec_combo.activated.connect(lambda _i: self._send("set_dec_guide_mode", self.dec_combo.currentText()))
         form.addWidget(self.dec_combo, 1, 1)
@@ -539,6 +540,7 @@ class GuiderPage(QWidget):
             lamps.addStretch(1)
         box.addLayout(lamps)
         self.state_label = QLabel("")
+        self.state_label.setProperty("helpKey", "guiding state")
         box.addWidget(self.state_label)
         box.addStretch(1)
         return column
@@ -547,12 +549,14 @@ class GuiderPage(QWidget):
         column = QVBoxLayout()
         column.setSpacing(8)
         self.star_view = StarView()
+        self.star_view.setProperty("helpKey", "guide star")
         column.addLayout(build_zoom_toolbar(self.star_view))
         column.addWidget(self.star_view, 3)
 
         lower = QHBoxLayout()
         graph_box = QVBoxLayout()
         self.graph = DriftGraph()
+        self.graph.setProperty("helpKey", "guide graph")
         graph_box.addWidget(self.graph, 1)
 
         toggles = QGridLayout()
@@ -566,6 +570,8 @@ class GuiderPage(QWidget):
             self.toggle_checks[key] = check
             toggles.addWidget(check, i // 3, i % 3)
         zoom_in, zoom_out = QPushButton("+"), QPushButton("−")
+        zoom_in.setProperty("helpKey", "graph zoom in")
+        zoom_out.setProperty("helpKey", "graph zoom out")
         zoom_in.setToolTip("Zoom the guide graph in (smaller error range).")
         zoom_out.setToolTip("Zoom the guide graph out (larger error range).")
         zoom_in.clicked.connect(lambda: self.graph.zoom(1))
@@ -585,7 +591,9 @@ class GuiderPage(QWidget):
 
         self.plot_tabs = QTabWidget()
         self.scatter = DriftScatter()
+        self.scatter.setProperty("helpKey", "mount drift")
         self.calibration_plot = CalibrationPlot()
+        self.calibration_plot.setProperty("helpKey", "calibration plot")
         drift_tab = QWidget()
         drift_box = QVBoxLayout(drift_tab)
         drift_box.setContentsMargins(0, 0, 0, 0)

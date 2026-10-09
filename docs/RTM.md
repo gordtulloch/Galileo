@@ -421,6 +421,12 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `UI-011` | P2 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-011` |
 | `UI-020` | P2 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-020` |
 | `UI-030` | P3 | SDD 4.21 `galileo.ui.theme` | Test | `TC-UI-030` |
+| `HELP-010` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-010` |
+| `HELP-020` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-020` |
+| `HELP-030` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-030` |
+| `HELP-040` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-040`, `TC-HELP-050` |
+| `HELP-050` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-060` |
+| `HELP-060` | P3 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-040`, `TC-HELP-050` |
 
 ### `LOG` — Diagnostics & Logging
 

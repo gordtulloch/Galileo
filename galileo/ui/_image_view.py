@@ -92,6 +92,7 @@ def build_zoom_toolbar(image_view: ImagePreviewView, label: QLabel | None = None
     ):
         button = QPushButton(text)
         button.setToolTip(tip)
+        button.setProperty("helpKey", {"+": "zoom in", "−": "zoom out"}.get(text, text))
         button.setFixedWidth(40)
         button.clicked.connect(slot)
         row.addWidget(button)

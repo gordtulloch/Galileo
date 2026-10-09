@@ -23,13 +23,13 @@ mypy .
 
 1. **Tests.** Tests are organised by SRS requirement domain, one file per domain (for example `tests/test_arch.py` covers `ARCH-*`). Add one `test_tc_<domain>_<nnn>_<description>` function per test case ID, tagged with `@pytest.mark.requirement("TC-...")` and `@pytest.mark.priority("MVP" | "P2" | "P3")`, with a docstring starting with the requirement ID. Reserved test case IDs are in [`docs/RTM.md`](docs/RTM.md). Device interaction is tested against the mocks in `tests/conftest.py`; only `hardware`-marked tests touch real devices.
 2. **A `CHANGELOG.md` entry** under `## [Unreleased]`, in the right `Added` / `Changed` / `Fixed` / `Removed` section (older entries live in [`docs/changelog/`](docs/changelog/); add new ones only to the root file). Write it for someone who wasn't watching: say what changed and why it matters, not a diff summary.
-3. **A file header on every new Python file**, exactly:
+3. **Updated documentation.** A change is not complete until the docs match it: the **inline help** for any control you add, rename or remove (`galileo/help/content/<screen>.md`, checked by `python -m galileo.ui.help --audit` and the test suite), the **wiki** overview (a separate repository, [Galileo.wiki](https://github.com/gordtulloch/Galileo/wiki)) for any new capability, and the design documents in `docs/` (the module's SDD section, and the SRS and RTM if requirements change). The wiki is the overview; the inline help is the detail.
+4. **A file header on every new Python file**, exactly:
    ```python
    # SPDX-License-Identifier: GPL-3.0-or-later
    # Copyright (C) <year> <your name>
    ```
    Contributors keep the copyright in their own contributions (see the CLA). Do not remove or alter existing notices.
-4. **Doc updates** where behaviour changes: the SDD section for the module and, if requirements change, the SRS and RTM.
 
 ## How to sign
 

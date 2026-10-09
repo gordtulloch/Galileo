@@ -529,6 +529,17 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | UI-020 | The system shall allow the imaging-tab panel arrangement to be customized (e.g. dockable/resizable panels) and persisted across restarts. | P2 |
 | UI-030 | The system shall allow accent-color customization within a theme, except the night-vision theme (UI-011), whose accent is fixed to preserve UI-011's no-green/blue guarantee. | P3 |
 
+### 4.20a `HELP` — In-App Help
+
+| ID | Requirement | Priority |
+|---|---|---|
+| HELP-010 | The system shall ship help for every screen as Markdown files bundled with the application (one file per screen, one section per control), readable offline, so help is edited as text without changing code. | P2 |
+| HELP-020 | The system shall resolve a control with no help entry on its own screen against its parent screen and then a shared set of common-control entries, so a control used on many screens is documented once. | P2 |
+| HELP-030 | The system shall provide a help window, reachable from every screen, that lists all documented screens and their controls and can search the help text. | P2 |
+| HELP-040 | The system shall show a short description when the user hovers any label, button or input that has a help entry, and shall find that entry from the control's visible text (form-row label, caption, button text or column header) without per-screen code. | P2 |
+| HELP-050 | The system shall let the user open the detailed help for a single control: **F1** for the focused control (or the screen, if none), and point-and-click (**Shift+F1**) for any control. | P2 |
+| HELP-060 | The system shall provide a developer audit that lists every control on every screen lacking a help entry, and plugins shall be able to register their own help content. | P3 |
+
 ### 4.21 `LOG` — Diagnostics & Logging
 
 | ID | Requirement | Priority |

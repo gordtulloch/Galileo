@@ -106,7 +106,8 @@ class AppWindowFramingMixin:
         rotator_adapter = rotator_state.get("adapter")
         rotator_connected = rotator_adapter is not None
 
-        dialog = QDialog(self._window)
+        from galileo.ui.help import tag_help_screen
+        dialog = tag_help_screen(QDialog(self._window), "imaging.framing")
         dialog.setWindowTitle("Framing Assistant")
         outer = QHBoxLayout(dialog)
 
@@ -216,6 +217,7 @@ class AppWindowFramingMixin:
         form.addRow(determine_rotation_btn)
 
         fov_label = QLabel("")
+        fov_label.setProperty("helpKey", "field of view")
         fov_label.setObjectName("StatusHint")
         fov_label.setWordWrap(True)
         left.addWidget(fov_label)

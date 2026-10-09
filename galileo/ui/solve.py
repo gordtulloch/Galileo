@@ -336,6 +336,7 @@ class SolvePage(QWidget):
         stop_row.addWidget(self.stop_btn, 1)
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)
+        self.busy.setProperty("helpKey", "busy")
         self.busy.setTextVisible(False)
         self.busy.setFixedSize(46, 12)
         stop_row.addWidget(self.busy)
@@ -359,6 +360,7 @@ class SolvePage(QWidget):
         for radio in self.action_radios.values():
             layout.addWidget(radio)
         self.target_label = QLabel()
+        self.target_label.setProperty("helpKey", "target")
         self.target_label.setWordWrap(True)
         layout.addWidget(self.target_label)
         box.addWidget(action)
@@ -444,6 +446,8 @@ class SolvePage(QWidget):
 
     def _build_image_tools(self) -> QHBoxLayout:
         self.frame_label = QLabel("No frame yet")
+        self.frame_label.setProperty("helpKey", "frame")
+        self.image_view.setProperty("helpKey", "frame")
         return build_zoom_toolbar(self.image_view, self.frame_label)
 
     def _build_tabs(self) -> QTabWidget:
@@ -459,6 +463,7 @@ class SolvePage(QWidget):
         left_box = QVBoxLayout(left)
         left_box.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(0, 6)
+        self.table.setProperty("helpKey", "solution results")
         self.table.setHorizontalHeaderLabels(["RA", "DEC", "Obj Name", "Result", "dRA", "dDE"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -484,6 +489,7 @@ class SolvePage(QWidget):
         splitter.addWidget(left)
 
         self.error_plot = SolveErrorPlot()
+        self.error_plot.setProperty("helpKey", "error plot")
         splitter.addWidget(self.error_plot)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -522,6 +528,7 @@ class SolvePage(QWidget):
         self.polar_direction = QComboBox()
         self.polar_direction.addItem("East", "east")
         self.polar_direction.addItem("West", "west")
+        self.polar_direction.setProperty("helpKey", "direction")
         self.polar_direction.setToolTip("Which way the RA axis turns. Pick the side with clear sky and room before a mount limit.")
         controls.addWidget(self.polar_direction)
         self.polar_refraction = QCheckBox("Refraction")
@@ -534,9 +541,11 @@ class SolvePage(QWidget):
         layout.addLayout(controls)
 
         self.polar_status = QLabel("Not started.")
+        self.polar_status.setProperty("helpKey", "polar alignment status")
         self.polar_status.setWordWrap(True)
         layout.addWidget(self.polar_status)
         self.polar_total = QLabel("—")
+        self.polar_total.setProperty("helpKey", "total error")
         font = self.polar_total.font()
         font.setPointSize(font.pointSize() + 8)
         font.setBold(True)
@@ -544,6 +553,8 @@ class SolvePage(QWidget):
         layout.addWidget(self.polar_total)
         self.polar_altitude = QLabel("")
         self.polar_azimuth = QLabel("")
+        self.polar_altitude.setProperty("helpKey", "altitude correction")
+        self.polar_azimuth.setProperty("helpKey", "azimuth correction")
         layout.addWidget(self.polar_altitude)
         layout.addWidget(self.polar_azimuth)
         layout.addStretch(1)

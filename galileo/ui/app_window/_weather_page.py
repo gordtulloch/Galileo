@@ -148,6 +148,7 @@ class AppWindowWeatherPageMixin:
 
         banner = QLabel("—")
         banner.setObjectName("CriteriaHeading")
+        banner.setProperty("helpKey", "status banner")
         layout.addWidget(banner)
 
         # --- readings + per-measure safety rules --------------------------
@@ -530,6 +531,7 @@ class AppWindowWeatherPageMixin:
         add_btn = QPushButton("+")
         add_btn.setToolTip("Add a safety device (weather station or safety monitor) in a new tab")
         add_btn.setObjectName("AccentButton")
+        add_btn.setProperty("helpKey", "add safety device")
         add_btn.setFixedWidth(28)
         header.addWidget(add_btn)
         layout.addLayout(header)

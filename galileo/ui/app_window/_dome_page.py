@@ -127,6 +127,7 @@ class AppWindowDomePageMixin:
         left_frame, left = _panel()
         left.addWidget(_heading("Shutter"))
         shutter_value = QLabel("—")
+        shutter_value.setProperty("helpKey", "shutter")
         shutter_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         big = shutter_value.font()
         big.setPointSize(big.pointSize() + 10)
@@ -159,6 +160,7 @@ class AppWindowDomePageMixin:
         right.addLayout(park_row)
 
         park_chip = QLabel("—")
+        park_chip.setProperty("helpKey", "park status")
         park_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         right.addWidget(park_chip)
         right.addStretch(1)
@@ -190,6 +192,7 @@ class AppWindowDomePageMixin:
         ready_row = QHBoxLayout()
         ready_row.addStretch(1)
         ready_value = QLabel("—")
+        ready_value.setProperty("helpKey", "observatory ready")
         ready_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ready_font = ready_value.font()
         ready_font.setBold(True)

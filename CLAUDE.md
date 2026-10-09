@@ -12,6 +12,20 @@ Galileo is a cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class
 
 **Every change to this repository — code, tests, or docs — must add an entry to [`CHANGELOG.md`](CHANGELOG.md) in the same turn the change is made**, under the `## [Unreleased]` heading, in the appropriate `Added`/`Changed`/`Fixed`/`Removed` subsection ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). Older entries are archived in `docs/changelog/YYYY-MM.md` — don't read those in full (they're large); grep them when you need history. When `CHANGELOG.md` passes ~40 KB, rotate its `[Unreleased]` entries into the current month's archive file, as its header describes. Write entries for someone who wasn't watching the session — state what changed and why it matters, not a diff summary. Don't batch this up for later; a change without a changelog entry is not done.
 
+## Definition of done: documentation
+
+**No code is complete until the documentation is updated, in the same turn as the change.** A change that adds, removes or alters behaviour a user or developer can see is not finished until every one of these that applies has been brought up to date:
+
+1. **[`CHANGELOG.md`](CHANGELOG.md)** — see above. Always.
+2. **Inline help** (`galileo/help/content/<screen_id>.md`) — the *detailed*, per-control reference. Any new, renamed or removed control, option, button, dialog field or screen needs its heading added, renamed or removed in that screen's file; a new screen also needs `tag_help_screen(page, "<id>")` where it is built. `python -m galileo.ui.help --audit` must report nothing, and `tests/test_help.py` enforces it.
+3. **The wiki** (sibling repo `../Galileo.wiki`) — the *overview*: what each screen is for, the typical workflow, and the new capability in a sentence or a short table. Add a new function to the matching article (and to `Home.md` if it is a new article); fix anything the change made untrue. Wiki articles do **not** list every control — that is the inline help's job; link to it instead ("every control has built-in help").
+4. **Design documents** (`docs/SRS.md`, `SDD.md`, `RTM.md`, and `docs/plugins/<name>/` for a plugin) — when requirements or architecture change; new requirement IDs also get an RTM row and a `TC-*` test.
+5. **`README.md`** status section, if what is implemented changed.
+
+**Division of labour:** the wiki is the overview, the inline help is the detail, the design docs are the intent, the changelog is the history. Don't duplicate one in another; cross-reference. The wiki is its own git repository: commit there separately when asked, but edit it as part of finishing the work.
+
+If a change genuinely needs none of these (an internal refactor with no visible effect), say so in the changelog entry rather than skipping it silently.
+
 ## Design documents (read these before making architectural changes)
 
 The `docs/` folder is a linked requirements → design → traceability chain, in this order of authority:
@@ -98,6 +112,7 @@ Galileo uses a **layered, ports-and-adapters (hexagonal) architecture** (SDD §2
 | `galileo.plugins.vstarget.planning` / `.analysis` | Vendored VSTarget: AAVSO planning and photometry, shipped as first-party plugins — requirements/design in `docs/plugins/vstarget/`, not core `docs/` |
 | `galileo.planning.sky_atlas` / `.framing`, `galileo.ui.skymap` | Catalog/visibility, FOV/framing, and the live planetarium view — three distinct UIs sharing one bundled catalog DB |
 | `galileo.plugins` | Entry-point-based plugin discovery/load, manifest/version checks, `PluginContext` callback surface |
+| `galileo.help` / `galileo.ui.help` | In-app help: Markdown in `galileo/help/content/<screen_id>.md`, one `##` heading per control (matched to the control by its label/button text). **Adding or renaming a control means updating that screen's help file**; `python -m galileo.ui.help --audit` lists controls with no entry. A new screen needs `tag_help_screen(page, "<id>")` where it is built |
 | `galileo.bus` | The `EventBus` / `Event` types used for all cross-module decoupling |
 | `galileo.platform` | All OS-specific path resolution (config/data/cache/log dirs) — isolated here per `NFR-PORT-010` |
 

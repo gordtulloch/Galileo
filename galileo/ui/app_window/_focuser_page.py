@@ -51,6 +51,7 @@ class AppWindowFocuserPageMixin:
         add_focuser_btn = QPushButton("+")
         add_focuser_btn.setObjectName("AccentButton")
         add_focuser_btn.setFixedWidth(28)
+        add_focuser_btn.setProperty("helpKey", "add another device")
         add_focuser_btn.setToolTip("Add another focuser sharing this connection.")
         heading_row.addWidget(add_focuser_btn)
         heading_row.addStretch(1)

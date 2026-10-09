@@ -58,7 +58,8 @@ class AppWindowDarksMixin:
             QMessageBox.information(self._window, "No camera connected", self.camera_not_connected_message())
             return
 
-        dialog = _DarksDialog(self._window)
+        from galileo.ui.help import tag_help_screen
+        dialog = tag_help_screen(_DarksDialog(self._window), "imaging.darks")
         dialog.setWindowTitle("Darks Assistant")
         outer = QVBoxLayout(dialog)
         form = _new_form_layout()

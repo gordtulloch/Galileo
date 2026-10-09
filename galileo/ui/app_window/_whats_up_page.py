@@ -436,6 +436,7 @@ class AppWindowWhatsUpPageMixin:
         band_col.setSpacing(2)
 
         day_night_chart = _DayNightBandChart()
+        day_night_chart.setProperty("helpKey", "day night band")
         band_col.addWidget(day_night_chart)
 
         legend_grid = QGridLayout()
@@ -541,16 +542,19 @@ class AppWindowWhatsUpPageMixin:
                 legend_grid.addWidget(marker_widget, 0, col, 3, 1, Qt.AlignmentFlag.AlignTop)
 
         fov_label = QLabel("")
+        fov_label.setProperty("helpKey", "field of view fit")
         fov_label.setObjectName("StatusHint")
         fov_label.setWordWrap(True)
         content_layout.addWidget(fov_label)
 
         advisory_label = QLabel("")
+        advisory_label.setProperty("helpKey", "advisories")
         advisory_label.setObjectName("StatusHint")
         advisory_label.setWordWrap(True)
         content_layout.addWidget(advisory_label)
 
         results = QListWidget()
+        results.setProperty("helpKey", "results")
         results.setSpacing(4)
         results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content_layout.addWidget(results, 1)

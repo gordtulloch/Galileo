@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from ._common import EQUIPMENT_CATEGORIES, OPTIONS_SECTION, LIBRARY_ITEMS, QWidget, QPlainTextEdit
 from ._widgets import _LogPane, _NavColumn
+from galileo.ui.help import tag_help_screen
 
 if TYPE_CHECKING:
     # See _state.py: every method below takes an explicit `self:
@@ -29,7 +30,8 @@ class AppWindowLibraryEquipmentMixin:
         screens = LibraryScreens(on_configure=self._open_library_settings)
         self._library_screens = screens
         return self._build_submenu_page(
-            LIBRARY_ITEMS, {item_id: (lambda item_id=item_id: screens.page(item_id)) for item_id, _l, _i in LIBRARY_ITEMS})
+            LIBRARY_ITEMS, {item_id: (lambda item_id=item_id: screens.page(item_id)) for item_id, _l, _i in LIBRARY_ITEMS},
+            help_prefix="library")
 
     def _build_library_settings_page(self: AppWindowState) -> QWidget:
         """Options > Library: repository folders, cloud, compression, telescope
@@ -77,6 +79,7 @@ class AppWindowLibraryEquipmentMixin:
                 page_widget = self._build_dome_page()
             else:
                 page_widget = self._build_device_config_page(cat_id, label)
+            tag_help_screen(page_widget, f"equipment.{cat_id}")
             device_pages[cat_id] = device_stack.addWidget(page_widget)
 
         secondary = _NavColumn(

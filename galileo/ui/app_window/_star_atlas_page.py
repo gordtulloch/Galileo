@@ -57,6 +57,7 @@ class AppWindowStarAtlasPageMixin:
         when_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
         when_edit.setTimeSpec(Qt.TimeSpec.LocalTime)
         when_edit.setToolTip("Date and time shown, in local time.")
+        when_edit.setProperty("helpKey", "time local")
         # The label sits on its own line so the field has the panel's full
         # width — beside the label it was too narrow to show the whole time.
         form.addRow(QLabel("Time (Local)"))
@@ -68,6 +69,7 @@ class AppWindowStarAtlasPageMixin:
                              ("+1h", dt.timedelta(hours=1)), ("+1d", dt.timedelta(days=1))):
             btn = QPushButton(label)
             btn.setToolTip(f"Step the time by {label.replace('−', '-')}")
+            btn.setProperty("helpKey", "step time")
             step_row.addWidget(btn)
             step_buttons.append((btn, delta))
         form.addRow(step_row)
@@ -114,6 +116,7 @@ class AppWindowStarAtlasPageMixin:
             box.toggled.connect(lambda checked, a=attr: (view.set_option(a, checked), save_display_prefs(view)))
             form.addRow(box)
 
+        view.setProperty("helpKey", "sky map")
         status = QLabel("Loading catalogs…")
         status.setObjectName("StatusHint")
         status.setWordWrap(True)
@@ -126,6 +129,7 @@ class AppWindowStarAtlasPageMixin:
         add_catalog_btn = QToolButton()
         add_catalog_btn.setText("+")
         add_catalog_btn.setToolTip("Add a deep-sky catalog to the map")
+        add_catalog_btn.setProperty("helpKey", "add catalog")
         catalogs_header.addWidget(add_catalog_btn)
         form.addRow(catalogs_header)
         catalog_rows = QVBoxLayout()
@@ -149,6 +153,7 @@ class AppWindowStarAtlasPageMixin:
                 remove = QToolButton()
                 remove.setText("×")
                 remove.setToolTip(f"Remove {cat} from the map")
+                remove.setProperty("helpKey", "remove catalog")
                 remove.clicked.connect(lambda _=False, c=cat: set_catalogs(view.dso_catalogs - {c}))
                 row_layout.addWidget(remove)
                 catalog_rows.addWidget(row)

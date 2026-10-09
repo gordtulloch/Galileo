@@ -246,6 +246,21 @@ def _about(painter, r):
     painter.drawEllipse(QPointF(c.x(), c.y() - r.height() * 0.24), r.width() * 0.045, r.width() * 0.045)
 
 
+def _help(painter, r):
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPainterPath
+    c = r.center()
+    painter.drawEllipse(c, r.width() * 0.42, r.width() * 0.42)
+    w, h = r.width(), r.height()
+    path = QPainterPath()
+    path.moveTo(c.x() - w * 0.12, c.y() - h * 0.12)
+    path.arcTo(QRectF(c.x() - w * 0.12, c.y() - h * 0.30, w * 0.24, h * 0.24), 180, -200)
+    path.quadTo(QPointF(c.x(), c.y() + h * 0.02), QPointF(c.x(), c.y() + h * 0.08))
+    painter.drawPath(path)
+    painter.setBrush(painter.pen().color())
+    painter.drawEllipse(QPointF(c.x(), c.y() + h * 0.24), w * 0.045, w * 0.045)
+
+
 # ---------------------------------------------------------------------------
 # Equipment secondary navigation icons (device categories)
 # ---------------------------------------------------------------------------
@@ -483,6 +498,7 @@ ICONS: dict[str, DrawFn] = {
     "theme": _theme,
     "manual": _manual,
     "about": _about,
+    "help": _help,
     "camera": _camera,
     "mount": _mount,
     "filter_wheel": _filter_wheel,

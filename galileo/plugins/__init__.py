@@ -264,6 +264,7 @@ class PluginManager:
             record.faulted = True
             return
 
+        self._register_help(mod)
         for attr_name in dir(mod):
             cls = getattr(mod, attr_name)
             if (
@@ -276,6 +277,19 @@ class PluginManager:
                 if cls.name in self._loaded:
                     record.loaded_names.append(cls.name)
         record.loaded = True
+
+    @staticmethod
+    def _register_help(mod: Any) -> None:
+        """Pick up a plugin's own help (HELP-060): Markdown in a ``help/`` folder beside its entry
+        module, named for the screen ids its pages use (``science.<plugin name>.md``)."""
+        try:
+            from galileo import help as help_content
+            module_file = getattr(mod, "__file__", None)
+            help_dir = Path(module_file).parent / "help" if module_file else None
+            if help_dir is not None and help_dir.is_dir():
+                help_content.register_dir(help_dir)
+        except Exception:
+            logger.exception("Could not register help for plugin module %r", getattr(mod, "__name__", mod))
 
     def load(self, plugin_cls: type[PluginBase]) -> None:
         """Instantiate and activate *plugin_cls*; isolates exceptions (PLUG-040)."""

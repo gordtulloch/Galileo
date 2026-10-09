@@ -170,6 +170,7 @@ class AppWindowFlatPanelPageMixin:
         brightness_slider = QSlider(Qt.Orientation.Horizontal)
         brightness_slider.setRange(0, 1000)
         brightness_spin = QSpinBox()
+        brightness_spin.setProperty("helpKey", "brightness")
         brightness_spin.setRange(0, 1000)
         brightness_set_btn = QPushButton("Set")
         brightness_set_btn.setObjectName("AccentButton")

@@ -329,6 +329,7 @@ class AppWindowPlanningPageMixin:
         content_layout.addWidget(heading)
 
         results = QListWidget()
+        results.setProperty("helpKey", "results")
         results.setSpacing(4)
         results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content_layout.addWidget(results, 1)

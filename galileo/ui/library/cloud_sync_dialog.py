@@ -154,7 +154,7 @@ class CloudSyncWidget(QWidget):
                 self,
                 "Configuration Required",
                 "Cloud sync is not configured.\n\n"
-                "Please go to Tools → Configuration and set up your cloud storage settings first."
+                "Please go to Options › Library and set up your cloud storage settings first."
             )
             return
 
@@ -165,7 +165,7 @@ class CloudSyncWidget(QWidget):
                 self,
                 "Authentication Required",
                 "Authentication file is not configured or not found.\n\n"
-                "Please go to Tools → Configuration and set up your authentication file."
+                "Please go to Options › Library and set up your authentication file."
             )
             return
 
@@ -219,7 +219,7 @@ class CloudSyncWidget(QWidget):
                         f"• Bucket name is correct: '{self.cloud_config['bucket_url']}'\n"
                         f"• Bucket exists in your Google Cloud project\n"
                         f"• You have the correct project selected\n\n"
-                        f"You can update the bucket name in Tools → Configuration."
+                        f"You can update the bucket name in Options › Library."
                     )
                 elif "access denied" in error_msg.lower() or "403" in error_msg:
                     QMessageBox.critical(
@@ -243,7 +243,7 @@ class CloudSyncWidget(QWidget):
                         f"• Your service account key file is valid\n"
                         f"• The file path is correct\n"
                         f"• The service account still exists\n\n"
-                        f"You can update the authentication file in Tools → Configuration."
+                        f"You can update the authentication file in Options › Library."
                     )
                 else:
                     QMessageBox.critical(
@@ -663,7 +663,7 @@ class CloudSyncWidget(QWidget):
                 self,
                 "Configuration Required",
                 "Cloud sync is not configured.\n\n"
-                "Please go to Tools → Configuration and set up your cloud storage settings first."
+                "Please go to Options › Library and set up your cloud storage settings first."
             )
             return
 
@@ -674,7 +674,7 @@ class CloudSyncWidget(QWidget):
                 self,
                 "Authentication Required",
                 "Authentication file is not configured or not found.\n\n"
-                "Please go to Tools → Configuration and set up your authentication file."
+                "Please go to Options › Library and set up your authentication file."
             )
             return
 
@@ -715,7 +715,7 @@ class CloudSyncWidget(QWidget):
                     self,
                     "Configuration Error",
                     "Repository path is not configured or does not exist.\n\n"
-                    "Please configure your repository path in Tools → Configuration."
+                    "Please configure your repository path in Options › Library."
                 )
                 return
 
@@ -890,7 +890,7 @@ class CloudSyncWidget(QWidget):
                     self,
                     "Configuration Error",
                     "Repository path is not configured or does not exist.\n\n"
-                    "Please configure your repository path in Tools → Configuration."
+                    "Please configure your repository path in Options › Library."
                 )
                 return
 
@@ -1175,7 +1175,7 @@ class CloudSyncWidget(QWidget):
                     self,
                     "Configuration Error",
                     "Repository path is not configured or does not exist.\n\n"
-                    "Please configure your repository path in Tools → Configuration."
+                    "Please configure your repository path in Options › Library."
                 )
                 return
 

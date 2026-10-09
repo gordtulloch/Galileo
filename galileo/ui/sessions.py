@@ -723,6 +723,9 @@ def _block_item_widget(label_text: str, kind_name: str, window: Any = None,
     border_color = theme_mgr.palette()["border"] if theme_mgr is not None else "#555555"
     border = "3px solid #2e9e3f" if running else f"1px solid {border_color}"
     widget = QLabel(f"▶ {label_text}" if running else label_text)
+    block_cls = _BLOCK_CLASSES.get(kind_name)
+    if block_cls is not None:
+        widget.setProperty("helpKey", block_cls.label)  # a tile reads "Image: 10×60s…"; its help is the block type's
     widget.setStyleSheet(
         f"QLabel {{"
         f" background-color: {color.name()};"
