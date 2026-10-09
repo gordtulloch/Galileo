@@ -428,6 +428,14 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `HELP-050` | P2 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-060` |
 | `HELP-060` | P3 | SDD 4.27 `galileo.help` / `galileo.ui.help` | Test | `TC-HELP-040`, `TC-HELP-050` |
 
+### `SUP` — Community & Support
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `SUP-010` | P2 | SDD 4.27a `galileo.community` | Test | `TC-SUP-010` |
+| `SUP-020` | P2 | SDD 4.27a `galileo.community` | Test | `TC-SUP-020` |
+| `SUP-030` | P3 | SDD 4.27a `galileo.community` | Test | `TC-SUP-030` |
+
 ### `LOG` — Diagnostics & Logging
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |

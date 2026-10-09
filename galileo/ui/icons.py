@@ -246,6 +246,23 @@ def _about(painter, r):
     painter.drawEllipse(QPointF(c.x(), c.y() - r.height() * 0.24), r.width() * 0.045, r.width() * 0.045)
 
 
+def _community(painter, r):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    w, h = r.width(), r.height()
+    # Speech bubble with a tail, for the Community & support menu.
+    bubble = r.adjusted(w * 0.06, h * 0.10, -w * 0.06, -h * 0.28)
+    painter.drawRoundedRect(bubble, 4, 4)
+    painter.drawPolyline(QPolygonF([
+        QPointF(bubble.left() + w * 0.16, bubble.bottom()),
+        QPointF(bubble.left() + w * 0.12, r.bottom() - h * 0.06),
+        QPointF(bubble.left() + w * 0.34, bubble.bottom()),
+    ]))
+    painter.setBrush(painter.pen().color())
+    for i in range(3):
+        painter.drawEllipse(QPointF(bubble.left() + w * (0.24 + 0.22 * i), bubble.center().y()), w * 0.03, w * 0.03)
+
+
 def _help(painter, r):
     from PySide6.QtCore import QPointF, QRectF
     from PySide6.QtGui import QPainterPath
@@ -499,6 +516,7 @@ ICONS: dict[str, DrawFn] = {
     "manual": _manual,
     "about": _about,
     "help": _help,
+    "community": _community,
     "camera": _camera,
     "mount": _mount,
     "filter_wheel": _filter_wheel,

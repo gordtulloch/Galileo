@@ -1,0 +1,16 @@
+title: "[Idea] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Galileo to do?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you do this today?

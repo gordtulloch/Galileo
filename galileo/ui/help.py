@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 
+from galileo import community
 from galileo import help as help_content
 
 try:
@@ -439,7 +440,8 @@ class HelpWindow(QWidget):
         split.setSizes([260, 720])
 
         if manual_url:
-            link = QLabel(f'<a href="{manual_url}">Online manual (user guides on the wiki)</a>')
+            link = QLabel(f'<a href="{manual_url}">Online manual (user guides on the wiki)</a>'
+                          f' &nbsp;·&nbsp; <a href="{community.DISCUSSIONS_URL}">Not answered here? Ask the community</a>')
             link.setOpenExternalLinks(True)
             palette = link.palette()
             palette.setColor(QPalette.ColorRole.Link, QColor(_LINK_COLOR))

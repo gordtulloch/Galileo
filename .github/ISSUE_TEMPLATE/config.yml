@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/gordtulloch/Galileo/discussions/new?category=q-a
+    about: Setup, equipment and how-do-I questions belong in Discussions, not Issues.
+  - name: Suggest a feature
+    url: https://github.com/gordtulloch/Galileo/discussions/new?category=ideas
+    about: Share an idea and see if others want it too.

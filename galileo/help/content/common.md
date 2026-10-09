@@ -76,3 +76,7 @@ Shrinks the picture by 20%.
 ## Help
 
 Opens this help window on the current screen. **F1** does the same for the control that has focus. For help on any single control, press **Shift+F1** (or "Point at a control…" in this window) and click it. Hovering a control also shows a short description.
+
+## Community & support
+
+The speech-bubble button at the bottom of the sidebar, beside Help, opens a menu of community links in your web browser: **Ask the community** (a new question in GitHub Discussions), **Browse discussions**, **Suggest a feature**, and **Report a problem**. Report a problem opens the bug-report form with your Galileo version, operating system, Python version and the screen you were on already filled in. Nothing is sent from Galileo itself; you review and submit the form in your browser.

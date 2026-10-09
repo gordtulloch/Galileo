@@ -500,6 +500,12 @@ Design for the VSTarget plugin's two modules is no longer here — see [`docs/pl
 - **Libraries:** PySide6 only; Markdown is rendered by `QTextBrowser.setMarkdown`.
 - **Satisfies:** `HELP-010`–`HELP-060`.
 
+### 4.27a `galileo.community` — Community & Support Links
+
+- **Responsibility:** Builds the URLs behind the sidebar's Community & support menu and the help window's "Ask the community" link.
+- **Key design:** Pure Python, no Qt, no network. The forum is GitHub Discussions (no hosting, moderation tooling or separate accounts to run; threads convert to issues), chosen over self-hosted Discourse for a solo-maintained project -- the entry points are plain URLs built here, so moving to another forum later is a change to this module. "Report a problem" targets the `bug_report.yml` issue form with `version`, `os`, `python` and `screen` (the help `screen_id`) as query parameters matching the form's field ids; the application only opens the user's browser, so it works offline and adds no telemetry. The repository's `.github/ISSUE_TEMPLATE` and `.github/DISCUSSION_TEMPLATE` hold the forms; the Discussion categories (`q-a`, `ideas`, `show-and-tell`) are created in the repository settings, which cannot be done from a file.
+- **Satisfies:** `SUP-010`–`SUP-030`.
+
 ---
 
 ## 5. Data Design

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
 from ._widgets import _NavColumn
+from galileo import community
 from galileo.ui.help import HelpController, tag_help_screen
 
 logger = logging.getLogger(__name__)
@@ -389,6 +390,8 @@ class AppWindowCoreMixin:
                 ("help", "Help — F1 for this screen, Shift+F1 then click a control for help on it",
                  self._help.help_for_screen),
                 ("manual", "Open online manual", self._open_manual),
+                ("community", "Community & support — ask a question, report a problem, suggest a feature",
+                 self._show_community_menu),
                 ("about", "About Galileo", self._show_about),
             ],
             initial_selection="star_atlas",
@@ -414,6 +417,24 @@ class AppWindowCoreMixin:
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
         QDesktopServices.openUrl(QUrl(_MANUAL_URL))
+
+    def _show_community_menu(self: AppWindowState) -> None:
+        """Pop up the Community & support menu at the pointer (SUP-010)."""
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self._window)
+        menu.addAction("Ask the community…", lambda: self._open_url(community.ask_url()))
+        menu.addAction("Browse discussions", lambda: self._open_url(community.DISCUSSIONS_URL))
+        menu.addAction("Suggest a feature…", lambda: self._open_url(community.idea_url()))
+        menu.addSeparator()
+        menu.addAction("Report a problem…",
+                       lambda: self._open_url(community.report_problem_url(self._help.current_screen_id())))
+        menu.exec(QCursor.pos())
+
+    def _open_url(self: AppWindowState, url: str) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(url))
 
     def _show_about(self: AppWindowState) -> None:
         from PySide6.QtWidgets import QMessageBox

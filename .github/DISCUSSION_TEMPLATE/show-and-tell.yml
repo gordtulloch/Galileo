@@ -1,0 +1,14 @@
+title: ""
+body:
+  - type: textarea
+    id: image
+    attributes:
+      label: Your image or setup
+      description: Drag in a picture, and say what it is.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Target, equipment, exposure, and how Galileo helped.

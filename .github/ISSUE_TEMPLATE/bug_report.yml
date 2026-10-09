@@ -1,0 +1,52 @@
+name: Report a problem
+description: Something in Galileo is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If you are not sure it is a bug, please ask in [Discussions](https://github.com/gordtulloch/Galileo/discussions) first.
+  - type: input
+    id: version
+    attributes:
+      label: Galileo version
+      description: Filled in automatically when opened from Help > Report a problem.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Leave blank for the installer builds.
+  - type: input
+    id: screen
+    attributes:
+      label: Screen you were on
+      description: For example imaging.flats or equipment.mount.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: textarea
+    id: equipment
+    attributes:
+      label: Equipment and protocol
+      description: Camera, mount, focuser etc. and whether connected over INDI or ASCOM Alpaca (with driver names).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: Paste the relevant lines from the Galileo log file. Check it for anything private first.
+      render: text

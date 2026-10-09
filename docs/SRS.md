@@ -540,6 +540,14 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | HELP-050 | The system shall let the user open the detailed help for a single control: **F1** for the focused control (or the screen, if none), and point-and-click (**Shift+F1**) for any control. | P2 |
 | HELP-060 | The system shall provide a developer audit that lists every control on every screen lacking a help entry, and plugins shall be able to register their own help content. | P3 |
 
+### 4.20b `SUP` — Community & Support
+
+| ID | Requirement | Priority |
+|---|---|---|
+| SUP-010 | The system shall provide, from the application's Help area and from the help window, links that open the project's community forum (GitHub Discussions) in the user's web browser: ask a question, browse discussions and suggest a feature. | P2 |
+| SUP-020 | The system shall provide a "Report a problem" link that opens the project's bug-report form with the Galileo version, operating system, Python version and current screen prefilled, and shall transmit nothing itself -- the user reviews and submits the form in the browser. | P2 |
+| SUP-030 | The repository shall provide issue and discussion forms (bug report, Q&A, ideas, show-and-tell) whose fields match the prefilled parameters, and shall direct questions and feature requests to Discussions rather than Issues. | P3 |
+
 ### 4.21 `LOG` — Diagnostics & Logging
 
 | ID | Requirement | Priority |

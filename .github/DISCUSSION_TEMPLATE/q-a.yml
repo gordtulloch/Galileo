@@ -1,0 +1,17 @@
+title: "[Question] "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Including anything in the built-in help (F1) or the wiki.
+  - type: input
+    id: setup
+    attributes:
+      label: Galileo version, OS and equipment
