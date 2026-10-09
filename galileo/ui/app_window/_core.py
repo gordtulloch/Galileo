@@ -437,16 +437,34 @@ class AppWindowCoreMixin:
         QDesktopServices.openUrl(QUrl(url))
 
     def _show_about(self: AppWindowState) -> None:
+        from pathlib import Path
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor, QPalette, QPixmap
         from PySide6.QtWidgets import QMessageBox
         from galileo import __version__
         from galileo.copyright import COPYRIGHT_NOTICE, LICENSE_NOTICE
-        QMessageBox.about(
-            self._window,
-            "About Galileo",
+        accent = self._theme.accent_color
+        box = QMessageBox(self._window)
+        # Qt's default link colour is dark purple once visited, unreadable on dark themes.
+        pal = box.palette()
+        pal.setColor(QPalette.ColorRole.Link, QColor(accent))
+        pal.setColor(QPalette.ColorRole.LinkVisited, QColor(accent))
+        box.setPalette(pal)
+        box.setWindowTitle("About Galileo")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
             f"<h3>Galileo {__version__}</h3>"
             f"<p>Cross-platform astrophotography imaging suite, built on INDI and ASCOM Alpaca.</p>"
-            f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>",
+            f"<p style='font-size:large'>A <a href='https://starseekers.ca' style='color:{accent}'>Starseekers.ca</a> "
+            f"project &mdash; software for the amateur astronomer.</p>"
+            f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>"
         )
+        logo = Path(__file__).resolve().parents[3] / "assets" / "images" / "starseekers.png"
+        pixmap = QPixmap(str(logo))
+        if not pixmap.isNull():
+            box.setIconPixmap(pixmap.scaledToWidth(
+                256, Qt.TransformationMode.SmoothTransformation))
+        box.exec()
 
     def _build_submenu_page(
         self: AppWindowState, items: list, builders: dict, help_prefix: str = "",

@@ -443,7 +443,7 @@ class _NavColumn(QWidget if _HAS_QT else object):
         initial_selection: str | None = None,
     ) -> None:
         super().__init__()
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QToolButton, QButtonGroup, QSizePolicy
+        from PySide6.QtWidgets import QVBoxLayout, QGridLayout, QToolButton, QButtonGroup, QSizePolicy
         from PySide6.QtCore import Qt, QSize
         from galileo.ui.icons import make_icon
 
@@ -521,17 +521,18 @@ class _NavColumn(QWidget if _HAS_QT else object):
 
         if utility_actions:
             small_size = max(14, icon_size - 8)
-            utility_row = QHBoxLayout()
+            # Two columns: five buttons side by side would squeeze each to a dot.
+            utility_row = QGridLayout()
             utility_row.setContentsMargins(4, 6, 4, 0)
             utility_row.setSpacing(2)
-            for icon_name, tooltip, callback in utility_actions:
+            for n, (icon_name, tooltip, callback) in enumerate(utility_actions):
                 util_btn = QToolButton()
                 util_btn.setObjectName(button_object_name)
                 util_btn.setToolTip(tooltip)
                 util_btn.setMinimumHeight(24)
                 _set_icon_pair(util_btn, icon_name, small_size)
                 util_btn.clicked.connect(callback)
-                utility_row.addWidget(util_btn)
+                utility_row.addWidget(util_btn, n // 2, n % 2)
             layout.addLayout(utility_row)
 
     def select(self, item_id: str) -> None:
