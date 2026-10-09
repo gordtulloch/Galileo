@@ -137,6 +137,46 @@ class IndiAdapter(DeviceBackend):
             self.device_type, action, self.host, self.port, self.device_name, detail,
         )
 
+    async def push_context(
+        self,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        elevation: float | None = None,
+        focal_length_mm: float = 0.0,
+        aperture_mm: float = 0.0,
+    ) -> None:
+        """Send the driver the current UTC time, the site (``GEOGRAPHIC_COORD``) and the
+        telescope (``SCOPE_INFO``), for whichever of those properties the device defines —
+        right after connecting, and again when the optics change. Drivers use them for
+        FITS headers and simulated skies, and warn ("Telescope focal length is missing")
+        when they are absent. Best effort: a failure is logged, never raised."""
+        if self._client is None:
+            return
+        client = self._client
+
+        def push() -> None:
+            if self._has("TIME_UTC"):
+                utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                client.send_text(self.device_name, "TIME_UTC", {"UTC": utc, "OFFSET": "0"})
+            if latitude is not None and longitude is not None and self._has("GEOGRAPHIC_COORD"):
+                geo = {"LAT": latitude, "LONG": longitude if longitude >= 0 else longitude + 360.0}
+                if elevation is not None:
+                    geo["ELEV"] = elevation
+                client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
+            for prop in ("SCOPE_INFO", "TELESCOPE_INFO"):
+                if focal_length_mm > 0 and aperture_mm > 0 and self._has(prop):
+                    client.send_number(self.device_name, prop, {
+                        "FOCAL_LENGTH": focal_length_mm, "APERTURE": aperture_mm,
+                        "TELESCOPE_FOCAL_LENGTH": focal_length_mm, "TELESCOPE_APERTURE": aperture_mm,
+                    } if prop == "TELESCOPE_INFO" else {"FOCAL_LENGTH": focal_length_mm, "APERTURE": aperture_mm})
+                    break
+
+        self._log_interaction("push_context", lat=latitude, lon=longitude, focal=focal_length_mm, aperture=aperture_mm)
+        try:
+            await asyncio.to_thread(push)
+        except Exception:
+            logger.warning("Could not push time/site/optics to INDI %r", self.device_name, exc_info=True)
+
     # -- connection --------------------------------------------------------
 
     async def connect(self) -> None:

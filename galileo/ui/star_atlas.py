@@ -479,14 +479,14 @@ class StarAtlasView(QWidget):
         for xi, yi, vi in zip(x.tolist(), y.tolist(), vis.tolist()):
             if vi and (not pen_down or math.hypot(xi - px, yi - py) < limit):
                 if pen_down:
-                    path.lineTo(xi, yi)
+                    path.lineTo(QPointF(float(xi), float(yi)))
                 else:
-                    path.moveTo(xi, yi)
+                    path.moveTo(QPointF(float(xi), float(yi)))
                     pen_down = True
             else:
                 pen_down = bool(vi)
                 if vi:
-                    path.moveTo(xi, yi)
+                    path.moveTo(QPointF(float(xi), float(yi)))
             px, py = xi, yi
         p.drawPath(path)
 

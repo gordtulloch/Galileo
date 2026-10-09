@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
 logger = logging.getLogger(__name__)
 
+_SPLASH_MINIMUM_MS = 1000
+_SPLASH_PAINT_GRACE_MS = 100
 _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "logo.png"
 _ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "images" / "galileo.ico"
 
@@ -50,6 +53,7 @@ def main() -> None:
     else:
         logger.warning("Application icon not found at %s", _ICON_PATH)
 
+    splash_started_at = time.monotonic()
     splash = _show_splash(app)
 
     from galileo.diagnostics import DiagnosticsService
@@ -64,7 +68,7 @@ def main() -> None:
     window.show()
 
     if splash is not None:
-        splash.finish(getattr(window, "_window", None))
+        _schedule_splash_finish(splash, getattr(window, "_window", None), splash_started_at)
 
     _schedule_registration_ping()
     _schedule_library_preload()
@@ -74,6 +78,15 @@ def main() -> None:
     from galileo.core.compute import shutdown_cpu_executor
     shutdown_cpu_executor(wait=False)
     sys.exit(exit_code)
+
+
+def _schedule_splash_finish(splash, main_window, started_at: float) -> None:
+    """Keep the splash visible until Qt has had time to paint the main window."""
+    from PySide6.QtCore import QTimer
+
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    delay_ms = max(_SPLASH_PAINT_GRACE_MS, _SPLASH_MINIMUM_MS - elapsed_ms)
+    QTimer.singleShot(delay_ms, lambda: splash.finish(main_window))
 
 
 def _show_splash(app):

@@ -61,6 +61,7 @@ class AppWindowTopbarOpticsCameraMixin:
         position = self._optics_combo.itemData(index)
         if position is not None:
             self._active_optics_position = position
+        self._push_context_to_devices()
         self._refresh_imaging_filters()
 
     def _active_filter_wheel(self: AppWindowState):

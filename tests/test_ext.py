@@ -25,6 +25,23 @@ def test_tc_ext_010_pyside6_gui_entry_point():
     app_module = pytest.importorskip("galileo.app")
     assert hasattr(app_module, "main"), "galileo.app must expose a main() entry point"
     assert callable(app_module.main)
+    import time
+    from PySide6.QtCore import QEventLoop, QTimer
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance() or QApplication([])
+    splash = app_module._show_splash(app)
+    assert splash is not None and splash.isVisible()
+
+    main_window = QWidget()
+    main_window.show()
+    app_module._schedule_splash_finish(splash, main_window, time.monotonic())
+    assert splash.isVisible()
+
+    loop = QEventLoop()
+    QTimer.singleShot(1100, loop.quit)
+    loop.exec()
+    assert not splash.isVisible()
 
 
 # ---------------------------------------------------------------------------

@@ -173,6 +173,7 @@ class AppWindowImagingSupportMixin:
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)
             return None
+        self._push_context_to_devices([adapter])
         return adapter
 
     @staticmethod
@@ -231,6 +232,36 @@ class AppWindowImagingSupportMixin:
             version_value.setText(info.get("driver_version") or "—")
 
         return row, apply
+
+    def _push_context_to_devices(self: AppWindowState, adapters=None) -> None:
+        """Send the current UTC time, the Observatory's location and the active optical
+        tube's focal length and aperture to INDI devices (every connected one by default).
+        Done on connect and when the optics selection changes. Best effort: never stops
+        a connect or an optics change."""
+        import asyncio
+        site = {}
+        pier = self._current_pier
+        if pier is not None:
+            try:
+                obs = pier.observatory
+                site = dict(latitude=obs.latitude, longitude=obs.longitude,
+                            elevation=getattr(obs, "elevation_m", None))
+            except Exception:
+                logger.exception("Could not read the Observatory location to send to the devices")
+        tube = self.active_optical_tube()
+        optics = dict(focal_length_mm=getattr(tube, "focal_length_mm", 0.0) or 0.0,
+                      aperture_mm=getattr(tube, "aperture_mm", 0.0) or 0.0)
+        if adapters is None:
+            adapters = list(self._camera_backends.values())
+            adapters += [page.get("adapter") for page in self._device_pages.values()
+                         if isinstance(page, dict)]
+        for adapter in adapters:
+            if adapter is None or not hasattr(adapter, "push_context"):
+                continue
+            try:
+                asyncio.run(adapter.push_context(**site, **optics))
+            except Exception:
+                logger.exception("Could not push context to %r", getattr(adapter, "device_name", adapter))
 
     def _connect_camera_device(self: AppWindowState, slot_label: str, driver: str, server: str, port: int, device_name: str) -> None:
         """Connect one camera device — shared by the Camera page's Primary
