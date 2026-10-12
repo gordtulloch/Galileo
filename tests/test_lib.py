@@ -894,9 +894,24 @@ def test_library_screens_are_built_only_when_first_shown(qt_app, library):
         win._window.close()
 
 
+def wait_for_library_loads(qt_app, root, timeout=10.0):
+    """Pump the Qt loop until the Images/Sessions screens under *root* finish their background loads."""
+    import time
+    from galileo.ui.library.images_widget import ImagesWidget
+    from galileo.ui.library.sessions_widget import SessionsWidget
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        qt_app.processEvents()
+        trees = [w.file_tree for w in root.findChildren(ImagesWidget)] +                 [w.sessions_tree for w in root.findChildren(SessionsWidget)]
+        if all(t.isEnabled() for t in trees):
+            return
+        time.sleep(0.01)
+    raise AssertionError("Library screens did not finish loading")
+
+
 @pytest.mark.requirement("TC-LIB-010")
 @pytest.mark.priority("MVP")
-def test_library_images_and_sessions_screens_show_the_catalog(window, library):
+def test_library_images_and_sessions_screens_show_the_catalog(qt_app, window, library):
     """The Images screen lists catalogued objects and the Sessions screen the sessions built from them."""
     window._window.close()
     write_light_frames(library.incoming)
@@ -915,6 +930,7 @@ def test_library_images_and_sessions_screens_show_the_catalog(window, library):
 
         images = win._window.findChildren(ImagesWidget)[0]
         sessions = win._window.findChildren(SessionsWidget)[0]
+        wait_for_library_loads(qt_app, win._window)
         assert images.file_tree.topLevelItemCount() == 1        # one object: M42
         assert sessions.sessions_tree.topLevelItemCount() == 1   # one session
     finally:
@@ -940,7 +956,7 @@ def test_library_images_screen_refreshes_when_reopened_after_new_frames(qt_app, 
     assert images.file_tree.topLevelItemCount() == 0    # hidden: not reloaded behind the user's back
 
     library_menu(window)
-    qt_app.processEvents()
+    wait_for_library_loads(qt_app, window._window)
     assert images.file_tree.topLevelItemCount() == 1    # one object: M42
 
 
@@ -1586,3 +1602,76 @@ def test_tc_lib_010_xisf_header_with_entity_expansion_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="(?i)entit|forbidden|Error reading XISF"):
         XISFConverter(_write_xisf(tmp_path / "bomb.xisf", bomb))
 
+
+
+# ---------------------------------------------------------------------------
+# One implementation per remote-source protocol (SDD §4.23 RemoteSourceAdapter)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("MVP")
+async def test_tc_lib_090_source_adapters_delegate_to_the_smart_telescope_manager(tmp_path, monkeypatch):
+    """LIB-090/LIB-100/LIB-110: the SMB and FTP source adapters are RemoteSourceAdapter facades over SmartTelescopeManager — the only SMB/FTP code — choosing the telescope model from their arguments."""
+    from galileo.library.adapters import RemoteSourceAdapter, SmartTelescopeFtpAdapter, SmartTelescopeSmbAdapter
+    from galileo.library.services import telescope
+
+    calls = []
+
+    def fake_list(telescope_type, host, user=None, password=None):
+        calls.append(("list", telescope_type, host))
+        return [{"name": "M42.fits", "path": "/a/M42.fits", "size": 3}], None
+
+    def fake_get(telescope_type, host, info, local_path, user=None, password=None, progress_callback=None):
+        calls.append(("get", telescope_type, host))
+        Path(local_path).write_bytes(b"abc")
+        return True, None
+
+    monkeypatch.setattr(telescope.smart_telescope_manager, "get_fits_files", fake_list)
+    monkeypatch.setattr(telescope.smart_telescope_manager, "download_file", fake_get)
+
+    smb = SmartTelescopeSmbAdapter("seestar.local")
+    ftp = SmartTelescopeFtpAdapter("dwarf.local")
+    assert isinstance(smb, RemoteSourceAdapter) and isinstance(ftp, RemoteSourceAdapter)
+
+    assert await smb.browse() == ["/a/M42.fits"]
+    got = await smb.download("/a/M42.fits", tmp_path)
+    assert got.read_bytes() == b"abc"
+    await ftp.browse(use_tls=False)
+    await SmartTelescopeSmbAdapter("sm.local").browse(share="Pictures")
+    await ftp.browse(use_tls=True)
+    assert calls == [("list", "SeeStar", "seestar.local"), ("get", "SeeStar", "seestar.local"),
+                     ("list", "DWARF 3", "dwarf.local"), ("list", "StellarMate", "sm.local"),
+                     ("list", "iTelescope", "dwarf.local")]
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_library_catalog_queries_run_off_the_ui_thread(qt_app, library, monkeypatch):
+    """ARCH concurrency model: the Images and Sessions screens read the catalog on a worker thread, not the UI thread."""
+    import threading
+    from galileo.ui.library.images_widget import ImagesWidget
+    from galileo.ui.library.sessions_widget import SessionsWidget
+
+    seen = []
+    ui_thread = threading.get_ident()
+    orig_groups = ImagesWidget._query_groups.__func__
+    orig_fetch = SessionsWidget._fetch_sessions_data
+    monkeypatch.setattr(ImagesWidget, "_query_groups",
+                        classmethod(lambda cls, *a: (seen.append(threading.get_ident()), orig_groups(cls, *a))[1]))
+    monkeypatch.setattr(SessionsWidget, "_fetch_sessions_data",
+                        lambda self: (seen.append(threading.get_ident()), orig_fetch(self))[1])
+
+    root = QtWidgets_root()
+    images, sessions = ImagesWidget(), SessionsWidget()
+    root.layout().addWidget(images)
+    root.layout().addWidget(sessions)
+    wait_for_library_loads(qt_app, root)
+    assert len(seen) == 2 and ui_thread not in seen
+    assert images.file_tree.isEnabled() and sessions.sessions_tree.isEnabled()
+
+
+def QtWidgets_root():
+    from PySide6 import QtWidgets
+    root = QtWidgets.QWidget()
+    QtWidgets.QVBoxLayout(root)
+    return root

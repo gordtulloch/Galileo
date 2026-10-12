@@ -73,9 +73,6 @@ dependencies = [
     "astropy>=5.0",
     "tzdata",  # IANA zone database for the Observatory timezone list (Windows has none)
     # Device protocols
-    # INDI needs no extra package: galileo.adapters.indi_client is a native Python INDI-protocol client
-    # (pyindi-client cannot be built on Windows because libindi has no Windows port).
-    # "alpyca>=0.1",          # optional: Alpaca device support
     "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
     # Image processing
     "sep>=1.2",               # Source Extractor Python (star detection / HFR)

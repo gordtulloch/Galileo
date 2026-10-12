@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel)
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
 
+from ._worker import run_in_worker
 from galileo.library.core import fitsProcessing
 from galileo.library.models import fitsFile as FitsFileModel, fitsSession as FitsSessionModel, Masters
 from galileo.library.config import load_config as load_library_config
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 class SessionsWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self._load_generation = 0
         self.init_ui()
 
         # Caches used to speed up sessions rendering
@@ -1351,125 +1353,149 @@ class SessionsWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
 
     def load_sessions_data(self):
-        """Load session data from the database and populate the tree widget with hierarchical structure."""
+        """Reload the sessions tree. Queries and per-session status run on a worker thread; the tree
+        (and its pixmaps, which Qt only allows on the UI thread) is built when they finish."""
+        self._load_generation += 1
+        generation = self._load_generation
+        self.sessions_tree.clear()
+        self.sessions_tree.setEnabled(False)
+
+        def done(result):
+            if generation != self._load_generation:
+                return      # superseded by a newer load
+            self.sessions_tree.setEnabled(True)
+            try:
+                self._populate_sessions_tree(*result)
+            except Exception as e:
+                self._report_load_error(e)
+
+        def failed(exc):
+            if generation != self._load_generation:
+                return
+            self.sessions_tree.setEnabled(True)
+            self._report_load_error(exc)
+
+        run_in_worker(self, self._fetch_sessions_data, done, failed)
+
+    def _report_load_error(self, exc):
+        logger.error(f"Error loading Sessions data: {exc}")
+        # Don't show error dialog on startup if database is just empty
+        if "no such table" not in str(exc).lower():
+            QMessageBox.warning(self, "Error", f"Failed to load Sessions data: {exc}")
+
+    def _fetch_sessions_data(self):
+        """Everything the tree needs, as plain data. Runs on a worker thread: no Qt objects here."""
+        # Reset caches for this rebuild
+        self._matched_master_types_by_session_id = {}
+
+        # Precompute counts/master flags up-front to avoid N+1 queries
+        from peewee import fn
+
+        sessions = list(FitsSessionModel.select())
+
+        # File counts per session (matches previous behavior: includes soft-deleted rows)
+        self._session_file_counts = {
+            row["sid"]: int(row["cnt"])
+            for row in (
+                FitsFileModel
+                .select(
+                    FitsFileModel.fitsFileSession.alias("sid"),
+                    fn.COUNT(FitsFileModel.fitsFileId).alias("cnt"),
+                )
+                .where(FitsFileModel.fitsFileSession.is_null(False))
+                .group_by(FitsFileModel.fitsFileSession)
+                .dicts()
+            )
+            if row.get("sid")
+        }
+
+        # Which sessions have created masters (and which master types)
+        self._master_types_by_source_session_id = {}
+        for sid, mtype in (
+            Masters
+            .select(Masters.source_session_id, Masters.master_type)
+            .where(
+                (Masters.soft_delete == False) &
+                (Masters.source_session_id.is_null(False))
+            )
+            .tuples()
+        ):
+            if not sid:
+                continue
+            st = str(mtype or '').strip().lower()
+            if not st:
+                continue
+            self._master_types_by_source_session_id.setdefault(str(sid), set()).add(st)
+
+        self._master_source_session_ids = set(self._master_types_by_source_session_id.keys())
+
+        # Group sessions by object name
+        sessions_by_object = {}
+        for session in sessions:
+            sessions_by_object.setdefault(session.fitsSessionObjectName or "Unknown", []).append(session)
+
+        groups = []
+        for object_name in sorted(sessions_by_object):
+            object_sessions = sessions_by_object[object_name]
+            total_images = sum(self._session_file_counts.get(s.fitsSessionId, 0) for s in object_sessions)
+
+            # Sort sessions by date (newest first)
+            rows = []
+            calibrated_sessions = 0
+            total_light_sessions = 0
+            for session in sorted(object_sessions,
+                                  key=lambda x: x.fitsSessionDate or datetime.date.min, reverse=True):
+                is_light = session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']
+                calibration_info = self._build_resources_status(session)
+                if is_light:
+                    total_light_sessions += 1
+                    if calibration_info["percentage"] > 0:
+                        calibrated_sessions += 1
+                thumb_path = ''
+                if is_light:
+                    path = self._get_thumbnail_path(str(session.fitsSessionId))
+                    if path and os.path.exists(path):
+                        thumb_path = path
+                rows.append({
+                    "session": session,
+                    "image_count": self._session_file_counts.get(session.fitsSessionId, 0),
+                    "calibration": calibration_info,
+                    "has_master": session.fitsSessionId in self._master_source_session_ids,
+                    "thumb_path": thumb_path,
+                    "quality_tooltip": self._build_quality_tooltip(session),
+                })
+            groups.append((object_name, total_images, calibrated_sessions, total_light_sessions, rows))
+        return groups, len(sessions)
+
+    def _populate_sessions_tree(self, groups, session_count):
+        """Build the tree from ``_fetch_sessions_data`` output (UI thread)."""
+        self.sessions_tree.setUpdatesEnabled(False)
         try:
-            self.sessions_tree.clear()
-
-            # Reset caches for this rebuild
-            self._matched_master_types_by_session_id = {}
-
-            # Precompute counts/master flags up-front to avoid N+1 queries
-            from peewee import fn
-
-            sessions = list(FitsSessionModel.select())
-
-            # File counts per session (matches previous behavior: includes soft-deleted rows)
-            self._session_file_counts = {
-                row["sid"]: int(row["cnt"])
-                for row in (
-                    FitsFileModel
-                    .select(
-                        FitsFileModel.fitsFileSession.alias("sid"),
-                        fn.COUNT(FitsFileModel.fitsFileId).alias("cnt"),
-                    )
-                    .where(FitsFileModel.fitsFileSession.is_null(False))
-                    .group_by(FitsFileModel.fitsFileSession)
-                    .dicts()
-                )
-                if row.get("sid")
-            }
-
-            # Which sessions have created masters (and which master types)
-            self._master_types_by_source_session_id = {}
-            for sid, mtype in (
-                Masters
-                .select(Masters.source_session_id, Masters.master_type)
-                .where(
-                    (Masters.soft_delete == False) &
-                    (Masters.source_session_id.is_null(False))
-                )
-                .tuples()
-            ):
-                if not sid:
-                    continue
-                st = str(mtype or '').strip().lower()
-                if not st:
-                    continue
-                self._master_types_by_source_session_id.setdefault(str(sid), set()).add(st)
-
-            self._master_source_session_ids = set(self._master_types_by_source_session_id.keys())
-
-            # Group sessions by object name
-            sessions_by_object = {}
-            for session in sessions:
-                object_name = session.fitsSessionObjectName or "Unknown"
-                if object_name not in sessions_by_object:
-                    sessions_by_object[object_name] = []
-                sessions_by_object[object_name].append(session)
-
-            # Create hierarchical tree structure - sort objects alphabetically
-            for object_name in sorted(sessions_by_object.keys()):
-                object_sessions = sessions_by_object[object_name]
-
-                # Calculate total image count for this object across all sessions
-                total_images = 0
-                for session in object_sessions:
-                    total_images += self._session_file_counts.get(session.fitsSessionId, 0)
-
-                # Calculate overall calibration statistics for this object
-                calibrated_sessions = 0
-                total_light_sessions = 0
-
-                for session in object_sessions:
-                    if session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']:
-                        total_light_sessions += 1
-                        calibration_info = self._build_resources_status(session)
-                        if calibration_info["percentage"] > 0:
-                            calibrated_sessions += 1
-
-                # Create parent item for each object
+            for object_name, total_images, calibrated_sessions, total_light_sessions, rows in groups:
                 parent_item = QTreeWidgetItem()
                 parent_item.setText(0, object_name)
-                parent_item.setText(1, "")  # No thumbnail for parent
-                parent_item.setText(2, "")  # No date for parent
-                parent_item.setText(3, "")  # No telescope for parent
-                parent_item.setText(4, "")  # No imager for parent
-                parent_item.setText(5, "")  # No filter for parent
-                parent_item.setText(6, str(total_images))  # Total images for this object
+                for col in range(1, 6):
+                    parent_item.setText(col, "")    # no thumbnail/date/telescope/imager/filter for parent
+                parent_item.setText(6, str(total_images))   # Total images for this object
 
                 # Show resource summary for parent
                 if total_light_sessions > 0:
                     cal_percentage = (calibrated_sessions / total_light_sessions) * 100
-                    cal_summary = f"{calibrated_sessions}/{total_light_sessions} ({cal_percentage:.0f}%)"
-                    parent_item.setText(7, cal_summary)
+                    parent_item.setText(7, f"{calibrated_sessions}/{total_light_sessions} ({cal_percentage:.0f}%)")
                     parent_item.setToolTip(7, f"Resource Coverage: {calibrated_sessions} of {total_light_sessions} sessions have calibration resources")
                 else:
                     parent_item.setText(7, "")
 
-                # Style parent item differently
                 font = parent_item.font(0)
                 font.setBold(True)
                 parent_item.setFont(0, font)
 
-                # Sort sessions by date (newest first)
-                sorted_sessions = sorted(object_sessions,
-                                       key=lambda x: x.fitsSessionDate or datetime.date.min,
-                                       reverse=True)
-
-                # Add child items for each session
-                for session in sorted_sessions:
-                    # Get the image count for this specific session
-                    session_image_count = self._session_file_counts.get(session.fitsSessionId, 0)
-
-                    # Build enhanced resources status
-                    calibration_info = self._build_resources_status(session)
-
-                    # Check if this session has created a master frame
-                    has_master = session.fitsSessionId in self._master_source_session_ids
-
+                for row in rows:
+                    session = row["session"]
+                    calibration_info = row["calibration"]
                     child_item = QTreeWidgetItem()
                     # Show (master) for calibration sessions that have created masters
-                    if has_master and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
+                    if row["has_master"] and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
                         child_item.setText(0, "(master)")
                     else:
                         child_item.setText(0, "")  # Empty object name for child
@@ -1478,35 +1504,26 @@ class SessionsWidget(QWidget):
                     child_item.setText(3, session.fitsSessionTelescope or "Unknown")
                     child_item.setText(4, session.fitsSessionImager or "Unknown")
                     child_item.setText(5, session.fitsSessionFilter or "Unknown")
-                    child_item.setText(6, str(session_image_count))  # Image count for this session
+                    child_item.setText(6, str(row["image_count"]))
 
                     # Store session ID in the item for later retrieval
                     child_item.setData(0, Qt.ItemDataRole.UserRole, session.fitsSessionId)
 
                     # Attach thumbnail icon if it exists (light sessions only)
-                    if session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']:
-                        thumb_path = self._get_thumbnail_path(str(session.fitsSessionId))
-                        if thumb_path and os.path.exists(thumb_path):
-                            pix = QPixmap(thumb_path)
-                            if not pix.isNull():
-                                pix = pix.scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                child_item.setIcon(1, QIcon(pix))
-                                child_item.setToolTip(1, f"Thumbnail: {thumb_path}")
+                    if row["thumb_path"]:
+                        pix = QPixmap(row["thumb_path"])
+                        if not pix.isNull():
+                            pix = pix.scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                            child_item.setIcon(1, QIcon(pix))
+                            child_item.setToolTip(1, f"Thumbnail: {row['thumb_path']}")
 
-                    # Set resources status as simple text only
-                    if calibration_info["text"]:
-                        child_item.setText(7, calibration_info["text"])
-                        child_item.setToolTip(7, calibration_info["tooltip"])
-                    else:
-                        child_item.setText(7, "")
+                    child_item.setText(7, calibration_info["text"] or "")
 
-                    # Build quality metrics tooltip for all columns
-                    quality_tooltip = self._build_quality_tooltip(session)
-                    for col in range(8):  # Apply tooltip to all columns
+                    # Quality metrics tooltip on every column; column 7 also carries the calibration tooltip
+                    quality_tooltip = row["quality_tooltip"]
+                    for col in range(8):
                         if col == 7 and calibration_info["tooltip"]:
-                            # Combine calibration tooltip with quality metrics
-                            combined_tooltip = f"{calibration_info['tooltip']}\n\n{quality_tooltip}"
-                            child_item.setToolTip(col, combined_tooltip)
+                            child_item.setToolTip(col, f"{calibration_info['tooltip']}\n\n{quality_tooltip}")
                         else:
                             child_item.setToolTip(col, quality_tooltip)
 
@@ -1516,18 +1533,14 @@ class SessionsWidget(QWidget):
                 if parent_item.childCount() > 0:
                     self.sessions_tree.addTopLevelItem(parent_item)
                     parent_item.setExpanded(False)
+        finally:
+            self.sessions_tree.setUpdatesEnabled(True)
 
-            count = len(sessions)
-            if count > 0:
-                logger.debug(f"Loaded {count} sessions into hierarchical display")
-            else:
-                logger.debug("No sessions found in database")
+        if session_count > 0:
+            logger.debug(f"Loaded {session_count} sessions into hierarchical display")
+        else:
+            logger.debug("No sessions found in database")
 
-        except Exception as e:
-            logger.error(f"Error loading Sessions data: {e}")
-            # Don't show error dialog on startup if database is just empty
-            if "no such table" not in str(e).lower():
-                QMessageBox.warning(self, "Error", f"Failed to load Sessions data: {e}")
 
     def _get_thumbnail_path(self, session_id: str) -> str:
         """Return the expected thumbnail path for a session id."""

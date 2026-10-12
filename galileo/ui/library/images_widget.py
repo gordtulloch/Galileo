@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from PySide6.QtGui import QTextCursor
 
 from galileo.library.models import fitsFile as FitsFileModel, fitsSession as FitsSessionModel
+from ._worker import run_in_worker
 from .download_dialog import SmartTelescopeDownloadDialog
 from galileo.library.config import load_config as load_library_config, save_config as save_library_config
 
@@ -28,6 +29,7 @@ class ImagesWidget(QWidget):
         super().__init__()
         self.search_term = ""
         self._loaded_signature = None
+        self._load_generation = 0
         # Set by the Library page host so imports can trigger session creation.
         self.sessions_widget = None
 
@@ -184,50 +186,56 @@ class ImagesWidget(QWidget):
     # ...existing code for other methods...
 
     def load_fits_data(self):
-        """Load FITS file data from the database."""
-        try:
-            try:
-                self._loaded_signature = self._catalog_signature()
-            except Exception:
-                self._loaded_signature = None
-            self.file_tree.clear()
+        """Reload the tree. The query runs on a worker thread; the tree is rebuilt on the UI thread."""
+        sort_method = self.sort_combo.currentText()
+        if sort_method not in ("Object", "Date", "Filter"):
+            sort_method = "Object"
+        # The Filter column is the group heading when sorting by filter
+        self.file_tree.setColumnHidden(4, sort_method == "Filter")
 
-            # Get sort method from combo box
-            sort_method = self.sort_combo.currentText()
-
-            # Show/hide Filter column based on sort method
-            if sort_method == "Filter":
-                self.file_tree.setColumnHidden(4, True)  # Hide Filter column when sorting by filter
-            else:
-                self.file_tree.setColumnHidden(4, False)  # Show Filter column for other sort methods
-
-            # Load data based on sort method
-            if sort_method == "Object":
-                self._load_fits_data_by_object_paginated()
-            elif sort_method == "Date":
-                self._load_fits_data_by_date_paginated()
-            elif sort_method == "Filter":
-                self._load_fits_data_by_filter_paginated()
-            else:
-                self._load_fits_data_by_object_paginated()  # Default
-
-            logger.debug(f"Loaded FITS data with {sort_method} sorting")
-
-        except Exception as e:
-            logger.error(f"Error loading FITS data: {e}")
-            QMessageBox.warning(self, "Error", f"Failed to load FITS data: {e}")
-
-    def _get_fits_files_query(self, include_search=True):
-        """Get the appropriate database query based on the frame filter selection and search term."""
-        # Start with base query
-        query = FitsFileModel.select()
-
-        # Apply soft-delete filter (exclude soft-deleted by default unless checkbox is checked)
-        if not self.show_deleted_checkbox.isChecked():
-            query = query.where((FitsFileModel.fitsFileSoftDelete == False) | (FitsFileModel.fitsFileSoftDelete.is_null()))
-
-        # Apply frame filter
+        # Read the controls here, on the UI thread; the worker only sees plain values.
+        show_deleted = self.show_deleted_checkbox.isChecked()
         frame_filter = self.frame_filter_combo.currentText()
+        search_term = self.search_term
+
+        self._load_generation += 1
+        generation = self._load_generation
+        self.file_tree.clear()
+        self.file_tree.setEnabled(False)
+
+        def query():
+            signature = self._safe_signature()
+            return signature, self._query_groups(sort_method, show_deleted, frame_filter, search_term)
+
+        def done(result):
+            if generation != self._load_generation:
+                return      # superseded by a newer load
+            self.file_tree.setEnabled(True)
+            self._loaded_signature, groups = result
+            self._populate_tree(sort_method, groups)
+            logger.debug("Loaded FITS data with %s sorting", sort_method)
+
+        def failed(exc):
+            if generation != self._load_generation:
+                return
+            self.file_tree.setEnabled(True)
+            QMessageBox.warning(self, "Error", f"Failed to load FITS data: {exc}")
+
+        run_in_worker(self, query, done, failed)
+
+    @classmethod
+    def _safe_signature(cls):
+        try:
+            return cls._catalog_signature()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _files_query(show_deleted, frame_filter, search_term):
+        """The catalog query for the given filter settings (pure; safe on any thread)."""
+        query = FitsFileModel.select()
+        if not show_deleted:
+            query = query.where((FitsFileModel.fitsFileSoftDelete == False) | (FitsFileModel.fitsFileSoftDelete.is_null()))
         if frame_filter == "Light Frames Only":
             query = query.where(FitsFileModel.fitsFileType.contains('Light'))
         elif frame_filter == "Calibration Frames Only":
@@ -236,219 +244,81 @@ class ImagesWidget(QWidget):
                 (FitsFileModel.fitsFileType.contains('Bias')) |
                 (FitsFileModel.fitsFileType.contains('Flat'))
             )
-        # "All Frames" requires no additional filter
-
-        # Apply search term if provided and requested
-        if include_search and self.search_term:
-            query = query.where(FitsFileModel.fitsFileObject.contains(self.search_term))
-
+        if search_term:
+            query = query.where(FitsFileModel.fitsFileObject.contains(search_term))
         return query
 
-    def _load_fits_data_by_object_paginated(self):
-        """Load FITS file data grouped by object name."""
+    def _get_fits_files_query(self, include_search=True):
+        """The query for the current frame filter, deleted toggle and (optionally) search term."""
+        return self._files_query(self.show_deleted_checkbox.isChecked(),
+                                 self.frame_filter_combo.currentText(),
+                                 self.search_term if include_search else "")
 
-        # Get unique objects with search and frame filter applied
-        base_query = self._get_fits_files_query()
-        objects_query = (base_query
-                        .select(FitsFileModel.fitsFileObject)
-                        .distinct()
-                        .order_by(FitsFileModel.fitsFileObject))
+    @classmethod
+    def _query_groups(cls, sort_method, show_deleted, frame_filter, search_term):
+        """One query, grouped in Python: ``[(heading, [row, ...]), ...]`` in display order.
 
-        # Get all unique objects
-        all_objects = [obj.fitsFileObject or "Unknown" for obj in objects_query]
-        page_objects = all_objects
-
-        # Load files for each object
-        for object_name in page_objects:
-            # Query files for this object
-            if object_name == "Unknown":
-                object_files = self._get_fits_files_query().where(FitsFileModel.fitsFileObject.is_null(True))
-            else:
-                object_files = self._get_fits_files_query().where(FitsFileModel.fitsFileObject == object_name)
-
-            object_files = object_files.order_by(FitsFileModel.fitsFileDate.desc())
-
-            # Create parent item for object
-            parent_item = QTreeWidgetItem()
-            parent_item.setText(0, object_name)
-            parent_item.setText(1, "")  # Type
-            parent_item.setText(2, "")  # Date
-            parent_item.setText(3, "")  # Exposure
-            parent_item.setText(4, "")  # Filter
-            parent_item.setText(5, "")  # Telescope
-            parent_item.setText(6, "")  # Instrument
-            parent_item.setText(7, "")  # Temperature
-            parent_item.setText(8, "")  # Local icon column - empty for parent
-            parent_item.setText(9, "")  # Cloud icon column - empty for parent
-            parent_item.setText(10, f"({len(object_files)} files)")  # Filename shows count
-
-            # Style parent item
-            font = parent_item.font(0)
-            font.setBold(True)
-            parent_item.setFont(0, font)
-
-            # Add child items for each file
-            for fits_file in object_files:
-                child_item = QTreeWidgetItem()
-                child_item.setText(0, "")  # Empty object for child
-                child_item.setText(1, fits_file.fitsFileType or "")
-                child_item.setText(2, str(fits_file.fitsFileDate) if fits_file.fitsFileDate else "")
-                child_item.setText(3, str(fits_file.fitsFileExpTime) if fits_file.fitsFileExpTime else "")
-                child_item.setText(4, fits_file.fitsFileFilter or "")
-                child_item.setText(5, fits_file.fitsFileTelescop or "")
-                child_item.setText(6, fits_file.fitsFileInstrument or "")
-                child_item.setText(7, str(fits_file.fitsFileCCDTemp) if fits_file.fitsFileCCDTemp else "")
-
-                # Set icons for local and cloud status
-                if fits_file.fitsFileName:
-                    child_item.setIcon(8, self.local_icon)
-                    child_item.setToolTip(8, f"Local file: {os.path.basename(fits_file.fitsFileName)}")
-                    child_item.setText(10, fits_file.fitsFileName or "")  # Filename in column 10
-
-                if fits_file.fitsFileCloudURL:
-                    child_item.setIcon(9, self.cloud_icon)
-                    child_item.setToolTip(9, f"Cloud file: {fits_file.fitsFileCloudURL}")
-
-                parent_item.addChild(child_item)
-
-            self.file_tree.addTopLevelItem(parent_item)
-            parent_item.setExpanded(False)  # Start collapsed
-
-    def _load_fits_data_by_date_paginated(self):
-        """Load FITS file data grouped by date."""
+        A row is a plain tuple ``(object, type, date, exptime, filter, telescope, instrument,
+        ccdtemp, filename, cloud_url)``. (The earlier code ran one query per group.)"""
         from peewee import fn
+        M = FitsFileModel
+        query = cls._files_query(show_deleted, frame_filter, search_term)
+        cols = (M.fitsFileObject, M.fitsFileType, M.fitsFileDate, M.fitsFileExpTime, M.fitsFileFilter,
+                M.fitsFileTelescop, M.fitsFileInstrument, M.fitsFileCCDTemp, M.fitsFileName, M.fitsFileCloudURL)
+        if sort_method == "Date":
+            day = fn.DATE(M.fitsFileDate)
+            raw = query.select(*cols, day).order_by(day.desc(), M.fitsFileObject).tuples()
+            rows = [(r[:-1], r[-1]) for r in raw if r[-1]]      # files with no date are not listed
+        elif sort_method == "Filter":
+            raw = query.select(*cols).order_by(M.fitsFileFilter, M.fitsFileDate.desc()).tuples()
+            rows = [(r, r[4] or "No Filter") for r in raw]
+        else:
+            raw = query.select(*cols).order_by(M.fitsFileObject, M.fitsFileDate.desc()).tuples()
+            rows = [(r, r[0] or "Unknown") for r in raw]
+        groups: list[tuple[str, list]] = []
+        for row, heading in rows:
+            heading = str(heading)
+            if not groups or groups[-1][0] != heading:
+                groups.append((heading, []))
+            groups[-1][1].append(row)
+        return groups
 
-        # Get unique dates (date only, not time) with search and frame filter applied
-        base_query = self._get_fits_files_query()
-        dates_query = (base_query
-                      .select(fn.DATE(FitsFileModel.fitsFileDate).alias('date_only'))
-                      .distinct()
-                      .order_by(fn.DATE(FitsFileModel.fitsFileDate).desc()))
+    def _populate_tree(self, sort_method, groups):
+        """Build the tree items from ``_query_groups`` output (UI thread)."""
+        self.file_tree.setUpdatesEnabled(False)
+        try:
+            for heading, rows in groups:
+                parent_item = QTreeWidgetItem()
+                parent_item.setText(0, heading)
+                parent_item.setText(10 if sort_method == "Object" else 1, f"({len(rows)} files)")
+                font = parent_item.font(0)
+                font.setBold(True)
+                parent_item.setFont(0, font)
 
-        # Get all unique dates (date only)
-        all_dates = [row.date_only for row in dates_query if row.date_only]
-        page_dates = all_dates
+                for obj, ftype, date, exp, filt, scope, instr, temp, filename, cloud in rows:
+                    child = QTreeWidgetItem()
+                    child.setText(0, "" if sort_method == "Object" else (obj or ""))
+                    child.setText(1, ftype or "")
+                    child.setText(2, "" if sort_method == "Date" else (str(date) if date else ""))
+                    child.setText(3, str(exp) if exp else "")
+                    child.setText(4, "" if sort_method == "Filter" else (filt or ""))
+                    child.setText(5, scope or "")
+                    child.setText(6, instr or "")
+                    child.setText(7, str(temp) if temp else "")
+                    if filename:
+                        child.setIcon(8, self.local_icon)
+                        child.setToolTip(8, f"Local file: {os.path.basename(filename)}")
+                        child.setText(10, filename)
+                    if cloud:
+                        child.setIcon(9, self.cloud_icon)
+                        child.setToolTip(9, f"Cloud file: {cloud}")
+                    parent_item.addChild(child)
 
-        # Load files for each date
-        for date_obj in page_dates:
-            # Query files for this date (all files on this date regardless of time)
-            date_files = self._get_fits_files_query().where(fn.DATE(FitsFileModel.fitsFileDate) == date_obj)
-            date_files = date_files.order_by(FitsFileModel.fitsFileObject)
+                self.file_tree.addTopLevelItem(parent_item)
+                parent_item.setExpanded(False)
+        finally:
+            self.file_tree.setUpdatesEnabled(True)
 
-            # Create parent item for date (Date in first column as expandable section)
-            parent_item = QTreeWidgetItem()
-            parent_item.setText(0, str(date_obj))  # Date in first column (Object column)
-            parent_item.setText(1, f"({len(date_files)} files)")  # File count in Type column
-            parent_item.setText(2, "")  # Empty for child date column
-            parent_item.setText(3, "")  # Exposure
-            parent_item.setText(4, "")  # Filter
-            parent_item.setText(5, "")  # Telescope
-            parent_item.setText(6, "")  # Instrument
-            parent_item.setText(7, "")  # Temperature
-            parent_item.setText(8, "")  # Local icon column - empty for parent
-            parent_item.setText(9, "")  # Cloud icon column - empty for parent
-            parent_item.setText(10, "")  # Filename
-
-            # Style parent item - make date bold in first column
-            font = parent_item.font(0)  # First column (Object/Date)
-            font.setBold(True)
-            parent_item.setFont(0, font)
-
-            # Add child items for each file
-            for fits_file in date_files:
-                child_item = QTreeWidgetItem()
-                child_item.setText(0, fits_file.fitsFileObject or "")  # Object in first column
-                child_item.setText(1, fits_file.fitsFileType or "")
-                child_item.setText(2, "")  # Empty date for child (parent shows the date)
-                child_item.setText(3, str(fits_file.fitsFileExpTime) if fits_file.fitsFileExpTime else "")
-                child_item.setText(4, fits_file.fitsFileFilter or "")
-                child_item.setText(5, fits_file.fitsFileTelescop or "")
-                child_item.setText(6, fits_file.fitsFileInstrument or "")
-                child_item.setText(7, str(fits_file.fitsFileCCDTemp) if fits_file.fitsFileCCDTemp else "")
-
-                # Set icons for local and cloud status
-                if fits_file.fitsFileName:
-                    child_item.setIcon(8, self.local_icon)
-                    child_item.setToolTip(8, f"Local file: {os.path.basename(fits_file.fitsFileName)}")
-                    child_item.setText(10, fits_file.fitsFileName or "")  # Filename in column 10
-
-                if fits_file.fitsFileCloudURL:
-                    child_item.setIcon(9, self.cloud_icon)
-                    child_item.setToolTip(9, f"Cloud file: {fits_file.fitsFileCloudURL}")
-
-                parent_item.addChild(child_item)
-
-            self.file_tree.addTopLevelItem(parent_item)
-            parent_item.setExpanded(False)  # Start collapsed
-
-    def _load_fits_data_by_filter_paginated(self):
-        """Load FITS file data grouped by filter."""
-        # Get unique filters with search and frame filter applied
-        base_query = self._get_fits_files_query()
-        filters_query = (base_query
-                        .select(FitsFileModel.fitsFileFilter)
-                        .distinct()
-                        .order_by(FitsFileModel.fitsFileFilter))
-
-        # Get all unique filters
-        all_filters = [filt.fitsFileFilter or "No Filter" for filt in filters_query]
-        page_filters = all_filters
-
-        # Load files for each filter
-        for filter_name in page_filters:
-            # Query files for this filter
-            if filter_name == "No Filter":
-                filter_files = self._get_fits_files_query().where(FitsFileModel.fitsFileFilter.is_null(True))
-            else:
-                filter_files = self._get_fits_files_query().where(FitsFileModel.fitsFileFilter == filter_name)
-
-            filter_files = filter_files.order_by(FitsFileModel.fitsFileDate.desc())
-
-            # Create parent item for filter (Filter in first column as expandable section)
-            parent_item = QTreeWidgetItem()
-            parent_item.setText(0, filter_name)  # Filter in first column (Object column)
-            parent_item.setText(1, f"({len(filter_files)} files)")  # File count in Type column
-            parent_item.setText(2, "")  # Date
-            parent_item.setText(3, "")  # Exposure
-            parent_item.setText(4, "")  # Empty for child filter column
-            parent_item.setText(5, "")  # Telescope
-            parent_item.setText(6, "")  # Instrument
-            parent_item.setText(7, "")  # Temperature
-            parent_item.setText(8, "")  # Local icon column - empty for parent
-            parent_item.setText(9, "")  # Cloud icon column - empty for parent
-            parent_item.setText(10, "")  # Filename
-
-            # Style parent item - make filter bold in first column
-            font = parent_item.font(0)  # First column (Object/Filter)
-            font.setBold(True)
-            parent_item.setFont(0, font)
-
-            # Add child items for each file
-            for fits_file in filter_files:
-                child_item = QTreeWidgetItem()
-                child_item.setText(0, fits_file.fitsFileObject or "")  # Object in first column
-                child_item.setText(1, fits_file.fitsFileType or "")
-                child_item.setText(2, str(fits_file.fitsFileDate) if fits_file.fitsFileDate else "")
-                child_item.setText(3, str(fits_file.fitsFileExpTime) if fits_file.fitsFileExpTime else "")
-                child_item.setText(4, "")  # Empty filter for child (parent shows the filter)
-                child_item.setText(5, fits_file.fitsFileTelescop or "")
-                child_item.setText(6, fits_file.fitsFileInstrument or "")
-                child_item.setText(7, str(fits_file.fitsFileCCDTemp) if fits_file.fitsFileCCDTemp else "")
-
-                # Set icons for local and cloud status
-                if fits_file.fitsFileName:
-                    child_item.setIcon(8, self.local_icon)
-                    child_item.setToolTip(8, f"Local file: {os.path.basename(fits_file.fitsFileName)}")
-                    child_item.setText(10, fits_file.fitsFileName or "")  # Filename in column 10
-
-                if fits_file.fitsFileCloudURL:
-                    child_item.setIcon(9, self.cloud_icon)
-                    child_item.setToolTip(9, f"Cloud file: {fits_file.fitsFileCloudURL}")
-
-                parent_item.addChild(child_item)
-
-            self.file_tree.addTopLevelItem(parent_item)
-            parent_item.setExpanded(False)  # Start collapsed
 
     def show_file_context_menu(self, position):
         """Show context menu for file items"""

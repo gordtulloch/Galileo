@@ -6,54 +6,29 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from galileo.library.adapters.base import ManagerSourceAdapter
 
 
-class SmartTelescopeSmbAdapter:
-    """Browse and download FITS files from a SEESTAR or StellarMate via SMB/CIFS."""
+class SmartTelescopeSmbAdapter(ManagerSourceAdapter):
+    """Browse and download FITS files from a SEESTAR or StellarMate via SMB/CIFS.
+
+    *share* picks the model: a share containing ``stellarmate`` or ``pictures`` selects StellarMate,
+    anything else SeeStar (the manager owns each model's share name, folder and credentials)."""
+
+    telescope_type = "SeeStar"
 
     def __init__(self, host: str = "", share: str = "") -> None:
-        self.host = host
+        super().__init__(host)
         self.share = share
+        self.telescope_type = self._model_for(share)
+
+    @staticmethod
+    def _model_for(share: str) -> str:
+        return "StellarMate" if share.lower() in ("pictures", "stellarmate") else "SeeStar"
 
     async def browse(self, host: str = "", share: str = "") -> list[str]:
-        """Return a list of remote FITS file paths on the SMB share."""
-        host = host or self.host
-        share = share or self.share
-        try:
-            from smb.SMBConnection import SMBConnection  # type: ignore[import]
-            import socket
-            conn = SMBConnection("", "", "galileo", host)
-            conn.connect(socket.gethostbyname(host), 139)
-            files = []
-            for item in conn.listPath(share, "/"):
-                if item.filename.endswith((".fits", ".fit")):
-                    files.append(f"/{item.filename}")
-            conn.close()
-            return files
-        except Exception as exc:
-            logger.debug("SMB browse error: %s", exc)
-            return []
-
-    async def download(self, remote_path: str, dest: Path | str) -> Path:
-        """Download *remote_path* from the SMB share to *dest*."""
-        dest_path = Path(dest) / Path(remote_path).name
-
-        def _download_sync() -> None:
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            from smb.SMBConnection import SMBConnection  # type: ignore[import]
-            import socket
-            conn = SMBConnection("", "", "galileo", self.host)
-            conn.connect(socket.gethostbyname(self.host), 139)
-            with open(dest_path, "wb") as fh:
-                conn.retrieveFile(self.share, remote_path, fh)
-            conn.close()
-
-        try:
-            await asyncio.to_thread(_download_sync)
-        except Exception as exc:
-            logger.warning("SMB download error: %s", exc)
-        return dest_path
+        """Return the remote FITS file paths on the telescope's SMB share."""
+        if share:
+            self.telescope_type = self._model_for(share)
+        return await asyncio.to_thread(self._browse_sync, self.telescope_type, host or self.host)
