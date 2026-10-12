@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import logging
 from typing import TYPE_CHECKING
+import contextlib
 
 if TYPE_CHECKING:
     from galileo.bus import EventBus
@@ -57,7 +58,7 @@ class ConnectionMonitor:
                 self._event_bus.publish(
                     DeviceErrorEvent(
                         source=name,
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                         error="timeout",
                     )
                 )
@@ -68,20 +69,19 @@ class ConnectionMonitor:
                 self._event_bus.publish(
                     DeviceErrorEvent(
                         source=name,
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                         error=str(exc),
                     )
                 )
             return
 
-        if not self._backend.is_connected:
-            if self._event_bus:
-                self._event_bus.publish(
-                    DeviceDisconnectedEvent(
-                        source=name,
-                        timestamp=datetime.datetime.utcnow().isoformat(),
-                    )
+        if not self._backend.is_connected and self._event_bus:
+            self._event_bus.publish(
+                DeviceDisconnectedEvent(
+                    source=name,
+                    timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                 )
+            )
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -98,7 +98,5 @@ class ConnectionMonitor:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass

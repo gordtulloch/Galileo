@@ -138,7 +138,7 @@ class DiagnosticsService:
         self._entries: list[LogEntry] = []
 
         import datetime
-        log_file = self._log_dir / f"galileo_{datetime.date.today().isoformat()}.log"
+        log_file = self._log_dir / f"galileo_{datetime.date.today().isoformat()}.log"  # noqa: DTZ011 -- local calendar date by design
         self._log_file = log_file
 
         root_logger = logging.getLogger()
@@ -208,7 +208,7 @@ class DiagnosticsService:
     ) -> None:
         import datetime
 
-        ts = datetime.datetime.utcnow().isoformat()
+        ts = datetime.datetime.now(datetime.UTC).isoformat()
         entry = LogEntry(
             severity=severity,
             message=message,

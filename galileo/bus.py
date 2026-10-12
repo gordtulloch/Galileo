@@ -15,6 +15,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 from collections.abc import Callable
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +111,8 @@ class EventBus:
 
     def unsubscribe(self, event_type: type, handler: Callable[[Event], None]) -> None:
         """Remove *handler* for *event_type*; silently ignores unknown handlers."""
-        try:
+        with contextlib.suppress(ValueError):
             self._handlers[event_type].remove(handler)
-        except ValueError:
-            pass
 
     def publish(self, event: Event) -> None:
         """Publish *event* to all registered handlers for its type."""

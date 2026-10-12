@@ -18,7 +18,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from galileo.observatory import (  # noqa: E402
+from galileo.observatory import (
     create_observatory, create_pier, list_optical_tubes, save_device_config, save_optical_tubes,
 )
 
@@ -50,7 +50,7 @@ def _button(page, text, index=0):
 
 
 def _titles(page):
-    return [l.text() for l in page.findChildren(QtWidgets.QLabel) if l.text().startswith("Optical Tube")]
+    return [label.text() for label in page.findChildren(QtWidgets.QLabel) if label.text().startswith("Optical Tube")]
 
 
 @pytest.mark.requirement("TC-PROF-100")
@@ -79,13 +79,13 @@ def test_tc_prof_100_plus_next_to_title_adds_a_tube(window):
 def test_tc_prof_100_tube_offers_the_specified_optical_systems_and_alignment(window):
     """PROF-100: optical system choices and Reversed/Inverted alignment flags are per tube."""
     page = window._build_optics_page()
-    combo = [c for c in page.findChildren(QtWidgets.QComboBox)][0]
+    combo = next(iter(page.findChildren(QtWidgets.QComboBox)))
     assert [combo.itemText(i) for i in range(combo.count())] == [
         "Newtonian", "Schmidt-Cassegrain", "Mak-Cassegrain", "Refractor", "Other",
     ]
     checks = [c.text() for c in page.findChildren(QtWidgets.QCheckBox)]
     assert checks == ["Reversed", "Inverted"]
-    assert any(l.text() == "Associated:" for l in page.findChildren(QtWidgets.QLabel))
+    assert any(label.text() == "Associated:" for label in page.findChildren(QtWidgets.QLabel))
 
 
 @pytest.mark.requirement("TC-PROF-100")
@@ -135,7 +135,7 @@ def test_tc_prof_100_save_and_reload_round_trips_tubes_and_associations(window, 
     assert [e.text() for e in fresh.findChildren(QtWidgets.QLineEdit) if e.placeholderText()] == [
         "Newt 8in", "Guide Scope",
     ]
-    labels = [l.text() for l in fresh.findChildren(QtWidgets.QLabel)]
+    labels = [label.text() for label in fresh.findChildren(QtWidgets.QLabel)]
     assert "Camera: ASI294" in labels and "Guider: PHD2" in labels
 
 
@@ -154,9 +154,9 @@ def test_tc_prof_100_dissociate_and_dangling_association(window):
     """PROF-100: an association to a since-removed device shows as unconfigured and can be removed."""
     save_optical_tubes(window.pier, [{"associated": ["focuser:primary"]}])
     page = window._build_optics_page()
-    assert any("not configured" in l.text() for l in page.findChildren(QtWidgets.QLabel))
+    assert any("not configured" in label.text() for label in page.findChildren(QtWidgets.QLabel))
     _button(page, "Remove").click()
-    assert not any("not configured" in l.text() for l in page.findChildren(QtWidgets.QLabel))
+    assert not any("not configured" in label.text() for label in page.findChildren(QtWidgets.QLabel))
 
 
 @pytest.mark.requirement("TC-PROF-100")
@@ -256,7 +256,7 @@ def test_tc_prof_110_selector_is_disabled_when_no_tubes_are_defined(window):
 def test_tc_prof_110_saving_optics_refreshes_the_selector(window):
     """PROF-110: tubes saved on the Optics page appear in the selector without a restart."""
     page = window._build_optics_page()
-    [e for e in page.findChildren(QtWidgets.QLineEdit) if e.placeholderText()][0].setText("Refractor")
+    next(e for e in page.findChildren(QtWidgets.QLineEdit) if e.placeholderText()).setText("Refractor")
     _button(page, "Save").click()
     combo = window._optics_combo
     assert [combo.itemText(i) for i in range(combo.count())] == ["Refractor"]

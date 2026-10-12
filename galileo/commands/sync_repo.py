@@ -26,13 +26,13 @@ Requirements:
 Example:
     # Sync repository with default settings
     python -m galileo.commands.sync_repo
-    
+
     # Sync with verbose output and clear database first
     python -m galileo.commands.sync_repo -v -n
-    
+
     # Sync with custom config file
     python -m galileo.commands.sync_repo -c /path/to/config.ini
-    
+
     # Sync specific repository folder
     python -m galileo.commands.sync_repo -r /path/to/repository
 """
@@ -107,7 +107,7 @@ Examples:
 
     try:
         logger.info("=== Galileo Repository Sync Starting ===")
-        logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Started at: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
         # Load configuration
@@ -146,7 +146,7 @@ Examples:
                 logger.info("Database tables cleared successfully for sync.")
 
             except Exception as e:
-                logger.error(f"Error clearing database tables: {e}")
+                logger.exception(f"Error clearing database tables: {e}")
                 raise
 
         # Create processor instance
@@ -193,10 +193,10 @@ Examples:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1
     except Exception as e:
-        logger.error(f"Error during repository sync: {e}")
+        logger.exception(f"Error during repository sync: {e}")
         if args.verbose:
             import traceback
-            logger.error(traceback.format_exc())
+            logger.exception(traceback.format_exc())
         return 1
 
 if __name__ == "__main__":

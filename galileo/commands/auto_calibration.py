@@ -48,24 +48,24 @@ Quality Assessment:
 Examples:
     # Complete auto-calibration workflow
     python -m galileo.commands.auto_calibration
-    
+
     # Analyze calibration opportunities with verbose output
     python -m galileo.commands.auto_calibration -o analyze -v
-    
+
     # Create masters for specific session
     python -m galileo.commands.auto_calibration -o masters -s 123 -v
 
     python -m galileo.commands.auto_calibration -o calibrate-lights -v
-    
+
     # Force recalibrate already-calibrated frames
     python -m galileo.commands.auto_calibration -o calibrate-lights --force -v
-    
+
     # Quality assessment with detailed report
     python -m galileo.commands.auto_calibration -o quality -r -v
-    
+
     # Clear all existing master frames
     python -m galileo.commands.auto_calibration -o clear-masters -v
-    
+
     # Dry run to see what would be processed
     python -m galileo.commands.auto_calibration --dry-run -v
 """
@@ -80,6 +80,7 @@ from datetime import datetime
 
 
 from galileo.commands._common import get_log_path, load_config
+from galileo.library.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ def get_auto_calibration_config(config):
         return auto_cal_config
 
     except Exception as e:
-        raise ValueError(f"Invalid auto-calibration configuration: {e}")
+        raise ValueError(f"Invalid auto-calibration configuration: {e}") from e
 
 def validate_database_access():
     """Validate database connectivity"""
@@ -155,7 +156,6 @@ def validate_database_access():
 
         from galileo.library.database import setup_database
         from galileo.library.models import fitsFile, fitsSession
-        from galileo.library.exceptions import DatabaseError
 
         # Setup database connection
         setup_database()
@@ -172,7 +172,7 @@ def validate_database_access():
         raise
 
     except Exception as e:
-        raise Exception(f"Database validation failed: {e}")
+        raise DatabaseError(f"Database validation failed: {e}") from e
 
 def analyze_calibration_opportunities(config, session_id=None, min_files=None):
     """Analyze sessions for calibration opportunities with detailed diagnostic information"""
@@ -389,11 +389,11 @@ def create_master_frames(config, session_id=None, force=False, dry_run=False, ve
 def clear_all_masters(config, dry_run=False):
     """
     Clear all existing master frames from database and files.
-    
+
     Args:
         config: Configuration object
         dry_run: If True, show what would be done without making changes
-        
+
     Returns:
         bool: True if successful, False otherwise
     """
@@ -621,12 +621,12 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
 def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
     """
     Calibrate light frames using available master frames - wrapper for core library function.
-       
+
     Light frames are calibrated by:
     1. Subtracting master bias
     2. Subtracting master dark
     3. Dividing by master flat (normalized)
-    
+
     The calibrated frames are saved with 'cal_' prefix in the same directory.
     """
 
@@ -725,13 +725,13 @@ def create_cli_progress_callback(operation_name):
 def generate_quality_report(quality_results, config):
     """Generate detailed quality assessment report"""
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
         report_filename = f"quality_report_{timestamp}.txt"
 
         with open(report_filename, 'w') as f:
             f.write("Galileo Quality Assessment Report\n")
             f.write("=" * 40 + "\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Generated: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Total files assessed: {len(quality_results)}\n\n")
 
             # Summary statistics
@@ -820,7 +820,7 @@ def main():
     try:
         # Load configuration
         config = load_config(args.config)
-        auto_cal_config = get_auto_calibration_config(config)
+        get_auto_calibration_config(config)
 
         # Validate database access
         validate_database_access()
@@ -862,8 +862,6 @@ def main():
         return 130
 
     except Exception as e:
-        # Import DatabaseError for special handling
-        from galileo.library.exceptions import DatabaseError
 
         # Handle database errors gracefully without traceback
         if isinstance(e, DatabaseError):

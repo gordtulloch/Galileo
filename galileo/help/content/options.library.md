@@ -123,6 +123,9 @@ Your iTelescope account name.
 <!-- keys: itelescope-configuration-password -->
 Your iTelescope password, used to sign in over FTPS to download files.
 
+## Verify the server's certificate
+When on (the default), Galileo checks that the iTelescope server presents a valid certificate for its name before it sends your password. Turn it off only if connecting fails with a certificate error; the link is then still encrypted but could be intercepted.
+
 ## SFTP Server
 
 An SFTP server you download images from (for example a telescope computer or a network drive), also used by **Download**.

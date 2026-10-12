@@ -472,7 +472,7 @@ def test_tc_ses_030_run_button_refuses_without_equipment(window):
     """SES-030: Run checks equipment first — an Image block with no camera connected is
     refused with a reason, and nothing is scheduled or started."""
     page = _page(window)
-    region = page.screen.add_session_from_context_menu()
+    region = page.sessions_screen.add_session_from_context_menu()
     region._scheduler = page._scheduler_for(region._pier_name)
     region.insert_block(sessions.ImageBlock(count=1))
 
@@ -491,7 +491,7 @@ def test_tc_ses_030_run_button_executes_session_and_completed_session_is_deleted
     ctx, frames = make_context()
     monkeypatch.setattr(session_runner, "build_session_context", lambda _w: ctx)
 
-    region = page.screen.add_session_from_context_menu()
+    region = page.sessions_screen.add_session_from_context_menu()
     region._scheduler = page._scheduler_for(region._pier_name)
     region.insert_block(sessions.ImageBlock(exposure=5.0, count=2))
 
@@ -501,7 +501,7 @@ def test_tc_ses_030_run_button_executes_session_and_completed_session_is_deleted
     _wait(page._controller)
 
     assert len(frames) == 2
-    assert region not in page.screen.visible_sessions
+    assert region not in page.sessions_screen.visible_sessions
 
 
 @pytest.mark.requirement("TC-SES-040")
@@ -513,7 +513,7 @@ def test_tc_ses_040_stopped_manual_run_returns_session_to_editable_draft(window,
     ctx, _frames = make_context(imaging={"delay": 0.5})
     monkeypatch.setattr(session_runner, "build_session_context", lambda _w: ctx)
 
-    region = page.screen.add_session_from_context_menu()
+    region = page.sessions_screen.add_session_from_context_menu()
     region._scheduler = page._scheduler_for(region._pier_name)
     region.insert_block(sessions.ImageBlock(exposure=5.0, count=20))
 
@@ -521,5 +521,5 @@ def test_tc_ses_040_stopped_manual_run_returns_session_to_editable_draft(window,
     page._controller.stop(region)
     _wait(page._controller)
 
-    assert region in page.screen.visible_sessions
+    assert region in page.sessions_screen.visible_sessions
     assert region.is_scheduled is False and region.is_editable

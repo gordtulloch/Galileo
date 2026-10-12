@@ -461,7 +461,7 @@ class AppWindowPlanningPageMixin:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
                     charts = atlas.altitude_charts_batch(shown, location)
-                    for i, (obj, chart) in enumerate(zip(shown, charts)):
+                    for i, (obj, chart) in enumerate(zip(shown, charts, strict=True)):
                         if not chart.get("altitudes"):
                             rise_set_texts[i] = "Rise/transit/set unavailable."
                             continue
@@ -482,7 +482,7 @@ class AppWindowPlanningPageMixin:
                     QApplication.restoreOverrideCursor()
 
             thumb_labels = []
-            for obj, rise_set_text, chart in zip(shown, rise_set_texts, charts):
+            for obj, rise_set_text, chart in zip(shown, rise_set_texts, charts, strict=True):
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, obj)
                 card, thumb_label = _build_result_card(obj, rise_set_text, chart)
@@ -499,7 +499,7 @@ class AppWindowPlanningPageMixin:
             if thumb_labels:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
-                    for obj, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels):
+                    for obj, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels, strict=False):
                         try:
                             data = asyncio.run(atlas._fetch_thumbnail(obj))
                         except Exception:

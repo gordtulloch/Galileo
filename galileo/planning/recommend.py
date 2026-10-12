@@ -55,7 +55,7 @@ import logging
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -88,7 +88,7 @@ _SMOKE_AQI_SEVERE = 200.0         # AQI at which the smoke factor bottoms out
 _TARGET_FIELD_FILL_FRACTION = 0.30
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     """How complete an entry's sky-state inputs were (WUT-030) — a parallel
     indicator, kept separate from and never multiplied into the score."""
     FULL = "full"
@@ -281,7 +281,7 @@ def _night_cloud_average(times: list | None, cloudcover: list) -> float:
     Falls back to the whole series if the times are missing or none fall at night."""
     if times and len(times) == len(cloudcover):
         night = []
-        for stamp, cover in zip(times, cloudcover):
+        for stamp, cover in zip(times, cloudcover, strict=False):
             try:
                 hour = int(str(stamp)[11:13])
             except ValueError:

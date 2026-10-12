@@ -12,11 +12,11 @@ astrofiler_file.py for better maintainability and organization:
 """
 
 import os
-import sys
-from typing import Optional, Union, Any
+from typing import Literal
 
 from ..config import load_config as load_library_config
 from ..types import FilePath
+from galileo.library.exceptions import CalibrationError, DatabaseError, QualityAnalysisError
 
 __version__ = "1.2.0"
 
@@ -40,7 +40,7 @@ from .utils import (
 class fitsProcessing:
     """
     Unified FITS processing class that combines all core functionality.
-    
+
     This class provides backwards compatibility with the original fitsProcessing
     class while using the new modular architecture internally.
     """
@@ -83,7 +83,7 @@ class fitsProcessing:
         """Calculate hash for file - delegates to FileProcessor."""
         return self.file_processor.calculateFileHash(filePath)
 
-    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | bool:
+    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
         """Register FITS image - original signature from astrofiler_file."""
         return self.file_processor.registerFitsImage(root, file, moveFiles)
 
@@ -220,7 +220,7 @@ class fitsProcessing:
                     except Exception as e:
                         import logging
                         logger = logging.getLogger(__name__)
-                        logger.error(f"Error processing {file}: {e}")
+                        logger.exception(f"Error processing {file}: {e}")
 
         return processed_files
 
@@ -244,7 +244,7 @@ class fitsProcessing:
 
     def convertXisfToFits(self, xisf_file_path):
         """Convert XISF to FITS - original signature."""
-        return self.file_processor.convertXisfToFits(xisf_file_path, outputFile=None)
+        return self.file_processor.convertXisfToFits(xisf_file_path)
 
     # Advanced master management methods
     def createAdvancedMaster(self, session_id, cal_type, min_files=2, progress_callback=None):
@@ -259,12 +259,12 @@ class fitsProcessing:
     def runAutoCalibrationWorkflow(self, progress_callback=None, operations=None):
         """
         Run the auto-calibration workflow with optional operation selection.
-        
+
         Args:
             progress_callback: Callback function for progress updates (percentage, message)
             operations: List of operations to run ['analyze', 'masters', 'calibrate', 'quality']
                        If None, runs all operations
-        
+
         Returns:
             dict: Results with keys: status, sessions_analyzed, masters_created,
                   calibration_opportunities, light_frames_calibrated, errors
@@ -297,7 +297,7 @@ class fitsProcessing:
 
             # Validate database access
             if not validate_database_access():
-                raise Exception("Database validation failed")
+                raise DatabaseError("Database validation failed")
 
             # Progress tracking
             total_operations = len(operations)
@@ -325,7 +325,7 @@ class fitsProcessing:
                         if analysis_result:
                             results['calibration_opportunities'] = analysis_result.get('total_opportunities', 0)
                         else:
-                            raise Exception("Analysis failed")
+                            raise QualityAnalysisError("Analysis failed")
 
                     elif operation == 'masters':
                         success = create_master_frames(config, progress_callback=operation_progress)
@@ -333,7 +333,7 @@ class fitsProcessing:
                             # Count created masters (rough estimate based on opportunities)
                             results['masters_created'] = results.get('calibration_opportunities', 1)
                         else:
-                            raise Exception("Master creation failed")
+                            raise CalibrationError("Master creation failed")
 
                     elif operation == 'calibrate':
                         from .light_calibration import get_calibration_statistics
@@ -343,16 +343,16 @@ class fitsProcessing:
                             frames_after = get_calibration_statistics()['calibrated_frames']
                             results['light_frames_calibrated'] = frames_after - frames_before
                         else:
-                            raise Exception("Light frame calibration failed")
+                            raise CalibrationError("Light frame calibration failed")
 
                     elif operation == 'quality':
                         success = perform_quality_assessment(config, progress_callback=operation_progress)
                         if not success:
-                            raise Exception("Quality assessment failed")
+                            raise QualityAnalysisError("Quality assessment failed")
 
                 except Exception as e:
                     error_msg = f"{operation} operation failed: {e!s}"
-                    logger.error(error_msg)
+                    logger.exception(error_msg)
                     results['errors'].append(error_msg)
 
                     # Critical operations cause complete failure
@@ -378,7 +378,7 @@ class fitsProcessing:
 
         except Exception as e:
             error_msg = f"Auto-calibration workflow failed: {e!s}"
-            logger.error(error_msg, exc_info=True)
+            logger.exception(error_msg)
             results['status'] = 'error'
             results['message'] = error_msg
             results['errors'].append(error_msg)

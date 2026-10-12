@@ -59,10 +59,7 @@ def _is_generated_calibrated_output(row: FitsFileModel) -> bool:
         return False
 
     base = os.path.basename(str(filename).replace('\\', os.sep).replace('/', os.sep))
-    if base.lower().startswith('cal_'):
-        return True
-
-    return False
+    return bool(base.lower().startswith('cal_'))
 
 
 def main() -> int:
@@ -103,7 +100,7 @@ def main() -> int:
                 row.delete_instance()
                 deleted_db_rows += 1
             except Exception as e:
-                logger.error(f"Failed to delete DB row for {path}: {e}")
+                logger.exception(f"Failed to delete DB row for {path}: {e}")
 
         # 2) Reset soft-delete flags
         updated_softdelete = FitsFileModel.update(fitsFileSoftDelete=False).execute()
@@ -142,7 +139,7 @@ def main() -> int:
         print("\nOperation cancelled by user")
         return 1
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logger.exception(f"Unexpected error: {e}")
         print(f"\nError: {e}")
         print("Use -v/--verbose for details")
         return 1

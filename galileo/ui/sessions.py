@@ -1132,7 +1132,7 @@ class SessionsPageWidget(QWidget):
         super().__init__()
         self.setObjectName("SessionsPage")
         self._window = window
-        self.screen = SessionsScreen()
+        self.sessions_screen = SessionsScreen()
         self._local_schedulers: dict[str, Any] = {}  # fallback when window lacks _scheduler_for_pier
         self._controller = get_session_controller(window)
         self._controller.changed.connect(self._on_run_changed)
@@ -1193,12 +1193,12 @@ class SessionsPageWidget(QWidget):
 
     def create_session_for_target(self, name: str, ra_deg: float, dec_deg: float) -> None:
         """Called when a target is selected elsewhere in the app (SES-160)."""
-        region = self.screen.create_session_for_target(name, ra_deg, dec_deg)
+        region = self.sessions_screen.create_session_for_target(name, ra_deg, dec_deg)
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 
     def _add_session_from_menu(self) -> None:
-        region = self.screen.add_session_from_context_menu()
+        region = self.sessions_screen.add_session_from_context_menu()
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 
@@ -1208,7 +1208,7 @@ class SessionsPageWidget(QWidget):
         disappears here too, not only from Planning > Schedule."""
         pier_name = self._active_pier_name()
         self._scheduler_for(pier_name).reap_completed_jobs()
-        self.screen.set_active_pier(pier_name)
+        self.sessions_screen.set_active_pier(pier_name)
         self._rebuild_regions()
 
     def _on_run_changed(self, _pier_key=None) -> None:
@@ -1227,7 +1227,7 @@ class SessionsPageWidget(QWidget):
             item = self._regions_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for region in self.screen.visible_sessions:
+        for region in self.sessions_screen.visible_sessions:
             widget = _RegionWidget(region, self._palette, self._rebuild_regions, self._window)
             self._regions_layout.insertWidget(self._regions_layout.count() - 1, widget)
         pier_name = self._active_pier_name()
@@ -1236,4 +1236,4 @@ class SessionsPageWidget(QWidget):
         elif pier_name is None:
             self._status.setText("Create a Pier to author sessions.")
         else:
-            self._status.setText(f"{len(self.screen.visible_sessions)} session(s) for {pier_name}.")
+            self._status.setText(f"{len(self.sessions_screen.visible_sessions)} session(s) for {pier_name}.")

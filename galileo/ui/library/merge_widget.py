@@ -1,5 +1,6 @@
 import os
 import logging
+from dataclasses import dataclass, field
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QPushButton, QLineEdit, QCheckBox,
@@ -11,6 +12,61 @@ from galileo.library.models import fitsFile as FitsFileModel, fitsSession as Fit
 from galileo.library.config import load_config as load_library_config
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class _MergeStats:
+    """Running totals of a merge, for the results report."""
+    merged_count: int = 0
+    renamed_count: int = 0
+    moved_count: int = 0
+    directories_renamed: int = 0
+    header_updated_count: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+def _merged_filename(old_filename: str, from_object: str, to_object: str) -> str:
+    """*old_filename* with the object name swapped, trying the name as typed and then its underscore form."""
+    new_filename = old_filename
+    if from_object in old_filename:
+        new_filename = old_filename.replace(from_object, to_object)
+        logger.info(f"Renaming file: {old_filename} -> {new_filename}")
+
+    # Try sanitized versions too
+    if new_filename == old_filename:
+        from_sanitized = from_object.replace(' ', '_').replace('-', '_')
+        to_sanitized = to_object.replace(' ', '_').replace('-', '_')
+        if from_sanitized in old_filename:
+            new_filename = old_filename.replace(from_sanitized, to_sanitized)
+            logger.info(f"Renaming file (sanitized): {old_filename} -> {new_filename}")
+    return new_filename
+
+
+def _merge_report(from_object, to_object, change_files, total_files, stats: _MergeStats, sessions_updated, empty_dirs_removed) -> str:
+    """The text shown in the results box after a merge."""
+    text = "MERGE EXECUTION RESULTS:\n\n"
+    text += f"From: '{from_object}' → To: '{to_object}'\n"
+    text += f"Change filenames: {'Yes' if change_files else 'No'}\n"
+    text += f"Total files to process: {total_files}\n\n"
+    if empty_dirs_removed > 0:
+        text += f"Empty directories cleaned up: {empty_dirs_removed}\n"
+
+    text += f"Database records updated: {stats.merged_count}\n"
+    if change_files:
+        text += f"Files renamed on disk: {stats.renamed_count}\n"
+        text += f"Files moved to new directory structure: {stats.moved_count}\n"
+        text += f"Directories renamed: {stats.directories_renamed}\n"
+        if stats.header_updated_count > 0:
+            text += f"FITS headers updated: {stats.header_updated_count}\n"
+    text += f"Sessions updated: {sessions_updated}\n"
+
+    if stats.errors:
+        text += f"\nErrors encountered ({len(stats.errors)} total):\n"
+        for error in stats.errors:
+            text += f"- {error}\n"
+
+    text += "\nMerge completed!"
+    return text
+
 
 class MergeWidget(QWidget):
     def __init__(self):
@@ -155,7 +211,7 @@ class MergeWidget(QWidget):
             self.results_text.setPlainText(preview_text)
 
         except Exception as e:
-            logger.error(f"Error during preview: {e}")
+            logger.exception(f"Error during preview: {e}")
             QMessageBox.warning(self, "Preview Error", f"Error during preview: {e}")
 
     def execute_merge(self):
@@ -211,17 +267,7 @@ class MergeWidget(QWidget):
             progress_dialog.show()
             QApplication.processEvents()
 
-            merged_count = 0
-            renamed_count = 0
-            moved_count = 0
-            directories_renamed = 0
-            header_updated_count = 0
-            errors = []
-
-            result_text = "MERGE EXECUTION RESULTS:\n\n"
-            result_text += f"From: '{from_object}' → To: '{to_object}'\n"
-            result_text += f"Change filenames: {'Yes' if change_files else 'No'}\n"
-            result_text += f"Total files to process: {total_files}\n\n"
+            stats = _MergeStats()
 
             # Update progress
             progress_dialog.setLabelText(f"Processing {total_files} files...")
@@ -235,43 +281,7 @@ class MergeWidget(QWidget):
             if change_files:
                 progress_dialog.setLabelText("Checking directory structure...")
                 QApplication.processEvents()
-
-                old_object_dir = os.path.join(repo_folder, 'Light', from_object)
-                new_object_dir = os.path.join(repo_folder, 'Light', to_object)
-
-                if os.path.exists(old_object_dir):
-                    try:
-                        if not os.path.exists(new_object_dir):
-                            # Simple case: rename directory
-                            logger.info(f"Renaming directory: {old_object_dir} -> {new_object_dir}")
-                            os.rename(old_object_dir, new_object_dir)
-                            directories_renamed += 1
-                            logger.info(f"Successfully renamed directory to: {new_object_dir}")
-                        else:
-                            # Target exists: move all files from old to new directory
-                            logger.info(f"Moving files from {old_object_dir} to existing {new_object_dir}")
-                            progress_dialog.setLabelText("Moving files to existing directory...")
-                            QApplication.processEvents()
-
-                            for filename in os.listdir(old_object_dir):
-                                old_file = os.path.join(old_object_dir, filename)
-                                new_file = os.path.join(new_object_dir, filename)
-                                if os.path.isfile(old_file) and not os.path.exists(new_file):
-                                    os.rename(old_file, new_file)
-                                    logger.info(f"Moved file: {old_file} -> {new_file}")
-
-                            # Remove old directory if empty
-                            try:
-                                if not os.listdir(old_object_dir):
-                                    os.rmdir(old_object_dir)
-                                    logger.info(f"Removed empty directory: {old_object_dir}")
-                            except OSError:
-                                pass  # Directory not empty, leave it
-
-                    except Exception as dir_error:
-                        error_msg = f"Error handling directory {old_object_dir}: {dir_error!s}"
-                        errors.append(error_msg)
-                        logger.error(error_msg)
+                self._rename_object_directory(repo_folder, from_object, to_object, progress_dialog, stats)
 
             for file_index, fits_file in enumerate(files_to_merge):
                 # Update progress
@@ -287,107 +297,32 @@ class MergeWidget(QWidget):
                     # Update database record
                     fits_file.fitsFileObject = to_object
                     fits_file.save()
-                    merged_count += 1
+                    stats.merged_count += 1
 
                     # Handle file operations if requested
                     if change_files and fits_file.fitsFileName:
-                        old_file_path = fits_file.fitsFileName
-
-                        # Simple path handling - files should now be in the new directory structure
-                        original_file_path = fits_file.fitsFileName
-                        current_file_path = original_file_path
-
-                        # If the file was in the old object directory, update path to new directory
-                        if f"/Light/{from_object}/" in original_file_path.replace('\\', '/'):
-                            current_file_path = original_file_path.replace(f"/Light/{from_object}/", f"/Light/{to_object}/").replace(f"\\Light\\{from_object}\\", f"\\Light\\{to_object}\\")
-                            logger.debug(f"Updated file path: {original_file_path} -> {current_file_path}")
-
-                        if os.path.exists(current_file_path):
-                            try:
-                                # Update the FITS header first
-                                logger.info(f"Updating FITS header for: {current_file_path}")
-                                with fits.open(current_file_path, mode='update') as hdul:
-                                    hdul[0].header['OBJECT'] = to_object
-                                    hdul[0].header.comments['OBJECT'] = 'Updated via Astrofiler merge'
-                                    hdul.flush()
-                                header_updated_count += 1
-                                logger.info(f"Successfully updated FITS header: OBJECT = '{to_object}'")
-
-                                # Handle filename renaming
-                                old_filename = os.path.basename(current_file_path)
-                                new_filename = old_filename
-                                current_directory = os.path.dirname(current_file_path)
-
-                                # Replace object name in filename
-                                if from_object in old_filename:
-                                    new_filename = old_filename.replace(from_object, to_object)
-                                    logger.info(f"Renaming file: {old_filename} -> {new_filename}")
-
-                                # Try sanitized versions too
-                                if new_filename == old_filename:
-                                    from_sanitized = from_object.replace(' ', '_').replace('-', '_')
-                                    to_sanitized = to_object.replace(' ', '_').replace('-', '_')
-                                    if from_sanitized in old_filename:
-                                        new_filename = old_filename.replace(from_sanitized, to_sanitized)
-                                        logger.info(f"Renaming file (sanitized): {old_filename} -> {new_filename}")
-
-                                # Rename file if needed
-                                new_file_path = os.path.join(current_directory, new_filename)
-                                if new_file_path != current_file_path:
-                                    if not os.path.exists(new_file_path):
-                                        logger.info(f"Renaming file: {current_file_path} -> {new_file_path}")
-                                        os.rename(current_file_path, new_file_path)
-                                        renamed_count += 1
-                                        current_file_path = new_file_path
-                                        logger.info(f"Successfully renamed file to: {new_file_path}")
-                                    else:
-                                        logger.warning(f"Cannot rename file, target exists: {new_file_path}")
-
-                                # Update database with final file path
-                                if current_file_path != original_file_path:
-                                    fits_file.fitsFileName = current_file_path.replace('\\', '/')
-                                    fits_file.save()
-                                    moved_count += 1
-
-                            except Exception as file_error:
-                                error_msg = f"Error processing file {current_file_path}: {file_error!s}"
-                                errors.append(error_msg)
-                                logger.error(error_msg)
-                        else:
-                            logger.warning(f"File not found: {current_file_path} (original: {original_file_path})")
-
-
+                        self._merge_file_on_disk(fits_file, from_object, to_object, stats)
                 except Exception as e:
                     error_msg = f"Error processing {fits_file.fitsFileName}: {e!s}"
-                    errors.append(error_msg)
-                    logger.error(error_msg)
+                    stats.errors.append(error_msg)
+                    logger.exception(error_msg)
 
             # Update Sessions that reference the old object name
             progress_dialog.setLabelText("Updating sessions...")
             progress_dialog.setValue(total_files + 2)
             QApplication.processEvents()
 
-            sessions_updated = 0
-            try:
-                sessions = FitsSessionModel.select().where(FitsSessionModel.fitsSessionObjectName == from_object)
-                for session in sessions:
-                    session.fitsSessionObjectName = to_object
-                    session.save()
-                    sessions_updated += 1
-            except Exception as e:
-                error_msg = f"Error querying/updating Sessions: {e!s}"
-                errors.append(error_msg)
-                logger.error(error_msg)
+            sessions_updated = self._rename_sessions(from_object, to_object, stats)
 
             # Clean up empty directories if files were moved
-            if change_files and (moved_count > 0 or directories_renamed > 0):
+            empty_dirs_removed = 0
+            if change_files and (stats.moved_count > 0 or stats.directories_renamed > 0):
                 progress_dialog.setLabelText("Cleaning up empty directories...")
                 QApplication.processEvents()
                 try:
                     # Look for and remove empty directories that may have been left behind
                     empty_dirs_removed = self.cleanup_empty_directories(repo_folder)
                     if empty_dirs_removed > 0:
-                        result_text += f"Empty directories cleaned up: {empty_dirs_removed}\n"
                         logger.info(f"Cleaned up {empty_dirs_removed} empty directories")
                 except Exception as cleanup_error:
                     logger.warning(f"Error during directory cleanup: {cleanup_error}")
@@ -395,31 +330,16 @@ class MergeWidget(QWidget):
             # Close progress dialog
             progress_dialog.close()
 
-            result_text += f"Database records updated: {merged_count}\n"
-            if change_files:
-                result_text += f"Files renamed on disk: {renamed_count}\n"
-                result_text += f"Files moved to new directory structure: {moved_count}\n"
-                result_text += f"Directories renamed: {directories_renamed}\n"
-                if header_updated_count > 0:
-                    result_text += f"FITS headers updated: {header_updated_count}\n"
-            result_text += f"Sessions updated: {sessions_updated}\n"
-
-            if errors:
-                result_text += f"\nErrors encountered ({len(errors)} total):\n"
-                for error in errors:
-                    result_text += f"- {error}\n"
-
-            result_text += "\nMerge completed!"
-
-            self.results_text.setPlainText(result_text)
+            self.results_text.setPlainText(
+                _merge_report(from_object, to_object, change_files, total_files, stats, sessions_updated, empty_dirs_removed))
 
             # Show success message
-            if errors:
+            if stats.errors:
                 QMessageBox.warning(self, "Merge Completed with Errors",
-                                  f"Merge completed but {len(errors)} errors occurred. Check results and log for details.")
+                                  f"Merge completed but {len(stats.errors)} errors occurred. Check results and log for details.")
             else:
                 QMessageBox.information(self, "Merge Successful",
-                                      f"Successfully merged {merged_count} records from '{from_object}' to '{to_object}'.")
+                                      f"Successfully merged {stats.merged_count} records from '{from_object}' to '{to_object}'.")
 
             # Refresh the Images view to reflect the merge changes
             if self.images_widget and hasattr(self.images_widget, 'load_fits_data'):
@@ -431,16 +351,122 @@ class MergeWidget(QWidget):
             if 'progress_dialog' in locals():
                 progress_dialog.close()
             error_msg = f"Critical error during merge execution: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             QMessageBox.critical(self, "Merge Error", f"A critical error occurred during merge: {e!s}")
             self.results_text.setPlainText(f"CRITICAL ERROR: {error_msg}")
+
+    @staticmethod
+    def _rename_object_directory(repo_folder, from_object, to_object, progress_dialog, stats):
+        """Rename ``<repo>/Light/<from>`` to ``<to>``, or move its files across if ``<to>`` already exists."""
+        old_object_dir = os.path.join(repo_folder, 'Light', from_object)
+        new_object_dir = os.path.join(repo_folder, 'Light', to_object)
+        if not os.path.exists(old_object_dir):
+            return
+        try:
+            if not os.path.exists(new_object_dir):
+                # Simple case: rename directory
+                logger.info(f"Renaming directory: {old_object_dir} -> {new_object_dir}")
+                os.rename(old_object_dir, new_object_dir)
+                stats.directories_renamed += 1
+                logger.info(f"Successfully renamed directory to: {new_object_dir}")
+                return
+
+            # Target exists: move all files from old to new directory
+            logger.info(f"Moving files from {old_object_dir} to existing {new_object_dir}")
+            progress_dialog.setLabelText("Moving files to existing directory...")
+            QApplication.processEvents()
+
+            for filename in os.listdir(old_object_dir):
+                old_file = os.path.join(old_object_dir, filename)
+                new_file = os.path.join(new_object_dir, filename)
+                if os.path.isfile(old_file) and not os.path.exists(new_file):
+                    os.rename(old_file, new_file)
+                    logger.info(f"Moved file: {old_file} -> {new_file}")
+
+            # Remove old directory if empty
+            try:
+                if not os.listdir(old_object_dir):
+                    os.rmdir(old_object_dir)
+                    logger.info(f"Removed empty directory: {old_object_dir}")
+            except OSError:
+                pass  # Directory not empty, leave it
+        except Exception as dir_error:
+            error_msg = f"Error handling directory {old_object_dir}: {dir_error!s}"
+            stats.errors.append(error_msg)
+            logger.exception(error_msg)
+
+    @staticmethod
+    def _merge_file_on_disk(fits_file, from_object, to_object, stats):
+        """Update the FITS header, rename the file and record its new path for one catalog row."""
+        # Simple path handling - files should now be in the new directory structure
+        original_file_path = fits_file.fitsFileName
+        current_file_path = original_file_path
+
+        # If the file was in the old object directory, update path to new directory
+        if f"/Light/{from_object}/" in original_file_path.replace('\\', '/'):
+            current_file_path = original_file_path.replace(f"/Light/{from_object}/", f"/Light/{to_object}/").replace(f"\\Light\\{from_object}\\", f"\\Light\\{to_object}\\")
+            logger.debug(f"Updated file path: {original_file_path} -> {current_file_path}")
+
+        if not os.path.exists(current_file_path):
+            logger.warning(f"File not found: {current_file_path} (original: {original_file_path})")
+            return
+
+        try:
+            # Update the FITS header first
+            logger.info(f"Updating FITS header for: {current_file_path}")
+            with fits.open(current_file_path, mode='update') as hdul:
+                hdul[0].header['OBJECT'] = to_object
+                hdul[0].header.comments['OBJECT'] = 'Updated via Astrofiler merge'
+                hdul.flush()
+            stats.header_updated_count += 1
+            logger.info(f"Successfully updated FITS header: OBJECT = '{to_object}'")
+
+            # Rename file if needed
+            new_file_path = os.path.join(os.path.dirname(current_file_path),
+                                         _merged_filename(os.path.basename(current_file_path), from_object, to_object))
+            if new_file_path != current_file_path:
+                if not os.path.exists(new_file_path):
+                    logger.info(f"Renaming file: {current_file_path} -> {new_file_path}")
+                    os.rename(current_file_path, new_file_path)
+                    stats.renamed_count += 1
+                    current_file_path = new_file_path
+                    logger.info(f"Successfully renamed file to: {new_file_path}")
+                else:
+                    logger.warning(f"Cannot rename file, target exists: {new_file_path}")
+
+            # Update database with final file path
+            if current_file_path != original_file_path:
+                fits_file.fitsFileName = current_file_path.replace('\\', '/')
+                fits_file.save()
+                stats.moved_count += 1
+
+        except Exception as file_error:
+            error_msg = f"Error processing file {current_file_path}: {file_error!s}"
+            stats.errors.append(error_msg)
+            logger.exception(error_msg)
+
+    @staticmethod
+    def _rename_sessions(from_object, to_object, stats) -> int:
+        """Point the sessions of *from_object* at *to_object*; returns how many were updated."""
+        sessions_updated = 0
+        try:
+            sessions = FitsSessionModel.select().where(FitsSessionModel.fitsSessionObjectName == from_object)
+            for session in sessions:
+                session.fitsSessionObjectName = to_object
+                session.save()
+                sessions_updated += 1
+        except Exception as e:
+            error_msg = f"Error querying/updating Sessions: {e!s}"
+            stats.errors.append(error_msg)
+            logger.exception(error_msg)
+        return sessions_updated
 
     def cleanup_empty_directories(self, repo_folder):
         """Remove empty directories recursively, starting from the deepest level"""
         empty_dirs_removed = 0
         try:
             # Walk through all directories in the repository
-            for root, dirs, files in os.walk(repo_folder, topdown=False):
+            for root, dirs, _files in os.walk(repo_folder, topdown=False):
                 for directory in dirs:
                     dir_path = os.path.join(root, directory)
                     try:
@@ -453,6 +479,6 @@ class MergeWidget(QWidget):
                         # Directory not empty or other error, skip it
                         pass
         except Exception as e:
-            logger.error(f"Error during directory cleanup: {e}")
+            logger.exception(f"Error during directory cleanup: {e}")
 
         return empty_dirs_removed

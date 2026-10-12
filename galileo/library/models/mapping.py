@@ -22,11 +22,11 @@ class Mapping(BaseModel):
     def get_mapped_value(cls, card_name, current_value):
         """
         Get the mapped value for a given card and current value.
-        
+
         Args:
             card_name (str): The FITS header card name (e.g., 'TELESCOP', 'INSTRUME')
             current_value (str): The current value to map
-            
+
         Returns:
             str: The mapped value, or the original value if no mapping exists
         """
@@ -46,12 +46,12 @@ class Mapping(BaseModel):
     def add_mapping(cls, card_name, current_value, replace_value):
         """
         Add or update a mapping.
-        
+
         Args:
             card_name (str): The FITS header card name
             current_value (str): The current value
             replace_value (str): The replacement value
-            
+
         Returns:
             Mapping: The created or updated mapping
         """
@@ -71,11 +71,11 @@ class Mapping(BaseModel):
     def remove_mapping(cls, card_name, current_value):
         """
         Remove a mapping.
-        
+
         Args:
             card_name (str): The FITS header card name
             current_value (str): The current value
-            
+
         Returns:
             bool: True if mapping was removed, False if it didn't exist
         """
@@ -93,10 +93,10 @@ class Mapping(BaseModel):
     def get_mappings_for_card(cls, card_name):
         """
         Get all mappings for a specific card.
-        
+
         Args:
             card_name (str): The FITS header card name
-            
+
         Returns:
             list: List of Mapping objects
         """
@@ -106,7 +106,7 @@ class Mapping(BaseModel):
     def get_all_cards(cls):
         """
         Get all unique card names that have mappings.
-        
+
         Returns:
             list: List of unique card names
         """

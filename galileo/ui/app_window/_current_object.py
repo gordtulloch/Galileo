@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     # *other* mixin's attributes/methods -- mypy's documented
     # pattern for mixin classes. No runtime effect; this class's
     # actual base stays plain `object`.
+    from galileo.planning.sky_atlas import DeepSkyObject, SkyAtlas
+
     from ._state import AppWindowState
 
 
@@ -68,10 +70,11 @@ class AppWindowCurrentObjectMixin:
         this file constructs, which are fine since the catalog itself is
         read-only and nothing those calls do needs to be remembered between
         one another."""
-        if self._sky_atlas is None:
+        atlas = self._sky_atlas
+        if atlas is None:
             from galileo.planning.sky_atlas import SkyAtlas
-            self._sky_atlas = SkyAtlas()
-        return self._sky_atlas
+            atlas = self._sky_atlas = SkyAtlas()
+        return atlas
 
     def _select_result(self: AppWindowState, obj: DeepSkyObject) -> None:
         """"Select" (a Targets-page result tile's own action button, SKY-050):

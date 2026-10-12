@@ -250,7 +250,7 @@ def fov_outline_radec(ra_deg: float, dec_deg: float, width_deg: float, height_de
     corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh), (-hw, -hh)]
     u: list[float] = []
     v: list[float] = []
-    for (u0, v0), (u1, v1) in zip(corners[:-1], corners[1:]):
+    for (u0, v0), (u1, v1) in zip(corners[:-1], corners[1:], strict=False):
         for k in range(n):
             f = k / n
             u.append(u0 + (u1 - u0) * f)

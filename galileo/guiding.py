@@ -393,7 +393,7 @@ class GuidingService:
         try:
             await client.connect()
         except Exception as exc:
-            logger.error("Failed to connect to guider at %s:%d: %s", self.host, self.port, exc)
+            logger.exception("Failed to connect to guider at %s:%d: %s", self.host, self.port, exc)
             raise
         self.model.update(connected=True)
         self.model.log(f"Connected to PHD2 at {self.host}:{self.port}.")

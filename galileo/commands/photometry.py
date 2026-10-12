@@ -117,7 +117,7 @@ def main() -> int:
         in_path = path
         if path.lower().endswith(".xisf"):
             logger.info(f"Converting XISF to FITS: {path}")
-            in_path = fp.convertXisfToFits(path, outputFile=None)
+            in_path = fp.convertXisfToFits(path)
             if not in_path or not os.path.exists(in_path):
                 logger.error(f"Failed to convert XISF: {path}")
                 continue

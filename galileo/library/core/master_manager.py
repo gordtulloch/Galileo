@@ -29,43 +29,6 @@ from ..models import Masters, fitsSession, fitsFile
 logger = logging.getLogger(__name__)
 
 
-def check_symlink_support():
-    """Check if symbolic links are supported on this system."""
-    try:
-        # Try creating a test symlink
-        import tempfile
-        with tempfile.TemporaryDirectory() as temp_dir:
-            test_file = os.path.join(temp_dir, 'test.txt')
-            test_link = os.path.join(temp_dir, 'test_link.txt')
-
-            # Create a test file
-            with open(test_file, 'w') as f:
-                f.write('test')
-
-            # Try to create a symlink
-            os.symlink(test_file, test_link)
-            return True
-    except (OSError, NotImplementedError, PermissionError):
-        return False
-
-
-def check_windows_developer_mode():
-    """Check if Windows Developer Mode is enabled."""
-    if winreg is None or os.name != 'nt':
-        return False
-
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
-        )
-        allow_dev_unlock, _ = winreg.QueryValueEx(key, "AllowDevelopmentWithoutDevLicense")
-        winreg.CloseKey(key)
-        return bool(allow_dev_unlock)
-    except (OSError, FileNotFoundError):
-        return False
-
-
 def _get_config():
     """Get configuration from the library settings file."""
     config = load_library_config()
@@ -226,7 +189,7 @@ class MasterFrameManager:
     def _get_master_calibration_path(self) -> str:
         """
         Get the path to the master calibration frames directory.
-        
+
         Returns:
             str: Path to the Masters directory within the repository folder
         """
@@ -244,7 +207,7 @@ class MasterFrameManager:
     def _ensure_masters_directory_exists(self) -> str:
         """
         Ensure the Masters directory exists and return its path.
-        
+
         Returns:
             str: Path to the Masters directory
         """
@@ -350,7 +313,7 @@ class MasterFrameManager:
             if w <= 0 or h <= 0:
                 return None
             new_w = int(width_px)
-            new_h = max(1, int(round((new_w * h) / float(w))))
+            new_h = max(1, round((new_w * h) / float(w)))
             im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
             thumbs_dir = self._get_thumbnails_directory()
@@ -365,11 +328,11 @@ class MasterFrameManager:
     def find_matching_master(self, session_data: dict[str, Any], cal_type: str) -> Masters | None:
         """
         Find a matching master frame for the given session and calibration type.
-        
+
         Args:
             session_data: Session data with equipment and settings
             cal_type: Type of calibration ('bias', 'dark', 'flat')
-            
+
         Returns:
             Matching master frame or None
         """
@@ -395,7 +358,7 @@ class MasterFrameManager:
             )
 
         except Exception as e:
-            logger.error(f"Error finding matching master: {e}")
+            logger.exception(f"Error finding matching master: {e}")
             return None
 
     def create_master_from_session(self, session_id: str, cal_type: str,
@@ -404,14 +367,14 @@ class MasterFrameManager:
                                  verbose: bool = False) -> Masters | None:
         """
         Create a master calibration frame from a session's files using sigma-clipped stacking.
-        
+
         Args:
             session_id: Session ID to create master from
             cal_type: Type of calibration ('bias', 'dark', 'flat')
             min_files: Minimum number of files required
             progress_callback: Progress reporting function
             verbose: Enable verbose output showing which files are used
-            
+
         Returns:
             Created master frame record or None if creation failed
         """
@@ -457,7 +420,7 @@ class MasterFrameManager:
                 timestamp = session.fitsSessionDate.strftime("%Y%m%d")
             else:
                 # Fallback to current date if session date is not available
-                timestamp = datetime.datetime.now().strftime("%Y%m%d")
+                timestamp = datetime.datetime.now().astimezone().strftime("%Y%m%d")
                 logger.warning(f"Session {session_id} has no date, using current date for master filename")
 
             # Clean telescope and imager names for filename compatibility
@@ -542,7 +505,7 @@ class MasterFrameManager:
             return master_record
 
         except Exception as e:
-            logger.error(f"Error creating master {cal_type} frame: {e}")
+            logger.exception(f"Error creating master {cal_type} frame: {e}")
             if progress_callback:
                 progress_callback(100, 100, f"Error creating master {cal_type} frame")
             return None
@@ -558,13 +521,13 @@ class MasterFrameManager:
     ) -> bool:
         """
         Create master frame using sigma-clipped averaging (internal implementation).
-        
+
         Args:
             file_paths: List of input FITS file paths
             output_path: Output path for master frame
             cal_type: Type of calibration
             progress_callback: Progress reporting function
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -585,27 +548,11 @@ class MasterFrameManager:
             if progress_callback:
                 progress_callback(25, 100, f"Loading {len(file_paths)} {cal_type} frames...")
 
-            # Find the first readable frame to get dimensions and dtype
-            header = None
-            data_shape = None
-            dtype = None
-            first_data_file = None
-            for candidate_path in file_paths:
-                try:
-                    data0, header0 = _read_fits_image(candidate_path)
-                    header = header0
-                    data_shape = data0.shape
-                    dtype = data0.dtype
-                    first_data_file = candidate_path
-                    logger.info(f"Frame dimensions: {data_shape}, dtype: {dtype}")
-                    break
-                except Exception as e:
-                    logger.warning(f"Skipping unreadable FITS frame {candidate_path}: {e}")
-                    continue
-
-            if header is None or data_shape is None or dtype is None or first_data_file is None:
+            first = self._first_readable_frame(file_paths)
+            if first is None:
                 logger.error("No valid input frames contained 2D image data")
                 return False
+            header, data_shape, first_data_file = first
 
             is_light_stack = str(cal_type).lower() == 'light'
 
@@ -624,40 +571,8 @@ class MasterFrameManager:
             if progress_callback:
                 progress_callback(30, 100, "Computing statistics (pass 1/2)...")
 
-            # Streaming approach using chunked processing
-            # Determine optimal chunk size based on available memory
-            # Process frames in chunks small enough to fit in memory
-            max_chunk_size = min(20, len(file_paths))  # Process up to 20 frames at a time
-
-            valid_files = []
-            frame_medians = []
-
             # First pass: validate files and compute frame medians for flats
-            logger.info("Pass 1: Validating files and computing frame medians...")
-            for i, file_path in enumerate(file_paths):
-                try:
-                    data = None
-                    try:
-                        data, _hdr = _read_fits_image(file_path)
-                    except Exception as e:
-                        logger.warning(f"Skipping corrupted/unreadable file {file_path}: {e}")
-                        continue
-
-                    if data.shape != data_shape:
-                        logger.warning(f"Skipping file with different dimensions: {file_path}")
-                        continue
-
-                    valid_files.append(file_path)
-                    if cal_type == 'flat':
-                        frame_medians.append(float(np.median(data)))
-
-                    if (i + 1) % 10 == 0 and progress_callback:
-                        progress = 30 + int((i + 1) / len(file_paths) * 10)
-                        progress_callback(progress, 100, f"Validating: {i+1}/{len(file_paths)} files...")
-                except Exception as e:
-                    logger.warning(f"Skipping corrupted file {file_path}: {e}")
-                    continue
-
+            valid_files, frame_medians = self._validate_stack_frames(file_paths, data_shape, cal_type, progress_callback)
             if not valid_files:
                 logger.error("No valid frames loaded")
                 return False
@@ -668,57 +583,10 @@ class MasterFrameManager:
             if progress_callback:
                 progress_callback(40, 100, "Computing sigma clipping bounds...")
 
-            # Compute median and std using chunked processing
-            logger.info(f"Computing statistics in chunks of {max_chunk_size} frames...")
-            median = None
-            M2 = None  # For Welford's online variance algorithm
-            # Registered light frames are NaN wherever they don't cover the reference, so their
-            # statistics must skip NaNs per pixel: a plain median/sum turns a pixel NaN if *any*
-            # frame misses it, which gave NaN clip bounds there and rejected every frame — losing
-            # a band as wide as the drift. Calibration frames have no NaNs and keep the plain
-            # (faster, identical-result) functions.
-            stat_median = _nanmedian_quiet if is_light_stack else np.median
-            stat_sum = np.nansum if is_light_stack else np.sum
-            samples = np.zeros(data_shape, dtype=np.uint32)   # frames contributing to M2, per pixel
-
-            for chunk_start in range(0, n_frames, max_chunk_size):
-                chunk_end = min(chunk_start + max_chunk_size, n_frames)
-                chunk_files = valid_files[chunk_start:chunk_end]
-
-                # Load chunk into memory; light frames are registered in parallel in the worker pool.
-                if is_light_stack:
-                    chunk_data = list(imap_cpu(register_light_frame, [(fp, ref_path) for fp in chunk_files]))
-                else:
-                    chunk_data = [_read_fits_image(fp)[0].astype(np.float32, copy=False) for fp in chunk_files]
-
-                chunk_array = np.array(chunk_data)
-                samples += np.isfinite(chunk_array).sum(axis=0, dtype=np.uint32)
-
-                # Update running statistics
-                if median is None:
-                    median = stat_median(chunk_array, axis=0)
-                    M2 = stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
-                else:
-                    # Combine statistics from chunks
-                    chunk_median = stat_median(chunk_array, axis=0)
-                    if is_light_stack:
-                        # A pixel no frame of one chunk covered takes the other chunk's median.
-                        median = np.where(np.isnan(median), chunk_median,
-                                          np.where(np.isnan(chunk_median), median, (median + chunk_median) / 2))
-                    else:
-                        median = (median + chunk_median) / 2  # Approximate for speed
-                    M2 += stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
-
-                del chunk_data, chunk_array
-
-                if progress_callback:
-                    progress = 40 + int((chunk_end / n_frames) * 20)
-                    progress_callback(progress, 100, f"Statistics: {chunk_end}/{n_frames} frames...")
-
-            # Per-pixel sample count: equal to n_frames for calibration frames (so unchanged there),
-            # smaller near a light stack's edges where only some frames reach.
-            std = np.sqrt(M2 / np.maximum(samples, 1))
-            del M2, samples
+            # Process frames in chunks small enough to fit in memory (up to 20 at a time)
+            max_chunk_size = min(20, len(file_paths))
+            median, std = self._chunked_median_and_std(valid_files, data_shape, is_light_stack, ref_path,
+                                                       max_chunk_size, progress_callback)
 
             # Sigma clipping parameters
             sigma_low = 3.0
@@ -733,48 +601,9 @@ class MasterFrameManager:
 
             # Pass 2 - Accumulate with sigma clipping
             logger.info("Pass 2: Combining frames with sigma clipping...")
-            accumulator = np.zeros(data_shape, dtype=np.float32)
-            count = np.zeros(data_shape, dtype=np.uint16)
-            rejected_pixels = 0
-            total_pixels = 0
-
-            def _pass2_frames():
-                """``(data, error)`` per valid file, in order; light frames registered in the pool."""
-                if is_light_stack:
-                    yield from imap_cpu(_register_or_error, ((fp, ref_path) for fp in valid_files))
-                    return
-                for fp in valid_files:
-                    try:
-                        yield _read_fits_image(fp)[0].astype(np.float32, copy=False), None
-                    except Exception as e:
-                        yield None, f"{type(e).__name__}: {e}"
-
-            for i, (file_path, (data, error)) in enumerate(zip(valid_files, _pass2_frames(), strict=True)):
-                if error is not None:
-                    logger.warning(f"Error processing {file_path}: {error}")
-                    continue
-                try:
-                    # Apply flat normalization if needed
-                    if cal_type == 'flat':
-                        data = data / frame_medians[i]
-
-                    # Apply sigma clipping mask
-                    mask = np.isfinite(data) & (data >= lower_bound) & (data <= upper_bound)
-
-                    # Accumulate valid pixels
-                    accumulator += np.where(mask, data, 0)
-                    count += mask.astype(np.uint16)
-
-                    rejected_pixels += np.sum(~mask)
-                    total_pixels += data.size
-
-                    if (i + 1) % 5 == 0 and progress_callback:
-                        progress = 60 + int((i + 1) / n_frames * 20)
-                        progress_callback(progress, 100, f"Pass 2: {i+1}/{n_frames} frames...")
-
-                except Exception as e:
-                    logger.warning(f"Error processing {file_path}: {e}")
-                    continue
+            accumulator, count, rejected_pixels, total_pixels = self._accumulate_clipped(
+                valid_files, data_shape, cal_type, is_light_stack, ref_path, frame_medians,
+                lower_bound, upper_bound, progress_callback)
 
             rejection_rate = (rejected_pixels / total_pixels) * 100 if total_pixels > 0 else 0
             logger.info(f"Sigma clipping: {rejected_pixels}/{total_pixels} pixels rejected ({rejection_rate:.3f}%)")
@@ -782,26 +611,7 @@ class MasterFrameManager:
             if progress_callback:
                 progress_callback(80, 100, "Computing final master frame...")
 
-            # Compute final master without triggering divide-by-zero warnings.
-            # Note: np.where would still evaluate (accumulator / count) for all pixels.
-            master_data = np.empty_like(accumulator, dtype=np.float32)
-            np.divide(accumulator, count, out=master_data, where=(count > 0))
-            if median is not None:
-                master_data[count == 0] = median[count == 0] if hasattr(median, 'shape') else median
-
-            # Replace any remaining NaN/Inf (e.g. from pathological inputs) with median.
-            if median is not None:
-                master_data = np.where(np.isfinite(master_data), master_data, median)
-
-            # Pixels that are still not finite had no data in any frame (for a light stack: outside
-            # every registered frame). Write them as 0 — the usual fill for a registered stack's
-            # uncovered edges — rather than letting the integer cast below turn NaN into arbitrary
-            # values.
-            uncovered = ~np.isfinite(master_data)
-            n_uncovered = int(np.count_nonzero(uncovered))
-            if n_uncovered:
-                master_data = np.where(uncovered, 0.0, master_data).astype(np.float32, copy=False)
-                logger.info(f"{n_uncovered} pixel(s) had no data in any frame; written as 0")
+            master_data, n_uncovered = self._finalize_master_data(accumulator, count, median)
 
             if cal_type == 'flat':
                 logger.info("Applied multiplicative normalization for flat frames")
@@ -818,7 +628,7 @@ class MasterFrameManager:
             header['METHOD'] = f'Sigma-clipped mean (sigma_low={sigma_low}, sigma_high={sigma_high})'
             header['REJECTED'] = f'{rejection_rate:.3f}%'
             header['NODATA'] = (n_uncovered, 'Pixels with no data in any frame, written as 0')
-            header['DATE'] = datetime.datetime.now().isoformat()
+            header['DATE'] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()
 
             # Convert to appropriate dtype (preserve as uint16 for most cases, float32 for flats)
             if cal_type == 'flat':
@@ -846,8 +656,189 @@ class MasterFrameManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error in sigma-clipped master creation: {e}", exc_info=True)
+            logger.exception(f"Error in sigma-clipped master creation: {e}")
             return False
+
+    @staticmethod
+    def _first_readable_frame(file_paths: list[str]):
+        """``(header, shape, path)`` of the first readable frame (it sets the stack's dimensions), or ``None``."""
+        for candidate_path in file_paths:
+            try:
+                data0, header0 = _read_fits_image(candidate_path)
+            except Exception as e:
+                logger.warning(f"Skipping unreadable FITS frame {candidate_path}: {e}")
+                continue
+            logger.info(f"Frame dimensions: {data0.shape}, dtype: {data0.dtype}")
+            return header0, data0.shape, candidate_path
+        return None
+
+    @staticmethod
+    def _validate_stack_frames(file_paths: list[str], data_shape, cal_type: str, progress_callback):
+        """Pass 1: keep the readable frames of the right shape; for flats also record each frame's median."""
+        import numpy as np
+
+        valid_files: list[str] = []
+        frame_medians: list[float] = []
+        logger.info("Pass 1: Validating files and computing frame medians...")
+        for i, file_path in enumerate(file_paths):
+            try:
+                try:
+                    data, _hdr = _read_fits_image(file_path)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted/unreadable file {file_path}: {e}")
+                    continue
+
+                if data.shape != data_shape:
+                    logger.warning(f"Skipping file with different dimensions: {file_path}")
+                    continue
+
+                valid_files.append(file_path)
+                if cal_type == 'flat':
+                    frame_medians.append(float(np.median(data)))
+
+                if (i + 1) % 10 == 0 and progress_callback:
+                    progress = 30 + int((i + 1) / len(file_paths) * 10)
+                    progress_callback(progress, 100, f"Validating: {i+1}/{len(file_paths)} files...")
+            except Exception as e:
+                logger.warning(f"Skipping corrupted file {file_path}: {e}")
+                continue
+        return valid_files, frame_medians
+
+    @staticmethod
+    def _chunked_median_and_std(valid_files: list[str], data_shape, is_light_stack: bool, ref_path,
+                                max_chunk_size: int, progress_callback):
+        """Per-pixel median and standard deviation of the stack, computed a chunk of frames at a time."""
+        import numpy as np
+
+        n_frames = len(valid_files)
+        logger.info(f"Computing statistics in chunks of {max_chunk_size} frames...")
+        median = None
+        M2 = None  # For Welford's online variance algorithm
+        # Registered light frames are NaN wherever they don't cover the reference, so their
+        # statistics must skip NaNs per pixel: a plain median/sum turns a pixel NaN if *any*
+        # frame misses it, which gave NaN clip bounds there and rejected every frame — losing
+        # a band as wide as the drift. Calibration frames have no NaNs and keep the plain
+        # (faster, identical-result) functions.
+        stat_median = _nanmedian_quiet if is_light_stack else np.median
+        stat_sum = np.nansum if is_light_stack else np.sum
+        samples = np.zeros(data_shape, dtype=np.uint32)   # frames contributing to M2, per pixel
+
+        for chunk_start in range(0, n_frames, max_chunk_size):
+            chunk_end = min(chunk_start + max_chunk_size, n_frames)
+            chunk_files = valid_files[chunk_start:chunk_end]
+
+            # Load chunk into memory; light frames are registered in parallel in the worker pool.
+            if is_light_stack:
+                chunk_data = list(imap_cpu(register_light_frame, [(fp, ref_path) for fp in chunk_files]))
+            else:
+                chunk_data = [_read_fits_image(fp)[0].astype(np.float32, copy=False) for fp in chunk_files]
+
+            chunk_array = np.array(chunk_data)
+            samples += np.isfinite(chunk_array).sum(axis=0, dtype=np.uint32)
+
+            # Update running statistics
+            if median is None:
+                median = stat_median(chunk_array, axis=0)
+                M2 = stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
+            else:
+                # Combine statistics from chunks
+                chunk_median = stat_median(chunk_array, axis=0)
+                if is_light_stack:
+                    # A pixel no frame of one chunk covered takes the other chunk's median.
+                    median = np.where(np.isnan(median), chunk_median,
+                                      np.where(np.isnan(chunk_median), median, (median + chunk_median) / 2))
+                else:
+                    median = (median + chunk_median) / 2  # Approximate for speed
+                M2 += stat_sum((chunk_array - median[np.newaxis, ...]) ** 2, axis=0)
+
+            del chunk_data, chunk_array
+
+            if progress_callback:
+                progress = 40 + int((chunk_end / n_frames) * 20)
+                progress_callback(progress, 100, f"Statistics: {chunk_end}/{n_frames} frames...")
+
+        # Per-pixel sample count: equal to n_frames for calibration frames (so unchanged there),
+        # smaller near a light stack's edges where only some frames reach.
+        std = np.sqrt(M2 / np.maximum(samples, 1))
+        return median, std
+
+    @staticmethod
+    def _accumulate_clipped(valid_files: list[str], data_shape, cal_type: str, is_light_stack: bool, ref_path,
+                            frame_medians: list[float], lower_bound, upper_bound, progress_callback):
+        """Pass 2: sum the pixels inside the clip bounds. Returns ``(accumulator, count, rejected, total)``."""
+        import numpy as np
+
+        n_frames = len(valid_files)
+        accumulator = np.zeros(data_shape, dtype=np.float32)
+        count = np.zeros(data_shape, dtype=np.uint16)
+        rejected_pixels = 0
+        total_pixels = 0
+
+        def _pass2_frames():
+            """``(data, error)`` per valid file, in order; light frames registered in the pool."""
+            if is_light_stack:
+                yield from imap_cpu(_register_or_error, ((fp, ref_path) for fp in valid_files))
+                return
+            for fp in valid_files:
+                try:
+                    yield _read_fits_image(fp)[0].astype(np.float32, copy=False), None
+                except Exception as e:
+                    yield None, f"{type(e).__name__}: {e}"
+
+        for i, (file_path, (data, error)) in enumerate(zip(valid_files, _pass2_frames(), strict=True)):
+            if error is not None:
+                logger.warning(f"Error processing {file_path}: {error}")
+                continue
+            try:
+                # Apply flat normalization if needed
+                if cal_type == 'flat':
+                    data = data / frame_medians[i]
+
+                # Apply sigma clipping mask
+                mask = np.isfinite(data) & (data >= lower_bound) & (data <= upper_bound)
+
+                # Accumulate valid pixels
+                accumulator += np.where(mask, data, 0)
+                count += mask.astype(np.uint16)
+
+                rejected_pixels += np.sum(~mask)
+                total_pixels += data.size
+
+                if (i + 1) % 5 == 0 and progress_callback:
+                    progress = 60 + int((i + 1) / n_frames * 20)
+                    progress_callback(progress, 100, f"Pass 2: {i+1}/{n_frames} frames...")
+
+            except Exception as e:
+                logger.warning(f"Error processing {file_path}: {e}")
+                continue
+        return accumulator, count, rejected_pixels, total_pixels
+
+    @staticmethod
+    def _finalize_master_data(accumulator, count, median):
+        """Mean of the accepted pixels, with gaps filled from the median. Returns ``(master_data, n_uncovered)``."""
+        import numpy as np
+
+        # Compute final master without triggering divide-by-zero warnings.
+        # Note: np.where would still evaluate (accumulator / count) for all pixels.
+        master_data = np.empty_like(accumulator, dtype=np.float32)
+        np.divide(accumulator, count, out=master_data, where=(count > 0))
+        if median is not None:
+            master_data[count == 0] = median[count == 0] if hasattr(median, 'shape') else median
+
+        # Replace any remaining NaN/Inf (e.g. from pathological inputs) with median.
+        if median is not None:
+            master_data = np.where(np.isfinite(master_data), master_data, median)
+
+        # Pixels that are still not finite had no data in any frame (for a light stack: outside
+        # every registered frame). Write them as 0 — the usual fill for a registered stack's
+        # uncovered edges — rather than letting the integer cast below turn NaN into arbitrary
+        # values.
+        uncovered = ~np.isfinite(master_data)
+        n_uncovered = int(np.count_nonzero(uncovered))
+        if n_uncovered:
+            master_data = np.where(uncovered, 0.0, master_data).astype(np.float32, copy=False)
+            logger.info(f"{n_uncovered} pixel(s) had no data in any frame; written as 0")
+        return master_data, n_uncovered
 
     def _create_light_stack_photometric_mean(
         self,
@@ -940,7 +931,7 @@ class MasterFrameManager:
             header['CREATOR'] = 'Galileo Photometric Stacking'
             header['METHOD'] = 'Registered mean (no clipping)'
             header['REFPATH'] = os.path.basename(ref_path)
-            header['DATE'] = datetime.datetime.now().isoformat()
+            header['DATE'] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()
 
             if progress_callback:
                 progress_callback(95, 100, "Saving stack...")
@@ -958,17 +949,17 @@ class MasterFrameManager:
             return True
 
         except Exception as e:
-            logger.error("Error creating photometric light stack: %s", e, exc_info=True)
+            logger.exception("Error creating photometric light stack: %s", e)
             return False
 
     def _create_master_simple_average(self, file_paths: list[str], output_path: str) -> bool:
         """
         Fallback method to create master frame using simple averaging.
-        
+
         Args:
             file_paths: List of input FITS files
             output_path: Output path for master frame
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -1002,7 +993,7 @@ class MasterFrameManager:
             header['HISTORY'] = f'Created master frame from {len(file_paths)} files'
             header['NFILES'] = len(file_paths)
             header['CREATOR'] = 'Galileo Master Frame Manager'
-            header['DATE'] = datetime.datetime.now().isoformat()
+            header['DATE'] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()
 
             # Save master frame
             hdu = fits.PrimaryHDU(data=master_data.astype(np.uint16), header=header)
@@ -1012,14 +1003,14 @@ class MasterFrameManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error in simple average master creation: {e}")
+            logger.exception(f"Error in simple average master creation: {e}")
             return False
 
     def _update_master_header(self, master_path: str, session: fitsSession,
                             files: list[fitsFile], cal_type: str):
         """
         Update master frame FITS header with comprehensive metadata.
-        
+
         Args:
             master_path: Path to master frame file
             session: Source session
@@ -1038,7 +1029,7 @@ class MasterFrameManager:
                 header['NFILES'] = len(files)
                 header['CREATOR'] = 'Galileo Advanced Master Manager'
                 header['VERSION'] = '2.0.0'
-                header['DATE'] = datetime.datetime.now().isoformat()
+                header['DATE'] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()
 
                 # Session information
                 header['TELESCOP'] = session.fitsSessionTelescope
@@ -1068,21 +1059,21 @@ class MasterFrameManager:
                 # Add history
                 header['HISTORY'] = f'Master {cal_type} created from {len(files)} frames'
                 header['HISTORY'] = f'Source session: {session.id}'
-                header['HISTORY'] = f'Processing date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+                header['HISTORY'] = f'Processing date: {datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")}'
 
                 # Add comment
                 header['COMMENT'] = 'Created by Galileo Master Frame Manager v2.0'
 
         except Exception as e:
-            logger.error(f"Error updating master frame header: {e}")
+            logger.exception(f"Error updating master frame header: {e}")
 
     def validate_masters(self, progress_callback: Callable | None = None) -> dict[str, Any]:
         """
         Validate all master frames in the database and filesystem.
-        
+
         Args:
             progress_callback: Progress reporting function
-            
+
         Returns:
             Dictionary with validation results
         """
@@ -1133,7 +1124,7 @@ class MasterFrameManager:
 
                     # Mark as validated
                     master.is_validated = True
-                    master.validation_date = datetime.datetime.now()
+                    master.validation_date = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
                     master.save()
 
                     results['valid_masters'] += 1
@@ -1143,7 +1134,7 @@ class MasterFrameManager:
                         progress_callback(i + 1, len(masters), f"Validated: {os.path.basename(master.file_path)}")
 
                 except Exception as e:
-                    logger.error(f"Error validating master {master.id}: {e}")
+                    logger.exception(f"Error validating master {master.id}: {e}")
                     results['invalid_masters'] += 1
 
             if progress_callback:
@@ -1153,18 +1144,18 @@ class MasterFrameManager:
             return results
 
         except Exception as e:
-            logger.error(f"Error during master validation: {e}")
+            logger.exception(f"Error during master validation: {e}")
             return {'error': str(e)}
 
     def cleanup_masters(self, retention_days: int | None = None,
                        progress_callback: Callable | None = None) -> dict[str, Any]:
         """
         Clean up old and unused master frames.
-        
+
         Args:
             retention_days: Number of days to retain masters (None = keep all)
             progress_callback: Progress reporting function
-            
+
         Returns:
             Dictionary with cleanup results
         """
@@ -1180,7 +1171,7 @@ class MasterFrameManager:
             if retention_days is None:
                 retention_days = self.config.getint('maintenance', 'master_retention_days', fallback=365)
 
-            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+            cutoff_date = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(days=retention_days)
 
             # Find masters older than retention period
             old_masters = list(Masters.select().where(
@@ -1223,7 +1214,7 @@ class MasterFrameManager:
 
                 except Exception as e:
                     error_msg = f"Error deleting master {master.id}: {e}"
-                    logger.error(error_msg)
+                    logger.exception(error_msg)
                     results['errors'].append(error_msg)
 
             if progress_callback:
@@ -1234,18 +1225,18 @@ class MasterFrameManager:
             return results
 
         except Exception as e:
-            logger.error(f"Error during master cleanup: {e}")
+            logger.exception(f"Error during master cleanup: {e}")
             return {'error': str(e)}
 
     def update_session_with_master(self, session_id: str, master_id: int, cal_type: str) -> bool:
         """
         Update a session to use a specific master frame.
-        
+
         Args:
             session_id: Session ID to update
             master_id: Master frame ID
             cal_type: Type of calibration ('bias', 'dark', 'flat')
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -1269,13 +1260,13 @@ class MasterFrameManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error updating session with master: {e}")
+            logger.exception(f"Error updating session with master: {e}")
             return False
 
     def get_master_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive statistics about master frames.
-        
+
         Returns:
             Dictionary with master frame statistics
         """
@@ -1350,7 +1341,7 @@ class MasterFrameManager:
             return stats
 
         except Exception as e:
-            logger.error(f"Error getting master statistics: {e}")
+            logger.exception(f"Error getting master statistics: {e}")
             return {}
 
     def _calculate_file_hash(self, file_path: str) -> str:
@@ -1362,7 +1353,7 @@ class MasterFrameManager:
                     hash_sha256.update(chunk)
             return hash_sha256.hexdigest()
         except Exception as e:
-            logger.error(f"Error calculating hash for {file_path}: {e}")
+            logger.exception(f"Error calculating hash for {file_path}: {e}")
             return ""
 
 

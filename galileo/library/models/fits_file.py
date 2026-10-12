@@ -50,7 +50,7 @@ class fitsFile(BaseModel):
     def is_calibration_frame(self):
         """
         Check if this file is a calibration frame (bias, dark, flat).
-        
+
         Returns:
             bool: True if this is a calibration frame
         """
@@ -59,7 +59,7 @@ class fitsFile(BaseModel):
     def is_light_frame(self):
         """
         Check if this file is a light frame.
-        
+
         Returns:
             bool: True if this is a light frame
         """
@@ -68,7 +68,7 @@ class fitsFile(BaseModel):
     def get_calibration_criteria(self):
         """
         Get the calibration matching criteria for this file.
-        
+
         Returns:
             dict: Dictionary with calibration matching criteria
         """
@@ -87,7 +87,7 @@ class fitsFile(BaseModel):
     def mark_as_calibrated(self, calibration_date=None):
         """
         Mark this file as calibrated.
-        
+
         Args:
             calibration_date: Date of calibration (defaults to now)
         """
@@ -96,13 +96,13 @@ class fitsFile(BaseModel):
         if calibration_date:
             self.fitsFileCalibrationDate = calibration_date
         else:
-            self.fitsFileCalibrationDate = datetime.datetime.now()
+            self.fitsFileCalibrationDate = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         self.save()
 
     def is_precalibrated(self):
         """
         Check if this file is from a telescope that provides pre-calibrated images.
-        
+
         Returns:
             bool: True if from Seestar or iTelescope
         """

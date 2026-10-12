@@ -254,10 +254,9 @@ async def test_tc_nfr_rel_010_survive_transient_device_disconnect(mock_indi_came
     """NFR-REL-010: Survive a transient INDI/Alpaca disconnect during a sequence without terminating it."""
     import numpy as np
     seq_mod = pytest.importorskip("galileo.sequencer.basic")
-    devices = pytest.importorskip("galileo.core.devices")
+    pytest.importorskip("galileo.core.devices")
 
     disconnect_count = [0]
-    orig_start = mock_indi_camera.start_exposure.side_effect
 
     async def flaky_expose(**kwargs):
         if disconnect_count[0] < 2:
@@ -419,7 +418,7 @@ async def test_tc_nfr_use_020_guided_flat_capture_no_manual_calc(mock_indi_camer
 @pytest.mark.priority("MVP")
 def test_tc_nfr_i18n_010_ui_strings_externalized():
     """NFR-I18N-010: All user-facing UI strings externalized into a translatable resource format from initial impl."""
-    ui_mod = pytest.importorskip("galileo.ui.imaging")
+    pytest.importorskip("galileo.ui.imaging")
     # PySide6 convention: strings must be wrapped in tr() — verified by inspection of the source
     # As a proxy test, check that a .ts or .qm translation file exists in the package
     import importlib.resources

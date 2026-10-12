@@ -54,7 +54,7 @@ class fitsSession(BaseModel):
     def is_calibration_session(self):
         """
         Check if this session contains calibration frames.
-        
+
         Returns:
             bool: True if this is a calibration session
         """
@@ -63,7 +63,7 @@ class fitsSession(BaseModel):
     def is_light_session(self):
         """
         Check if this session contains light frames.
-        
+
         Returns:
             bool: True if this is a light frame session
         """
@@ -72,7 +72,7 @@ class fitsSession(BaseModel):
     def get_calibration_criteria(self):
         """
         Get the calibration matching criteria for this session.
-        
+
         Returns:
             dict: Dictionary with calibration matching criteria
         """
@@ -91,10 +91,10 @@ class fitsSession(BaseModel):
     def link_calibration_sessions(self, bias_session=None, dark_session=None, flat_session=None):
         """
         Link this session to calibration sessions.
-        
+
         Args:
             bias_session (str): Bias session ID
-            dark_session (str): Dark session ID  
+            dark_session (str): Dark session ID
             flat_session (str): Flat session ID
         """
         if bias_session:
@@ -108,7 +108,7 @@ class fitsSession(BaseModel):
     def has_linked_calibrations(self):
         """
         Check if this session has linked calibration sessions.
-        
+
         Returns:
             bool: True if calibration sessions are linked
         """
@@ -117,7 +117,7 @@ class fitsSession(BaseModel):
     def get_linked_calibration_sessions(self):
         """
         Get the linked calibration session IDs.
-        
+
         Returns:
             dict: Dictionary with linked session IDs
         """
@@ -130,7 +130,7 @@ class fitsSession(BaseModel):
     def mark_as_auto_calibration(self, cal_type, source_session_ids=None):
         """
         Mark this session as an auto-calibration session.
-        
+
         Args:
             cal_type (str): Type of calibration ('bias', 'dark', 'flat')
             source_session_ids (dict): Source session IDs for auto-calibration
@@ -150,7 +150,7 @@ class fitsSession(BaseModel):
     def get_session_files(self):
         """
         Get all FITS files associated with this session.
-        
+
         Returns:
             list: List of fitsFile objects
         """
@@ -160,7 +160,7 @@ class fitsSession(BaseModel):
     def get_session_file_count(self):
         """
         Get the count of files in this session.
-        
+
         Returns:
             int: Number of files in session
         """

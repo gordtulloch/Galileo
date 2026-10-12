@@ -12,7 +12,7 @@ from galileo.library.config import load_config as load_library_config
 import shutil
 from datetime import datetime
 from math import cos, sin
-from typing import Any
+from typing import Any, Literal
 from astropy.io import fits
 from peewee import IntegrityError
 
@@ -54,15 +54,15 @@ class FileProcessor:
     def calculateFileHash(self, filePath: FilePath) -> str | None:
         """
         Calculate SHA-256 hash of a file for duplicate detection.
-        
+
         Uses the dedicated FileHashCalculator service following Single Responsibility Principle.
-        
+
         Args:
             filePath: Path to the file
-            
+
         Returns:
             SHA-256 hash hex string, or None if error
-            
+
         Raises:
             FileProcessingError: If file cannot be read or hash calculation fails
         """
@@ -205,10 +205,10 @@ class FileProcessor:
     def _is_master_file(self, file_path: str) -> bool:
         """
         Check if a file is a master calibration frame that should be handled specially.
-        
+
         Args:
             file_path: Full path to the file
-            
+
         Returns:
             True if this is a master file
         """
@@ -235,22 +235,18 @@ class FileProcessor:
             'flat_master'
         ]
 
-        for pattern in master_patterns:
-            if pattern in filename:
-                return True
-
-        return False
+        return any(pattern in filename for pattern in master_patterns)
 
     def _register_master_file(self, file_path):
         """
         Register a master calibration frame in the Masters table.
-        
+
         Args:
             file_path (str): Full path to the master file
-            
+
         Returns:
             str: Master ID if successful
-            
+
         Raises:
             FileProcessingError: If file cannot be processed
             ValidationError: If master type cannot be determined
@@ -260,11 +256,11 @@ class FileProcessor:
             # Import here to avoid circular imports
             try:
                 from ..models import Masters
-            except ImportError:
+            except ImportError as exc:
                 raise DatabaseError(
                     "Masters table not available yet. Run migrations to create Masters table.",
                     error_code="MASTERS_TABLE_MISSING"
-                )
+                ) from exc
 
             # Open the FITS file to read header
             try:
@@ -275,13 +271,13 @@ class FileProcessor:
                     f"Cannot read FITS file: {e}",
                     file_path=file_path,
                     error_code="FITS_READ_ERROR"
-                )
+                ) from e
             except Exception as e:
                 raise FitsHeaderError(
                     f"Error reading FITS header: {e}",
                     file_path=file_path,
                     error_code="FITS_HEADER_ERROR"
-                )
+                ) from e
 
             # Determine master type from filename or header
             master_type = self._determine_master_type(file_path, hdr)
@@ -349,7 +345,7 @@ class FileProcessor:
                     f"Failed to create master record: {e}",
                     file_path=file_path,
                     error_code="MASTER_CREATE_ERROR"
-                )
+                ) from e
 
             # Validate the file
             try:
@@ -360,7 +356,7 @@ class FileProcessor:
                     logger.warning(f"Master file validation failed: {file_path}")
                     return master.master_id  # Still return ID even if validation failed
             except Exception as e:
-                logger.error(f"Master validation error: {e}")
+                logger.exception(f"Master validation error: {e}")
                 return master.master_id  # Return ID anyway for partial success
 
         except (FileProcessingError, ValidationError, DatabaseError, FitsHeaderError):
@@ -371,16 +367,16 @@ class FileProcessor:
                 f"Unexpected error registering master file: {e}",
                 file_path=file_path,
                 error_code="MASTER_REGISTER_ERROR"
-            )
+            ) from e
 
     def _determine_master_type(self, file_path, hdr):
         """
         Determine the type of master calibration frame.
-        
+
         Args:
             file_path (str): Path to the file
             hdr: FITS header
-            
+
         Returns:
             str or None: 'bias', 'dark', 'flat', or None if undetermined
         """
@@ -417,15 +413,15 @@ class FileProcessor:
     def submitFileToDB(self, fileName: str, hdr: Any, fileHash: str | None = None) -> str | None:
         """
         Submit FITS file to database after processing.
-        
+
         Args:
             fileName: Full path to the FITS file
             hdr: FITS header object
             fileHash: Pre-calculated file hash
-            
+
         Returns:
             File ID if successful, None if failed
-            
+
         Raises:
             DatabaseError: If database operations fail
             ValidationError: If required header fields are missing
@@ -437,7 +433,7 @@ class FileProcessor:
             raise DatabaseError(
                 f"Cannot import database models: {e}",
                 error_code="MODEL_IMPORT_ERROR"
-            )
+            ) from e
 
         try:
             # Calculate hash if not provided
@@ -544,7 +540,7 @@ class FileProcessor:
                 f"Database integrity constraint violated: {e}",
                 file_path=fileName,
                 error_code="DB_INTEGRITY_ERROR"
-            )
+            ) from e
         except (ValidationError, FileProcessingError, DatabaseError):
             # Re-raise our custom exceptions
             raise
@@ -553,20 +549,20 @@ class FileProcessor:
                 f"Unexpected database error: {e}",
                 file_path=fileName,
                 error_code="DB_UNEXPECTED_ERROR"
-            )
+            ) from e
 
-    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | bool:
+    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
         """
         Register a FITS image file, process headers, and move to repository structure.
-        
+
         Args:
             root: Directory containing the file
             file: Filename
             moveFiles: Whether to move files to repository structure
-            
+
         Returns:
             File ID if successful, False if failed
-            
+
         Raises:
             FileProcessingError: If file processing fails
             ValidationError: If file validation fails
@@ -576,52 +572,26 @@ class FileProcessor:
         try:
             return self._register_fits_image_internal(root, file, moveFiles)
         except (FileProcessingError, ValidationError, FitsHeaderError, DatabaseError) as e:
-            logger.error(f"Error processing {os.path.join(root, file)}: {e}")
+            logger.exception(f"Error processing {os.path.join(root, file)}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error processing {os.path.join(root, file)}: {e}")
+            logger.exception(f"Unexpected error processing {os.path.join(root, file)}: {e}")
             raise FileProcessingError(
                 f"Unexpected error during FITS registration: {e}",
                 file_path=os.path.join(root, file),
                 error_code="UNEXPECTED_REGISTRATION_ERROR"
-            )
+            ) from e
 
-    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool) -> str | bool:
+    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
         """Internal implementation of FITS image registration with proper error handling."""
-        newFitsFileId = None
-        file_name, file_extension = os.path.splitext(os.path.join(root, file))
-
-        original_input_path = os.path.join(root, file)
-        cleanup_source_path = None
-
         # Read configuration
         config = load_library_config()
         save_modified = config.getboolean('DEFAULT', 'save_modified_headers', fallback=False)
 
-        # Process files through the FileFormatProcessor following Open/Closed Principle
-        try:
-            if self.format_processor.can_process(os.path.join(root, file)):
-                processed_file_path = self.format_processor.process_file(os.path.join(root, file))
-
-                # If we expanded an external gzip archive, delete it only after
-                # the import succeeds (DB record created).
-                if str(original_input_path).lower().endswith('.gz') and processed_file_path != original_input_path:
-                    cleanup_source_path = original_input_path
-
-                # Update root and file to point to processed file
-                root = os.path.dirname(processed_file_path)
-                file = os.path.basename(processed_file_path)
-                file_name, file_extension = os.path.splitext(processed_file_path)
-
-                logger.info(f"Successfully processed file: {processed_file_path}")
-            else:
-                # If no handler available, check if it's a FITS file directly
-                if "fit" not in file_extension.lower():
-                    logger.debug(f"Ignoring unsupported file {os.path.join(root, file)}")
-                    return False
-        except FileProcessingError:
-            # Re-raise file processing errors
-            raise
+        prepared = self._prepare_input_file(root, file)
+        if prepared is None:
+            return False
+        root, file, cleanup_source_path = prepared
 
         # Check if this is a master calibration frame
         full_file_path = os.path.join(root, file)
@@ -630,255 +600,23 @@ class FileProcessor:
             # Register in Masters table instead of regular file table
             return self._register_master_file(full_file_path)
 
-        # Open the FITS file for reading and close immediately after reading header
-        try:
-            hdul = fits.open(os.path.join(root, file), mode='readonly')
-            hdr = hdul[0].header
-            hdul.close()
-        except OSError as e:
-            raise FileProcessingError(
-                f"Cannot read FITS file: {e}",
-                file_path=os.path.join(root, file),
-                error_code="FITS_FILE_READ_ERROR"
-            )
-        except Exception as e:
-            raise FitsHeaderError(
-                f"Error reading FITS header: {e}",
-                file_path=os.path.join(root, file),
-                error_code="FITS_HEADER_READ_ERROR"
-            )
-
-        # Special handling for vendors with incomplete headers
-        header_modified = False
-        telescop_value = hdr.get("TELESCOP", "")
-        if telescop_value and telescop_value.upper() == "DWARF":
-            modified_hdr = dwarfFixHeader(hdr, root, file)
-            if not modified_hdr:
-                raise FitsHeaderError(
-                    "Error fixing DWARF header",
-                    file_path=os.path.join(root, file),
-                    error_code="DWARF_HEADER_FIX_FAILED"
-                )
-            hdr = modified_hdr
-            header_modified = True
-
-        # Apply FITS header mappings from the Mapping table
-        mapping_modified = mapFitsHeader(hdr, os.path.join(root, file))
-        if mapping_modified:
-            header_modified = True
-
-        # Validate required header fields
-        if not (hdr.get("IMAGETYP") or hdr.get("FRAME")):
-            raise ValidationError(
-                "Missing required IMAGETYP or FRAME field in FITS header",
-                field="IMAGETYP",
-                file_path=os.path.join(root, file)
-            )
-
-        # Fix header field variations
-        if hdr.get("FRAME") and not hdr.get("IMAGETYP"):
-            hdr["IMAGETYP"] = hdr["FRAME"]
-            header_modified = True
-
-        # Get exposure time
-        exposure = hdr.get("EXPTIME", hdr.get("EXPOSURE"))
-        if exposure is None:
-            raise ValidationError(
-                "Missing required EXPTIME/EXPOSURE field in FITS header",
-                field="EXPTIME",
-                file_path=os.path.join(root, file)
-            )
-
-        # Get telescope
-        telescope = hdr.get("TELESCOP", "Unknown")
-
-        # Fix calibration frames where OBJECT is set to an object rather than the frame type
-        if "DARK" in hdr["IMAGETYP"].upper():
-            hdr["OBJECT"] = "Dark"
-            header_modified = True
-        elif "FLAT" in hdr["IMAGETYP"].upper():
-            hdr["OBJECT"] = "Flat"
-            header_modified = True
-        elif "BIAS" in hdr["IMAGETYP"].upper():
-            hdr["OBJECT"] = "Bias"
-            header_modified = True
-
-        # Validate date field
-        date_obs = hdr.get("DATE-OBS")
-        if not date_obs:
-            raise ValidationError(
-                "Missing required DATE-OBS field in FITS header",
-                field="DATE-OBS",
-                file_path=os.path.join(root, file)
-            )
-
-        try:
-            datestr = date_obs.replace("T", " ")
-            datestr = datestr[0:datestr.find('.')] if '.' in datestr else datestr
-            dateobj = datetime.strptime(datestr, '%Y-%m-%d %H:%M:%S')
-            fitsDate = dateobj.strftime("%Y%m%d%H%M%S")
-        except ValueError:
-            raise ValidationError(
-                f"Invalid date format in DATE-OBS field: {date_obs}",
-                field="DATE-OBS",
-                file_path=os.path.join(root, file)
-            )
-
-        # Process different image types
-        newName = None
-
-        if "LIGHT" in hdr["IMAGETYP"].upper():
-            # Handle WCS transformation for light frames
-            if "CD1_1" not in hdr and all(field in hdr for field in ["CDELT1", "CDELT2", "CROTA2"]):
-                fitsCDELT1 = float(hdr["CDELT1"])
-                fitsCDELT2 = float(hdr["CDELT2"])
-                fitsCROTA2 = float(hdr["CROTA2"])
-                fitsCD1_1 = fitsCDELT1 * cos(fitsCROTA2)
-                fitsCD1_2 = -fitsCDELT2 * sin(fitsCROTA2)
-                fitsCD2_1 = fitsCDELT1 * sin(fitsCROTA2)
-                fitsCD2_2 = fitsCDELT2 * cos(fitsCROTA2)
-                hdr.append(('CD1_1', str(fitsCD1_1), 'Rotation Matrix'), end=True)
-                hdr.append(('CD1_2', str(fitsCD1_2), 'Rotation Matrix'), end=True)
-                hdr.append(('CD2_1', str(fitsCD2_1), 'Rotation Matrix'), end=True)
-                hdr.append(('CD2_2', str(fitsCD2_2), 'Rotation Matrix'), end=True)
-                header_modified = True
-
-            # Create filename for light frames
-            if hdr.get("OBJECT"):
-                filter_name = hdr.get("FILTER", "OSC")
-                newName = "{0}-{1}-{2}-{3}-{4}-{5}s-{6}x{7}-t{8}.fits".format(
-                    sanitize_filesystem_name(hdr["OBJECT"]),
-                    sanitize_filesystem_name(telescope),
-                    sanitize_filesystem_name(hdr.get("INSTRUME", "Unknown")),
-                    sanitize_filesystem_name(filter_name),
-                    fitsDate, exposure,
-                    hdr.get("XBINNING", 1),
-                    hdr.get("YBINNING", 1),
-                    hdr.get("CCD-TEMP", 0)
-                )
-            else:
-                raise ValidationError(
-                    "Missing or invalid object name in header for light frame",
-                    field="OBJECT",
-                    file_path=os.path.join(root, file)
-                )
-
-        elif "FLAT" in hdr["IMAGETYP"].upper():
-            # Create filename for flat frames
-            filter_name = hdr.get("FILTER", "OSC")
-            newName = "{0}-{1}-{2}-{3}-{4}-{5}s-{6}x{7}-t{8}.fits".format(
-                "Flat",
-                sanitize_filesystem_name(telescope),
-                sanitize_filesystem_name(hdr.get("INSTRUME", "Unknown")),
-                sanitize_filesystem_name(filter_name),
-                fitsDate, exposure,
-                hdr.get("XBINNING", 1),
-                hdr.get("YBINNING", 1),
-                hdr.get("CCD-TEMP", 0)
-            )
-
-        elif "DARK" in hdr["IMAGETYP"].upper():
-            # Create filename for dark frames
-            newName = "{0}-{1}-{2}-{3}-{4}s-{5}x{6}-t{7}.fits".format(
-                "Dark",
-                sanitize_filesystem_name(telescope),
-                sanitize_filesystem_name(hdr.get("INSTRUME", "Unknown")),
-                fitsDate, exposure,
-                hdr.get("XBINNING", 1),
-                hdr.get("YBINNING", 1),
-                hdr.get("CCD-TEMP", 0)
-            )
-
-        elif "BIAS" in hdr["IMAGETYP"].upper():
-            # Create filename for bias frames
-            newName = "{0}-{1}-{2}-{3}-{4}x{5}-t{6}.fits".format(
-                "Bias",
-                sanitize_filesystem_name(telescope),
-                sanitize_filesystem_name(hdr.get("INSTRUME", "Unknown")),
-                fitsDate,
-                hdr.get("XBINNING", 1),
-                hdr.get("YBINNING", 1),
-                hdr.get("CCD-TEMP", 0)
-            )
-
-        if not newName:
-            raise ValidationError(
-                f"Could not determine appropriate filename for file type {hdr.get('IMAGETYP', 'Unknown')}",
-                field="IMAGETYP",
-                file_path=os.path.join(root, file)
-            )
+        hdr = self._read_fits_header(root, file)
+        hdr, header_modified, exposure, fitsDate = self._validate_and_normalise_header(hdr, root, file)
+        newName, wcs_added = self._frame_filename(hdr, exposure, fitsDate, root, file)
+        header_modified = header_modified or wcs_added
 
         # Save modified header if required
         if header_modified and save_modified:
-            try:
-                # Create backup of original file
-                backup_path = os.path.join(root, file + ".backup")
-                import shutil
-                shutil.copy2(os.path.join(root, file), backup_path)
-
-                # Save modified header
-                with fits.open(os.path.join(root, file), mode='update') as hdul:
-                    hdul[0].header = hdr
-                    hdul.flush()
-
-                logger.info(f"Saved modified header for {file}")
-            except OSError as e:
-                logger.error(f"File I/O error saving modified header for {file}: {e}")
-                # Continue processing despite header save failure
-            except Exception as e:
-                logger.error(f"Unexpected error saving modified header for {file}: {e}")
-                # Continue processing despite header save failure
+            self._save_modified_header(hdr, root, file)
 
         # Process file for compression if enabled and appropriate
         current_file_path = os.path.join(root, file)
-        try:
-            compressed_file_path = self.compressor.process_file_for_compression(current_file_path)
-            if compressed_file_path != current_file_path:
-                # File was compressed, update path references
-                root = os.path.dirname(compressed_file_path)
-                file = os.path.basename(compressed_file_path)
-                current_file_path = compressed_file_path
-                logger.info(f"File compressed: {current_file_path} -> {compressed_file_path}")
-        except Exception as e:
-            logger.warning(f"Compression processing failed for {current_file_path}: {e}")
-            # Continue with original file if compression fails
+        current_file_path = self._compress_if_enabled(current_file_path)
 
         # If requested, move/rename the file into the repository structure.
         # This is required for the Images view "Load New" workflow.
         if moveFiles:
-            try:
-                from .repository import RepositoryManager
-
-                repo_manager = RepositoryManager()
-                # A fresh manager reads library.ini; honour this processor's folder instead, so the commands'
-                # --repo override (and any caller that sets repoFolder) decides where the file is filed.
-                repo_manager.repoFolder = self.repoFolder
-                # Ensure the repository root folders exist (Light/Calibrate/Masters/Incoming/etc.)
-                repo_manager.createRepositoryStructure()
-
-                new_filename = newName
-
-                moved_path = repo_manager.organizeFileByType(
-                    current_file_path,
-                    hdr,
-                    new_filename=new_filename,
-                )
-                if not moved_path:
-                    raise FileProcessingError(
-                        "Failed to move file into repository structure",
-                        file_path=current_file_path,
-                        error_code="REPO_MOVE_FAILED",
-                    )
-
-                root = os.path.dirname(moved_path)
-                file = os.path.basename(moved_path)
-                current_file_path = moved_path
-            except Exception as e:
-                raise FileProcessingError(
-                    f"Failed moving file into repository: {e}",
-                    file_path=current_file_path,
-                    error_code="REPO_MOVE_FAILED",
-                )
+            current_file_path = self._move_into_repository(current_file_path, hdr, newName)
 
         # Submit file to database (use the potentially compressed file path)
         fileHash = self.calculateFileHash(current_file_path)
@@ -894,20 +632,271 @@ class FileProcessor:
 
         return newFitsFileId or False
 
+    def _prepare_input_file(self, root: str, file: str) -> tuple[str, str, str | None] | None:
+        """Run the file through the format processor; ``None`` if it is not a file we import.
+
+        Returns ``(root, file, cleanup_source_path)`` for the (possibly converted) FITS file. When an external
+        gzip archive was expanded, ``cleanup_source_path`` is the archive to delete once the import succeeds.
+        """
+        _, file_extension = os.path.splitext(os.path.join(root, file))
+        original_input_path = os.path.join(root, file)
+        cleanup_source_path = None
+
+        # Process files through the FileFormatProcessor following Open/Closed Principle
+        if self.format_processor.can_process(original_input_path):
+            processed_file_path = self.format_processor.process_file(original_input_path)
+
+            # If we expanded an external gzip archive, delete it only after the import succeeds (DB record created).
+            if str(original_input_path).lower().endswith('.gz') and processed_file_path != original_input_path:
+                cleanup_source_path = original_input_path
+
+            # Update root and file to point to processed file
+            root = os.path.dirname(processed_file_path)
+            file = os.path.basename(processed_file_path)
+            logger.info(f"Successfully processed file: {processed_file_path}")
+        elif "fit" not in file_extension.lower():
+            # No handler available and not a FITS file directly
+            logger.debug(f"Ignoring unsupported file {os.path.join(root, file)}")
+            return None
+        return root, file, cleanup_source_path
+
+    @staticmethod
+    def _read_fits_header(root: str, file: str):
+        """Read the primary header, closing the file straight away."""
+        try:
+            hdul = fits.open(os.path.join(root, file), mode='readonly')
+            hdr = hdul[0].header
+            hdul.close()
+        except OSError as e:
+            raise FileProcessingError(
+                f"Cannot read FITS file: {e}",
+                file_path=os.path.join(root, file),
+                error_code="FITS_FILE_READ_ERROR"
+            ) from e
+        except Exception as e:
+            raise FitsHeaderError(
+                f"Error reading FITS header: {e}",
+                file_path=os.path.join(root, file),
+                error_code="FITS_HEADER_READ_ERROR"
+            ) from e
+        return hdr
+
+    @staticmethod
+    def _validate_and_normalise_header(hdr, root: str, file: str):
+        """Apply vendor fixes and header mappings, validate the required fields and tidy calibration-frame headers.
+
+        Returns ``(hdr, header_modified, exposure, fitsDate)`` where ``fitsDate`` is ``DATE-OBS`` as ``YYYYMMDDhhmmss``.
+        """
+        path = os.path.join(root, file)
+
+        # Special handling for vendors with incomplete headers
+        header_modified = False
+        telescop_value = hdr.get("TELESCOP", "")
+        if telescop_value and telescop_value.upper() == "DWARF":
+            modified_hdr = dwarfFixHeader(hdr, root, file)
+            if not modified_hdr:
+                raise FitsHeaderError(
+                    "Error fixing DWARF header",
+                    file_path=path,
+                    error_code="DWARF_HEADER_FIX_FAILED"
+                )
+            hdr = modified_hdr
+            header_modified = True
+
+        # Apply FITS header mappings from the Mapping table
+        if mapFitsHeader(hdr, path):
+            header_modified = True
+
+        # Validate required header fields
+        if not (hdr.get("IMAGETYP") or hdr.get("FRAME")):
+            raise ValidationError(
+                "Missing required IMAGETYP or FRAME field in FITS header",
+                field="IMAGETYP",
+                file_path=path
+            )
+
+        # Fix header field variations
+        if hdr.get("FRAME") and not hdr.get("IMAGETYP"):
+            hdr["IMAGETYP"] = hdr["FRAME"]
+            header_modified = True
+
+        # Get exposure time
+        exposure = hdr.get("EXPTIME", hdr.get("EXPOSURE"))
+        if exposure is None:
+            raise ValidationError(
+                "Missing required EXPTIME/EXPOSURE field in FITS header",
+                field="EXPTIME",
+                file_path=path
+            )
+
+        # Fix calibration frames where OBJECT is set to an object rather than the frame type
+        imagetyp = hdr["IMAGETYP"].upper()
+        for frame_type, object_name in (("DARK", "Dark"), ("FLAT", "Flat"), ("BIAS", "Bias")):
+            if frame_type in imagetyp:
+                hdr["OBJECT"] = object_name
+                header_modified = True
+                break
+
+        # Validate date field
+        date_obs = hdr.get("DATE-OBS")
+        if not date_obs:
+            raise ValidationError(
+                "Missing required DATE-OBS field in FITS header",
+                field="DATE-OBS",
+                file_path=path
+            )
+
+        try:
+            datestr = date_obs.replace("T", " ")
+            datestr = datestr[0:datestr.find('.')] if '.' in datestr else datestr
+            dateobj = datetime.strptime(datestr, '%Y-%m-%d %H:%M:%S')  # noqa: DTZ007 -- calendar date, no zone
+            fitsDate = dateobj.strftime("%Y%m%d%H%M%S")
+        except ValueError as exc:
+            raise ValidationError(
+                f"Invalid date format in DATE-OBS field: {date_obs}",
+                field="DATE-OBS",
+                file_path=path
+            ) from exc
+
+        return hdr, header_modified, exposure, fitsDate
+
+    @staticmethod
+    def _add_cd_matrix_from_cdelt(hdr) -> bool:
+        """Derive the CD rotation matrix from CDELT1/2 + CROTA2 when a light frame has no CD1_1. True if added."""
+        if "CD1_1" in hdr or not all(field in hdr for field in ["CDELT1", "CDELT2", "CROTA2"]):
+            return False
+        fitsCDELT1 = float(hdr["CDELT1"])
+        fitsCDELT2 = float(hdr["CDELT2"])
+        fitsCROTA2 = float(hdr["CROTA2"])
+        hdr.append(('CD1_1', str(fitsCDELT1 * cos(fitsCROTA2)), 'Rotation Matrix'), end=True)
+        hdr.append(('CD1_2', str(-fitsCDELT2 * sin(fitsCROTA2)), 'Rotation Matrix'), end=True)
+        hdr.append(('CD2_1', str(fitsCDELT1 * sin(fitsCROTA2)), 'Rotation Matrix'), end=True)
+        hdr.append(('CD2_2', str(fitsCDELT2 * cos(fitsCROTA2)), 'Rotation Matrix'), end=True)
+        return True
+
+    def _frame_filename(self, hdr, exposure, fitsDate: str, root: str, file: str) -> tuple[str, bool]:
+        """The repository file name for this frame, plus whether the WCS matrix was added to *hdr*."""
+        path = os.path.join(root, file)
+        telescope = hdr.get("TELESCOP", "Unknown")
+        instrument = sanitize_filesystem_name(hdr.get("INSTRUME", "Unknown"))
+        scope = sanitize_filesystem_name(telescope)
+        xbin, ybin, temp = hdr.get("XBINNING", 1), hdr.get("YBINNING", 1), hdr.get("CCD-TEMP", 0)
+        imagetyp = hdr["IMAGETYP"].upper()
+        wcs_added = False
+        newName = None
+
+        if "LIGHT" in imagetyp:
+            # Handle WCS transformation for light frames
+            wcs_added = self._add_cd_matrix_from_cdelt(hdr)
+            if not hdr.get("OBJECT"):
+                raise ValidationError(
+                    "Missing or invalid object name in header for light frame",
+                    field="OBJECT",
+                    file_path=path
+                )
+            filter_name = hdr.get("FILTER", "OSC")
+            newName = "{}-{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
+                sanitize_filesystem_name(hdr["OBJECT"]), scope, instrument, sanitize_filesystem_name(filter_name),
+                fitsDate, exposure, xbin, ybin, temp)
+        elif "FLAT" in imagetyp:
+            filter_name = hdr.get("FILTER", "OSC")
+            newName = "{}-{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
+                "Flat", scope, instrument, sanitize_filesystem_name(filter_name), fitsDate, exposure, xbin, ybin, temp)
+        elif "DARK" in imagetyp:
+            newName = "{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
+                "Dark", scope, instrument, fitsDate, exposure, xbin, ybin, temp)
+        elif "BIAS" in imagetyp:
+            newName = "{}-{}-{}-{}-{}x{}-t{}.fits".format(
+                "Bias", scope, instrument, fitsDate, xbin, ybin, temp)
+
+        if not newName:
+            raise ValidationError(
+                f"Could not determine appropriate filename for file type {hdr.get('IMAGETYP', 'Unknown')}",
+                field="IMAGETYP",
+                file_path=path
+            )
+        return newName, wcs_added
+
+    @staticmethod
+    def _save_modified_header(hdr, root: str, file: str) -> None:
+        """Write the corrected header back to the file, keeping a ``.backup`` copy. Failures are logged, not raised."""
+        try:
+            # Create backup of original file
+            backup_path = os.path.join(root, file + ".backup")
+            import shutil
+            shutil.copy2(os.path.join(root, file), backup_path)
+
+            # Save modified header
+            with fits.open(os.path.join(root, file), mode='update') as hdul:
+                hdul[0].header = hdr
+                hdul.flush()
+
+            logger.info(f"Saved modified header for {file}")
+        except OSError as e:
+            logger.exception(f"File I/O error saving modified header for {file}: {e}")
+            # Continue processing despite header save failure
+        except Exception as e:
+            logger.exception(f"Unexpected error saving modified header for {file}: {e}")
+            # Continue processing despite header save failure
+
+    def _compress_if_enabled(self, current_file_path: str) -> str:
+        """Compress the file when the settings ask for it; on failure keep using the original."""
+        try:
+            compressed_file_path = self.compressor.process_file_for_compression(current_file_path)
+            if compressed_file_path != current_file_path:
+                # File was compressed, update path references
+                logger.info(f"File compressed: {current_file_path} -> {compressed_file_path}")
+                return compressed_file_path
+        except Exception as e:
+            logger.warning(f"Compression processing failed for {current_file_path}: {e}")
+            # Continue with original file if compression fails
+        return current_file_path
+
+    def _move_into_repository(self, current_file_path: str, hdr, new_filename: str) -> str:
+        """Move/rename the file into the repository structure; returns its new path."""
+        try:
+            from .repository import RepositoryManager
+
+            repo_manager = RepositoryManager()
+            # A fresh manager reads library.ini; honour this processor's folder instead, so the commands'
+            # --repo override (and any caller that sets repoFolder) decides where the file is filed.
+            repo_manager.repoFolder = self.repoFolder
+            # Ensure the repository root folders exist (Light/Calibrate/Masters/Incoming/etc.)
+            repo_manager.createRepositoryStructure()
+
+            moved_path = repo_manager.organizeFileByType(
+                current_file_path,
+                hdr,
+                new_filename=new_filename,
+            )
+            if not moved_path:
+                raise FileProcessingError(
+                    "Failed to move file into repository structure",
+                    file_path=current_file_path,
+                    error_code="REPO_MOVE_FAILED",
+                )
+            return moved_path
+        except Exception as e:
+            raise FileProcessingError(
+                f"Failed moving file into repository: {e}",
+                file_path=current_file_path,
+                error_code="REPO_MOVE_FAILED",
+            ) from e
+
     # Legacy methods for backward compatibility - delegate to new services
     def extractZipFile(self, zip_path):
         """
         DEPRECATED: Extract FITS file from ZIP archive.
-        
+
         This method is deprecated. Use FileFormatProcessor directly instead.
         Delegates to the ZIP handler in the format processor.
-        
+
         Args:
             zip_path (str): Path to ZIP file
-            
+
         Returns:
             str: Path to extracted FITS file
-            
+
         Raises:
             FileProcessingError: If extraction fails
         """
@@ -924,22 +913,22 @@ class FileProcessor:
             return handler.process_file(zip_path)
         except Exception as e:
             # Convert any exception to the expected format for backward compatibility
-            logger.error(f"Error extracting zip file {zip_path}: {e}")
+            logger.exception(f"Error extracting zip file {zip_path}: {e}")
             return None
 
     def convertXisfToFits(self, xisf_file_path):
         """
         DEPRECATED: Convert XISF file to FITS format.
-        
+
         This method is deprecated. Use FileFormatProcessor directly instead.
         Delegates to the XISF handler in the format processor.
-        
+
         Args:
             xisf_file_path (str): Path to XISF file
-            
+
         Returns:
             str: Path to converted FITS file
-            
+
         Raises:
             FileProcessingError: If conversion fails
         """
@@ -956,5 +945,5 @@ class FileProcessor:
             return handler.process_file(xisf_file_path)
         except Exception as e:
             # Convert any exception to the expected format for backward compatibility
-            logger.error(f"Error converting XISF file {xisf_file_path}: {e}")
+            logger.exception(f"Error converting XISF file {xisf_file_path}: {e}")
             return None

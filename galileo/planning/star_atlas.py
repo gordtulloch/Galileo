@@ -255,7 +255,7 @@ def build_boundaries(codes: list[str], ra1875, dec1875) -> ConstellationBoundari
     centers = []
     for code, idx in runs:
         pts_ra, pts_dec = [], []
-        for a, b in zip(idx, idx[1:] + idx[:1]):
+        for a, b in zip(idx, idx[1:] + idx[:1], strict=True):
             d_ra = (ra1875[b] - ra1875[a] + 180.0) % 360.0 - 180.0
             d_dec = dec1875[b] - dec1875[a]
             n = max(1, int(np.ceil(max(abs(d_ra), abs(d_dec)) / _BOUNDARY_STEP_DEG)))
@@ -368,7 +368,7 @@ def build_constellation_lines(polylines: list[list[list[float]]]) -> Constellati
         pts = np.asarray(line, dtype=float)
         vec = _unit_vectors(pts[:, 0], pts[:, 1])
         seg_ra, seg_dec = [], []
-        for a, b in zip(range(len(pts) - 1), range(1, len(pts))):
+        for a, b in zip(range(len(pts) - 1), range(1, len(pts)), strict=True):
             va, vb = vec[:, a], vec[:, b]
             angle = float(np.degrees(np.arccos(np.clip(va @ vb, -1.0, 1.0))))
             n = max(1, int(np.ceil(angle / _LINES_STEP_DEG)))
@@ -444,7 +444,7 @@ def julian_date(when: _dt.datetime) -> float:
     """Julian date of *when* (naive datetimes are taken as UTC)."""
     if when.tzinfo is not None:
         when = when.astimezone(_dt.UTC).replace(tzinfo=None)
-    epoch = _dt.datetime(2000, 1, 1, 12)
+    epoch = _dt.datetime(2000, 1, 1, 12)  # noqa: DTZ001 -- calendar/epoch arithmetic, zone-free
     return 2451545.0 + (when - epoch).total_seconds() / 86400.0
 
 

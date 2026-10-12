@@ -14,9 +14,7 @@ database both end up at the current schema.
 
 from __future__ import annotations
 
-import datetime
 import logging
-import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -98,15 +96,6 @@ def setup_database() -> bool:
     return True
 
 
-def create_migration(name: str) -> None:
-    """Create an empty migration file named *name* in the migrations folder."""
-    if not name or not name.strip():
-        raise ValueError("Migration name cannot be empty")
-    if db.database is None:
-        raise DatabaseError("Database path not set; call init_db() first.")
-    _router().create(name.strip())
-
-
 def get_migration_status() -> dict[str, Any]:
     """``{'done': [...], 'undone': [...], 'current': name-or-'none'}`` for the open database."""
     if db.database is None:
@@ -114,24 +103,6 @@ def get_migration_status() -> dict[str, Any]:
     router = _router()
     done = list(router.done)
     return {"done": done, "undone": list(router.diff), "current": done[-1] if done else "none"}
-
-
-def backup_database(backup_dir: Path | str | None = None) -> Path | None:
-    """Copy the SQLite file (and its WAL/SHM sidecars) to a timestamped backup; ``None`` if there's nothing to copy."""
-    name = getattr(db, "database", None)
-    if not name or name == ":memory:" or not Path(name).exists():
-        return None
-    source = Path(name)
-    target_dir = Path(backup_dir) if backup_dir else source.parent / "backups"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = target_dir / f"{source.stem}_backup_{stamp}{source.suffix}"
-    shutil.copy2(source, backup_path)
-    for suffix in ("-wal", "-shm"):
-        sidecar = Path(str(source) + suffix)
-        if sidecar.exists():
-            shutil.copy2(sidecar, target_dir / (backup_path.name + suffix))
-    return backup_path
 
 
 def get_db() -> pw.SqliteDatabase:

@@ -115,7 +115,7 @@ async def test_tc_eqp_040_scan_lists_devices_by_category(server):
 async def test_tc_ext_030_unreachable_server_reports_clear_error():
     """EXT-030: an unreachable INDI server surfaces as a DeviceConnectionError naming host:port."""
     adapter = indi.IndiCameraAdapter(host="127.0.0.1", port=1)  # nothing listens on port 1
-    with pytest.raises(DeviceConnectionError, match="127.0.0.1:1"):
+    with pytest.raises(DeviceConnectionError, match=r"127\.0\.0\.1:1"):
         await adapter.list_available_devices(DeviceCategory.CAMERA)
 
 

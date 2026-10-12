@@ -124,14 +124,14 @@ def test_tc_guide_060_independent_guider_per_pier():
 # PHD2 event-server protocol, against a fake server (TC-GUIDE-010 … 090)
 # ---------------------------------------------------------------------------
 
-import asyncio  # noqa: E402
-import base64  # noqa: E402
-import struct  # noqa: E402
-import threading  # noqa: E402
-import time  # noqa: E402
+import asyncio
+import base64
+import struct
+import threading
+import time
 
-from galileo.guiding import GuideModel, GuiderError, GuidingService  # noqa: E402
-from tests.phd2_fake_server import FakePhd2Server  # noqa: E402
+from galileo.guiding import GuideModel, GuiderError, GuidingService
+from tests.phd2_fake_server import FakePhd2Server
 
 
 @pytest.fixture
@@ -180,7 +180,7 @@ async def test_tc_guide_070_connects_by_host_and_port_and_reads_phd2_state(phd2)
 async def test_tc_guide_070_unreachable_phd2_raises_a_guider_error():
     """GUIDE-070: An unreachable host/port fails with a clear error rather than hanging or crashing."""
     service = GuidingService("127.0.0.1", 1)
-    with pytest.raises(GuiderError, match="127.0.0.1:1"):
+    with pytest.raises(GuiderError, match=r"127\.0\.0\.1:1"):
         await service.connect()
     assert not service.is_connected
 

@@ -143,8 +143,8 @@ def test_tc_obs_050_dome_scope_observatory_or_pier():
 @pytest.mark.priority("P2")
 def test_tc_obs_060_multi_pier_status_dashboard(two_pier_observatory):
     """OBS-060: Present a multi-Pier status dashboard with equipment/sequence/scheduler state per Pier."""
-    obs, pier1, pier2 = two_pier_observatory
-    obs_mod = pytest.importorskip("galileo.observatory")
+    obs, _pier1, _pier2 = two_pier_observatory
+    pytest.importorskip("galileo.observatory")
 
     dashboard = obs.get_dashboard()
     assert isinstance(dashboard, list)
@@ -164,9 +164,9 @@ def test_tc_obs_060_multi_pier_status_dashboard(two_pier_observatory):
 @pytest.mark.priority("P2")
 def test_tc_obs_070_scheduler_assigns_jobs_to_any_pier(two_pier_observatory):
     """OBS-070: Scheduler supports assigning jobs to any Pier and coordinates shared-resource constraints."""
-    obs_mod = pytest.importorskip("galileo.observatory")
+    pytest.importorskip("galileo.observatory")
     scheduler_mod = pytest.importorskip("galileo.scheduler")
-    obs, pier1, pier2 = two_pier_observatory
+    obs, _pier1, _pier2 = two_pier_observatory
 
     scheduler = scheduler_mod.ObservatoryScheduler(observatory=obs)
     job1 = scheduler_mod.SchedulerJob(name="M42", pier_name="Pier-1", target_ra=83.8, target_dec=-5.4)
@@ -380,11 +380,11 @@ def test_update_observatory_persists_every_field_and_rename_pier_persists_name(t
     try:
         obs = create_observatory("Backyard")
         pier = create_pier(obs, "Pier A")
-        edited = dict(
-            name="Dark Site", latitude=44.5, longitude=-79.25, elevation_m=250.0, timezone="America/Toronto",
-            physical_address="1 Rural Rd", owner="Gord", notification_type="Both",
-            email_address="a@example.com", cell_number="+1-555-555-5555",
-        )
+        edited = {
+            "name": "Dark Site", "latitude": 44.5, "longitude": -79.25, "elevation_m": 250.0, "timezone": "America/Toronto",
+            "physical_address": "1 Rural Rd", "owner": "Gord", "notification_type": "Both",
+            "email_address": "a@example.com", "cell_number": "+1-555-555-5555",
+        }
         assert set(edited) == set(OBSERVATORY_FIELDS)
         update_observatory(obs, **edited)
         rename_pier(pier, "Pier B")

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from enum import Enum
+from enum import StrEnum
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 
-class NotificationEvent(str, Enum):
+class NotificationEvent(StrEnum):
     SEQUENCE_COMPLETE = "sequence_complete"
     SEQUENCE_ERROR = "sequence_error"
     SAFETY_ABORT = "safety_abort"

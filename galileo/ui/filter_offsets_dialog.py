@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -164,10 +165,10 @@ class FilterOffsetsDialog(QDialog):
         self.table.setItem(row, column, item)
 
     def _primary_box(self, row: int) -> QCheckBox:
-        return self.table.cellWidget(row, _COL_PRIMARY).findChild(QCheckBox)
+        return cast(QCheckBox, self.table.cellWidget(row, _COL_PRIMARY).findChild(QCheckBox))
 
     def _select_box(self, row: int) -> QCheckBox:
-        return self.table.cellWidget(row, _COL_SELECT).findChild(QCheckBox)
+        return cast(QCheckBox, self.table.cellWidget(row, _COL_SELECT).findChild(QCheckBox))
 
     def _on_primary_toggled(self, row: int, checked: bool) -> None:
         """Exactly one filter can be Primary — the offset calculation needs

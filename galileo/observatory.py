@@ -491,11 +491,11 @@ def save_device_config(
         & (DeviceConfigRecord.category == category)
         & (DeviceConfigRecord.slot == slot)
     )
-    fields = dict(
-        driver=driver, server=server, port=port, device_name=device_name,
-        pixel_size_um=pixel_size_um, sensor_width_px=sensor_width_px,
-        sensor_height_px=sensor_height_px, sensor_name=sensor_name,
-    )
+    fields = {
+        "driver": driver, "server": server, "port": port, "device_name": device_name,
+        "pixel_size_um": pixel_size_um, "sensor_width_px": sensor_width_px,
+        "sensor_height_px": sensor_height_px, "sensor_name": sensor_name,
+    }
     if bayer_pattern is not None:
         fields["bayer_pattern"] = bayer_pattern
     if panel_type is not None:
@@ -550,10 +550,10 @@ def get_autofocus_params(pier: PierRecord | None) -> AutofocusParams:
 def save_autofocus_params(pier: PierRecord, params: AutofocusParams) -> None:
     """Create or update *pier*'s saved autofocus defaults (Options > Focus)."""
     from galileo.library.models.autofocus_settings import AutofocusSettingsRecord
-    fields = dict(
-        step_size=params.step_size, num_points=params.num_points,
-        exposure_s=params.exposure_s, backlash_compensation=params.backlash_compensation,
-    )
+    fields = {
+        "step_size": params.step_size, "num_points": params.num_points,
+        "exposure_s": params.exposure_s, "backlash_compensation": params.backlash_compensation,
+    }
     record = AutofocusSettingsRecord.get_or_none(AutofocusSettingsRecord.pier == pier)
     if record is None:
         AutofocusSettingsRecord.create(pier=pier, **fields)
@@ -598,11 +598,11 @@ def save_filter_offset(pier: PierRecord, offset: FilterOffset) -> None:
         FilterOffsetRecord.update(is_primary=False).where(
             (FilterOffsetRecord.pier == pier) & (FilterOffsetRecord.filter_name != offset.filter_name)
         ).execute()
-    m1, m2, m3, m4 = (list(offset.measurements) + [None, None, None, None])[:4]
-    fields = dict(
-        is_primary=offset.is_primary, measurement_1=m1, measurement_2=m2,
-        measurement_3=m3, measurement_4=m4, offset_steps=offset.offset_steps,
-    )
+    m1, m2, m3, m4 = ([*list(offset.measurements), None, None, None, None])[:4]
+    fields = {
+        "is_primary": offset.is_primary, "measurement_1": m1, "measurement_2": m2,
+        "measurement_3": m3, "measurement_4": m4, "offset_steps": offset.offset_steps,
+    }
     record = FilterOffsetRecord.get_or_none(
         (FilterOffsetRecord.pier == pier) & (FilterOffsetRecord.filter_name == offset.filter_name)
     )
@@ -648,10 +648,10 @@ def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule, slot: st
     """Create or update *pier*'s saved rule for ``rule.parameter`` (Equipment >
     Weather screen's Save button, EQP-WX-020)."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
-    fields = dict(
-        label=rule.label, unit=rule.unit, safety_related=rule.safety_related,
-        operator=rule.operator, threshold=rule.threshold,
-    )
+    fields = {
+        "label": rule.label, "unit": rule.unit, "safety_related": rule.safety_related,
+        "operator": rule.operator, "threshold": rule.threshold,
+    }
     record = WeatherSafetyRuleRecord.get_or_none(
         (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
         & (WeatherSafetyRuleRecord.parameter == rule.parameter)
@@ -703,10 +703,10 @@ def get_solver_settings(pier: PierRecord | None) -> tuple[str, SolverParams]:
 def save_solver_settings(pier: PierRecord, executable: str, params: SolverParams) -> None:
     """Create or update *pier*'s saved solver defaults (Options > Solve)."""
     from galileo.library.models.solver_settings import SolverSettingsRecord
-    fields = dict(
-        executable=executable or None, fov_hint_deg=params.fov_hint_deg,
-        search_radius_deg=params.search_radius_deg, downsample=params.downsample,
-    )
+    fields = {
+        "executable": executable or None, "fov_hint_deg": params.fov_hint_deg,
+        "search_radius_deg": params.search_radius_deg, "downsample": params.downsample,
+    }
     record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
     if record is None:
         SolverSettingsRecord.create(pier=pier, **fields)

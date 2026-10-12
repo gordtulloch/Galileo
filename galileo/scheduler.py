@@ -320,9 +320,7 @@ class ObservatoryScheduler:
 
     async def can_start_job(self, job: SchedulerJob) -> bool:
         """Return True when the job's constraints and safety allow it to start."""
-        if self.safety_block_reason():
-            return False
-        return True
+        return not self.safety_block_reason()
 
     def due_jobs(self, now: datetime.datetime | None = None) -> list[SchedulerJob]:
         """Session jobs ready to start at *now*, in priority order: positioned on the

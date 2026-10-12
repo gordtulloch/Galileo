@@ -27,13 +27,13 @@ class SessionProcessor:
     def createLightSessions(self, progress_callback=None):
         """
         Create sessions for all Light files not currently assigned to one.
-        
-        Follows astronomical workflow: position on object, take images in multiple filters, 
+
+        Follows astronomical workflow: position on object, take images in multiple filters,
         then move to next object. Sessions are grouped by object, date, and filter only.
-        
+
         Args:
             progress_callback: Optional callback function for progress updates
-            
+
         Returns:
             list: List of session IDs that were created
         """
@@ -103,7 +103,7 @@ class SessionProcessor:
                     logger.debug("New session created for "+str(newFitsSession.fitsSessionId))
                 except IntegrityError as e:
                     # Handle the integrity error
-                    logger.error("IntegrityError: "+str(e))
+                    logger.exception("IntegrityError: "+str(e))
                     continue
                 currentObject = str(currentFitsFile.fitsFileObject)
 
@@ -126,7 +126,7 @@ class SessionProcessor:
     def updateSessionQualityMetrics(self, session_ids):
         """
         Calculate and update average quality metrics for sessions.
-        
+
         Args:
             session_ids: List of session IDs to update
         """
@@ -184,13 +184,13 @@ class SessionProcessor:
                     logger.debug(f"Updated quality metrics for session {session_id}")
 
             except Exception as e:
-                logger.error(f"Error updating quality metrics for session {session_id}: {e}")
+                logger.exception(f"Error updating quality metrics for session {session_id}: {e}")
                 continue
 
     def shouldCreateNewCalibrationSession(self, currentFile, currentSession, calType):
         """
         Determine if a new calibration session should be created based on image parameters.
-        
+
         For calibration frames to be compatible for stacking, they must have identical:
         - Date (same observing session)
         - Telescope and imager
@@ -198,12 +198,12 @@ class SessionProcessor:
         - Gain and offset settings
         - For darks: exposure time and CCD temperature (within 5 degrees)
         - For flats: filter
-        
+
         Args:
             currentFile: Current FITS file being processed
             currentSession: Current session parameters (dict or None for first file)
             calType: Calibration type ('bias', 'dark', 'flat')
-            
+
         Returns:
             bool: True if a new session should be created
         """
@@ -258,7 +258,7 @@ class SessionProcessor:
     def shouldCreateNewLightSession(self, currentFile, currentSession):
         """
         Determine if a new light session should be created based on image parameters.
-        
+
         For light frames to be compatible for processing together, they must have identical:
         - Target object
         - Date (same observing session using sameDay logic)
@@ -267,11 +267,11 @@ class SessionProcessor:
         - Exposure time (for proper stacking)
         - Binning settings (X and Y)
         - Gain and offset settings
-        
+
         Args:
             currentFile: Current FITS file being processed
             currentSession: Current session parameters (dict or None for first file)
-            
+
         Returns:
             bool: True if a new session should be created
         """
@@ -316,15 +316,15 @@ class SessionProcessor:
     def createCalibrationSessions(self, progress_callback=None):
         """
         Create sessions for all calibration files not currently assigned to one.
-        
+
         Follows actual calibration workflows:
         - Bias: Group by date, telescope, imager, binning
-        - Dark: Group by date, telescope, imager, exposure, binning  
+        - Dark: Group by date, telescope, imager, exposure, binning
         - Flat: Group by date, telescope, imager, filter, binning
-        
+
         Args:
             progress_callback: Optional callback function for progress updates
-            
+
         Returns:
             list: List of session IDs that were created
         """
@@ -412,7 +412,7 @@ class SessionProcessor:
 
                 logger.debug("Creating new bias session for date " + str(biasFitsFile.fitsFileDate))
                 uuidStr = uuid.uuid4()  # New Session
-                newFitsSession = fitsSessionModel.create(
+                fitsSessionModel.create(
                     fitsSessionId=uuidStr,
                     fitsSessionDate=fits_date,
                     fitsSessionObjectName='Bias',
@@ -476,7 +476,7 @@ class SessionProcessor:
 
                 logger.debug("Creating new dark session for date " + str(darkFitsFile.fitsFileDate))
                 uuidStr = uuid.uuid4()  # New Session
-                newFitsSession = fitsSessionModel.create(
+                fitsSessionModel.create(
                     fitsSessionId=uuidStr,
                     fitsSessionDate=fits_date,
                     fitsSessionObjectName='Dark',
@@ -541,7 +541,7 @@ class SessionProcessor:
 
                 logger.debug("Creating new flat session for date " + str(flatFitsFile.fitsFileDate))
                 uuidStr = uuid.uuid4()  # New Session
-                newFitsSession = fitsSessionModel.create(
+                fitsSessionModel.create(
                     fitsSessionId=uuidStr,
                     fitsSessionDate=fits_date,
                     fitsSessionObjectName='Flat',
@@ -592,8 +592,8 @@ class SessionProcessor:
     def linkSessions(self, progress_callback=None):
         """
         Link calibration sessions to light sessions based on telescope, imager, and specific matching criteria.
-        
-        This function iterates through all light sessions and finds the most recent 
+
+        This function iterates through all light sessions and finds the most recent
         calibration sessions (bias, dark, flat) that match:
         - Telescope and imager (all calibration types)
         - Binning settings (all calibration types)
@@ -601,10 +601,10 @@ class SessionProcessor:
         - Exposure time (darks only)
         - CCD temperature within 5 degrees (darks only)
         - Filter (flats only)
-        
+
         Args:
             progress_callback: Optional callback function for progress updates
-            
+
         Returns:
             list: List of session IDs that were updated
         """
@@ -727,7 +727,7 @@ class SessionProcessor:
             logger.info(f"Session linking complete. Updated {len(updated_sessions)} light sessions with calibration links")
 
         except Exception as e:
-            logger.error(f"Error in linkSessions: {e!s}")
+            logger.exception(f"Error in linkSessions: {e!s}")
             raise
 
         return updated_sessions
@@ -735,19 +735,19 @@ class SessionProcessor:
     def sameDay(self, Date1: str, Date2: str) -> bool:
         """
         Check if two dates are within 12 hours of each other.
-        
+
         Simple logic for same observing session - if Date1 is within 12 hours of Date2.
-        
+
         Args:
-            Date1: First date string 
+            Date1: First date string
             Date2: Second date string
-            
+
         Returns:
             bool: True if dates are within 12 hours of each other, False otherwise
         """
         try:
-            current_date = datetime.strptime(Date1, '%Y-%m-%d')
-            target_date = datetime.strptime(Date2, '%Y-%m-%d')
+            current_date = datetime.strptime(Date1, '%Y-%m-%d')  # noqa: DTZ007 -- calendar date, no zone
+            target_date = datetime.strptime(Date2, '%Y-%m-%d')  # noqa: DTZ007 -- calendar date, no zone
             time_difference = abs(current_date - target_date)
             return time_difference <= timedelta(hours=12)
         except (ValueError, AttributeError) as e:
@@ -803,7 +803,7 @@ class SessionProcessor:
                 # Try each format
                 for fmt in date_formats:
                     try:
-                        parsed_date = datetime.strptime(date_obj, fmt).date()
+                        parsed_date = datetime.strptime(date_obj, fmt).date()  # noqa: DTZ007 -- calendar date, no zone
                         return parsed_date
                     except ValueError:
                         continue
@@ -812,14 +812,14 @@ class SessionProcessor:
                 if 'T' in date_obj:
                     date_part = date_obj.split('T')[0]
                     try:
-                        parsed_date = datetime.strptime(date_part, '%Y-%m-%d').date()
+                        parsed_date = datetime.strptime(date_part, '%Y-%m-%d').date()  # noqa: DTZ007 -- calendar date, no zone
                         return parsed_date
                     except ValueError:
                         pass
 
                 # If still no luck, try to take first 10 characters
                 try:
-                    parsed_date = datetime.strptime(date_obj[:10], '%Y-%m-%d').date()
+                    parsed_date = datetime.strptime(date_obj[:10], '%Y-%m-%d').date()  # noqa: DTZ007 -- calendar date, no zone
                     return parsed_date
                 except ValueError:
                     logger.warning(f"Could not parse date string: {date_obj}")

@@ -15,6 +15,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -137,10 +138,7 @@ class ProfileManager:
     def save(self, profile_data: dict | EquipmentProfile) -> None:
         """Persist *profile_data* to the database and update the in-memory cache."""
         from galileo import settings_store
-        if isinstance(profile_data, EquipmentProfile):
-            profile = profile_data
-        else:
-            profile = _profile_from_dict(profile_data)
+        profile = profile_data if isinstance(profile_data, EquipmentProfile) else _profile_from_dict(profile_data)
         self._in_memory[profile.name] = profile
         settings_store.set_setting(self.NAMESPACE, profile.name, _profile_to_dict(profile))
 
@@ -227,7 +225,7 @@ class ProfileManager:
 class FirstRunWizard:
     """Guided first-run equipment-setup flow (NFR-USE-010)."""
 
-    steps = ["welcome", "create_profile", "add_pier", "connect_camera", "connect_mount", "finish"]
+    steps: ClassVar[list[str]] = ["welcome", "create_profile", "add_pier", "connect_camera", "connect_mount", "finish"]
 
     async def run(self, profile_manager: ProfileManager) -> EquipmentProfile | None:
         return None

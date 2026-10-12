@@ -739,7 +739,7 @@ def test_tc_lib_130_missing_config_file_fails_loudly(tmp_path):
     from galileo.library.config import set_config_path
 
     try:
-        with pytest.raises(FileNotFoundError, match="nope.ini"):
+        with pytest.raises(FileNotFoundError, match=r"nope\.ini"):
             load_config(str(tmp_path / "nope.ini"))
     finally:
         set_config_path(None)
@@ -1460,7 +1460,7 @@ def test_tc_lib_050_sigma_clipped_light_stack_keeps_its_edges(tmp_path):
         stacked, header = hdul[0].data.astype(float), hdul[0].header
     # The reference covers every pixel, so every pixel has data — the drifted edges included.
     assert header["NODATA"] == 0
-    assert 450 < stacked.min() and 480 < np.median(stacked[:, :8]) < 520 and 480 < np.median(stacked[-6:, :]) < 520
+    assert stacked.min() > 450 and 480 < np.median(stacked[:, :8]) < 520 and 480 < np.median(stacked[-6:, :]) < 520
     # And the stars are registered, not smeared: the brightest is as bright as in the reference.
     assert stacked.max() == pytest.approx(float(fits.getdata(paths[0]).max()), rel=0.05)
 
@@ -1599,7 +1599,7 @@ def test_tc_lib_010_xisf_header_with_entity_expansion_is_rejected(tmp_path):
         '<xisf version="1.0" xmlns="http://www.pixinsight.com/xisf"><Image geometry="4:4:1" sampleFormat="UInt16">'
         '<FITSKeyword name="OBJECT" value="&b;"/></Image></xisf>'
     )
-    with pytest.raises(ValueError, match="(?i)entit|forbidden|Error reading XISF"):
+    with pytest.raises(ValueError, match=r"(?i)entit|forbidden|Error reading XISF"):
         XISFConverter(_write_xisf(tmp_path / "bomb.xisf", bomb))
 
 
@@ -1675,3 +1675,358 @@ def QtWidgets_root():
     root = QtWidgets.QWidget()
     QtWidgets.QVBoxLayout(root)
     return root
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("MVP")
+def test_tc_lib_010_database_error_carries_code_and_file_path():
+    """LIB-010: the shared DatabaseError accepts the AstroFiler error_code/file_path/details keywords.
+
+    The ported file-processing code raises ``DatabaseError(msg, file_path=..., error_code=...)``;
+    previously that was a ``TypeError`` which masked the underlying database failure.
+    """
+    from galileo.exceptions import DatabaseError, LibraryError
+    from galileo.library.exceptions import FileProcessingError
+
+    err = DatabaseError("constraint violated", file_path="a.fits", error_code="DB_INTEGRITY_ERROR", table="fitsFile")
+    assert isinstance(err, LibraryError)
+    assert err.file_path == "a.fits"
+    assert err.error_code == "DB_INTEGRITY_ERROR"
+    assert err.details == {"table": "fitsFile"}
+    assert str(err) == "[DB_INTEGRITY_ERROR] constraint violated"
+    assert str(DatabaseError("plain")) == "plain"
+    assert str(FileProcessingError("bad", file_path="b.fits", error_code="X")) == "[X] bad"
+
+
+# ---------------------------------------------------------------------------
+# Session checkout (Library > Sessions > Check out)
+# ---------------------------------------------------------------------------
+
+class _TreeItem:
+    """The bits of a QTreeWidgetItem the checkout workflow reads."""
+
+    def __init__(self, texts, user_role=None, parent=None):
+        self._texts, self._role, self._parent = texts, user_role, parent
+
+    def text(self, column):
+        return self._texts[column]
+
+    def parent(self):
+        return self._parent
+
+    def data(self, column, role):
+        return self._role
+
+
+def _checkout_env(monkeypatch, tmp_path, qt_app, *, masters_only=False, copy_files=True):
+    """Patch the checkout dialogs; returns the module and the list of message boxes shown."""
+    from galileo.ui.library.sessions import checkout_workflow as cw
+    from galileo.ui.library.sessions.checkout_options_dialog import CheckoutOptions
+
+    dest = tmp_path / "checkout"
+    dest.mkdir()
+    shown = []
+    monkeypatch.setattr(cw, "prompt_checkout_options", lambda parent, title: CheckoutOptions(
+        dest_dir=str(dest), copy_files=copy_files, decompress=False, masters_only=masters_only))
+    for kind in ("information", "warning", "critical"):
+        monkeypatch.setattr(cw.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    monkeypatch.setattr(cw.QDesktopServices, "openUrl", staticmethod(lambda url: True))
+    return cw, dest, shown
+
+
+def _light_session():
+    from galileo.library.models import fitsSession
+
+    return fitsSession.select().where(fitsSession.fitsSessionObjectName == "M42").get()
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_checkout_single_session_links_lights_and_calibration(library, qt_app, monkeypatch, tmp_path):
+    """LIB-090: checking out one session creates lights plus its darks, bias and flats in a per-session folder."""
+    calibration_ready(library)
+    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app)
+    session = _light_session()
+    item = _TreeItem([None, None, str(session.fitsSessionDate)], parent=_TreeItem(["M42"]))
+
+    cw.checkout_single_session(None, item)
+
+    [session_dir] = list(dest.iterdir())
+    names = {p.name: sorted(f.name for f in p.iterdir()) for p in session_dir.iterdir()}
+    assert len(names["lights"]) == 3
+    assert len(names["darks"]) == 3 and len(names["bias"]) == 3 and len(names["flats"]) == 3
+    assert "masters" in names
+    assert shown == [("information", "Checkout Complete", shown[0][2])] and "Created 12 files" in shown[0][2]
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_checkout_single_session_masters_only_skips_calibration_frames(library, qt_app, monkeypatch, tmp_path):
+    """LIB-090: with 'masters only' ticked the lights are checked out but not the raw calibration frames."""
+    calibration_ready(library)
+    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
+    session = _light_session()
+    item = _TreeItem([None, None, str(session.fitsSessionDate)], parent=_TreeItem(["M42"]))
+
+    cw.checkout_single_session(None, item)
+
+    [session_dir] = list(dest.iterdir())
+    assert sorted(p.name for p in session_dir.iterdir()) == ["lights", "masters"]
+    assert len(list((session_dir / "lights").iterdir())) == 3
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_checkout_single_session_unknown_session_warns(library, qt_app, monkeypatch, tmp_path):
+    """LIB-090: a tree item with no matching session is reported, not crashed on."""
+    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app)
+    cw.checkout_single_session(None, _TreeItem([None, None, "1999-01-01"], parent=_TreeItem(["Nothing"])))
+    assert shown and shown[0][0] == "warning" and "not found" in shown[0][2]
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_checkout_multiple_sessions_shares_one_folder(library, qt_app, monkeypatch, tmp_path):
+    """LIB-090: several sessions are checked out into one tree, calibration folders created on demand."""
+    calibration_ready(library)
+    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app)
+    session = _light_session()
+    good = _TreeItem([None, None, str(session.fitsSessionDate)], user_role=session.fitsSessionId, parent=_TreeItem(["M42"]))
+    no_id = _TreeItem([None, None, "x"], user_role=None, parent=_TreeItem(["M42"]))
+
+    cw.checkout_multiple_sessions(None, [good, no_id])
+
+    [checkout_dir] = list(dest.iterdir())
+    names = sorted(p.name for p in checkout_dir.iterdir())
+    assert names == ["bias", "darks", "flats", "lights", "process"]
+    assert len(list((checkout_dir / "lights").iterdir())) == 3
+    assert shown[0][0] == "information"
+    assert "Successfully processed 1 out of 2 sessions" in shown[0][2] and "Session item missing ID" in shown[0][2]
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_checkout_multiple_sessions_masters_only(library, qt_app, monkeypatch, tmp_path):
+    """LIB-090: masters-only multi checkout creates only the lights and masters folders."""
+    calibration_ready(library)
+    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
+    session = _light_session()
+    good = _TreeItem([None, None, str(session.fitsSessionDate)], user_role=session.fitsSessionId, parent=_TreeItem(["M42"]))
+
+    cw.checkout_multiple_sessions(None, [good])
+
+    [checkout_dir] = list(dest.iterdir())
+    names = sorted(p.name for p in checkout_dir.iterdir())
+    assert "darks" not in names and "flats" not in names and "bias" not in names and "lights" in names
+
+
+# ---------------------------------------------------------------------------
+# Object merge (Library > Merge)
+# ---------------------------------------------------------------------------
+
+def _merge_env(monkeypatch):
+    from galileo.ui.library import merge_widget as mw
+
+    shown = []
+    monkeypatch.setattr(mw.QMessageBox, "question", staticmethod(lambda *a, **k: mw.QMessageBox.StandardButton.Yes))
+    for kind in ("information", "warning", "critical"):
+        monkeypatch.setattr(mw.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    return mw, shown
+
+
+@pytest.mark.requirement("TC-LIB-100")
+@pytest.mark.priority("P2")
+def test_tc_lib_100_merge_renames_object_in_database_files_and_headers(library, qt_app, monkeypatch):
+    """LIB-100: merging 'M42' into 'M31' updates the catalog, sessions, FITS headers and file/folder names."""
+    from astropy.io import fits
+
+    from galileo.library.models import fitsFile, fitsSession
+
+    write_light_frames(library.incoming)
+    processor, _ = ingest(library)
+    processor.createLightSessions()
+    mw, shown = _merge_env(monkeypatch)
+    widget = mw.MergeWidget()
+    widget.from_field.setText("M42")
+    widget.to_field.setText("M31")
+    widget.change_filenames.setChecked(True)
+
+    widget.execute_merge()
+
+    rows = list(fitsFile.select())
+    assert len(rows) == 3 and all(r.fitsFileObject == "M31" for r in rows)
+    assert all("M31" in Path(r.fitsFileName).name and Path(r.fitsFileName).exists() for r in rows)
+    assert all(fits.getheader(r.fitsFileName)["OBJECT"] == "M31" for r in rows)
+    assert (library.repo / "Light" / "M31").is_dir() and not (library.repo / "Light" / "M42").exists()
+    assert [s.fitsSessionObjectName for s in fitsSession.select()] == ["M31"]
+    text = widget.results_text.toPlainText()
+    assert "Database records updated: 3" in text and "Files renamed on disk: 3" in text
+    assert "Directories renamed: 1" in text and "Sessions updated: 1" in text and "Merge completed!" in text
+    assert shown and shown[-1][1] == "Merge Successful"
+
+
+@pytest.mark.requirement("TC-LIB-100")
+@pytest.mark.priority("P2")
+def test_tc_lib_100_merge_database_only_leaves_files_alone(library, qt_app, monkeypatch):
+    """LIB-100: with 'change filenames' off only the catalog records change."""
+    from galileo.library.models import fitsFile
+
+    write_light_frames(library.incoming)
+    ingest(library)
+    before = sorted(r.fitsFileName for r in fitsFile.select())
+    mw, shown = _merge_env(monkeypatch)
+    widget = mw.MergeWidget()
+    widget.from_field.setText("M42")
+    widget.to_field.setText("M31")
+    widget.change_filenames.setChecked(False)
+
+    widget.execute_merge()
+
+    assert {r.fitsFileObject for r in fitsFile.select()} == {"M31"}
+    assert sorted(r.fitsFileName for r in fitsFile.select()) == before
+    assert "Files renamed on disk" not in widget.results_text.toPlainText()
+
+
+@pytest.mark.requirement("TC-LIB-100")
+@pytest.mark.priority("P2")
+def test_tc_lib_100_merge_validates_input(library, qt_app, monkeypatch):
+    """LIB-100: empty, identical or unknown object names are reported and change nothing."""
+    mw, shown = _merge_env(monkeypatch)
+    widget = mw.MergeWidget()
+
+    widget.execute_merge()
+    widget.from_field.setText("A")
+    widget.to_field.setText("A")
+    widget.execute_merge()
+    widget.to_field.setText("B")
+    widget.execute_merge()
+
+    assert [s[:2] for s in shown] == [("warning", "Input Error"), ("information", "No Changes"), ("warning", "Object Not Found")]
+
+
+# ---------------------------------------------------------------------------
+# Session calibration from the Sessions screen
+# ---------------------------------------------------------------------------
+
+def _calibration_widget(library, qt_app, monkeypatch):
+    """A SessionsWidget plus the tree item of the M42 light session, with masters built."""
+    from galileo.library.core.auto_calibration import create_master_frames
+    from galileo.ui.library import sessions_widget as sw
+
+    assert create_master_frames(calibration_ready(library)) is True
+    session = _light_session()
+    shown = []
+    for kind in ("information", "warning", "critical"):
+        monkeypatch.setattr(sw.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    widget = sw.SessionsWidget()
+    item = _TreeItem([None, None, str(session.fitsSessionDate)], user_role=session.fitsSessionId, parent=_TreeItem(["M42"]))
+    return widget, item, session, shown
+
+
+@pytest.mark.requirement("TC-LIB-060")
+@pytest.mark.priority("P2")
+def test_tc_lib_060_sessions_screen_calibrates_lights_with_masters(library, qt_app, monkeypatch):
+    """LIB-060: Calibrate on the Sessions screen writes cal_ frames, catalogs them and soft-deletes the sources."""
+    from astropy.io import fits
+
+    from galileo.library.models import fitsFile
+
+    widget, item, session, shown = _calibration_widget(library, qt_app, monkeypatch)
+
+    result = widget.calibrate_session(item, confirm=False, show_results=True)
+
+    assert result == {"total": 3, "calibrated": 3, "skipped": 0, "errors": 0}
+    calibrated = list(fitsFile.select().where(fitsFile.fitsFileCalibrated == 1, fitsFile.fitsFileSession == session.fitsSessionId))
+    assert len(calibrated) == 3 and all(Path(f.fitsFileName).name.startswith("cal_") for f in calibrated)
+    sources = list(fitsFile.select().where(fitsFile.fitsFileSoftDelete == True, fitsFile.fitsFileType == "LIGHT FRAME"))  # noqa: E712
+    assert len(sources) >= 3
+    header = fits.getheader(calibrated[0].fitsFileName)
+    assert header["CALIBRAT"] is True and "CALDATE" in header
+    assert any("Bias corrected" in str(h) for h in header["HISTORY"])
+    assert shown and shown[-1][:2] == ("information", "Calibration Complete")
+
+
+@pytest.mark.requirement("TC-LIB-060")
+@pytest.mark.priority("P2")
+def test_tc_lib_060_sessions_screen_calibration_rejects_bad_requests(library, qt_app, monkeypatch):
+    """LIB-060: no session id, a calibration session, or no matching masters are reported, not attempted."""
+    from galileo.ui.library import sessions_widget as sw
+
+    shown = []
+    for kind in ("information", "warning", "critical"):
+        monkeypatch.setattr(sw.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    widget = sw.SessionsWidget()
+
+    assert widget.calibrate_session(_TreeItem([None, None, "d"], user_role=None), confirm=False) == {"error": "Session ID not found"}
+
+    calibration_ready(library)           # catalogued, but no masters built yet
+    session = _light_session()
+    item = _TreeItem([None, None, str(session.fitsSessionDate)], user_role=session.fitsSessionId, parent=_TreeItem(["M42"]))
+    result = widget.calibrate_session(item, confirm=False, show_results=False)
+    assert result["error"] == "No matching master frames found"
+
+    flat_item = _TreeItem([None, None, "d"], user_role=session.fitsSessionId, parent=_TreeItem(["Flat"]))
+    assert widget.calibrate_session(flat_item, confirm=False, show_results=False) == {
+        "error": "Calibration not applicable to calibration sessions"}
+
+
+@pytest.mark.requirement("TC-LIB-090")
+@pytest.mark.priority("P2")
+def test_tc_lib_090_sessions_context_menu_offers_and_runs_actions(library, qt_app, monkeypatch):
+    """LIB-090: the Sessions tree's right-click menu offers the actions that fit the selection and runs the chosen one."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QMenu, QTreeWidgetItem
+
+    from galileo.ui.library import sessions_widget as sw
+
+    widget = sw.SessionsWidget()
+    tree = widget.sessions_tree
+    tree.clear()
+    objects = {}
+    items = {}
+    for name, sid in (("M42", "sess-1"), ("M31", "sess-2"), ("Flat", "sess-3")):
+        top = QTreeWidgetItem([name])
+        tree.addTopLevelItem(top)
+        child = QTreeWidgetItem(top, [name, "", "2026-09-16"])
+        child.setData(0, Qt.ItemDataRole.UserRole, sid)
+        objects[name], items[name] = top, child
+
+    calls, offered = [], []
+    monkeypatch.setattr(widget, "checkout_session", lambda it: calls.append(("checkout", it.text(0))))
+    monkeypatch.setattr(widget, "checkout_multiple_sessions", lambda its: calls.append(("checkout_many", len(its))))
+    monkeypatch.setattr(widget, "calibrate_session", lambda it: calls.append(("calibrate", it.text(0))))
+    monkeypatch.setattr(tree, "itemAt", lambda pos: items["M42"])
+
+    chosen = {"label": ""}
+
+    class FakeMenu(QMenu):
+        """A QMenu whose exec() picks the action named by ``chosen`` instead of blocking on the user."""
+
+        def exec(self, *_args):
+            offered.append([a.text() for a in self.actions()])
+            return next((a for a in self.actions() if chosen["label"] in a.text()), None)
+
+    monkeypatch.setattr(sw, "QMenu", FakeMenu)
+
+    def right_click(selection, label):
+        tree.clearSelection()
+        for it in selection:
+            it.setSelected(True)
+        chosen["label"] = label
+        widget.show_context_menu(tree.viewport().rect().center())
+
+    right_click([items["M42"]], "Check out")
+    right_click([items["M42"], items["M31"]], "Check out (2 sessions)")
+    right_click([items["M42"]], "Calibrate")
+    QApplication.clipboard().clear()
+    right_click([items["M42"]], "Copy Session ID")
+
+    assert calls == [("checkout", "M42"), ("checkout_many", 2), ("calibrate", "M42")]
+    assert QApplication.clipboard().text() == "sess-1"
+    single, multi, _, _ = offered
+    assert any("Calibrate" in t for t in single) and any("Stack (photometric)" in t for t in single)
+    assert not any("Calibrate" in t for t in multi), "per-session actions are single-selection only"
+
+    offered.clear()
+    right_click([items["Flat"]], "nothing-matches")
+    assert not any("Check out" in t or "Calibrate" in t for t in offered[0]), "calibration sessions are not checked out"

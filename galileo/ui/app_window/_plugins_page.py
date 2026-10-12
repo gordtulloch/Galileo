@@ -393,7 +393,8 @@ class AppWindowPluginsPageMixin:
 
         def _do_market_install(entry: MarketplaceEntry) -> None:
             nonlocal _dl_thread
-            import tempfile, os
+            import tempfile
+            import os
             tmp_path = os.path.join(
                 tempfile.gettempdir(), f"{entry.name}-{entry.version}.zip"
             )

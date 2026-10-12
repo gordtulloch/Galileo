@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 def prepare_fits_data(data: np.ndarray, sample_format: str | Enum) -> tuple[np.ndarray, int]:
     """
     Prepare image data for FITS format by ensuring correct data types and byte order.
-    
+
     Args:
         data: The image data array
         sample_format: The original XISF sample format (string or enum)
-        
+
     Returns:
         Tuple of (prepared_data, bitpix_value) for FITS format
     """
@@ -27,21 +27,18 @@ def prepare_fits_data(data: np.ndarray, sample_format: str | Enum) -> tuple[np.n
             data = np.array(data)
 
         # Convert enum to string if needed
-        if hasattr(sample_format, 'value'):
-            format_str = sample_format.value
-        else:
-            format_str = str(sample_format)
+        format_str = sample_format.value if hasattr(sample_format, 'value') else str(sample_format)
 
         # Map XISF formats to appropriate FITS-compatible formats and BITPIX values
-        if format_str in ['UInt8']:
+        if format_str == 'UInt8':
             # Unsigned 8-bit data - keep as is for FITS
             data = data.astype(np.uint8)
             bitpix = 8
-        elif format_str in ['UInt16']:
+        elif format_str == 'UInt16':
             # Unsigned 16-bit data - keep as is
             data = data.astype(np.uint16)
             bitpix = 16
-        elif format_str in ['UInt32']:
+        elif format_str == 'UInt32':
             # FITS doesn't natively support uint32, convert to int32 if possible
             if np.max(data) <= np.iinfo(np.int32).max:
                 data = data.astype(np.int32)
@@ -51,29 +48,29 @@ def prepare_fits_data(data: np.ndarray, sample_format: str | Enum) -> tuple[np.n
                 data = data.astype(np.float32)
                 bitpix = -32
                 logger.warning("UInt32 data exceeded int32 range, converted to float32")
-        elif format_str in ['UInt64']:
+        elif format_str == 'UInt64':
             # Convert to float64 to preserve large values
             data = data.astype(np.float64)
             bitpix = -64
             logger.warning("UInt64 data converted to float64 for FITS compatibility")
-        elif format_str in ['Int16']:
+        elif format_str == 'Int16':
             data = data.astype(np.int16)
             bitpix = 16
-        elif format_str in ['Int32']:
+        elif format_str == 'Int32':
             data = data.astype(np.int32)
             bitpix = 32
-        elif format_str in ['Float32']:
+        elif format_str == 'Float32':
             data = data.astype(np.float32)
             bitpix = -32
-        elif format_str in ['Float64']:
+        elif format_str == 'Float64':
             data = data.astype(np.float64)
             bitpix = -64
-        elif format_str in ['Complex32']:
+        elif format_str == 'Complex32':
             # FITS doesn't support complex, take magnitude
             data = np.abs(data).astype(np.float32)
             bitpix = -32
             logger.warning("Complex32 data converted to magnitude (float32)")
-        elif format_str in ['Complex64']:
+        elif format_str == 'Complex64':
             # FITS doesn't support complex, take magnitude
             data = np.abs(data).astype(np.float64)
             bitpix = -64
@@ -102,18 +99,18 @@ def prepare_fits_data(data: np.ndarray, sample_format: str | Enum) -> tuple[np.n
         return data, bitpix
 
     except Exception as e:
-        logger.error(f"Error preparing FITS data: {e}")
+        logger.exception(f"Error preparing FITS data: {e}")
         raise
 
 def validate_data_integrity(data: np.ndarray, expected_pixels: int | None = None, sample_format: str | Enum | None = None) -> bool:
     """
     Validate the integrity of image data.
-    
+
     Args:
         data: The image data array
         expected_pixels: Expected total number of pixels, if known
         sample_format: The XISF sample format, if known
-        
+
     Returns:
         True if data appears valid, False otherwise
     """
@@ -144,13 +141,13 @@ def validate_data_integrity(data: np.ndarray, expected_pixels: int | None = None
         return True
 
     except Exception as e:
-        logger.error(f"Error validating data integrity: {e}")
+        logger.exception(f"Error validating data integrity: {e}")
         return False
 
-def log_data_statistics(data: np.ndarray, sample_format: str | Enum = None) -> None:
+def log_data_statistics(data: np.ndarray, sample_format: str | Enum | None = None) -> None:
     """
     Log statistical information about the data for debugging.
-    
+
     Args:
         data: The image data array
         sample_format: The XISF sample format for additional context (string or enum)
@@ -174,25 +171,24 @@ def log_data_statistics(data: np.ndarray, sample_format: str | Enum = None) -> N
         logger.info(f"  Data type: {data.dtype}")
         logger.info(f"  Size: {data.size} elements")
 
-        if data.size > 0:
-            if np.issubdtype(data.dtype, np.number):
-                logger.info(f"  Min: {np.min(data)}")
-                logger.info(f"  Max: {np.max(data)}")
-                logger.info(f"  Mean: {np.mean(data):.6f}")
-                logger.info(f"  Std: {np.std(data):.6f}")
+        if data.size > 0 and np.issubdtype(data.dtype, np.number):
+            logger.info(f"  Min: {np.min(data)}")
+            logger.info(f"  Max: {np.max(data)}")
+            logger.info(f"  Mean: {np.mean(data):.6f}")
+            logger.info(f"  Std: {np.std(data):.6f}")
 
-                # Check for special values
-                if np.issubdtype(data.dtype, np.floating):
-                    nan_count = np.sum(np.isnan(data))
-                    inf_count = np.sum(np.isinf(data))
-                    if nan_count > 0:
-                        logger.info(f"  NaN values: {nan_count}")
-                    if inf_count > 0:
-                        logger.info(f"  Infinite values: {inf_count}")
+            # Check for special values
+            if np.issubdtype(data.dtype, np.floating):
+                nan_count = np.sum(np.isnan(data))
+                inf_count = np.sum(np.isinf(data))
+                if nan_count > 0:
+                    logger.info(f"  NaN values: {nan_count}")
+                if inf_count > 0:
+                    logger.info(f"  Infinite values: {inf_count}")
 
-                # Check for zero values
-                zero_count = np.sum(data == 0)
-                logger.info(f"  Zero values: {zero_count} ({zero_count/data.size*100:.2f}%)")
+            # Check for zero values
+            zero_count = np.sum(data == 0)
+            logger.info(f"  Zero values: {zero_count} ({zero_count/data.size*100:.2f}%)")
 
     except Exception as e:
-        logger.error(f"Error logging data statistics: {e}")
+        logger.exception(f"Error logging data statistics: {e}")

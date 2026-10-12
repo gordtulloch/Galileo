@@ -15,8 +15,8 @@ import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, TYPE_CHECKING, Protocol, cast
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities
 from galileo.core.monitor import ConnectionMonitor as ConnectionMonitor  # re-exported so importers find it here
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 CONCURRENCY_MODEL = "ProcessPoolExecutor"
 
 
-class DeviceCategory(str, Enum):
+class DeviceCategory(StrEnum):
     """Supported device categories, one per hardware type."""
     CAMERA = "Camera"
     MOUNT = "Mount"
@@ -54,10 +54,17 @@ class DeviceBackend(ABC):
     """
 
     # Registry: DeviceCategory → list[type[DeviceBackend]]
-    registered_backends: dict[DeviceCategory, list[type[DeviceBackend]]] = defaultdict(list)
+    registered_backends: ClassVar[dict[DeviceCategory, list[type[DeviceBackend]]]] = defaultdict(list)
 
     backend: str = "unknown"  # overridden by each concrete adapter class
     device_type: str  # every concrete adapter sets this in __init__ (its DeviceCategory.value)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: B027 -- permissive port constructor
+        """Connection details (``host``, ``port``, ``device_name``, ...) are adapter-specific.
+
+        The port declares a permissive constructor so code that instantiates a class obtained from
+        ``get_adapter_class(category)`` type-checks; each concrete adapter defines its own signature.
+        """
 
     @abstractmethod
     async def connect(self) -> None:
@@ -80,8 +87,12 @@ class DeviceBackend(ABC):
         """Return the device's current raw properties as a flat dict."""
         return {}
 
-    async def set_property(self, name: str, value: object) -> None:
-        """Set a raw device property by name."""
+    async def set_property(self, name: str, value: object) -> None:  # noqa: B027 -- optional hook, no-op by design
+        """Set a raw device property by name.
+
+        Optional: the default does nothing, for backends with no writable raw properties
+        (the INDI and Alpaca bases override it).
+        """
 
     async def get_driver_info(self) -> dict[str, str | None]:
         """Identify the driver behind this device, for the Equipment pages'
@@ -360,7 +371,7 @@ class DeviceController:
                 self._event_bus.publish(
                     DeviceConnectedEvent(
                         source=getattr(self._backend, "name", ""),
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                     )
                 )
         except Exception as exc:
@@ -368,7 +379,7 @@ class DeviceController:
                 self._event_bus.publish(
                     DeviceErrorEvent(
                         source=getattr(self._backend, "name", ""),
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                         error=str(exc),
                     )
                 )
@@ -669,7 +680,7 @@ class SafetyMonitorController(DeviceController):
                     SafetyUnsafeEvent(
                         source=getattr(self._backend, "name", ""),
                         explanation=new_expl,
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                     )
                 )
             self.last_abort_trigger = f"SafetyMonitor:{getattr(self._backend, 'name', '')}"

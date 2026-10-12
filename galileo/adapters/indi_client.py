@@ -36,6 +36,7 @@ from collections.abc import Callable
 from xml.sax.saxutils import escape, quoteattr
 
 from galileo.exceptions import DeviceConnectionError, DeviceTimeoutError
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -169,10 +170,8 @@ class IndiClient:
         self._alive = False
         sock, self._sock = self._sock, None
         if sock is not None:
-            try:
+            with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             sock.close()
         with self._cond:
             self._cond.notify_all()
@@ -229,7 +228,7 @@ class IndiClient:
                             root.remove(elem)
         except (OSError, ET.ParseError) as exc:
             if self._alive:
-                logger.error("INDI connection to %s:%d lost: %s", self.host, self.port, exc)
+                logger.exception("INDI connection to %s:%d lost: %s", self.host, self.port, exc)
             self._fail(str(exc))
 
     # -- incoming message handling -----------------------------------------

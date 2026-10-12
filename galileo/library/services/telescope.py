@@ -8,16 +8,23 @@ import socket
 import ipaddress
 import os
 import logging
-from galileo.library.config import get_itelescope_password, get_sftp_settings, load_config as load_library_config
+from galileo.library.config import (
+    get_itelescope_password,
+    get_itelescope_verify_tls,
+    get_sftp_settings,
+    load_config as load_library_config,
+)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import ftplib
+import ssl
 import numpy as np
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from astropy.io import fits
 from galileo.library.models import fitsSession, fitsFile
 from galileo.library.core import get_master_calibration_path
+from galileo.library.exceptions import TelescopeConnectionError
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -29,10 +36,22 @@ logging.getLogger('SMB.SMBProtocol').setLevel(logging.WARNING)
 
 try:
     from smb.SMBConnection import SMBConnection
-    from smb.base import NotReadyError, NotConnectedError
     SMB_AVAILABLE = True
 except ImportError:
     SMB_AVAILABLE = False
+
+def _new_ftps_client() -> ftplib.FTP_TLS:
+    """An FTP-over-TLS client that verifies the server certificate and host name.
+
+    Verification can be switched off in Options > Library > Smart Telescopes for a server whose
+    certificate does not validate; the connection is then still encrypted but not authenticated."""
+    if get_itelescope_verify_tls():
+        return ftplib.FTP_TLS(context=ssl.create_default_context())
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE  # explicit user opt-out
+    return ftplib.FTP_TLS(context=context)  # noqa: S321 -- FTP over TLS
+
 
 class SmartTelescopeManager:
     """Manages connections to smart telescopes."""
@@ -41,28 +60,28 @@ class SmartTelescopeManager:
         self.supported_telescopes = {
             'SeeStar': {
                 'default_hostname': 'seestar.local',
-                'default_username': 'guest',
+                'default_username': 'guest',  # nosec B105 -- default account name, not a secret
                 'default_password': 'guest',
                 'share_name': 'EMMC Images',
                 'fits_path': 'MyWorks'
             },
             'StellarMate': {
                 'default_hostname': 'stellarmate.local',
-                'default_username': 'stellarmate',
+                'default_username': 'stellarmate',  # nosec B105 -- default account name, not a secret
                 'default_password': 'smate',
                 'share_name': 'Pictures',
                 'fits_path': ''  # Start scanning from root
             },
             'DWARF 3': {
                 'default_hostname': '192.168.88.1',
-                'default_username': None,  # No authentication for FTP
+                'default_username': None,  # nosec B105 -- No authentication for FTP
                 'default_password': None,  # No authentication for FTP
                 'protocol': 'ftp',
                 'fits_path': 'Astronomy'  # DWARF stores FITS files in /Astronomy
             },
             'iTelescope': {
                 'default_hostname': 'data.itelescope.net',
-                'default_username': '',  # To be configured by user
+                'default_username': '',  # nosec B105 -- To be configured by user
                 'default_password': '',  # To be configured by user
                 'protocol': 'ftps',  # FTP with TLS
                 'fits_path': '',  # Start scanning from root
@@ -73,7 +92,7 @@ class SmartTelescopeManager:
                 # from the Download dialog or --hostname; the account, key, folder and host-key policy
                 # from Options > Library > Smart Telescopes (see galileo.library.config.get_sftp_settings).
                 'default_hostname': '',
-                'default_username': None,
+                'default_username': None,  # nosec B105 -- default account name, not a secret
                 'default_password': None,
                 'protocol': 'sftp',
                 'fits_path': '/'
@@ -87,7 +106,7 @@ class SmartTelescopeManager:
             username = config.get('DEFAULT', 'itelescope_username', fallback='')
             return username.strip(), get_itelescope_password().strip()
         except Exception as e:
-            logger.error(f"Error reading iTelescope credentials: {e}")
+            logger.exception(f"Error reading iTelescope credentials: {e}")
             return '', ''
 
     def get_local_network(self):
@@ -218,7 +237,7 @@ class SmartTelescopeManager:
                 logger.warning(f"Device {hostname} ({ip}) not found or not accessible")
                 return None, f"Device {hostname} not found or not accessible"
             except Exception as e:
-                logger.error(f"Unable to resolve hostname {hostname}: {e}")
+                logger.exception(f"Unable to resolve hostname {hostname}: {e}")
                 return None, f"Unable to resolve hostname {hostname}"
 
         # For SeeStar, try the default mDNS hostname first before network scanning
@@ -258,7 +277,7 @@ class SmartTelescopeManager:
             network = ipaddress.IPv4Network(network_range, strict=False)
             logger.info(f"Scanning network {network} for {telescope_type} devices...")
         except ValueError as e:
-            logger.error(f"Invalid network range {network_range}: {e}")
+            logger.exception(f"Invalid network range {network_range}: {e}")
             return None, f"Invalid network range: {e}"
 
         # Use ThreadPoolExecutor for parallel scanning
@@ -364,11 +383,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 conn.close()
-                logger.error(f"Error accessing files on {ip}: {e}")
+                logger.exception(f"Error accessing files on {ip}: {e}")
                 return [], f"Error accessing files: {e}"
 
         except Exception as e:
-            logger.error(f"Connection error to {ip}: {e}")
+            logger.exception(f"Connection error to {ip}: {e}")
             return [], f"Connection error: {e}"
 
     def _get_fits_files_ftp(self, telescope_type, ip, username=None, password=None):
@@ -377,7 +396,7 @@ class SmartTelescopeManager:
 
         try:
             # Create FTP connection (no authentication for DWARF)
-            ftp = ftplib.FTP()
+            ftp = ftplib.FTP()  # noqa: S321  # nosec B321 -- plain FTP: the device offers nothing else (LAN-only)
             logger.debug(f"Attempting FTP connection to {ip}:21...")
             ftp.connect(ip, 21, timeout=10)
 
@@ -402,11 +421,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 ftp.quit()
-                logger.error(f"Error accessing files on {ip}: {e}")
+                logger.exception(f"Error accessing files on {ip}: {e}")
                 return [], f"Error accessing files: {e}"
 
         except Exception as e:
-            logger.error(f"FTP connection error to {ip}: {e}")
+            logger.exception(f"FTP connection error to {ip}: {e}")
             return [], f"FTP connection error: {e}"
 
     def _get_fits_files_ftps(self, telescope_type, hostname, username=None, password=None):
@@ -419,8 +438,7 @@ class SmartTelescopeManager:
 
         try:
             # Create FTPS connection (FTP over TLS)
-            from ftplib import FTP_TLS
-            ftps = FTP_TLS()
+            ftps = _new_ftps_client()
             logger.debug(f"Attempting FTPS connection to {hostname}:21...")
             ftps.connect(hostname, 21, timeout=30)
 
@@ -443,11 +461,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 ftps.quit()
-                logger.error(f"Error accessing files on {hostname}: {e}")
+                logger.exception(f"Error accessing files on {hostname}: {e}")
                 return [], f"Error accessing files: {e}"
 
         except Exception as e:
-            logger.error(f"FTPS connection error to {hostname}: {e}")
+            logger.exception(f"FTPS connection error to {hostname}: {e}")
             return [], f"FTPS connection error: {e}"
 
     def _get_fits_files_from_path_smb(self, conn, share_name, target_path, telescope_type):
@@ -540,7 +558,7 @@ class SmartTelescopeManager:
                 return False
 
         except Exception as e:
-            logger.error(f"Error validating DWARF structure: {e}")
+            logger.exception(f"Error validating DWARF structure: {e}")
             return False
 
     def _get_fits_files_from_dwarf_ftp(self, ftp):
@@ -566,7 +584,7 @@ class SmartTelescopeManager:
                 self._scan_dwarf_dark_folder(ftp, 'DWARF_DARK', fits_files)
 
         except Exception as e:
-            logger.error(f"Error scanning DWARF FTP structure: {e}")
+            logger.exception(f"Error scanning DWARF FTP structure: {e}")
 
         return fits_files
 
@@ -623,7 +641,7 @@ class SmartTelescopeManager:
                     logger.debug(f"Found DWARF light file: {file_path} (Object: {object_name}, Instrument: {instrument})")
 
         except Exception as e:
-            logger.error(f"Error scanning DWARF_RAW folder {folder_name}: {e}")
+            logger.exception(f"Error scanning DWARF_RAW folder {folder_name}: {e}")
 
     def _scan_dwarf_cali_folder(self, ftp, folder_name, fits_files):
         """Scan CALI_FRAME folder for calibration master frames."""
@@ -640,7 +658,7 @@ class SmartTelescopeManager:
                     self._scan_dwarf_cali_type_folder(ftp, f"{folder_name}/{cali_type}", cali_type, fits_files)
 
         except Exception as e:
-            logger.error(f"Error scanning CALI_FRAME folder: {e}")
+            logger.exception(f"Error scanning CALI_FRAME folder: {e}")
 
     def _scan_dwarf_cali_type_folder(self, ftp, folder_path, cali_type, fits_files):
         """Scan a calibration type folder (bias/dark/flat) for cam_0 and cam_1 subfolders."""
@@ -656,7 +674,7 @@ class SmartTelescopeManager:
                     self._scan_dwarf_cam_folder(ftp, f"{folder_path}/{cam_folder}", cali_type, instrument, fits_files)
 
         except Exception as e:
-            logger.error(f"Error scanning calibration type folder {folder_path}: {e}")
+            logger.exception(f"Error scanning calibration type folder {folder_path}: {e}")
 
     def _scan_dwarf_cam_folder(self, ftp, folder_path, cali_type, instrument, fits_files):
         """Scan a camera folder for FITS files."""
@@ -687,7 +705,7 @@ class SmartTelescopeManager:
                     logger.debug(f"Found DWARF {cali_type} master file: {folder_path}/{file}")
 
         except Exception as e:
-            logger.error(f"Error scanning camera folder {folder_path}: {e}")
+            logger.exception(f"Error scanning camera folder {folder_path}: {e}")
 
     def _scan_dwarf_dark_folder(self, ftp, folder_name, fits_files):
         """Scan DWARF_DARK folder for dark library files."""
@@ -717,7 +735,7 @@ class SmartTelescopeManager:
                     logger.debug(f"Found DWARF dark library file: {folder_name}/{file}")
 
         except Exception as e:
-            logger.error(f"Error scanning DWARF_DARK folder: {e}")
+            logger.exception(f"Error scanning DWARF_DARK folder: {e}")
 
     def _get_fits_files_from_itelescope_ftps(self, ftps, hostname):
         """Get all calibrated FITS files from iTelescope FTPS server."""
@@ -731,7 +749,7 @@ class SmartTelescopeManager:
             self._scan_itelescope_directory(ftps, '', fits_files, hostname)
 
         except Exception as e:
-            logger.error(f"Error scanning iTelescope directories: {e}")
+            logger.exception(f"Error scanning iTelescope directories: {e}")
 
         return fits_files
 
@@ -818,7 +836,7 @@ class SmartTelescopeManager:
                     logger.debug(f"Found iTelescope calibrated file: {item_path}")
 
         except Exception as e:
-            logger.error(f"Error scanning iTelescope directory {current_path}: {e}")
+            logger.exception(f"Error scanning iTelescope directory {current_path}: {e}")
 
     def _extract_object_from_filename(self, filename):
         """Extract object name from iTelescope filename if possible."""
@@ -913,7 +931,7 @@ class SmartTelescopeManager:
 
                         def write(self, data):
                             if self.cancelled:
-                                raise Exception("Download cancelled by user")
+                                raise TelescopeConnectionError("Download cancelled by user")
 
                             result = self.file_obj.write(data)
                             self.bytes_written += len(data)
@@ -922,7 +940,7 @@ class SmartTelescopeManager:
                                 # Check if callback returns False (cancellation request)
                                 if self.progress_callback(progress) is False:
                                     self.cancelled = True
-                                    raise Exception("Download cancelled by user")
+                                    raise TelescopeConnectionError("Download cancelled by user")
                             return result
 
                         def __getattr__(self, name):
@@ -942,11 +960,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 conn.close()
-                logger.error(f"Error downloading {file_name}: {e}")
+                logger.exception(f"Error downloading {file_name}: {e}")
                 return False, f"Error downloading file: {e}"
 
         except Exception as e:
-            logger.error(f"Connection error during download of {file_name}: {e}")
+            logger.exception(f"Connection error during download of {file_name}: {e}")
             return False, f"Connection error: {e}"
 
     def _download_file_ftp(self, telescope_type, ip, file_info, local_path, progress_callback=None):
@@ -955,7 +973,7 @@ class SmartTelescopeManager:
 
         try:
             # Create FTP connection
-            ftp = ftplib.FTP()
+            ftp = ftplib.FTP()  # noqa: S321  # nosec B321 -- plain FTP: the device offers nothing else (LAN-only)
             logger.debug(f"Connecting to {ip} for FTP file download...")
             ftp.connect(ip, 21, timeout=10)
             ftp.login()  # Anonymous login for DWARF
@@ -986,11 +1004,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 ftp.quit()
-                logger.error(f"Error downloading {file_name}: {e}")
+                logger.exception(f"Error downloading {file_name}: {e}")
                 return False, f"Error downloading file: {e}"
 
         except Exception as e:
-            logger.error(f"FTP connection error during download of {file_name}: {e}")
+            logger.exception(f"FTP connection error during download of {file_name}: {e}")
             return False, f"FTP connection error: {e}"
 
     def _download_file_ftps(self, telescope_type, hostname, file_info, local_path, username=None, password=None, progress_callback=None):
@@ -1003,8 +1021,7 @@ class SmartTelescopeManager:
 
         try:
             # Create FTPS connection
-            from ftplib import FTP_TLS
-            ftps = FTP_TLS()
+            ftps = _new_ftps_client()
             ftps.connect(hostname, 21, timeout=30)
             ftps.login(username, password)
             ftps.prot_p()  # Switch to secure data connection
@@ -1037,11 +1054,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 ftps.quit()
-                logger.error(f"Error downloading {file_name}: {e}")
+                logger.exception(f"Error downloading {file_name}: {e}")
                 return False, f"Error downloading file: {e}"
 
         except Exception as e:
-            logger.error(f"FTPS connection error during download of {file_name}: {e}")
+            logger.exception(f"FTPS connection error during download of {file_name}: {e}")
             return False, f"FTPS connection error: {e}"
 
     def format_file_size(self, size_bytes):
@@ -1137,11 +1154,11 @@ class SmartTelescopeManager:
 
             except Exception as e:
                 conn.close()
-                logger.error(f"Error deleting {file_name}: {e}")
+                logger.exception(f"Error deleting {file_name}: {e}")
                 return False, f"Error deleting file: {e}"
 
         except Exception as e:
-            logger.error(f"Connection error during deletion of {file_info.get('name', 'unknown file')}: {e}")
+            logger.exception(f"Connection error during deletion of {file_info.get('name', 'unknown file')}: {e}")
             return False, f"Connection error: {e}"
 
 # Global instance
@@ -1152,14 +1169,14 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
                                    flat_master, calibrated_data, light_path):
     """
     Update FITS header of calibrated light frame with comprehensive metadata.
-    
+
     Adds astronomy-standard headers for calibrated light frames including:
     - Calibration identification and status
     - Master frame references with full paths and checksums
     - Processing history and timestamps
     - Quality metrics and statistics
     - Software version and processing parameters
-    
+
     Args:
         header: FITS header object to update
         calibration_steps: List of calibration steps applied
@@ -1177,7 +1194,7 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
     # =================================================================
     header['CALIBRAT'] = (True, 'Image has been calibrated')
     header['IMAGETYP'] = ('LIGHT_CAL', 'Calibrated light frame')
-    header['CALDATE'] = (datetime.now().isoformat(), 'Calibration processing timestamp')
+    header['CALDATE'] = (datetime.now(UTC).replace(tzinfo=None).isoformat(), 'Calibration processing timestamp')
     header['CALSOFT'] = ('Galileo', 'Calibration software and version')
 
     # Original file reference
@@ -1329,10 +1346,10 @@ def _update_calibrated_frame_header(header, calibration_steps, bias_master, dark
     # Common headers expected by popular astronomy software
     header['PROCESSED'] = (True, 'Frame has been processed/calibrated')
     header['REDUCER'] = ('Galileo', 'Software used for calibration')
-    header['REDDATE'] = (datetime.now().strftime('%Y-%m-%d'), 'Date of calibration processing')
+    header['REDDATE'] = (datetime.now().astimezone().strftime('%Y-%m-%d'), 'Date of calibration processing')
 
     # Compatibility with common pipeline formats
-    header['HISTORY'] = f"CALIBRATED by Galileo on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    header['HISTORY'] = f"CALIBRATED by Galileo on {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}"
     if calibration_steps:
         header['HISTORY'] = f"Applied: {' -> '.join(calibration_steps)}"
 
@@ -1350,7 +1367,7 @@ def calibrate_light_frame(light_path, dark_master=None, flat_master=None, bias_m
                          output_path=None, progress_callback=None):
     """
     Calibrate a single light frame using master calibration frames.
-    
+
     Args:
         light_path (str): Path to the light frame FITS file
         dark_master (str): Path to master dark frame (optional)
@@ -1358,7 +1375,7 @@ def calibrate_light_frame(light_path, dark_master=None, flat_master=None, bias_m
         bias_master (str): Path to master bias frame (optional)
         output_path (str): Path for calibrated output file (optional, auto-generated if not provided)
         progress_callback (callable): Optional callback for progress updates
-        
+
     Returns:
         dict: Calibration result with output path and metadata
     """
@@ -1476,12 +1493,12 @@ def calibrate_light_frame(light_path, dark_master=None, flat_master=None, bias_m
 def calibrate_session_lights(session_id, progress_callback=None, force_recalibrate=False):
     """
     Calibrate all light frames in a session using available master frames.
-    
+
     Args:
         session_id (int): Database ID of the session to calibrate
         progress_callback (callable): Optional callback for progress updates
         force_recalibrate (bool): If True, recalibrate even if already calibrated
-        
+
     Returns:
         dict: Calibration results with statistics
     """
@@ -1574,10 +1591,10 @@ def calibrate_session_lights(session_id, progress_callback=None, force_recalibra
 def get_session_master_frames(session_id):
     """
     Get the paths to master calibration frames for a session.
-    
+
     Args:
         session_id (int): Database ID of the session
-        
+
     Returns:
         dict: Paths to master frames (dark, flat, bias) or None if not available
     """

@@ -283,7 +283,7 @@ def test_tc_eqp_070_camera_and_focuser_panels_show_driver_info_when_a_device_is_
     for build in (window._build_camera_page, window._build_focuser_page):
         page = build()
         assert {"Driver info", "Driver version"} <= set(_texts(page))
-        combo = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+        combo = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
         combo.setEditText("Some Device (#0)")
         combo.activated.emit(0)
         assert {"Acme Driver", "2.3"} <= set(_texts(page)), build.__name__
@@ -295,7 +295,7 @@ def test_tc_eqp_070_rotator_page_shows_driver_info_when_a_device_is_picked(windo
     """EQP-070: the rotator page shows the driver row and fills it on device pick."""
     page = window._build_rotator_page()
     assert {"Driver info", "Driver version"} <= set(_texts(page))
-    combo = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+    combo = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
     combo.setEditText("Some Rotator (#0)")
     combo.activated.emit(0)
     assert {"Acme Driver", "2.3"} <= set(_texts(page))
@@ -321,7 +321,8 @@ def test_tc_eqp_070_real_lookup_reads_from_a_server_and_degrades_when_unreachabl
     # instead of building a whole AppWindow.
     from types import SimpleNamespace
     stand_in = SimpleNamespace(_make_adapter=AppWindow._make_adapter)
-    lookup = lambda *args: AppWindow._lookup_driver_info(stand_in, DeviceCategory.FOCUSER, "INDI", *args)  # noqa: E731
+    def lookup(*args):
+        return AppWindow._lookup_driver_info(stand_in, DeviceCategory.FOCUSER, "INDI", *args)
 
     found = lookup("127.0.0.1", server.port, FOCUSER)
     assert found["driver_info"] == FOCUSER and found["driver_version"] == "1.0"

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import colorsys
 import logging
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-class Theme(str, Enum):
+class Theme(StrEnum):
     LIGHT = "light"
     DARK = "dark"
     RED = "red"

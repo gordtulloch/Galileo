@@ -31,13 +31,13 @@ Options:
 Examples:
     # Basic registration with default settings
     python -m galileo.commands.register_existing
-    
+
     # Verbose mode with header verification
     python -m galileo.commands.register_existing --verbose
-    
+
     # Fast scan without header verification
     python -m galileo.commands.register_existing --no-header-verify --quiet
-    
+
     # Dry run to see what would be done
     python -m galileo.commands.register_existing --dry-run --verbose
 
@@ -287,7 +287,7 @@ def main():
         return 130
 
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.exception(f"Unexpected error: {e}")
         return 1
 
 if __name__ == "__main__":

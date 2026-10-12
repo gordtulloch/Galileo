@@ -2,7 +2,7 @@ import os
 import glob
 import logging
 import datetime
-from datetime import datetime as dt
+from datetime import UTC, datetime as dt
 from PySide6.QtCore import Qt
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -17,6 +17,165 @@ from galileo.library.models import fitsFile as FitsFileModel, fitsSession as Fit
 from galileo.library.config import load_config as load_library_config
 
 logger = logging.getLogger(__name__)
+
+def _extract_image_hdu(hdul):
+    """Return ``(hdu, 2D array)`` for the first HDU with 2D image data, or ``(None, None)``."""
+    import numpy as np
+
+    for hdu in hdul:
+        data = getattr(hdu, 'data', None)
+        if data is None:
+            continue
+        arr = np.asarray(data)
+        # Some writers store a single plane as (1, H, W)
+        if arr.ndim == 3 and arr.shape[0] == 1:
+            arr = arr[0]
+        if arr.ndim != 2:
+            continue
+        return hdu, arr
+    return None, None
+
+
+def _read_fits_image(file_path: str):
+    """Read a FITS image, handling data-in-extension FITS files.
+
+    Returns (data, header). Header is taken from the image HDU when
+    available; falls back to primary header.
+    """
+    from astropy.io import fits
+
+    with fits.open(file_path) as hdul:
+        primary_header = hdul[0].header.copy()
+        hdu, data = _extract_image_hdu(hdul)
+        if data is None:
+            raise ValueError("No 2D image data found in any HDU")
+        header = getattr(hdu, 'header', None)
+        return data, (header.copy() if header is not None else primary_header)
+
+
+def _load_master_arrays(masters: dict, progress) -> dict:
+    """Load the master frames as float32 arrays keyed like *masters*; the flat is normalised to a mean of 1.
+
+    A flat with a non-positive mean maps to ``None`` (flat correction is skipped).
+    """
+    import numpy as np
+
+    arrays: dict = {}
+    for label in ("Bias", "Dark", "Flat"):
+        master = masters.get(label)
+        if master is None:
+            continue
+        progress.setLabelText(f"Loading {label.lower()} master...")
+        QApplication.processEvents()
+        data, _header = _read_fits_image(master.master_path)
+        data = data.astype(np.float32, copy=False)
+        if label == "Flat":
+            flat_mean = np.mean(data)
+            if flat_mean > 0:
+                data = data / flat_mean
+                logger.info(f"Loaded and normalized flat master: {os.path.basename(master.master_path)}")
+            else:
+                logger.warning("Flat frame has zero mean, skipping flat correction")
+                data = None
+        else:
+            logger.info(f"Loaded {label.lower()} master: {os.path.basename(master.master_path)}")
+        arrays[label] = data
+    return arrays
+
+
+def _calibrate_light_file(light_file, masters: dict, master_data: dict) -> str:
+    """Write ``cal_<name>`` next to *light_file*, catalog it and soft-delete the source. Returns the new path."""
+    import hashlib
+    import uuid
+
+    import numpy as np
+    from astropy.io import fits
+
+    from galileo.library.core.utils import normalize_file_path
+
+    # Load light frame
+    light_data0, light_header = _read_fits_image(light_file.fitsFileName)
+    light_data = light_data0.astype(np.float32, copy=False)
+
+    # Apply calibration: (Light - Bias - Dark) / Flat
+    calibrated_data = light_data.copy()
+
+    for label in ("Bias", "Dark", "Flat"):
+        master_array = master_data.get(label)
+        if master_array is not None and master_array.shape != calibrated_data.shape:
+            logger.warning(
+                f"{label} master shape {master_array.shape} does not match light shape {calibrated_data.shape}; skipping {label.lower()}"
+            )
+            master_array = None
+        if master_array is None:
+            continue
+
+        if label == "Flat":
+            mask = master_array > 0
+            calibrated_data[mask] /= master_array[mask]
+        else:
+            calibrated_data -= master_array
+        light_header['HISTORY'] = f'{label} corrected using {os.path.basename(masters[label].master_path)}'
+
+    # Update header
+    light_header['CALIBRAT'] = True
+    # NOTE: this file imports `datetime` module at top-level; use `dt` alias for datetime.datetime
+    light_header['CALDATE'] = dt.now(UTC).replace(tzinfo=None).isoformat()
+    light_header['HISTORY'] = 'Calibrated by Galileo'
+
+    # Save calibrated frame in same directory with cal_ prefix
+    source_dir = os.path.dirname(light_file.fitsFileName)
+    base_filename = os.path.basename(light_file.fitsFileName)
+    calibrated_filename = f"cal_{base_filename}"
+    calibrated_path = os.path.join(source_dir, calibrated_filename)
+
+    # Clip and convert
+    calibrated_data = np.clip(calibrated_data, 0, 65535).astype(np.uint16)
+
+    hdu = fits.PrimaryHDU(data=calibrated_data, header=light_header)
+    hdu.writeto(calibrated_path, overwrite=True)
+
+    # Add calibrated file to DB so it shows up in the session
+    calibrated_hash = None
+    try:
+        with open(calibrated_path, 'rb') as f:
+            calibrated_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
+    except Exception as e:
+        logger.warning(f"Failed to hash calibrated file {calibrated_path}: {e}")
+
+    FitsFileModel.create(
+        fitsFileId=str(uuid.uuid4()),
+        fitsFileName=normalize_file_path(calibrated_path),
+        fitsFileDate=light_file.fitsFileDate,
+        fitsFileCalibrated=1,
+        fitsFileType=light_file.fitsFileType,
+        fitsFileStacked=light_file.fitsFileStacked,
+        fitsFileObject=light_file.fitsFileObject,
+        fitsFileExpTime=light_file.fitsFileExpTime,
+        fitsFileXBinning=light_file.fitsFileXBinning,
+        fitsFileYBinning=light_file.fitsFileYBinning,
+        fitsFileCCDTemp=light_file.fitsFileCCDTemp,
+        fitsFileTelescop=light_file.fitsFileTelescop,
+        fitsFileInstrument=light_file.fitsFileInstrument,
+        fitsFileGain=light_file.fitsFileGain,
+        fitsFileOffset=light_file.fitsFileOffset,
+        fitsFileFilter=light_file.fitsFileFilter,
+        fitsFileHash=calibrated_hash,
+        fitsFileSession=light_file.fitsFileSession,
+        fitsFileCloudURL=None,
+        fitsFileSoftDelete=False,
+        fitsFileCalibrationDate=dt.now(UTC).replace(tzinfo=None),
+        fitsFileOriginalFile=normalize_file_path(light_file.fitsFileName),
+        fitsFileOriginalCloudURL=light_file.fitsFileCloudURL
+    )
+
+    # Soft-delete the source record so the session shows calibrated outputs
+    light_file.fitsFileSoftDelete = True
+    light_file.save()
+
+    logger.info(f"Calibrated: {calibrated_filename}")
+    return calibrated_path
+
 
 class SessionsWidget(QWidget):
     def __init__(self):
@@ -126,7 +285,7 @@ class SessionsWidget(QWidget):
             self._open_path_in_external_viewer(stack_path)
 
         except Exception as e:
-            logger.error(f"Error handling thumbnail double-click: {e}")
+            logger.exception(f"Error handling thumbnail double-click: {e}")
 
     def _get_session_stack_output_dir(self, session: FitsSessionModel) -> str:
         """Best-effort directory where stack outputs are expected to be written."""
@@ -205,18 +364,9 @@ class SessionsWidget(QWidget):
         except Exception:
             return ''
 
-    def show_context_menu(self, position):
-        """Show context menu for session items with master frame management"""
-        item = self.sessions_tree.itemAt(position)
-        if not item:
-            return
-
-        # Get all selected items
-        selected_items = self.sessions_tree.selectedItems()
-        if not selected_items:
-            return
-
-        # Analyze selected items to determine menu options
+    @staticmethod
+    def _classify_selection(selected_items):
+        """Split the selected tree items into ``(light_sessions, calibration_sessions, parent_objects)``."""
         light_sessions = []
         calibration_sessions = []
         parent_objects = []
@@ -229,11 +379,80 @@ class SessionsWidget(QWidget):
                 continue
 
             # This is a session item
-            object_name = parent.text(0)
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if parent.text(0) in ['Bias', 'Dark', 'Flat']:
                 calibration_sessions.append(selected_item)
             else:
                 light_sessions.append(selected_item)
+        return light_sessions, calibration_sessions, parent_objects
+
+    def _add_light_session_actions(self, context_menu, light_sessions) -> dict:
+        """Check-out, calibrate, stack and thumbnail entries for the selected light session(s)."""
+        actions: dict = {}
+        if light_sessions:
+            if len(light_sessions) == 1:
+                actions["checkout"] = context_menu.addAction("📂 Check out")
+                actions["checkout"].setToolTip("Create symbolic links for this session's files")
+            else:
+                actions["checkout"] = context_menu.addAction(f"📂 Check out ({len(light_sessions)} sessions)")
+                actions["checkout"].setToolTip("Create symbolic links for selected light sessions")
+
+        if len(light_sessions) == 1:
+            actions["calibrate"] = context_menu.addAction("⚙️ Calibrate")
+            actions["calibrate"].setToolTip("Calibrate light frames in this session using available master frames")
+
+            actions["stack"] = context_menu.addAction("📚 Stack")
+            actions["stack"].setToolTip(
+                "Stack light frames and open the result in the external FITS viewer. If the session is not precalibrated, calibration runs automatically if needed."
+            )
+
+            actions["photometric_stack"] = context_menu.addAction("📚 Stack (photometric)")
+            actions["photometric_stack"].setToolTip(
+                "Create a photometry-safe stack (registered mean, no sigma clipping) and open the result in the external FITS viewer. If the session is not precalibrated, calibration runs automatically if needed."
+            )
+
+            actions["regenerate_thumbnail"] = context_menu.addAction("🖼️ Regenerate Thumbnail")
+            actions["regenerate_thumbnail"].setToolTip(
+                "Recreate the session thumbnail from the most recent stack file (photometric/deep/sample) if available."
+            )
+        return actions
+
+    @staticmethod
+    def _add_view_master_action(context_menu, selected_items, parent_objects):
+        """"View Master" entry when exactly one session is selected and it has a master frame."""
+        if len(selected_items) != 1 or parent_objects:
+            return None
+        session_id = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
+        if not session_id:
+            return None
+        try:
+            master = Masters.select().where(
+                Masters.source_session_id == session_id,
+                Masters.soft_delete == False
+            ).first()
+            if not master:
+                logger.debug(f"No master found for session {session_id}")
+                return None
+            action = context_menu.addAction("🔍 View Master")
+            action.setToolTip(f"Open master {master.master_type} frame in external FITS viewer")
+            logger.debug(f"Found master for session {session_id}: {master.master_path}")
+            return action
+        except Exception as e:
+            logger.exception(f"Error checking for master: {e}")
+            return None
+
+    def show_context_menu(self, position):
+        """Show context menu for session items with master frame management"""
+        item = self.sessions_tree.itemAt(position)
+        if not item:
+            return
+
+        # Get all selected items
+        selected_items = self.sessions_tree.selectedItems()
+        if not selected_items:
+            return
+
+        # Analyze selected items to determine menu options
+        light_sessions, _calibration_sessions, parent_objects = self._classify_selection(selected_items)
 
         # Create context menu based on selection
         context_menu = QMenu(self)
@@ -241,171 +460,104 @@ class SessionsWidget(QWidget):
         # Session ID clipboard helper
         session_items_for_clipboard = [si for si in selected_items if si.parent() is not None]
         session_ids_for_clipboard = [str(si.data(0, Qt.ItemDataRole.UserRole)) for si in session_items_for_clipboard if si.data(0, Qt.ItemDataRole.UserRole)]
+        copy_session_id_action = None
         if session_ids_for_clipboard:
             label = "📋 Copy Session ID" if len(session_ids_for_clipboard) == 1 else f"📋 Copy Session IDs ({len(session_ids_for_clipboard)})"
             copy_session_id_action = context_menu.addAction(label)
             copy_session_id_action.setToolTip("Copy the selected session ID(s) to the clipboard")
-        else:
-            copy_session_id_action = None
 
-        # === CHECKOUT OPTIONS ===
-        if light_sessions:
-            if len(light_sessions) == 1:
-                checkout_action = context_menu.addAction("📂 Check out")
-                checkout_action.setToolTip("Create symbolic links for this session's files")
-            else:
-                checkout_action = context_menu.addAction(f"📂 Check out ({len(light_sessions)} sessions)")
-                checkout_action.setToolTip("Create symbolic links for selected light sessions")
-        else:
-            checkout_action = None
-
-        # === CALIBRATION OPTIONS ===
-        if light_sessions and len(light_sessions) == 1:
-            calibrate_action = context_menu.addAction("⚙️ Calibrate")
-            calibrate_action.setToolTip("Calibrate light frames in this session using available master frames")
-
-            sample_stack_action = context_menu.addAction("📚 Stack")
-            sample_stack_action.setToolTip(
-                "Stack light frames and open the result in the external FITS viewer. If the session is not precalibrated, calibration runs automatically if needed."
-            )
-
-            photometric_stack_action = context_menu.addAction("📚 Stack (photometric)")
-            photometric_stack_action.setToolTip(
-                "Create a photometry-safe stack (registered mean, no sigma clipping) and open the result in the external FITS viewer. If the session is not precalibrated, calibration runs automatically if needed."
-            )
-
-            regenerate_thumbnail_action = context_menu.addAction("🖼️ Regenerate Thumbnail")
-            regenerate_thumbnail_action.setToolTip(
-                "Recreate the session thumbnail from the most recent stack file (photometric/deep/sample) if available."
-            )
-        else:
-            calibrate_action = None
-            sample_stack_action = None
-            photometric_stack_action = None
-            regenerate_thumbnail_action = None
-
-        # === MASTER FRAME OPTIONS ===
-        view_master_action = None
-        if len(selected_items) == 1 and not parent_objects:
-            # Check if this session has a master frame
-            session_id = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
-            if session_id:
-                try:
-                    master = Masters.select().where(
-                        Masters.source_session_id == session_id,
-                        Masters.soft_delete == False
-                    ).first()
-                    if master:
-                        view_master_action = context_menu.addAction("🔍 View Master")
-                        view_master_action.setToolTip(f"Open master {master.master_type} frame in external FITS viewer")
-                        logger.debug(f"Found master for session {session_id}: {master.master_path}")
-                    else:
-                        logger.debug(f"No master found for session {session_id}")
-                except Exception as e:
-                    logger.error(f"Error checking for master: {e}")
+        actions = self._add_light_session_actions(context_menu, light_sessions)
+        view_master_action = self._add_view_master_action(context_menu, selected_items, parent_objects)
 
         # Show the menu and handle selected action
         if context_menu.isEmpty():
             return
 
         action = context_menu.exec(self.sessions_tree.viewport().mapToGlobal(position))
-
         if not action:
             return
 
         # === HANDLE ACTIONS ===
-        # Checkout actions
-        if action == checkout_action:
+        if action == actions.get("checkout"):
             if len(light_sessions) == 1:
                 logger.info(f"Checking out session: {light_sessions[0].parent().text(0)} on {light_sessions[0].text(2)}")
                 self.checkout_session(light_sessions[0])
             else:
                 logger.info(f"Checking out {len(light_sessions)} sessions")
                 self.checkout_multiple_sessions(light_sessions)
-
-        # Calibrate action
-        elif action == calibrate_action:
+        elif action == actions.get("calibrate"):
             logger.info(f"Calibrating session: {light_sessions[0].parent().text(0)} on {light_sessions[0].text(2)}")
             self.calibrate_session(light_sessions[0])
-
-        # Stack action
-        elif action == sample_stack_action:
+        elif action == actions.get("stack"):
             logger.info(f"Stacking session: {light_sessions[0].parent().text(0)} on {light_sessions[0].text(2)}")
             self.sample_stack_session(light_sessions[0])
-
-        # Photometric stack action
-        elif action == photometric_stack_action:
+        elif action == actions.get("photometric_stack"):
             logger.info(f"Photometric stacking session: {light_sessions[0].parent().text(0)} on {light_sessions[0].text(2)}")
             self.photometric_stack_session(light_sessions[0])
-
-        # Regenerate thumbnail action
-        elif action == regenerate_thumbnail_action:
-            try:
-                item = light_sessions[0]
-                session_id = item.data(0, Qt.ItemDataRole.UserRole)
-                if not session_id:
-                    QMessageBox.warning(self, "Error", "Session ID not found")
-                    return
-
-                parent_item = item.parent()
-                object_name = parent_item.text(0) if parent_item else "Unknown"
-                if object_name in ['Bias', 'Dark', 'Flat']:
-                    QMessageBox.information(self, "Not Applicable", "Thumbnails are only generated for light sessions.")
-                    return
-
-                try:
-                    session = FitsSessionModel.get_by_id(str(session_id))
-                except Exception:
-                    session = None
-                if not session:
-                    QMessageBox.warning(self, "Error", "Session not found in database")
-                    return
-
-                out_dir = self._get_session_stack_output_dir(session)
-                if not out_dir:
-                    QMessageBox.information(self, "No Stack", "No stack location found for this session.")
-                    return
-
-                stack_path = self._find_best_stack_for_session(session=session, object_name=object_name, out_dir=out_dir)
-                if not stack_path:
-                    QMessageBox.information(self, "No Stack", "No stacked FITS file found for this session.")
-                    return
-
-                from galileo.library.core.master_manager import get_master_manager
-                master_manager = get_master_manager()
-                out_thumb = master_manager._write_light_session_thumbnail(
-                    stacked_fits_path=stack_path,
-                    session_id=str(session_id),
-                    width_px=150,
-                )
-
-                if not out_thumb or not os.path.exists(out_thumb):
-                    QMessageBox.warning(self, "Thumbnail Failed", "Failed to regenerate thumbnail.")
-                    return
-
-                logger.info(f"Thumbnail regenerated for session {session_id}: {out_thumb}")
-                self.load_sessions_data()
-
-            except Exception as e:
-                logger.error(f"Error regenerating thumbnail: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to regenerate thumbnail:\n{e!s}")
-
-        # View master action
+        elif action == actions.get("regenerate_thumbnail"):
+            self._regenerate_session_thumbnail(light_sessions[0])
         elif action == view_master_action:
             session_id = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
             self.view_master_frame(session_id)
-
-        # Copy Session ID(s)
         elif action == copy_session_id_action:
             try:
-                ids = session_ids_for_clipboard
-                if not ids:
+                if not session_ids_for_clipboard:
                     return
-                text = "\n".join(ids)
-                QApplication.clipboard().setText(text)
-                logger.info(f"Copied {len(ids)} session id(s) to clipboard")
+                QApplication.clipboard().setText("\n".join(session_ids_for_clipboard))
+                logger.info(f"Copied {len(session_ids_for_clipboard)} session id(s) to clipboard")
             except Exception as e:
-                logger.error(f"Failed to copy session id(s) to clipboard: {e}")
+                logger.exception(f"Failed to copy session id(s) to clipboard: {e}")
+
+    def _regenerate_session_thumbnail(self, item) -> None:
+        """Recreate a light session's thumbnail from its most recent stack, reporting problems to the user."""
+        try:
+            session_id = item.data(0, Qt.ItemDataRole.UserRole)
+            if not session_id:
+                QMessageBox.warning(self, "Error", "Session ID not found")
+                return
+
+            parent_item = item.parent()
+            object_name = parent_item.text(0) if parent_item else "Unknown"
+            if object_name in ['Bias', 'Dark', 'Flat']:
+                QMessageBox.information(self, "Not Applicable", "Thumbnails are only generated for light sessions.")
+                return
+
+            try:
+                session = FitsSessionModel.get_by_id(str(session_id))
+            except Exception:
+                session = None
+            if not session:
+                QMessageBox.warning(self, "Error", "Session not found in database")
+                return
+
+            out_dir = self._get_session_stack_output_dir(session)
+            if not out_dir:
+                QMessageBox.information(self, "No Stack", "No stack location found for this session.")
+                return
+
+            stack_path = self._find_best_stack_for_session(session=session, object_name=object_name, out_dir=out_dir)
+            if not stack_path:
+                QMessageBox.information(self, "No Stack", "No stacked FITS file found for this session.")
+                return
+
+            from galileo.library.core.master_manager import get_master_manager
+            master_manager = get_master_manager()
+            out_thumb = master_manager._write_light_session_thumbnail(
+                stacked_fits_path=stack_path,
+                session_id=str(session_id),
+                width_px=150,
+            )
+
+            if not out_thumb or not os.path.exists(out_thumb):
+                QMessageBox.warning(self, "Thumbnail Failed", "Failed to regenerate thumbnail.")
+                return
+
+            logger.info(f"Thumbnail regenerated for session {session_id}: {out_thumb}")
+            self.load_sessions_data()
+
+        except Exception as e:
+            logger.exception(f"Error regenerating thumbnail: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to regenerate thumbnail:\n{e!s}")
 
     def view_master_frame(self, session_id):
         """Open master frame in external FITS viewer"""
@@ -430,7 +582,7 @@ class SessionsWidget(QWidget):
             self._open_path_in_external_viewer(master_path)
 
         except Exception as e:
-            logger.error(f"Error viewing master frame: {e}")
+            logger.exception(f"Error viewing master frame: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open master frame:\n{e!s}")
 
     def _open_path_in_external_viewer(self, file_path: str) -> None:
@@ -468,7 +620,7 @@ class SessionsWidget(QWidget):
             else:
                 QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
         except Exception as e:
-            logger.error(f"Failed to open file in external viewer: {e}")
+            logger.exception(f"Failed to open file in external viewer: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{e!s}")
 
     def checkout_session(self, item):
@@ -490,12 +642,7 @@ class SessionsWidget(QWidget):
     def calibrate_session(self, item, *, confirm: bool = True, show_results: bool = True):
         """Calibrate light frames in a session using available master frames"""
         try:
-            from astropy.io import fits
-            import numpy as np
             from galileo.library.core.master_manager import get_master_manager
-            from galileo.library.core.utils import normalize_file_path
-            import uuid
-            import hashlib
 
             # Get session ID from tree item
             session_id = item.data(0, Qt.ItemDataRole.UserRole)
@@ -528,28 +675,10 @@ class SessionsWidget(QWidget):
                 return {"error": "Calibration not applicable to calibration sessions"}
 
             # Find matching master frames
-            master_manager = get_master_manager()
-            session_data = {
-                'telescope': session.fitsSessionTelescope,
-                'instrument': session.fitsSessionImager,
-                'exposure_time': session.fitsSessionExposure,
-                'filter_name': session.fitsSessionFilter,
-                'binning_x': session.fitsSessionBinningX,
-                'binning_y': session.fitsSessionBinningY,
-                'ccd_temp': session.fitsSessionCCDTemp,
-                'gain': session.fitsSessionGain,
-                'offset': session.fitsSessionOffset
-            }
+            masters = self._find_session_masters(get_master_manager(), session)
+            available_masters = [f"{label}: {os.path.basename(m.master_path)}" for label, m in masters.items()]
 
-            master_bias = master_manager.find_matching_master(session_data, 'bias')
-            master_dark = master_manager.find_matching_master(session_data, 'dark')
-            master_flat = master_manager.find_matching_master(session_data, 'flat')
-
-            has_bias = master_bias is not None and os.path.exists(master_bias.master_path)
-            has_dark = master_dark is not None and os.path.exists(master_dark.master_path)
-            has_flat = master_flat is not None and os.path.exists(master_flat.master_path)
-
-            if not (has_bias or has_dark or has_flat):
+            if not masters:
                 details = (
                     f"No matching master frames found for this session.\n\n"
                     f"Telescope: {session.fitsSessionTelescope}\n"
@@ -561,15 +690,6 @@ class SessionsWidget(QWidget):
                 if show_results:
                     QMessageBox.warning(self, "No Master Frames", details)
                 return {"error": "No matching master frames found", "details": details}
-
-            # Show available masters
-            available_masters = []
-            if has_bias:
-                available_masters.append(f"Bias: {os.path.basename(master_bias.master_path)}")
-            if has_dark:
-                available_masters.append(f"Dark: {os.path.basename(master_dark.master_path)}")
-            if has_flat:
-                available_masters.append(f"Flat: {os.path.basename(master_flat.master_path)}")
 
             if confirm:
                 # Confirm calibration
@@ -604,74 +724,13 @@ class SessionsWidget(QWidget):
             progress.show()
             QApplication.processEvents()
 
-            # Load master frames
-            master_bias_data = None
-            master_dark_data = None
-            master_flat_data = None
-
-            def _extract_image_hdu(hdul):
-                """Return the first HDU with 2D image data, or None."""
-                for hdu in hdul:
-                    data = getattr(hdu, 'data', None)
-                    if data is None:
-                        continue
-                    arr = np.asarray(data)
-                    # Some writers store a single plane as (1, H, W)
-                    if arr.ndim == 3 and arr.shape[0] == 1:
-                        arr = arr[0]
-                    if arr.ndim != 2:
-                        continue
-                    return hdu, arr
-                return None, None
-
-            def _read_fits_image(file_path: str):
-                """Read a FITS image, handling data-in-extension FITS files.
-
-                Returns (data, header). Header is taken from the image HDU when
-                available; falls back to primary header.
-                """
-                with fits.open(file_path) as hdul:
-                    primary_header = hdul[0].header.copy()
-                    hdu, data = _extract_image_hdu(hdul)
-                    if data is None:
-                        raise ValueError("No 2D image data found in any HDU")
-                    header = getattr(hdu, 'header', None)
-                    return data, (header.copy() if header is not None else primary_header)
-
             try:
-                if has_bias:
-                    progress.setLabelText("Loading bias master...")
-                    QApplication.processEvents()
-                    bias_data, _bias_header = _read_fits_image(master_bias.master_path)
-                    master_bias_data = bias_data.astype(np.float32, copy=False)
-                    logger.info(f"Loaded bias master: {os.path.basename(master_bias.master_path)}")
-
-                if has_dark:
-                    progress.setLabelText("Loading dark master...")
-                    QApplication.processEvents()
-                    dark_data, _dark_header = _read_fits_image(master_dark.master_path)
-                    master_dark_data = dark_data.astype(np.float32, copy=False)
-                    logger.info(f"Loaded dark master: {os.path.basename(master_dark.master_path)}")
-
-                if has_flat:
-                    progress.setLabelText("Loading flat master...")
-                    QApplication.processEvents()
-                    flat_data, _flat_header = _read_fits_image(master_flat.master_path)
-                    master_flat_data = flat_data.astype(np.float32, copy=False)
-                    flat_mean = np.mean(master_flat_data)
-                    if flat_mean > 0:
-                        master_flat_data = master_flat_data / flat_mean
-                    else:
-                        logger.warning("Flat frame has zero mean, skipping flat correction")
-                        master_flat_data = None
-                    if master_flat_data is not None:
-                        logger.info(f"Loaded and normalized flat master: {os.path.basename(master_flat.master_path)}")
-
+                master_data = _load_master_arrays(masters, progress)
             except Exception as e:
                 progress.close()
                 if show_results:
                     QMessageBox.critical(self, "Error", f"Failed to load master frames: {e!s}")
-                logger.error(f"Error loading master frames: {e}")
+                logger.exception(f"Error loading master frames: {e}")
                 return {"error": f"Failed to load master frames: {e!s}"}
 
             # Calibrate each light frame
@@ -699,108 +758,11 @@ class SessionsWidget(QWidget):
                         error_count += 1
                         continue
 
-                    # Load light frame
-                    light_data0, light_header = _read_fits_image(light_file.fitsFileName)
-                    light_data = light_data0.astype(np.float32, copy=False)
-
-                    # Apply calibration: (Light - Bias - Dark) / Flat
-                    calibrated_data = light_data.copy()
-
-                    bias_data = master_bias_data
-                    if bias_data is not None and bias_data.shape != calibrated_data.shape:
-                        logger.warning(
-                            f"Bias master shape {bias_data.shape} does not match light shape {calibrated_data.shape}; skipping bias"
-                        )
-                        bias_data = None
-
-                    if bias_data is not None:
-                        calibrated_data -= bias_data
-                        light_header['HISTORY'] = f'Bias corrected using {os.path.basename(master_bias.master_path)}'
-
-                    dark_data = master_dark_data
-                    if dark_data is not None and dark_data.shape != calibrated_data.shape:
-                        logger.warning(
-                            f"Dark master shape {dark_data.shape} does not match light shape {calibrated_data.shape}; skipping dark"
-                        )
-                        dark_data = None
-
-                    if dark_data is not None:
-                        calibrated_data -= dark_data
-                        light_header['HISTORY'] = f'Dark corrected using {os.path.basename(master_dark.master_path)}'
-
-                    flat_data = master_flat_data
-                    if flat_data is not None and flat_data.shape != calibrated_data.shape:
-                        logger.warning(
-                            f"Flat master shape {flat_data.shape} does not match light shape {calibrated_data.shape}; skipping flat"
-                        )
-                        flat_data = None
-
-                    if flat_data is not None:
-                        mask = flat_data > 0
-                        calibrated_data[mask] /= flat_data[mask]
-                        light_header['HISTORY'] = f'Flat corrected using {os.path.basename(master_flat.master_path)}'
-
-                    # Update header
-                    light_header['CALIBRAT'] = True
-                    # NOTE: this file imports `datetime` module at top-level; use `dt` alias for datetime.datetime
-                    light_header['CALDATE'] = dt.now().isoformat()
-                    light_header['HISTORY'] = 'Calibrated by Galileo'
-
-                    # Save calibrated frame in same directory with cal_ prefix
-                    source_dir = os.path.dirname(light_file.fitsFileName)
-                    base_filename = os.path.basename(light_file.fitsFileName)
-                    calibrated_filename = f"cal_{base_filename}"
-                    calibrated_path = os.path.join(source_dir, calibrated_filename)
-
-                    # Clip and convert
-                    calibrated_data = np.clip(calibrated_data, 0, 65535).astype(np.uint16)
-
-                    hdu = fits.PrimaryHDU(data=calibrated_data, header=light_header)
-                    hdu.writeto(calibrated_path, overwrite=True)
-
-                    # Add calibrated file to DB so it shows up in the session
-                    calibrated_hash = None
-                    try:
-                        with open(calibrated_path, 'rb') as f:
-                            calibrated_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
-                    except Exception as e:
-                        logger.warning(f"Failed to hash calibrated file {calibrated_path}: {e}")
-
-                    FitsFileModel.create(
-                        fitsFileId=str(uuid.uuid4()),
-                        fitsFileName=normalize_file_path(calibrated_path),
-                        fitsFileDate=light_file.fitsFileDate,
-                        fitsFileCalibrated=1,
-                        fitsFileType=light_file.fitsFileType,
-                        fitsFileStacked=light_file.fitsFileStacked,
-                        fitsFileObject=light_file.fitsFileObject,
-                        fitsFileExpTime=light_file.fitsFileExpTime,
-                        fitsFileXBinning=light_file.fitsFileXBinning,
-                        fitsFileYBinning=light_file.fitsFileYBinning,
-                        fitsFileCCDTemp=light_file.fitsFileCCDTemp,
-                        fitsFileTelescop=light_file.fitsFileTelescop,
-                        fitsFileInstrument=light_file.fitsFileInstrument,
-                        fitsFileGain=light_file.fitsFileGain,
-                        fitsFileOffset=light_file.fitsFileOffset,
-                        fitsFileFilter=light_file.fitsFileFilter,
-                        fitsFileHash=calibrated_hash,
-                        fitsFileSession=light_file.fitsFileSession,
-                        fitsFileCloudURL=None,
-                        fitsFileSoftDelete=False,
-                        fitsFileCalibrationDate=dt.now(),
-                        fitsFileOriginalFile=normalize_file_path(light_file.fitsFileName),
-                        fitsFileOriginalCloudURL=light_file.fitsFileCloudURL
-                    )
-
-                    # Soft-delete the source record so the session shows calibrated outputs
-                    light_file.fitsFileSoftDelete = True
-                    light_file.save()
-
+                    _calibrate_light_file(light_file, masters, master_data)
                     calibrated_count += 1
-                    logger.info(f"Calibrated: {calibrated_filename}")
 
                 except Exception as e:
-                    logger.error(f"Error calibrating {light_file.fitsFileName}: {e}")
+                    logger.exception(f"Error calibrating {light_file.fitsFileName}: {e}")
                     error_count += 1
 
             progress.setValue(len(light_files))
@@ -839,8 +801,29 @@ class SessionsWidget(QWidget):
         except Exception as e:
             if show_results:
                 QMessageBox.critical(self, "Error", f"Failed to calibrate session: {e!s}")
-            logger.error(f"Error in calibrate_session: {e!s}")
+            logger.exception(f"Error in calibrate_session: {e!s}")
             return {"error": str(e)}
+
+    @staticmethod
+    def _find_session_masters(master_manager, session) -> dict:
+        """The bias/dark/flat masters (keyed ``Bias``/``Dark``/``Flat``) that match *session* and exist on disk."""
+        session_data = {
+            'telescope': session.fitsSessionTelescope,
+            'instrument': session.fitsSessionImager,
+            'exposure_time': session.fitsSessionExposure,
+            'filter_name': session.fitsSessionFilter,
+            'binning_x': session.fitsSessionBinningX,
+            'binning_y': session.fitsSessionBinningY,
+            'ccd_temp': session.fitsSessionCCDTemp,
+            'gain': session.fitsSessionGain,
+            'offset': session.fitsSessionOffset
+        }
+        masters = {}
+        for label, cal_type in (("Bias", "bias"), ("Dark", "dark"), ("Flat", "flat")):
+            master = master_manager.find_matching_master(session_data, cal_type)
+            if master is not None and os.path.exists(master.master_path):
+                masters[label] = master
+        return masters
 
         # === SESSION MANAGEMENT METHODS ===
 
@@ -974,7 +957,7 @@ class SessionsWidget(QWidget):
             # Cancellation
             logger.info(f"Stack cancelled: {e}")
         except Exception as e:
-            logger.error(f"Error creating stack: {e}")
+            logger.exception(f"Error creating stack: {e}")
             QMessageBox.critical(self, "Error", f"Failed to create stack:\n{e!s}")
 
     def photometric_stack_session(self, item):
@@ -1119,7 +1102,7 @@ class SessionsWidget(QWidget):
         except RuntimeError as e:
             logger.info(f"Photometric stack cancelled: {e}")
         except Exception as e:
-            logger.error(f"Error creating photometric stack: {e}")
+            logger.exception(f"Error creating photometric stack: {e}")
             QMessageBox.critical(self, "Error", f"Failed to create photometric stack:\n{e!s}")
 
     def show_session_properties(self, session_item):
@@ -1239,7 +1222,7 @@ class SessionsWidget(QWidget):
             dialog.exec()
 
         except Exception as e:
-            logger.error(f"Error showing session properties: {e}")
+            logger.exception(f"Error showing session properties: {e}")
             QMessageBox.critical(self, "Error", f"Failed to show session properties:\n\n{e}")
 
     def update_sessions(self):
@@ -1294,7 +1277,7 @@ class SessionsWidget(QWidget):
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
-            logger.error(f"Error creating light sessions: {e}")
+            logger.exception(f"Error creating light sessions: {e}")
             QMessageBox.critical(self, "Error", f"Failed to create light sessions: {e}")
 
     def update_calibration_sessions(self):
@@ -1349,7 +1332,7 @@ class SessionsWidget(QWidget):
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
-            logger.error(f"Error creating calibration sessions: {e}")
+            logger.exception(f"Error creating calibration sessions: {e}")
             QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
 
     def load_sessions_data(self):
@@ -1557,10 +1540,10 @@ class SessionsWidget(QWidget):
     def _build_quality_tooltip(self, session):
         """
         Build a tooltip string with quality metrics for a session.
-        
+
         Args:
             session: fitsSession object
-            
+
         Returns:
             str: Formatted tooltip with quality metrics
         """
@@ -1840,10 +1823,7 @@ class SessionsWidget(QWidget):
         tooltip = f"Calibration Resources ({readiness_percentage:.0f}% ready):\n" + "\n".join(tooltip_parts)
 
         # Build display text - combine all status parts with commas
-        if status_parts:
-            text = ", ".join(status_parts)
-        else:
-            text = "No resources"
+        text = ", ".join(status_parts) if status_parts else "No resources"
 
         return {
             "text": text,
@@ -1920,7 +1900,7 @@ class SessionsWidget(QWidget):
                                   f"Successfully cleared {deleted_count} sessions from the database.")
 
         except Exception as e:
-            logger.error(f"Error clearing sessions: {e}")
+            logger.exception(f"Error clearing sessions: {e}")
             QMessageBox.critical(self, "Error", f"Failed to clear sessions: {e}")
 
     def link_sessions(self):
@@ -1975,7 +1955,7 @@ class SessionsWidget(QWidget):
         except Exception as e:
             if 'progress_dialog' in locals():
                 progress_dialog.close()
-            logger.error(f"Error linking sessions: {e}")
+            logger.exception(f"Error linking sessions: {e}")
             QMessageBox.critical(self, "Error", f"Failed to link sessions: {e}")
 
     def run_auto_calibration(self):
@@ -1993,7 +1973,7 @@ class SessionsWidget(QWidget):
                 self.load_sessions_data()
 
         except Exception as e:
-            logger.error(f"Error running auto-calibration workflow: {e}")
+            logger.exception(f"Error running auto-calibration workflow: {e}")
             QMessageBox.critical(self, "Error", f"Failed to run auto-calibration workflow:\n\n{e}")
 
     def regenerate_sessions(self):
@@ -2037,7 +2017,7 @@ class SessionsWidget(QWidget):
                 self._do_regenerate_sessions_new_only(show_user_messages=True)
 
         except Exception as e:
-            logger.error(f"Error in regenerate_sessions: {e}")
+            logger.exception(f"Error in regenerate_sessions: {e}")
             QMessageBox.critical(self, "Error", f"Session regeneration failed: {e}")
 
     def _do_regenerate_sessions(self):
@@ -2060,7 +2040,7 @@ class SessionsWidget(QWidget):
                 QApplication.processEvents()
 
             except Exception as e:
-                logger.error(f"Error clearing sessions: {e}")
+                logger.exception(f"Error clearing sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to clear existing sessions: {e}")
                 return
 
@@ -2110,7 +2090,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error creating light sessions: {e}")
+                logger.exception(f"Error creating light sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to create light sessions: {e}")
                 return
 
@@ -2163,7 +2143,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error creating calibration sessions: {e}")
+                logger.exception(f"Error creating calibration sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
                 return
 
@@ -2211,7 +2191,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error linking sessions: {e}")
+                logger.exception(f"Error linking sessions: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to link sessions: {e}")
                 return
 
@@ -2226,7 +2206,7 @@ class SessionsWidget(QWidget):
             logger.info(f"Session regeneration complete: {total_light} light, {total_cal} calibration, {total_linked} linked")
 
         except Exception as e:
-            logger.error(f"Unexpected error during session regeneration: {e}")
+            logger.exception(f"Unexpected error during session regeneration: {e}")
             QMessageBox.critical(self, "Error", f"Unexpected error during session regeneration: {e}")
 
     def _do_regenerate_sessions_new_only(self, show_user_messages: bool = True):
@@ -2307,7 +2287,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error creating light sessions: {e}")
+                logger.exception(f"Error creating light sessions: {e}")
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to create light sessions: {e}")
                 return
@@ -2360,7 +2340,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error creating calibration sessions: {e}")
+                logger.exception(f"Error creating calibration sessions: {e}")
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to create calibration sessions: {e}")
                 return
@@ -2407,7 +2387,7 @@ class SessionsWidget(QWidget):
             except Exception as e:
                 if 'progress_dialog' in locals():
                     progress_dialog.close()
-                logger.error(f"Error linking sessions: {e}")
+                logger.exception(f"Error linking sessions: {e}")
                 if show_user_messages:
                     QMessageBox.critical(self, "Error", f"Failed to link sessions: {e}")
                 return
@@ -2431,7 +2411,7 @@ class SessionsWidget(QWidget):
             logger.info(f"New-only session creation complete: {total_light} light, {total_cal} calibration, {total_linked} linked")
 
         except Exception as e:
-            logger.error(f"Unexpected error during new-only session regeneration: {e}")
+            logger.exception(f"Unexpected error during new-only session regeneration: {e}")
             if show_user_messages:
                 QMessageBox.critical(self, "Error", f"Unexpected error during session creation: {e}")
 
@@ -2458,6 +2438,6 @@ class SessionsWidget(QWidget):
             logger.info("Auto-regeneration completed")
 
         except Exception as e:
-            logger.error(f"Error in auto_regenerate_sessions: {e}")
+            logger.exception(f"Error in auto_regenerate_sessions: {e}")
             if 'progress_dialog' in locals():
                 progress_dialog.close()

@@ -91,10 +91,34 @@ class SafetyError(GalileoError):
 # --- Library / repository errors ------------------------------------------
 
 class LibraryError(GalileoError):
-    """An image-library operation failed."""
+    """An image-library operation failed.
+
+    Carries an optional machine-readable ``error_code`` and free-form ``details``
+    (extra keyword arguments), inherited from AstroFiler's error model. ``str()``
+    prefixes the code as ``[CODE] message`` when one is set.
+    """
+
+    def __init__(self, message: str = "", error_code: str | None = None, **details: object) -> None:
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.details = details
+
+    def __str__(self) -> str:
+        if self.error_code:
+            return f"[{self.error_code}] {self.message}"
+        return self.message
 
 class DatabaseError(LibraryError):
-    """A database operation failed."""
+    """A database operation failed.
+
+    ``file_path`` names the file being processed when the failure occurred, if any.
+    """
+
+    def __init__(self, message: str = "", error_code: str | None = None,
+                 file_path: str | None = None, **details: object) -> None:
+        super().__init__(message, error_code, **details)
+        self.file_path = file_path
 
 
 # --- Plugin errors --------------------------------------------------------

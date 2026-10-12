@@ -17,12 +17,13 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Re-exported so callers can do ``from galileo.planning.sky_atlas import ObservingLocation``
 from galileo.planning.visibility import HorizonProfile, ObservingLocation  # noqa: F401
+import contextlib
 
 if TYPE_CHECKING:
     pass
@@ -35,7 +36,7 @@ _CATALOG_FILENAME = "galileo_dso_catalog_v2.json"
 _LEGACY_CATALOG_FILENAME = "galileo_dso_catalog.json"
 
 
-class ObjectType(str, Enum):
+class ObjectType(StrEnum):
     GALAXY = "Galaxy"
     NEBULA = "Nebula"
     CLUSTER = "Cluster"
@@ -128,10 +129,8 @@ def _catalog_cache_path() -> Path:
 def _load_catalog() -> list[DeepSkyObject]:
     """Load the DSO catalog, building it from OpenNGC if the cache is absent."""
     cache = _catalog_cache_path()
-    try:
+    with contextlib.suppress(OSError):
         cache.with_name(_LEGACY_CATALOG_FILENAME).unlink(missing_ok=True)
-    except OSError:
-        pass
     if cache.exists():
         try:
             raw = json.loads(cache.read_text("utf-8"))
@@ -207,7 +206,7 @@ def _fetch_catalog_online() -> list[DeepSkyObject]:
         import urllib.request
         tables = []
         for filename in ("NGC.csv", "addendum.csv"):
-            with urllib.request.urlopen(_OPENNGC_URL + filename, timeout=30) as resp:     # noqa: S310 — fixed https URL
+            with urllib.request.urlopen(_OPENNGC_URL + filename, timeout=30) as resp:
                 tables.append(resp.read().decode("utf-8"))
         return _parse_openngc(*tables)
     except Exception:
@@ -748,11 +747,10 @@ class SkyAtlas:
                 continue
             if catalogs and not (catalogs_of(o) & catalogs):
                 continue
-            if visible_tonight and location:
-                if not is_observable_tonight(
-                    o.ra_deg, o.dec_deg, location, date_str, min_altitude_deg, min_duration_hours,
-                ):
-                    continue
+            if visible_tonight and location and not is_observable_tonight(
+                o.ra_deg, o.dec_deg, location, date_str, min_altitude_deg, min_duration_hours,
+            ):
+                continue
             if moon_pos is not None:
                 if moon_separation_deg(o.ra_deg, o.dec_deg, *moon_pos) < min_moon_separation_deg:
                     continue

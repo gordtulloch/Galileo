@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -194,4 +193,4 @@ class DomeService:
             await self.track_mount()
 
 
-__all__ = ["DomeService", "DEFAULT_SLAVE_TOLERANCE_DEG"]
+__all__ = ["DEFAULT_SLAVE_TOLERANCE_DEG", "DomeService"]

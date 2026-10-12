@@ -76,7 +76,7 @@ def fit_parabola(positions: list[int], hfr_values: list[float]) -> tuple:
 
 def vertex_of_parabola(coeffs: tuple) -> float:
     """Return the x-coordinate (focuser position) of the parabola's vertex."""
-    a, b, c = coeffs
+    a, b, _c = coeffs
     if a == 0:
         return 0.0
     return -b / (2 * a)
@@ -168,7 +168,8 @@ class AutofocusService:
                 result = AutofocusResult(
                     success=False,
                     failure_reason="Cancelled",
-                    sample_points=list(zip(positions, hfr_values)),
+                    # strict=False: a cancelled or partial run has fewer HFR readings than focuser positions
+                    sample_points=list(zip(positions, hfr_values, strict=False)),
                 )
                 self.last_run = result
                 return result
@@ -179,21 +180,21 @@ class AutofocusService:
             result = AutofocusResult(
                 success=False,
                 failure_reason="No valid HFR measurements — check camera/stars",
-                sample_points=list(zip(positions, hfr_values)),
+                sample_points=list(zip(positions, hfr_values, strict=False)),
             )
             self.last_run = result
             return result
 
         try:
             coeffs = fit_parabola(positions, hfr_values)
-            best = int(round(vertex_of_parabola(coeffs)))
+            best = round(vertex_of_parabola(coeffs))
             self._last_best_position = best
         except Exception as exc:
             await self._move_to(initial_position)
             result = AutofocusResult(
                 success=False,
                 failure_reason=str(exc),
-                sample_points=list(zip(positions, hfr_values)),
+                sample_points=list(zip(positions, hfr_values, strict=False)),
             )
             self.last_run = result
             return result
@@ -204,7 +205,7 @@ class AutofocusService:
         result = AutofocusResult(
             success=True,
             best_position=best,
-            sample_points=list(zip(positions, hfr_values)),
+            sample_points=list(zip(positions, hfr_values, strict=False)),
             curve_coefficients=coeffs,
         )
         self.last_run = result
@@ -386,7 +387,7 @@ def _measure_stars(frame) -> tuple[float, int]:
             return 2.0, 0
         height, width = data_sub.shape
         radii = []
-        for x, y, a in zip(objects["x"], objects["y"], objects["a"]):
+        for x, y, a in zip(objects["x"], objects["y"], objects["a"], strict=True):
             r_outer = min(max(6.0 * float(a), 6.0), 40.0)
             x0, x1 = max(0, int(x - r_outer)), min(width, int(x + r_outer) + 1)
             y0, y1 = max(0, int(y - r_outer)), min(height, int(y + r_outer) + 1)

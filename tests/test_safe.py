@@ -220,7 +220,7 @@ def test_tc_safe_060_settings_defaults_and_clamping(settings_db, config_folder):
 @pytest.mark.priority("P2")
 async def test_tc_safe_070_tier1_hardware_monitor_trusted(safety_service, mock_safety_monitor):
     """SAFE-070: Tier-1 hardware safety monitor connected via INDI/Alpaca; state fully trusted for abort."""
-    safe_mod = pytest.importorskip("galileo.safety")
+    pytest.importorskip("galileo.safety")
     mock_safety_monitor.tier = 1
     mock_safety_monitor.is_safe = False
 

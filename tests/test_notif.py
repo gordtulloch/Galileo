@@ -135,7 +135,7 @@ def notify_cfg(tmp_path, monkeypatch, settings_db):
 def test_tc_notif_050_settings_persist_and_password_not_in_file(notify_cfg):
     """NOTIF-050: Notification delivery settings persist; the SMTP password is kept in the credential store, not the file."""
     import galileo.notify_settings as ns
-    tmp_path, _store = notify_cfg
+    _tmp_path, _store = notify_cfg
     settings = ns.load_notify_settings()
     assert settings["smtp_host"] == "localhost"
     settings.update(email_address="me@example.com", smtp_host="smtp.example.com", smtp_port=587,

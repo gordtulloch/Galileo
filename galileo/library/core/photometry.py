@@ -142,7 +142,7 @@ def aperture_photometry_sep(
         bkg = sep.Background(data_sep)  # type: ignore[union-attr]
         data_sep = data_sep - bkg
 
-    flux, fluxerr, flag = sep.sum_circle(  # type: ignore[union-attr]
+    flux, _fluxerr, _flag = sep.sum_circle(  # type: ignore[union-attr]
         data_sep,
         x.astype(float),
         y.astype(float),
@@ -168,7 +168,7 @@ def run_aperture_photometry(
 
     image, header = _load_fits_image(fits_path)
     # Keep sigma-clipped stats for a quick sanity background estimate.
-    _, median, _ = sigma_clipped_stats(image, sigma=3.0)
+    _, _median, _ = sigma_clipped_stats(image, sigma=3.0)
 
     # SEP expects native-endian float32.
     image_sep = np.asarray(image, dtype=np.float32)
@@ -213,7 +213,7 @@ def run_aperture_photometry(
 
     # Local background median from annulus; net flux = raw - (bkg_median * area)
     bkg_medians: list[float] = []
-    for xi, yi in zip(x, y):
+    for xi, yi in zip(x, y, strict=True):
         bkg_medians.append(
             _annulus_median_background(
                 image_sep,

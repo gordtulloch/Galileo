@@ -19,18 +19,11 @@ __all__ = [
 
 
 class AstroFilerError(LibraryError):
-    """Base class for library errors that carry an optional error code and details."""
+    """Base class for library errors that carry an optional error code and details.
 
-    def __init__(self, message: str, error_code: str | None = None, **kwargs):
-        super().__init__(message)
-        self.message = message
-        self.error_code = error_code
-        self.details = kwargs
-
-    def __str__(self) -> str:
-        if self.error_code:
-            return f"[{self.error_code}] {self.message}"
-        return self.message
+    The code/details behaviour lives on :class:`galileo.exceptions.LibraryError` so the
+    shared ``DatabaseError`` supports the same keyword arguments.
+    """
 
 
 class FileProcessingError(AstroFilerError):
@@ -104,7 +97,7 @@ class DatabaseTransaction:
 class FileOperation:
     """Context manager for file operations with cleanup."""
 
-    def __init__(self, temp_files: list = None):
+    def __init__(self, temp_files: list | None = None):
         self.temp_files = temp_files or []
 
     def add_temp_file(self, file_path: str):

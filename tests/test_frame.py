@@ -42,7 +42,7 @@ def test_tc_frame_010_fov_rectangle_from_optical_train(minimal_profile, framing_
 @pytest.mark.priority("MVP")
 async def test_tc_frame_020_online_and_offline_sky_background(framing_assistant):
     """FRAME-020: Support at least one online sky-survey source and one offline/cached rendering mode."""
-    frame_mod = pytest.importorskip("galileo.planning.framing")
+    pytest.importorskip("galileo.planning.framing")
 
     framing_assistant._fetch_online_image = AsyncMock(return_value=b"\x89PNG" + b"\x00" * 50)
     online = await framing_assistant.get_background(ra=83.8, dec=-5.4, mode="online")
@@ -90,7 +90,7 @@ def test_tc_frame_020_survey_cutout_extent_is_clamped_for_a_wide_field():
 def test_tc_frame_020_sync_fetch_falls_back_to_cache_without_raising(framing_assistant, monkeypatch):
     """FRAME-020: the Qt-side synchronous fetch helper never raises — an online failure falls back to
     any cached copy (or an empty result, never an exception, so a dialog can't crash opening it)."""
-    frame_mod = pytest.importorskip("galileo.planning.framing")
+    pytest.importorskip("galileo.planning.framing")
 
     async def _boom(*a, **k):
         raise RuntimeError("no network")

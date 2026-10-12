@@ -1,0 +1,50 @@
+name: Code quality
+
+# Static analysis on every push to main and every pull request (see "Code Review.md" for the baseline).
+#  - ruff       BLOCKING, but only for the Python files the change touches, so the existing backlog does not
+#               stop unrelated work while new code stays clean.
+#  - pip-audit  BLOCKING: the dependency set is currently free of known vulnerabilities.
+#  - bandit     informational (3 High findings are the documented plain-FTP smart-telescope support).
+#  - mypy       informational until the Qt "Optional" backlog is cleared.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ruff needs the merge base to find the changed files
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Galileo with dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,dev]"
+
+      - name: ruff (changed Python files only)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          files=$(git diff --name-only --diff-filter=d "$base"...HEAD -- '*.py' 2>/dev/null || true)
+          if [ -z "$files" ]; then echo "No Python files changed"; exit 0; fi
+          echo "$files" | xargs ruff check
+
+      - name: pip-audit
+        run: pip-audit
+
+      - name: bandit (informational)
+        continue-on-error: true
+        run: bandit -r galileo -ll -q
+
+      - name: mypy (informational)
+        continue-on-error: true
+        run: mypy galileo

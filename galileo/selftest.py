@@ -47,7 +47,7 @@ def _check_imports() -> None:
     for name in _REQUIRED_MODULES:
         try:
             importlib.import_module(name)
-        except Exception as exc:  # noqa: BLE001 - report every failure, not just the first
+        except Exception as exc:
             failed.append(f"{name}: {type(exc).__name__}: {exc}")
     if failed:
         raise RuntimeError("could not import:\n    " + "\n    ".join(failed))
@@ -120,7 +120,7 @@ def run(report_file: str | None = None) -> int:
         try:
             check()
             lines.append(f"PASS  {name}")
-        except Exception:  # noqa: BLE001
+        except Exception:
             failures += 1
             lines.append(f"FAIL  {name}\n" + "".join(traceback.format_exc()).rstrip())
     lines.append("SELFTEST OK" if not failures else f"SELFTEST FAILED ({failures} check(s))")

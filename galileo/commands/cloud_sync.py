@@ -30,13 +30,13 @@ Requirements:
 Example:
     # Sync using configured profile
     python -m galileo.commands.cloud_sync
-    
+
     # Backup sync with verbose output
     python -m galileo.commands.cloud_sync -p backup -v
-    
+
     # Complete sync with auto-confirm
     python -m galileo.commands.cloud_sync -p complete -y
-    
+
     # Analyze cloud storage only
     python -m galileo.commands.cloud_sync -a
 """
@@ -51,6 +51,7 @@ import itertools
 
 
 from galileo.commands._common import get_log_path, load_config
+from galileo.library.exceptions import CloudSyncError
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def get_cloud_config(config):
         return cloud_config
 
     except Exception as e:
-        raise ValueError(f"Invalid cloud configuration: {e}")
+        raise ValueError(f"Invalid cloud configuration: {e}") from e
 
 def validate_bucket_access(cloud_config):
     """Validate that we can access the cloud bucket"""
@@ -114,7 +115,7 @@ def validate_bucket_access(cloud_config):
         return True
 
     except Exception as e:
-        raise Exception(f"Failed to access cloud bucket: {e}")
+        raise CloudSyncError(f"Failed to access cloud bucket: {e}") from e
 
 def perform_analysis(cloud_config):
     """Perform cloud storage analysis"""
@@ -625,7 +626,7 @@ def perform_complete_sync_cli(cloud_config, repo_path):
                 # Download to source folder (incoming)
                 incoming_file_path = os.path.join(source_path, os.path.basename(cloud_file['name']))
 
-                success, message = download_file_from_gcs(
+                success, _message = download_file_from_gcs(
                     bucket_name, auth_info, cloud_file['name'], incoming_file_path
                 )
 

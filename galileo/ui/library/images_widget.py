@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ImagesWidget(QWidget):
     """
     Images widget for viewing and managing FITS files with search.
-    
+
     Features:
     - Text search functionality on object field
     - Sortable by Object (default) or Date
@@ -397,14 +397,14 @@ class ImagesWidget(QWidget):
                 QMessageBox.information(self, "Variable Star", "Select a valid target name.")
                 return
 
-            record, created = VariableStars.get_or_create(target_name=target)
+            _record, created = VariableStars.get_or_create(target_name=target)
             if created:
                 QMessageBox.information(self, "Variable Star", f"Added variable star target: {target}")
             else:
                 QMessageBox.information(self, "Variable Star", f"Already marked as variable star: {target}")
 
         except Exception as e:
-            logger.error(f"Error adding variable star target '{object_name}': {e}")
+            logger.exception(f"Error adding variable star target '{object_name}': {e}")
             QMessageBox.critical(self, "Error", f"Failed to add variable star target:\n{e!s}")
 
     def _view_file(self, filename):
@@ -443,7 +443,7 @@ class ImagesWidget(QWidget):
                 QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
 
         except Exception as e:
-            logger.error(f"Error viewing file {filename}: {e}")
+            logger.exception(f"Error viewing file {filename}: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{e!s}")
 
     def _delete_file(self, filename):
@@ -496,17 +496,17 @@ class ImagesWidget(QWidget):
                     QMessageBox.warning(self, "File Not Found", f"File not found in database: {filename}")
 
             except Exception as db_error:
-                logger.error(f"Error soft-deleting file from database: {db_error}")
+                logger.exception(f"Error soft-deleting file from database: {db_error}")
                 QMessageBox.warning(self, "Database Error", f"Could not mark file as deleted:\n{db_error!s}")
 
         except PermissionError:
             QMessageBox.critical(self, "Permission Error", f"Permission denied. Cannot delete file:\n{os.path.basename(filename)}")
-            logger.error(f"Permission denied deleting file: {filename}")
+            logger.exception(f"Permission denied deleting file: {filename}")
         except FileNotFoundError:
             QMessageBox.warning(self, "File Not Found", f"File not found:\n{os.path.basename(filename)}")
             logger.warning(f"File not found for deletion: {filename}")
         except Exception as e:
-            logger.error(f"Error deleting file {filename}: {e}")
+            logger.exception(f"Error deleting file {filename}: {e}")
             QMessageBox.critical(self, "Error", f"Failed to delete file:\n{e!s}")
 
     def _show_delete_confirmation_with_checkbox(self, filename):
@@ -571,7 +571,7 @@ class ImagesWidget(QWidget):
             logger.info("Auto-regenerating sessions after %s...", trigger)
             sessions_widget.auto_regenerate_sessions()
         except Exception as e:
-            logger.error(f"Error auto-regenerating sessions after {trigger}: {e}")
+            logger.exception(f"Error auto-regenerating sessions after {trigger}: {e}")
 
     def show_download_dialog(self):
         """Show the download dialog for smart telescopes."""
@@ -586,7 +586,7 @@ class ImagesWidget(QWidget):
 
                 self._regenerate_sessions("Download")
         except Exception as e:
-            logger.error(f"Error opening download dialog: {e}")
+            logger.exception(f"Error opening download dialog: {e}")
             QMessageBox.critical(self, "Error", f"Error opening download dialog: {e}")
 
     def load_repo(self):
@@ -662,7 +662,7 @@ class ImagesWidget(QWidget):
                     logger.debug(f"Progress callback returning True for {filename}")
                     return True  # Continue processing
                 except Exception as e:
-                    logger.error(f"Error in progress callback: {e}")
+                    logger.exception(f"Error in progress callback: {e}")
                     return True  # Continue on callback errors
 
             # Create and run the FITS processing
@@ -771,7 +771,7 @@ class ImagesWidget(QWidget):
         except Exception as e:
             if progress_dialog:
                 progress_dialog.close()
-            logger.error(f"Error in load_repo: {e}")
+            logger.exception(f"Error in load_repo: {e}")
             QMessageBox.critical(self, "Error", f"An error occurred while loading the repository:\n{e!s}")
 
     def sync_repo(self):
@@ -812,7 +812,7 @@ class ImagesWidget(QWidget):
 
                 logger.info(f"Cleared repository before sync: {deleted_sessions} sessions, {deleted_files} files")
             except Exception as e:
-                logger.error(f"Error clearing repository before sync: {e}")
+                logger.exception(f"Error clearing repository before sync: {e}")
                 QMessageBox.warning(self, "Error", f"Failed to clear repository before sync: {e}")
                 return
 
@@ -952,7 +952,7 @@ class ImagesWidget(QWidget):
         except Exception as e:
             if progress_dialog:
                 progress_dialog.close()
-            logger.error(f"Error in sync_repo: {e}")
+            logger.exception(f"Error in sync_repo: {e}")
             QMessageBox.critical(self, "Error", f"An error occurred while synchronizing the repository:\n{e!s}")
 
     def clear_files(self):
@@ -976,7 +976,7 @@ class ImagesWidget(QWidget):
                 logger.info(f"Clear repository completed: {deleted_sessions} sessions, {deleted_files} files")
 
             except Exception as e:
-                logger.error(f"Error clearing repository: {e}")
+                logger.exception(f"Error clearing repository: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to clear repository:\n{e!s}")
 
     def load_log_content(self):
@@ -996,4 +996,4 @@ class ImagesWidget(QWidget):
                 logger.warning(f"Log file not found: {self.log_file_path}")
         except Exception as e:
             self.log_text.setPlainText(f"Error loading log file: {e!s}")
-            logger.error(f"Error loading log file: {e}")
+            logger.exception(f"Error loading log file: {e}")

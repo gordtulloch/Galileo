@@ -133,7 +133,7 @@ def _write_cache(kind: str, payload: Any) -> None:
 
 
 def _http_get(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as resp:   # noqa: S310 — fixed https URLs
+    with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as resp:
         return resp.read()
 
 
@@ -372,7 +372,7 @@ def satellite_positions(sats: Satellites, when: _dt.datetime, latitude: float, l
         ra_d, dec_d = sa.precess_from_j2000(sun["ra_deg"], sun["dec_deg"], jd_full)
         sun_dir = np.array(sa._unit_vectors(ra_d, dec_d)).ravel()
     out: list[dict[str, Any]] = []
-    for name, (l1, l2) in zip(sats.names, sats.lines):
+    for name, (l1, l2) in zip(sats.names, sats.lines, strict=False):
         try:
             err, pos, _vel = Satrec.twoline2rv(l1, l2).sgp4(jd, fr)
         except Exception:

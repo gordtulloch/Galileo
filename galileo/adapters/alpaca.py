@@ -612,7 +612,7 @@ class AlpacaMountAdapter(AlpacaAdapter):
         """Push current UTC time and (if configured) site coordinates to the
         mount immediately after connection so goto, meridian-flip limits, and
         sidereal time are all computed from accurate values."""
-        utc_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        utc_now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")
         pairs: list[tuple[str, str, object]] = [
             ("utcdate", "UTCDate", utc_now),
             ("sitelatitude", "SiteLatitude", self.site_lat),

@@ -339,7 +339,15 @@ class ConfigWidget(QWidget):
         )
 
         itelescope_layout.addRow("Username:", self.itelescope_username)
+        self.itelescope_verify_tls = QCheckBox("Verify the server's certificate")
+        self.itelescope_verify_tls.setChecked(True)
+        self.itelescope_verify_tls.setToolTip(
+            "Check that data.itelescope.net presents a valid certificate for its name before sending your password.\n"
+            "Turn this off only if the connection fails with a certificate error; the link is then still\n"
+            "encrypted but could be intercepted."
+        )
         itelescope_layout.addRow("Password:", self.itelescope_password)
+        itelescope_layout.addRow("", self.itelescope_verify_tls)
 
         layout.addWidget(itelescope_group)
 
@@ -432,6 +440,7 @@ class ConfigWidget(QWidget):
             if config.has_option('DEFAULT', 'itelescope_password'):
                 config.remove_option('DEFAULT', 'itelescope_password')
             set_itelescope_password(self.itelescope_password.text().strip())
+            config.set('DEFAULT', 'itelescope_verify_tls', str(self.itelescope_verify_tls.isChecked()))
 
             # SFTP server settings (EXT-120) - likewise, the password goes to the keychain
             config.set('DEFAULT', 'sftp_username', self.sftp_username.text().strip())
@@ -459,7 +468,7 @@ class ConfigWidget(QWidget):
             QMessageBox.information(self, "Success", "Settings saved successfully!")
 
         except Exception as e:
-            logger.error(f"Error saving settings: {e}")
+            logger.exception(f"Error saving settings: {e}")
             QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
 
     def load_settings(self):
@@ -558,6 +567,8 @@ class ConfigWidget(QWidget):
                 self.itelescope_username.setText(itelescope_username)
 
             self.itelescope_password.setText(get_itelescope_password())
+            self.itelescope_verify_tls.setChecked(
+                config.get('DEFAULT', 'itelescope_verify_tls', fallback='True').strip().lower() in ('true', '1', 'yes', 'on'))
 
             # Load SFTP settings
             self.sftp_username.setText(config.get('DEFAULT', 'sftp_username', fallback=''))
@@ -599,7 +610,7 @@ class ConfigWidget(QWidget):
             logger.debug("Library settings loaded")
 
         except Exception as e:
-            logger.error(f"Error loading settings: {e}")
+            logger.exception(f"Error loading settings: {e}")
             # Use default values if loading fails
             self.reset_settings()
 
@@ -624,6 +635,7 @@ class ConfigWidget(QWidget):
         # iTelescope defaults
         self.itelescope_username.setText("")
         self.itelescope_password.setText("")
+        self.itelescope_verify_tls.setChecked(True)
 
         # SFTP defaults
         self.sftp_username.setText("")

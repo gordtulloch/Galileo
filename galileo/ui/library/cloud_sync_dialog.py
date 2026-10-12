@@ -5,8 +5,6 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPush
                                QLabel, QFrame, QMessageBox, QGroupBox, QApplication)
 from PySide6.QtGui import QFont
 
-logger = logging.getLogger(__name__)
-
 from galileo.library.services.gcs import (
     _get_gcs_client,
     check_file_exists_in_gcs,
@@ -18,6 +16,9 @@ from galileo.library.services.gcs import (
     _calculate_md5_hash,
 )
 from galileo.library.config import load_config as load_library_config
+from galileo.library.exceptions import CloudSyncError
+
+logger = logging.getLogger(__name__)
 
 
 class CloudSyncWidget(QWidget):
@@ -49,7 +50,7 @@ class CloudSyncWidget(QWidget):
                 'sync_profile': config.get('DEFAULT', 'sync_profile', fallback='complete')
             }
         except Exception as e:
-            logger.error(f"Error loading cloud config: {e}")
+            logger.exception(f"Error loading cloud config: {e}")
             return {
                 'vendor': 'Error loading config',
                 'bucket_url': 'Error loading config',
@@ -205,7 +206,7 @@ class CloudSyncWidget(QWidget):
 
                 self.perform_cloud_analysis()
             except Exception as e:
-                logger.error(f"Error during cloud analysis: {e}")
+                logger.exception(f"Error during cloud analysis: {e}")
 
                 # Provide user-friendly error messages
                 error_msg = str(e)
@@ -374,7 +375,7 @@ class CloudSyncWidget(QWidget):
                     # Track match type for reporting
                     if local_file.fitsFileName == filename:
                         filename_matches += 1
-                    elif cloud_file.get('md5_hash') and _calculate_md5_hash:
+                    elif cloud_file.get('md5_hash'):
                         try:
                             local_hash = _calculate_md5_hash(local_file.fitsFilePath)
                             if local_hash == cloud_file['md5_hash']:
@@ -390,7 +391,6 @@ class CloudSyncWidget(QWidget):
             progress.close()
 
             # Build detailed results message
-            hash_function_available = _calculate_md5_hash is not None
             results_message = (
                 f"Cloud analysis completed successfully!\n\n"
                 f"📊 Analysis Results:\n"
@@ -413,7 +413,7 @@ class CloudSyncWidget(QWidget):
                     "✅ No duplicates found in cloud storage!\n\n"
                 )
 
-            if hash_function_available and matches_found > 0:
+            if matches_found > 0:
                 results_message += (
                     f"🔍 Local Match Breakdown:\n"
                     f"• Exact filename matches: {filename_matches}\n"
@@ -439,10 +439,10 @@ class CloudSyncWidget(QWidget):
                 duplicate_analysis.get('duplicate_groups', 0) > 0):
                 self.show_duplicate_details(duplicate_analysis)
 
-        except Exception as e:
+        except Exception:
             if 'progress' in locals():
                 progress.close()
-            raise e
+            raise
 
     def show_duplicate_details(self, duplicate_analysis):
         """Show detailed duplicate file report in a separate dialog"""
@@ -518,7 +518,7 @@ class CloudSyncWidget(QWidget):
             dialog.exec()
 
         except Exception as e:
-            logger.error(f"Error showing duplicate details: {e}")
+            logger.exception(f"Error showing duplicate details: {e}")
             QMessageBox.critical(self, "Error", f"Failed to show duplicate details: {e!s}")
 
     def get_cloud_file_list(self, bucket_name, auth_info):
@@ -533,8 +533,8 @@ class CloudSyncWidget(QWidget):
             return cloud_files
 
         except Exception as e:
-            logger.error(f"Error getting cloud file list: {e}")
-            raise Exception(f"Failed to get cloud file listing: {e!s}")
+            logger.exception(f"Error getting cloud file list: {e}")
+            raise CloudSyncError(f"Failed to get cloud file listing: {e!s}") from e
 
     def find_matching_local_file(self, cloud_file):
         """Find local file that matches the cloud file using filename and hash-based matching"""
@@ -555,7 +555,7 @@ class CloudSyncWidget(QWidget):
 
                 # If we have a filename match and hash functions are available,
                 # verify content matches using hash comparison
-                if _calculate_md5_hash and cloud_file.get('md5_hash'):
+                if cloud_file.get('md5_hash'):
                     try:
                         local_hash = _calculate_md5_hash(filename_match.fitsFilePath)
                         cloud_hash = cloud_file['md5_hash']
@@ -584,7 +584,7 @@ class CloudSyncWidget(QWidget):
                 logger.debug(f"Found partial filename match: {base_filename}")
 
                 # If we have a partial match and hash functions are available, verify with hash
-                if _calculate_md5_hash and cloud_file.get('md5_hash'):
+                if cloud_file.get('md5_hash'):
                     try:
                         local_hash = _calculate_md5_hash(partial_match.fitsFilePath)
                         cloud_hash = cloud_file['md5_hash']
@@ -604,7 +604,7 @@ class CloudSyncWidget(QWidget):
                 pass
 
             # Try hash-based matching across all local files (most thorough but slower)
-            if _calculate_md5_hash and cloud_file.get('md5_hash'):
+            if cloud_file.get('md5_hash'):
                 try:
                     cloud_hash = cloud_file['md5_hash']
                     logger.debug(f"Attempting hash-based matching for {filename}")
@@ -630,7 +630,7 @@ class CloudSyncWidget(QWidget):
             return None
 
         except Exception as e:
-            logger.error(f"Error finding matching local file: {e}")
+            logger.exception(f"Error finding matching local file: {e}")
             return None
 
     def build_cloud_url(self, cloud_file):
@@ -650,7 +650,7 @@ class CloudSyncWidget(QWidget):
             return ''
 
         except Exception as e:
-            logger.error(f"Error building cloud URL: {e}")
+            logger.exception(f"Error building cloud URL: {e}")
             return ''
 
     def on_sync_clicked(self):
@@ -824,7 +824,7 @@ class CloudSyncWidget(QWidget):
                             except OSError as e:
                                 logger.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
                             except Exception as e:
-                                logger.error(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                                logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
 
                         if "uploaded" in message.lower():
                             uploaded_count += 1
@@ -836,7 +836,7 @@ class CloudSyncWidget(QWidget):
                         error_count += 1
 
                 except Exception as e:
-                    logger.error(f"Error processing file {fits_file.fitsFileName}: {e}")
+                    logger.exception(f"Error processing file {fits_file.fitsFileName}: {e}")
                     error_count += 1
 
             progress.setValue(len(fits_files))
@@ -866,7 +866,7 @@ class CloudSyncWidget(QWidget):
                 )
 
         except Exception as e:
-            logger.error(f"Error during backup sync: {e}")
+            logger.exception(f"Error during backup sync: {e}")
             QMessageBox.critical(
                 self,
                 "Backup Sync Error",
@@ -1046,7 +1046,7 @@ class CloudSyncWidget(QWidget):
                                 logger.info(f"Downloaded non-FITS file: {cloud_file['name']}")
 
                     except Exception as e:
-                        logger.error(f"Failed to download {cloud_file['name']}: {e}")
+                        logger.exception(f"Failed to download {cloud_file['name']}: {e}")
 
             if progress.wasCanceled():
                 return
@@ -1115,7 +1115,7 @@ class CloudSyncWidget(QWidget):
                         error_count += 1
 
                 except Exception as e:
-                    logger.error(f"Error processing file {fits_file.fitsFileName}: {e}")
+                    logger.exception(f"Error processing file {fits_file.fitsFileName}: {e}")
                     error_count += 1
 
             progress.setValue(100)
@@ -1151,7 +1151,7 @@ class CloudSyncWidget(QWidget):
                 )
 
         except Exception as e:
-            logger.error(f"Error during complete sync: {e}")
+            logger.exception(f"Error during complete sync: {e}")
             QMessageBox.critical(
                 self,
                 "Complete Sync Error",
@@ -1285,7 +1285,7 @@ class CloudSyncWidget(QWidget):
                         except OSError as e:
                             logger.warning(f"Failed to delete local file {relative_path} after upload: {e}")
                         except Exception as e:
-                            logger.error(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                            logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
 
                         if "uploaded" in message.lower():
                             uploaded_count += 1
@@ -1297,7 +1297,7 @@ class CloudSyncWidget(QWidget):
                         error_count += 1
 
                 except Exception as e:
-                    logger.error(f"Error processing soft-deleted file {fits_file.fitsFileName}: {e}")
+                    logger.exception(f"Error processing soft-deleted file {fits_file.fitsFileName}: {e}")
                     error_count += 1
 
             progress.setValue(len(soft_deleted_files))
@@ -1329,7 +1329,7 @@ class CloudSyncWidget(QWidget):
                 )
 
         except Exception as e:
-            logger.error(f"Error during on-demand sync: {e}")
+            logger.exception(f"Error during on-demand sync: {e}")
             QMessageBox.critical(
                 self,
                 "On Demand Sync Error",

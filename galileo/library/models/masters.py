@@ -49,13 +49,13 @@ class Masters(BaseModel):
     def find_matching_master(cls, telescope, instrument, master_type, **criteria):
         """
         Find a matching master frame based on equipment and criteria.
-        
+
         Args:
             telescope (str): Telescope name
-            instrument (str): Instrument name  
+            instrument (str): Instrument name
             master_type (str): Type of master ('bias', 'dark', 'flat')
             **criteria: Additional matching criteria (exposure_time, filter_name, binning_x, binning_y)
-            
+
         Returns:
             Masters: Matching master frame or None
         """
@@ -83,12 +83,12 @@ class Masters(BaseModel):
     def _retry_database_operation(cls, operation, max_retries=5, delay=1.0):
         """
         Retry database operation to handle SQLite database locks.
-        
+
         Args:
             operation: Function to execute
             max_retries: Maximum number of retry attempts
             delay: Initial delay between retries (exponential backoff)
-            
+
         Returns:
             Result of the operation
         """
@@ -102,25 +102,25 @@ class Masters(BaseModel):
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.error(f"Database operation failed after {attempt + 1} attempts: {e}")
+                    logger.exception(f"Database operation failed after {attempt + 1} attempts: {e}")
                     raise
 
     @classmethod
     def create_master_record(cls, master_path, session_data, cal_type, file_count=0):
         """
         Create a new master calibration frame record.
-        
+
         Args:
             master_path (str): Path to the master file
             session_data (dict): Session data with equipment and settings
             cal_type (str): Type of calibration ('bias', 'dark', 'flat')
             file_count (int): Number of files used to create master
-            
+
         Returns:
             Masters: Created master record
         """
         # Generate unique master ID
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.datetime.now().astimezone().strftime('%Y%m%d_%H%M%S')
         telescope_safe = session_data.get('telescope', 'unknown').replace(' ', '_')
         master_id = f"{cal_type}_{telescope_safe}_{timestamp}"
 
@@ -137,7 +137,7 @@ class Masters(BaseModel):
                 master_id=master_id,
                 master_type=cal_type,
                 master_path=master_path,
-                creation_date=datetime.datetime.now(),
+                creation_date=datetime.datetime.now(datetime.UTC).replace(tzinfo=None),
                 telescope=session_data.get('telescope'),
                 instrument=session_data.get('instrument'),
                 exposure_time=session_data.get('exposure_time') if cal_type == 'dark' else None,
@@ -158,7 +158,7 @@ class Masters(BaseModel):
     def validate_file_integrity(self):
         """
         Validate that the master file exists and matches the stored hash.
-        
+
         Returns:
             bool: True if file is valid, False otherwise
         """
@@ -175,7 +175,7 @@ class Masters(BaseModel):
     def get_matching_criteria(self):
         """
         Get the criteria dictionary for matching this master to sessions.
-        
+
         Returns:
             dict: Matching criteria
         """
@@ -201,7 +201,7 @@ class Masters(BaseModel):
     def update_quality_score(self, score):
         """
         Update the quality score for this master.
-        
+
         Args:
             score (float): Quality score (0.0 to 1.0)
         """
@@ -211,13 +211,13 @@ class Masters(BaseModel):
     def validate_and_mark(self):
         """
         Validate the master file and mark as validated if successful.
-        
+
         Returns:
             bool: True if validation successful
         """
         if self.validate_file_integrity():
             self.is_validated = True
-            self.validation_date = datetime.datetime.now()
+            self.validation_date = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             self.save()
             return True
         return False
@@ -233,7 +233,7 @@ class Masters(BaseModel):
     def cleanup_invalid_masters(cls):
         """
         Clean up masters whose files no longer exist.
-        
+
         Returns:
             list: List of master IDs that were cleaned up
         """
@@ -249,11 +249,11 @@ class Masters(BaseModel):
     def get_masters_by_type(cls, master_type, include_deleted=False):
         """
         Get all masters of a specific type.
-        
+
         Args:
             master_type (str): Type of master ('bias', 'dark', 'flat')
             include_deleted (bool): Whether to include soft-deleted masters
-            
+
         Returns:
             list: List of Masters objects
         """
@@ -266,11 +266,11 @@ class Masters(BaseModel):
     def get_masters_for_equipment(cls, telescope, instrument):
         """
         Get all masters for specific equipment.
-        
+
         Args:
             telescope (str): Telescope name
             instrument (str): Instrument name
-            
+
         Returns:
             list: List of Masters objects
         """
@@ -284,7 +284,7 @@ class Masters(BaseModel):
     def get_storage_usage(cls):
         """
         Get total storage usage of all masters.
-        
+
         Returns:
             dict: Dictionary with storage statistics
         """

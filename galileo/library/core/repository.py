@@ -27,7 +27,7 @@ class RepositoryManager:
     def createRepositoryStructure(self):
         """
         Create the standard repository directory structure.
-        
+
         Returns:
             bool: True if successful, False otherwise
         """
@@ -50,18 +50,18 @@ class RepositoryManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error creating repository structure: {e}")
+            logger.exception(f"Error creating repository structure: {e}")
             return False
 
     def organizeFileByType(self, file_path, hdr, new_filename=None):
         """
         Organize a file into the appropriate repository structure based on type.
-        
+
         Args:
             file_path (str): Current path to the file
             hdr: FITS header object
             new_filename (str, optional): New filename to use
-            
+
         Returns:
             str or None: New file path if successful, None if failed
         """
@@ -104,10 +104,7 @@ class RepositoryManager:
             os.makedirs(dest_dir, exist_ok=True)
 
             # Determine filename
-            if new_filename:
-                filename = new_filename
-            else:
-                filename = os.path.basename(file_path)
+            filename = new_filename or os.path.basename(file_path)
 
             # Ensure unique filename
             dest_path = os.path.join(dest_dir, filename)
@@ -120,16 +117,16 @@ class RepositoryManager:
             return dest_path
 
         except Exception as e:
-            logger.error(f"Error organizing file {file_path}: {e}")
+            logger.exception(f"Error organizing file {file_path}: {e}")
             return None
 
     def _getDateString(self, hdr):
         """
         Extract date string from FITS header for directory organization.
-        
+
         Args:
             hdr: FITS header object
-            
+
         Returns:
             str: Date string in YYYYMMDD format
         """
@@ -140,24 +137,24 @@ class RepositoryManager:
             if date_obs:
                 # Parse the date string
                 date_part = date_obs.split('T')[0]  # Get date part before 'T'
-                date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                date_obj = datetime.strptime(date_part, '%Y-%m-%d')  # noqa: DTZ007 -- calendar date, no zone
                 return date_obj.strftime('%Y%m%d')
             else:
                 # Use current date as fallback
-                return datetime.now().strftime('%Y%m%d')
+                return datetime.now().astimezone().strftime('%Y%m%d')
 
         except Exception as e:
-            logger.error(f"Error parsing date from header: {e}")
+            logger.exception(f"Error parsing date from header: {e}")
             from datetime import datetime
-            return datetime.now().strftime('%Y%m%d')
+            return datetime.now().astimezone().strftime('%Y%m%d')
 
     def _ensureUniqueFilename(self, file_path):
         """
         Ensure filename is unique by adding a counter if necessary.
-        
+
         Args:
             file_path (str): Desired file path
-            
+
         Returns:
             str: Unique file path
         """
@@ -175,7 +172,7 @@ class RepositoryManager:
     def validateRepositoryStructure(self):
         """
         Validate that the repository structure exists and is accessible.
-        
+
         Returns:
             dict: Validation results with status and messages
         """
@@ -227,7 +224,7 @@ class RepositoryManager:
             return results
 
         except Exception as e:
-            logger.error(f"Error validating repository structure: {e}")
+            logger.exception(f"Error validating repository structure: {e}")
             results['valid'] = False
             results['messages'].append(f"Validation error: {e}")
             return results
@@ -235,11 +232,11 @@ class RepositoryManager:
     def cleanupRepository(self, dry_run=False, progress_callback=None):
         """
         Clean up repository by removing empty directories and organizing loose files.
-        
+
         Args:
             dry_run (bool): If True, only report what would be done
             progress_callback: Optional callback for progress updates
-            
+
         Returns:
             dict: Cleanup results
         """
@@ -271,7 +268,7 @@ class RepositoryManager:
                 except Exception as e:
                     error_msg = f"Error removing directory {empty_dir}: {e}"
                     results['errors'].append(error_msg)
-                    logger.error(error_msg)
+                    logger.exception(error_msg)
 
             # Look for misplaced FITS files in the repository root
             for item in os.listdir(self.repoFolder):
@@ -291,7 +288,7 @@ class RepositoryManager:
                     except Exception as e:
                         error_msg = f"Error moving file {item}: {e}"
                         results['errors'].append(error_msg)
-                        logger.error(error_msg)
+                        logger.exception(error_msg)
 
             if progress_callback:
                 progress_callback(100, 100, "Cleanup completed")
@@ -302,13 +299,13 @@ class RepositoryManager:
         except Exception as e:
             error_msg = f"Error during repository cleanup: {e}"
             results['errors'].append(error_msg)
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return results
 
     def getRepositoryStats(self):
         """
         Get statistics about the repository contents.
-        
+
         Returns:
             dict: Repository statistics
         """
@@ -323,7 +320,7 @@ class RepositoryManager:
         }
 
         try:
-            for root, dirs, files in os.walk(self.repoFolder):
+            for root, _dirs, files in os.walk(self.repoFolder):
                 for file in files:
                     if file.lower().endswith(('.fit', '.fits', '.fts')):
                         file_path = os.path.join(root, file)
@@ -353,25 +350,25 @@ class RepositoryManager:
 
                         except Exception as e:
                             stats['error_count'] += 1
-                            logger.error(f"Error processing file {file_path}: {e}")
+                            logger.exception(f"Error processing file {file_path}: {e}")
 
             logger.info(f"Repository stats: {stats['total_files']} files, {stats['total_size_gb']:.2f} GB")
             return stats
 
         except Exception as e:
-            logger.error(f"Error gathering repository statistics: {e}")
+            logger.exception(f"Error gathering repository statistics: {e}")
             stats['error_count'] += 1
             return stats
 
     def backupRepository(self, backup_path, compress=True, progress_callback=None):
         """
         Create a backup of the repository.
-        
+
         Args:
             backup_path (str): Path for the backup file/directory
             compress (bool): Whether to create a compressed backup
             progress_callback: Optional callback for progress updates
-            
+
         Returns:
             dict: Backup results
         """
@@ -419,6 +416,6 @@ class RepositoryManager:
         except Exception as e:
             error_msg = f"Error creating backup: {e}"
             results['error_message'] = error_msg
-            logger.error(error_msg)
+            logger.exception(error_msg)
 
         return results

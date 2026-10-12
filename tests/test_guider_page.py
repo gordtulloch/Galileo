@@ -19,7 +19,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-from PySide6 import QtCore  # noqa: E402
+from PySide6 import QtCore
 
 from galileo.observatory import (
     create_observatory,
@@ -120,7 +120,7 @@ def test_tc_guide_070_equipment_page_uses_the_guider_page(window):
     from galileo.ui.guider import GuiderPage
     state = window._device_pages["guider"]
     assert set(state) == {"reload", "autoconnect", "disconnect", "connected", "get_service"}
-    pages = [w for w in window._window.findChildren(GuiderPage)]
+    pages = list(window._window.findChildren(GuiderPage))
     assert len(pages) == 1
 
 

@@ -25,7 +25,7 @@ Options:
 
 Telescope Types:
     SeeStar     - SeeStar S50 smart telescope (SMB protocol)
-    StellarMate - StellarMate device (SMB protocol)  
+    StellarMate - StellarMate device (SMB protocol)
     DWARF 3     - DWARF 3 smart telescope (FTP protocol)
     iTelescope  - iTelescope network (FTPS protocol)
     SFTP        - any SFTP server (needs --hostname; account, key and folder come from Options > Library)
@@ -33,16 +33,16 @@ Telescope Types:
 Examples:
     # Download from SeeStar with auto-discovery
     python -m galileo.commands.download -t SeeStar -v
-    
+
     # Download from DWARF 3 at default IP
     python -m galileo.commands.download -t "DWARF 3" -v
-    
+
     # Download from specific iTelescope with credentials
     python -m galileo.commands.download -t iTelescope -u username -p password
-    
+
     # Download from StellarMate at specific IP
     python -m galileo.commands.download -t StellarMate -H 192.168.1.100
-    
+
     # Dry run to see what files are available
     python -m galileo.commands.download -t SeeStar --dry-run -v
 """
@@ -65,14 +65,14 @@ from galileo.commands._common import get_log_path, load_config
 def apply_mappings_to_fits(file_path):
     """
     Apply header mappings to a FITS file before registration.
-    
+
     This function reads the FITS header, applies any defined mappings
     from the database, and updates the FITS file with the new values.
     This ensures files are named correctly during registration.
-    
+
     Args:
         file_path: Path to the FITS file
-        
+
     Returns:
         bool: True if any mappings were applied, False otherwise
     """
@@ -139,7 +139,7 @@ def apply_mappings_to_fits(file_path):
         return changes_made
 
     except Exception as e:
-        logger.error(f"Error applying mappings to {file_path}: {e}")
+        logger.exception(f"Error applying mappings to {file_path}: {e}")
         return False
 
 def setup_logging(verbose=False):
@@ -170,8 +170,8 @@ def get_destination_folder(config, override_path=None):
         if not source_folder:
             raise ValueError("source folder not configured")
         return source_folder
-    except (configparser.NoOptionError, configparser.NoSectionError):
-        raise ValueError("source folder not found in configuration")
+    except (configparser.NoOptionError, configparser.NoSectionError) as exc:
+        raise ValueError("source folder not found in configuration") from exc
 
 def download_files(telescope_type, hostname, network, destination, username=None, password=None, delete_files=False, dry_run=False):
     """Download files from smart telescope."""
@@ -382,7 +382,7 @@ def main():
                         logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
                         return 1
                 except Exception:
-                    logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
+                    logger.exception("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
                     return 1
 
         # Download files
@@ -405,7 +405,7 @@ def main():
             return 1
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.exception(f"Error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()

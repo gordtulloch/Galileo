@@ -830,7 +830,7 @@ class GuiderPage(QWidget):
         options = list(snap.exposure_options_ms) if snap else []
         current = snap.exposure_ms if snap else None
         if current is not None and current not in options:
-            options = sorted(options + [current])
+            options = sorted([*options, current])
         self.exposure_combo.blockSignals(True)
         self.exposure_combo.clear()
         for ms in options:
@@ -863,7 +863,7 @@ class GuiderPage(QWidget):
         scale = (snap.pixel_scale or 1.0) if snap else 1.0
 
         def put(key: str, *texts: str) -> None:
-            for label, text in zip(self.info[key], texts):
+            for label, text in zip(self.info[key], texts, strict=False):
                 label.setText(text)
 
         if last is None:

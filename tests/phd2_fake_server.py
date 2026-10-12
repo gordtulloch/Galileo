@@ -15,6 +15,7 @@ import json
 import socket
 import threading
 import time
+import contextlib
 
 
 class FakePhd2Server:
@@ -43,10 +44,8 @@ class FakePhd2Server:
         line = (json.dumps(event) + "\r\n").encode()
         with self._lock:
             for client in list(self._clients):
-                try:
+                with contextlib.suppress(OSError):
                     client.sendall(line)
-                except OSError:
-                    pass
 
     def wait_for_client(self, timeout: float = 3.0) -> bool:
         """Wait until the accept thread has registered a client. ``Phd2Adapter.open`` returns as soon as
@@ -67,10 +66,8 @@ class FakePhd2Server:
         for client in clients:
             # shutdown() first: on Linux, close() alone does not hang up while the server's own thread
             # is blocked reading this socket, so the client would never see the disconnect.
-            try:
+            with contextlib.suppress(OSError):
                 client.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             client.close()
 
     def wait_for_request(self, method: str, timeout: float = 3.0) -> bool:
@@ -120,7 +117,5 @@ class FakePhd2Server:
             reply = {"jsonrpc": "2.0", "result": value(params) if callable(value) else value, "id": request["id"]}
         else:
             reply = {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"unknown method {method}"}, "id": request["id"]}
-        try:
+        with contextlib.suppress(OSError):
             client.sendall((json.dumps(reply) + "\r\n").encode())
-        except OSError:
-            pass

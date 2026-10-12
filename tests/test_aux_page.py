@@ -102,7 +102,7 @@ def _connect(window, adapter):
     """Build the page, and connect it to *adapter* through the real Connect button."""
     page = window._build_aux_page()
     window._connect_device_adapter = lambda *a, **k: adapter
-    device_combo = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+    device_combo = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
     device_combo.setEditText("Dust Cover Simulator")
     _button(page, "Connect").click()
     return page
@@ -141,7 +141,7 @@ def test_tc_eqp_aux_010_connect_builds_one_tab_per_driver_group(window):
     for btn_text in ("Connect", "Disconnect", "Park", "Unpark"):
         _button(tab, btn_text)
     _button(tab, "Set")  # the Operation/Duration row's Set button
-    spin = [s for s in tab.findChildren(QtWidgets.QDoubleSpinBox)][0]
+    spin = next(iter(tab.findChildren(QtWidgets.QDoubleSpinBox)))
     assert spin.value() == pytest.approx(5.0)
 
 

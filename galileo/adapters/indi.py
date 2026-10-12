@@ -156,7 +156,7 @@ class IndiAdapter(DeviceBackend):
 
         def push() -> None:
             if self._has("TIME_UTC"):
-                utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                utc = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")
                 client.send_text(self.device_name, "TIME_UTC", {"UTC": utc, "OFFSET": "0"})
             if latitude is not None and longitude is not None and self._has("GEOGRAPHIC_COORD"):
                 geo = {"LAT": latitude, "LONG": longitude if longitude >= 0 else longitude + 360.0}
@@ -629,7 +629,7 @@ class IndiMountAdapter(IndiAdapter):
         sidereal time are computed from accurate values."""
         if self._client is None:
             return
-        utc_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        utc_now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")
         if self._has("TIME_UTC"):
             try:
                 self._client.send_text(self.device_name, "TIME_UTC", {"UTC": utc_now, "OFFSET": "0"})

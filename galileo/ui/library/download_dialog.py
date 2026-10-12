@@ -109,10 +109,10 @@ class TelescopeDownloadWorker(QThread):
             return main_file
 
         except zipfile.BadZipFile:
-            logger.error(f"Invalid zip file: {zip_path}")
+            logger.exception(f"Invalid zip file: {zip_path}")
             return None
         except Exception as e:
-            logger.error(f"Error extracting zip file {zip_path}: {e}")
+            logger.exception(f"Error extracting zip file {zip_path}: {e}")
             return None
 
     def stop(self):
@@ -256,7 +256,7 @@ class TelescopeDownloadWorker(QThread):
                             else:
                                 logger.warning(f"Failed to unzip {file_name}, continuing with zip file")
                         except Exception as e:
-                            logger.error(f"Error unzipping {file_name}: {e}, continuing with zip file")
+                            logger.exception(f"Error unzipping {file_name}: {e}, continuing with zip file")
 
                     # Modify FITS headers based on folder name
                     self._modify_fits_headers(local_path, folder_name, self.telescope_type)
@@ -277,7 +277,7 @@ class TelescopeDownloadWorker(QThread):
                             logger.warning(f"Failed to register {file_name} in database")
 
                     except Exception as e:
-                        logger.error(f"Error registering {file_name} in database: {e}")
+                        logger.exception(f"Error registering {file_name} in database: {e}")
 
                     # Delete file from telescope if requested
                     if self.delete_files:
@@ -323,7 +323,7 @@ class TelescopeDownloadWorker(QThread):
         except Exception as e:
             if not self._stop_requested:
                 self.error_occurred.emit(f"Unexpected error during download: {e!s}")
-                logger.error(f"Unexpected error during download: {e!s}")
+                logger.exception(f"Unexpected error during download: {e!s}")
 
 
 class SmartTelescopeDownloadDialog(QDialog):

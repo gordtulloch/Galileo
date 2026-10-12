@@ -347,7 +347,7 @@ class StarAtlasView(QWidget):
             self.objectSelected.emit(obj)
         self.selectionChanged.emit(obj)
 
-    def find(self, query: str) -> dict[str, Any] | None:
+    def find_object(self, query: str) -> dict[str, Any] | None:
         """Look an object up by name across bodies, stars and deep-sky objects."""
         q = query.strip().lower()
         if not q:
@@ -390,7 +390,7 @@ class StarAtlasView(QWidget):
             ra = np.array([b["ra_deg"] for b in self._bodies])
             dec = np.array([b["dec_deg"] for b in self._bodies])
             alt, az = self._altaz_arrays(ra, dec)
-            for b, a, z in zip(self._bodies, alt, az):
+            for b, a, z in zip(self._bodies, alt, az, strict=True):
                 b["alt"], b["az"] = float(a), float(z)
             self._sun_alt = next((b["alt"] for b in self._bodies if b["name"] == "Sun"), -30.0)
         else:
@@ -433,7 +433,7 @@ class StarAtlasView(QWidget):
                 if b["name"] == obj["name"]:
                     return b["alt"], b["az"]
         if obj.get("kind") == "minor":
-            for b, alt, az in zip(self._minor, self._minor_alt, self._minor_az):
+            for b, alt, az in zip(self._minor, self._minor_alt, self._minor_az, strict=True):
                 if b["name"] == obj["name"]:      # these move; the live position beats the one captured on click
                     return float(alt), float(az)
         alt, az = self._altaz_arrays(np.array([obj["ra_deg"]]), np.array([obj["dec_deg"]]))
@@ -556,7 +556,7 @@ class StarAtlasView(QWidget):
         path = QPainterPath()
         pen_down = False
         px = py = 0.0
-        for xi, yi, vi in zip(x.tolist(), y.tolist(), vis.tolist()):
+        for xi, yi, vi in zip(x.tolist(), y.tolist(), vis.tolist(), strict=True):
             if vi and (not pen_down or math.hypot(xi - px, yi - py) < limit):
                 if pen_down:
                     path.lineTo(QPointF(float(xi), float(yi)))
@@ -616,7 +616,7 @@ class StarAtlasView(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(255, 255, 240))
         mags = self._stars.mag[idx]
-        for m, x, y in zip(mags.tolist(), xs.tolist(), ys.tolist()):
+        for m, x, y in zip(mags.tolist(), xs.tolist(), ys.tolist(), strict=True):
             r = self._star_radius(m)
             p.drawEllipse(QPointF(x, y), r, r)
 
@@ -625,7 +625,7 @@ class StarAtlasView(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_DSO_COLOR, 1))
         px_per_arcmin = vp.scale * 2.0 * math.tan(math.radians(1.0 / 60.0) / 2.0)
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             d = self._dsos[i]
             r = float(min(40.0, max(3.5, d.size_arcmin * px_per_arcmin / 2.0)))
             kind = d.object_type.value
@@ -648,7 +648,7 @@ class StarAtlasView(QWidget):
 
     def _draw_bodies(self, p: QPainter, body_set) -> None:
         idx, xs, ys = body_set
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             name = self._bodies[i]["name"]
             if name == "Sun":
                 p.setPen(QPen(QColor(255, 235, 150), 2))
@@ -668,7 +668,7 @@ class StarAtlasView(QWidget):
         """Comets (a dot in a soft coma), asteroids (a small square) and satellites (a triangle, dim
         while in the Earth's shadow) - SKYMAP-040."""
         idx, xs, ys = minor_set
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             body = self._minor[i]
             kind = body["kind"]
             if kind == mb.COMET:
@@ -754,7 +754,7 @@ class StarAtlasView(QWidget):
         p.setPen(_LABEL_COLOR)
         limit = self._label_limit(vp)
         idx, xs, ys = sets["stars"]
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             if self._stars.mag[i] > limit:
                 continue
             text = self._stars.names[i] or (self._stars.designations[i] if vp.fov_deg < 30 else "")
@@ -762,14 +762,14 @@ class StarAtlasView(QWidget):
                 p.drawText(QPointF(x + self._star_radius(self._stars.mag[i]) + 3, y - 2), text)
         p.setPen(_DSO_COLOR)
         idx, xs, ys = sets["dsos"]       # every drawn deep-sky object is labelled
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             p.drawText(QPointF(x + 7, y - 4), self._dsos[i].primary_name)
         p.setPen(_BODY_COLOR)
         idx, xs, ys = sets["bodies"]
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             p.drawText(QPointF(x + 10, y - 4), self._bodies[i]["name"])
         idx, xs, ys = sets["minor"]
-        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             body = self._minor[i]
             if body["kind"] == mb.ASTEROID and (vp.fov_deg > 40.0 or body["mag"] > 9.5):
                 continue                    # hundreds of asteroids: label only the bright ones, zoomed in

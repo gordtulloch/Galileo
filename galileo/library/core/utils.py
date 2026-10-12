@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 def normalize_file_path(file_path: FilePath | None) -> str | None:
     """
     Normalize file paths to use forward slashes consistently.
-    
+
     Args:
         file_path: File path string that may contain backslashes
-        
+
     Returns:
         Normalized path with forward slashes
     """
@@ -33,13 +33,13 @@ def normalize_file_path(file_path: FilePath | None) -> str | None:
 def sanitize_filesystem_name(name: str | Any | None) -> str:
     """
     Sanitize a string for use in filesystem paths and filenames.
-    
+
     Replaces invalid filesystem characters with underscores to match
     the existing folder creation logic in registerFitsImage.
-    
+
     Args:
         name: String that may contain invalid filesystem characters
-        
+
     Returns:
         Sanitized string safe for filesystem use
     """
@@ -70,23 +70,179 @@ def sanitize_filesystem_name(name: str | Any | None) -> str:
     return sanitized
 
 
+def _utc_fits_timestamp() -> str:
+    """Now, as a zone-less UTC ``DATE-OBS`` string."""
+    from datetime import UTC, datetime
+    return datetime.now(UTC).replace(tzinfo=None).strftime('%Y-%m-%dT%H:%M:%S')
+
+
+def _find_dwarf_root(path_parts: list[str]) -> str | None:
+    """The folder that holds a DWARF card's ``DWARF_RAW*``/``CALI_FRAME``/``DWARF_DARK`` tree, or ``None``."""
+    for i, part in enumerate(path_parts):
+        if part.startswith("DWARF_RAW"):
+            # Check if parent directory contains required DWARF folders
+            parent_path = os.sep.join(path_parts[:i])
+            dwarf_raw_folders = [d for d in os.listdir(parent_path) if d.startswith("DWARF_RAW")]
+
+            if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
+                os.path.exists(os.path.join(parent_path, "DWARF_DARK")) and
+                dwarf_raw_folders):
+                return parent_path
+
+    # Check if we're in CALI_FRAME or DWARF_DARK structure
+    for i, part in enumerate(path_parts):
+        if part in ["CALI_FRAME", "DWARF_DARK"]:
+            parent_path = os.sep.join(path_parts[:i])
+            if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
+                os.path.exists(os.path.join(parent_path, "DWARF_DARK"))):
+                return parent_path
+    return None
+
+
+def _fix_dwarf_raw_header(hdr: Any, folder_name: str, file: str) -> bool:
+    """Fill a DWARF_RAW light frame's header from its folder name. False if the name cannot be parsed."""
+    # Parse: DWARF_RAW_(INSTRUMEN)_(OBJECT)_EXP_(EXPTIME)_GAIN_(GAIN)_(DATE-OBS)
+    parts = folder_name.split("_")
+    if len(parts) < 8:  # Minimum expected parts
+        return True
+    try:
+        instrument = parts[2]  # INSTRUMEN
+        object_name = parts[3]  # OBJECT
+        exptime = parts[5]  # EXPTIME (after EXP)
+        gain = parts[7]  # GAIN (after GAIN)
+        date_obs = "_".join(parts[8:])  # DATE-OBS (rest of string)
+
+        # Update header
+        hdr['INSTRUME'] = instrument
+        hdr['OBJECT'] = object_name
+        hdr['EXPTIME'] = float(exptime)
+        hdr['GAIN'] = float(gain)
+
+        # Add missing fields with defaults if not present
+        if 'XBINNING' not in hdr:
+            hdr['XBINNING'] = 1
+        if 'YBINNING' not in hdr:
+            hdr['YBINNING'] = 1
+        if 'CCD-TEMP' not in hdr:
+            hdr['CCD-TEMP'] = -10.0  # Default temperature
+
+        # Parse and format date if needed
+        if date_obs and 'DATE-OBS' not in hdr:
+            # Assume date format needs to be converted to ISO format
+            hdr['DATE-OBS'] = date_obs
+
+        # Set image type to LIGHT
+        hdr['IMAGETYP'] = 'LIGHT'
+
+        logger.info(f"Fixed DWARF_RAW header for {file}: OBJECT={object_name}, INSTRUME={instrument}")
+    except (ValueError, IndexError) as e:
+        logger.exception(f"Error parsing DWARF_RAW folder name {folder_name}: {e}")
+        return False
+    return True
+
+
+# CALI_FRAME file names: bias_gain_(GAIN)_bin_(BINNING)_*.fits, flat_gain_..., and for darks
+# dark_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNING)_(CCD-TEMP)_*.fits.
+# Per frame type: (file-name prefix, minimum "_" parts, defaults added when the header lacks them).
+_DWARF_GAIN_BIN_FRAMES = {
+    "bias": ("bias_gain_", 5, (('EXPTIME', 0.0), ('CCD-TEMP', -10.0))),
+    "flat": ("flat_gain_", 5, (('EXPTIME', 1.0), ('CCD-TEMP', -10.0), ('FILTER', 'UNKNOWN'))),
+}
+
+
+def _fix_dwarf_cali_frame_header(hdr: Any, path_components: list[str], file: str) -> None:
+    """Fill a CALI_FRAME master calibration header from its folder and file names."""
+    cali_index = path_components.index("CALI_FRAME")
+    if len(path_components) <= cali_index + 2:
+        return
+    frame_type = path_components[cali_index + 1]  # bias, dark, or flat
+    cam_folder = path_components[cali_index + 2]   # cam_0 or cam_1
+
+    # Set IMAGETYP and OBJECT
+    hdr['IMAGETYP'] = frame_type.upper()
+    hdr['OBJECT'] = f"MASTER{frame_type.upper()}"
+
+    # Add DATE-OBS if missing (use current date as fallback)
+    if 'DATE-OBS' not in hdr:
+        hdr['DATE-OBS'] = _utc_fits_timestamp()
+
+    # Set INSTRUME based on camera folder
+    if cam_folder == "cam_0":
+        hdr['INSTRUME'] = 'TELE'
+    elif cam_folder == "cam_1":
+        hdr['INSTRUME'] = 'WIDE'
+    else:
+        logger.warning(f"Unknown camera folder: {cam_folder}")
+
+    # Parse filename for specific calibration parameters
+    filename_base = os.path.splitext(file)[0]
+    kind = frame_type.lower()
+
+    if kind in _DWARF_GAIN_BIN_FRAMES:
+        prefix, min_parts, defaults = _DWARF_GAIN_BIN_FRAMES[kind]
+        parts = filename_base.split("_")
+        if filename_base.startswith(prefix) and len(parts) >= min_parts:
+            binning = parts[4]
+            hdr['GAIN'] = float(parts[2])
+            hdr['XBINNING'] = int(binning)
+            hdr['YBINNING'] = int(binning)
+            for key, value in defaults:
+                if key not in hdr:
+                    hdr[key] = value
+    elif kind == "dark" and filename_base.startswith("dark_exp_"):
+        parts = filename_base.split("_")
+        if len(parts) >= 8:
+            binning = parts[6]
+            hdr['EXPTIME'] = float(parts[2])
+            hdr['GAIN'] = float(parts[4])
+            hdr['XBINNING'] = int(binning)
+            hdr['YBINNING'] = int(binning)
+            hdr['CCD-TEMP'] = float(parts[7])
+
+    logger.debug(f"Fixed CALI_FRAME header for {file}: IMAGETYP={frame_type.upper()}, INSTRUME={hdr.get('INSTRUME')}")
+
+
+def _fix_dwarf_dark_library_header(hdr: Any, file: str) -> None:
+    """Fill a DWARF_DARK library file's header: tele_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNING)_(OBS-DATE).fits."""
+    filename_base = os.path.splitext(file)[0]
+    if not filename_base.startswith("tele_exp_"):
+        return
+    parts = filename_base.split("_")
+    if len(parts) < 7:
+        return
+    exptime = parts[2]
+    gain = parts[4]
+    binning = parts[6]
+    obs_date = "_".join(parts[7:]) if len(parts) > 7 else ""
+
+    hdr['INSTRUME'] = 'TELE'
+    hdr['IMAGETYP'] = 'DARKMASTER'
+    hdr['OBJECT'] = 'DARKMASTER'
+    hdr['EXPTIME'] = float(exptime)
+    hdr['GAIN'] = float(gain)
+    hdr['XBINNING'] = int(binning)
+    hdr['YBINNING'] = int(binning)
+
+    # Add DATE-OBS if missing
+    if 'DATE-OBS' not in hdr:
+        hdr['DATE-OBS'] = obs_date or _utc_fits_timestamp()
+
+    logger.info(f"Fixed DWARF_DARK header for {file}: EXPTIME={exptime}, GAIN={gain}")
+
+
 def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
     """
     Fix FITS headers for DWARF telescope files based on folder structure and filenames.
-    
+
     Args:
         hdr: FITS header object
         root: Root directory path containing the file
         file: Filename
-    
+
     Returns:
         Modified header object or False if error
     """
     try:
-        # Read configuration to check if we should save modified headers
-        config = load_library_config()
-        save_modified = config.getboolean('DEFAULT', 'save_modified_headers', fallback=False)
-
         # Check if this is a DWARF telescope file
         telescop_value = hdr.get("TELESCOP", "")
         if not telescop_value or telescop_value.upper() != "DWARF":
@@ -98,189 +254,21 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
             logger.info(f"Ignoring failed DWARF image: {file}")
             return False
 
-        # Get the directory structure
-        path_parts = os.path.normpath(root).split(os.sep)
-
-        # Find the DWARF root directory by looking for required folders
-        dwarf_root = None
-        for i, part in enumerate(path_parts):
-            if part.startswith("DWARF_RAW"):
-                # Check if parent directory contains required DWARF folders
-                parent_path = os.sep.join(path_parts[:i])
-                required_folders = ["CALI_FRAME", "DWARF_DARK"]
-                dwarf_raw_folders = [d for d in os.listdir(parent_path) if d.startswith("DWARF_RAW")]
-
-                if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
-                    os.path.exists(os.path.join(parent_path, "DWARF_DARK")) and
-                    dwarf_raw_folders):
-                    dwarf_root = parent_path
-                    break
-
-        if not dwarf_root:
-            # Check if we're in CALI_FRAME or DWARF_DARK structure
-            for i, part in enumerate(path_parts):
-                if part in ["CALI_FRAME", "DWARF_DARK"]:
-                    parent_path = os.sep.join(path_parts[:i])
-                    if (os.path.exists(os.path.join(parent_path, "CALI_FRAME")) and
-                        os.path.exists(os.path.join(parent_path, "DWARF_DARK"))):
-                        dwarf_root = parent_path
-                        break
-
+        dwarf_root = _find_dwarf_root(os.path.normpath(root).split(os.sep))
         if not dwarf_root:
             logger.error(f"Dwarf folder structure not recognized for file: {file}")
             return False
 
         # Determine file type based on path
-        rel_path = os.path.relpath(root, dwarf_root)
-        path_components = rel_path.split(os.sep)
+        path_components = os.path.relpath(root, dwarf_root).split(os.sep)
 
-        # Handle DWARF_RAW light files
         if path_components[0].startswith("DWARF_RAW"):
-            folder_name = path_components[0]
-            # Parse: DWARF_RAW_(INSTRUMEN)_(OBJECT)_EXP_(EXPTIME)_GAIN_(GAIN)_(DATE-OBS)
-            parts = folder_name.split("_")
-            if len(parts) >= 8:  # Minimum expected parts
-                try:
-                    instrument = parts[2]  # INSTRUMEN
-                    object_name = parts[3]  # OBJECT
-                    exptime = parts[5]  # EXPTIME (after EXP)
-                    gain = parts[7]  # GAIN (after GAIN)
-                    date_obs = "_".join(parts[8:])  # DATE-OBS (rest of string)
-
-                    # Update header
-                    hdr['INSTRUME'] = instrument
-                    hdr['OBJECT'] = object_name
-                    hdr['EXPTIME'] = float(exptime)
-                    hdr['GAIN'] = float(gain)
-
-                    # Add missing fields with defaults if not present
-                    if 'XBINNING' not in hdr:
-                        hdr['XBINNING'] = 1
-                    if 'YBINNING' not in hdr:
-                        hdr['YBINNING'] = 1
-                    if 'CCD-TEMP' not in hdr:
-                        hdr['CCD-TEMP'] = -10.0  # Default temperature
-
-                    # Parse and format date if needed
-                    if date_obs and 'DATE-OBS' not in hdr:
-                        # Assume date format needs to be converted to ISO format
-                        hdr['DATE-OBS'] = date_obs
-
-                    # Set image type to LIGHT
-                    hdr['IMAGETYP'] = 'LIGHT'
-
-                    logger.info(f"Fixed DWARF_RAW header for {file}: OBJECT={object_name}, INSTRUME={instrument}")
-
-                except (ValueError, IndexError) as e:
-                    logger.error(f"Error parsing DWARF_RAW folder name {folder_name}: {e}")
-                    return False
-
-        # Handle CALI_FRAME master calibration files
+            if not _fix_dwarf_raw_header(hdr, path_components[0], file):
+                return False
         elif "CALI_FRAME" in path_components:
-            cali_index = path_components.index("CALI_FRAME")
-            if len(path_components) > cali_index + 2:
-                frame_type = path_components[cali_index + 1]  # bias, dark, or flat
-                cam_folder = path_components[cali_index + 2]   # cam_0 or cam_1
-
-                # Set IMAGETYP and OBJECT
-                hdr['IMAGETYP'] = frame_type.upper()
-                hdr['OBJECT'] = f"MASTER{frame_type.upper()}"
-
-                # Add DATE-OBS if missing (use current date as fallback)
-                if 'DATE-OBS' not in hdr:
-                    from datetime import datetime
-                    hdr['DATE-OBS'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-
-                # Set INSTRUME based on camera folder
-                if cam_folder == "cam_0":
-                    hdr['INSTRUME'] = 'TELE'
-                elif cam_folder == "cam_1":
-                    hdr['INSTRUME'] = 'WIDE'
-                else:
-                    logger.warning(f"Unknown camera folder: {cam_folder}")
-
-                # Parse filename for specific calibration parameters
-                filename_base = os.path.splitext(file)[0]
-
-                if frame_type.lower() == "bias":
-                    # bias_gain_(GAIN)_bin_(BINNINGX)_*.fits
-                    if filename_base.startswith("bias_gain_"):
-                        parts = filename_base.split("_")
-                        if len(parts) >= 5:
-                            gain = parts[2]
-                            binning = parts[4]
-                            hdr['GAIN'] = float(gain)
-                            hdr['XBINNING'] = int(binning)
-                            hdr['YBINNING'] = int(binning)
-                            if 'EXPTIME' not in hdr:
-                                hdr['EXPTIME'] = 0.0  # Bias frames have zero exposure
-                            if 'CCD-TEMP' not in hdr:
-                                hdr['CCD-TEMP'] = -10.0  # Default temperature
-
-                elif frame_type.lower() == "flat":
-                    # flat_gain_(GAIN)_bin_(BINNINGX)_*.fits
-                    if filename_base.startswith("flat_gain_"):
-                        parts = filename_base.split("_")
-                        if len(parts) >= 5:
-                            gain = parts[2]
-                            binning = parts[4]
-                            hdr['GAIN'] = float(gain)
-                            hdr['XBINNING'] = int(binning)
-                            hdr['YBINNING'] = int(binning)
-                            if 'EXPTIME' not in hdr:
-                                hdr['EXPTIME'] = 1.0  # Default flat exposure
-                            if 'CCD-TEMP' not in hdr:
-                                hdr['CCD-TEMP'] = -10.0  # Default temperature
-                            if 'FILTER' not in hdr:
-                                hdr['FILTER'] = 'UNKNOWN'  # Will be set based on folder structure
-
-                elif frame_type.lower() == "dark":
-                    # dark_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNINGX)_(CCD-TEMP)_*.fits
-                    if filename_base.startswith("dark_exp_"):
-                        parts = filename_base.split("_")
-                        if len(parts) >= 8:
-                            exptime = parts[2]
-                            gain = parts[4]
-                            binning = parts[6]
-                            ccd_temp = parts[7]
-                            hdr['EXPTIME'] = float(exptime)
-                            hdr['GAIN'] = float(gain)
-                            hdr['XBINNING'] = int(binning)
-                            hdr['YBINNING'] = int(binning)
-                            hdr['CCD-TEMP'] = float(ccd_temp)
-
-                logger.debug(f"Fixed CALI_FRAME header for {file}: IMAGETYP={frame_type.upper()}, INSTRUME={hdr.get('INSTRUME')}")
-
-        # Handle DWARF_DARK library files
+            _fix_dwarf_cali_frame_header(hdr, path_components, file)
         elif "DWARF_DARK" in path_components:
-            # tele_exp_(EXPTIME)_gain_(GAIN)_bin_(BINNINGX)_OBS-DATE).fits
-            filename_base = os.path.splitext(file)[0]
-            if filename_base.startswith("tele_exp_"):
-                parts = filename_base.split("_")
-                if len(parts) >= 7:
-                    exptime = parts[2]
-                    gain = parts[4]
-                    binning = parts[6]
-                    obs_date = "_".join(parts[7:]) if len(parts) > 7 else ""
-
-                    hdr['INSTRUME'] = 'TELE'
-                    hdr['IMAGETYP'] = 'DARKMASTER'
-                    hdr['OBJECT'] = 'DARKMASTER'
-                    hdr['EXPTIME'] = float(exptime)
-                    hdr['GAIN'] = float(gain)
-                    hdr['XBINNING'] = int(binning)
-                    hdr['YBINNING'] = int(binning)
-
-                    # Add DATE-OBS if missing
-                    if 'DATE-OBS' not in hdr:
-                        if obs_date:
-                            hdr['DATE-OBS'] = obs_date
-                        else:
-                            from datetime import datetime
-                            hdr['DATE-OBS'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-
-                    logger.info(f"Fixed DWARF_DARK header for {file}: EXPTIME={exptime}, GAIN={gain}")
-
+            _fix_dwarf_dark_library_header(hdr, file)
         else:
             logger.info(f"Ignoring DWARF file in unrecognized folder structure: {file}")
             return hdr  # Return unchanged header
@@ -288,7 +276,7 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
         return hdr
 
     except Exception as e:
-        logger.error(f"Error in dwarfFixHeader for {file}: {e}")
+        logger.exception(f"Error in dwarfFixHeader for {file}: {e}")
         return False
 
 
@@ -296,11 +284,11 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
     """
     Apply mappings from the Mapping table to FITS header fields.
     Uses static caching to avoid repeated database queries.
-    
+
     Args:
         hdr: FITS header object to modify
         file_path: Full path to the FITS file (for logging)
-    
+
     Returns:
         bool: True if any header changes were made, False otherwise
     """
@@ -325,7 +313,7 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
                 logger.debug(f"Loaded {len(mappings)} header mappings from database")
 
             except Exception as e:
-                logger.error(f"Failed to load header mappings: {e}")
+                logger.exception(f"Failed to load header mappings: {e}")
                 mapFitsHeader._cached_mappings = {}
                 mapFitsHeader._cache_loaded = True  # Set to avoid repeated failures
                 return False
@@ -348,7 +336,7 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
         return changes_made
 
     except Exception as e:
-        logger.error(f"Error in mapFitsHeader for {file_path}: {e}")
+        logger.exception(f"Error in mapFitsHeader for {file_path}: {e}")
         return False
 
 
@@ -363,7 +351,7 @@ def clearMappingCache() -> None:
 def get_master_calibration_path() -> str | None:
     """
     Get the master calibration frames path from configuration.
-    
+
     Returns:
         str: Path to master calibration frames directory
     """
@@ -372,5 +360,5 @@ def get_master_calibration_path() -> str | None:
         repo_folder = config.get('DEFAULT', 'repo', fallback='.')
         return os.path.join(repo_folder, 'Masters')
     except Exception as e:
-        logger.error(f"Error getting master calibration path: {e}")
+        logger.exception(f"Error getting master calibration path: {e}")
         return os.path.join('.', 'Masters')

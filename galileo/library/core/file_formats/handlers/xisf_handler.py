@@ -27,24 +27,24 @@ class XisfFileHandler(BaseFileFormatHandler):
     def _process_file_internal(self, file_path: FilePath) -> FilePath:
         """
         Convert XISF file to FITS format.
-        
+
         Args:
             file_path: Path to XISF file
-            
+
         Returns:
             Path to converted FITS file
-            
+
         Raises:
             FileProcessingError: If conversion fails or XISF support not available
         """
         try:
             from ....file_formats.xisfFile import XISFConverter
-        except ImportError:
+        except ImportError as exc:
             raise FileProcessingError(
                 "XISF conversion not available. Install xisfFile package.",
                 file_path=str(file_path),
                 error_code="XISF_SUPPORT_MISSING"
-            )
+            ) from exc
 
         try:
             # Create output path
@@ -71,4 +71,4 @@ class XisfFileHandler(BaseFileFormatHandler):
                 f"Error during XISF conversion: {e}",
                 file_path=str(file_path),
                 error_code="XISF_CONVERSION_ERROR"
-            )
+            ) from e

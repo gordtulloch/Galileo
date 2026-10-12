@@ -1134,7 +1134,7 @@ def test_tc_eqp_mnt_060_flip_is_due_only_past_the_limit_on_the_west_side():
     assert not flip_due(_limits(flip_enabled=False), 1.0, "West")   # not requested
     assert not flip_due(on, -1.0, "West")                           # still east of the meridian
 
-    base = dict(alt_deg=50.0, ha_hours=1.0, side_of_pier="West", slewing=False)
+    base = {"alt_deg": 50.0, "ha_hours": 1.0, "side_of_pier": "West", "slewing": False}
     assert evaluate(on, tracking=True, **base).flip
     assert not evaluate(on, tracking=False, **base).flip            # only flips while tracking
 
@@ -1146,7 +1146,7 @@ def test_tc_eqp_mnt_070_limits_stop_a_tracking_or_slewing_mount():
     idle mount is left alone, and "Tracking only" spares a slew from the altitude limits."""
     from galileo.mount_limits import evaluate
     lim = _limits(alt_limits_enabled=True, min_alt=20.0, max_alt=85.0, ha_limits_enabled=True, max_ha_hours=2.0)
-    ok = dict(alt_deg=45.0, ha_hours=0.5, side_of_pier="East", slewing=False)
+    ok = {"alt_deg": 45.0, "ha_hours": 0.5, "side_of_pier": "East", "slewing": False}
     assert not evaluate(lim, tracking=True, **ok).stop
     assert evaluate(lim, tracking=True, **{**ok, "alt_deg": 10.0}).stop
     assert evaluate(lim, tracking=True, **{**ok, "alt_deg": 88.0}).stop
@@ -1283,7 +1283,8 @@ def test_tc_eqp_mnt_020_park_and_tracking_controls_and_status_text(window):
         setattr(mount, name, AsyncMock())
     window._device_pages["mount"]["adapter"] = mount
 
-    labels = lambda: {l.text() for l in page.findChildren(QtWidgets.QLabel)}  # noqa: E731
+    def labels():
+        return {label.text() for label in page.findChildren(QtWidgets.QLabel)}
     buttons["Tracking Off"].click()
     mount.set_tracking.assert_awaited_once_with(False)
     assert "Tracking: On (Lunar rate)" in labels() and "Park status: Unparked" in labels()

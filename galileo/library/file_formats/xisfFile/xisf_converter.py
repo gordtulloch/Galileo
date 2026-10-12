@@ -10,7 +10,7 @@ XISF (Extensible Image Serialization Format) is an XML-based file format that ca
 
 The converter extracts the header information as FITS-compatible cards and converts the image data.
 
-Thanks to 
+Thanks to
 """
 
 import os
@@ -36,7 +36,7 @@ except ImportError:  # only lz4-compressed XISF blocks need it
 class XISFConverter:
     """
     A class to convert XISF files to FITS format.
-    
+
     The XISF format consists of an XML header followed by binary data.
     This class reads the XML header to extract metadata and image properties,
     then reads the binary image data and creates a FITS file.
@@ -45,10 +45,10 @@ class XISFConverter:
     def __init__(self, file_path: str):
         """
         Initialize the XISF converter with a file path.
-        
+
         Args:
             file_path (str): Path to the XISF file to convert
-            
+
         Raises:
             FileNotFoundError: If the specified file doesn't exist
             ValueError: If the file is not a valid XISF file
@@ -103,7 +103,7 @@ class XISFConverter:
                 try:
                     self.xml_header = DefusedET.fromstring(xml_content)
                 except DefusedET.ParseError as e:
-                    raise ValueError(f"Invalid XML in XISF file: {e}")
+                    raise ValueError(f"Invalid XML in XISF file: {e}") from e
 
                 # Calculate data offset (16 bytes binary header + XML length)
                 self.data_offset = 16 + xml_length
@@ -114,7 +114,7 @@ class XISFConverter:
                 logger.debug(f"Binary data offset: {self.data_offset}")
 
         except Exception as e:
-            raise ValueError(f"Error reading XISF file {self.file_path}: {e}")
+            raise ValueError(f"Error reading XISF file {self.file_path}: {e}") from e
 
     def _parse_xml_header(self):
         """Parse the XML header to extract image geometry and properties."""
@@ -140,14 +140,14 @@ class XISFConverter:
         try:
             geometry = XISFGeometry(geometry_str)
         except ValueError as e:
-            raise ValueError(f"Invalid geometry: {e}")
+            raise ValueError(f"Invalid geometry: {e}") from e
 
         # Parse sample format
         sample_format_str = image_elem.get('sampleFormat', 'UInt16')
         try:
             sample_format = XISFSampleFormat(sample_format_str)
-        except ValueError:
-            raise ValueError(f"Unsupported sample format: {sample_format_str}")
+        except ValueError as exc:
+            raise ValueError(f"Unsupported sample format: {sample_format_str}") from exc
 
         # Parse location (format: "attachment:offset:length")
         location_str = image_elem.get('location', '')
@@ -339,7 +339,7 @@ class XISFConverter:
     def _unshuffle_bytes(self, data: bytes, byte_size: int) -> bytes:
         """
         Unshuffle byte array as per XISF specification.
-        
+
         Based on: http://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html#byte_shuffling
         """
         if byte_size <= 1:
@@ -495,17 +495,17 @@ class XISFConverter:
             logger.info(f"Successfully read image data: shape {self.image_data.shape}, dtype {self.image_data.dtype}")
 
         except Exception as e:
-            raise ValueError(f"Error reading image data: {e}")
+            raise ValueError(f"Error reading image data: {e}") from e
 
         return self.image_data
 
     def convert_to_fits(self, output_path: str | None = None) -> str:
         """
         Convert the XISF file to FITS format.
-        
+
         Args:
             output_path (str, optional): Output FITS file path. If None, uses same name as input with .fits extension.
-            
+
         Returns:
             str: Path to the created FITS file
         """
@@ -555,7 +555,7 @@ class XISFConverter:
             return output_path
 
         except Exception as e:
-            raise ValueError(f"Error writing FITS file {output_path}: {e}")
+            raise ValueError(f"Error writing FITS file {output_path}: {e}") from e
 
         finally:
             hdu_list.close()
@@ -563,7 +563,7 @@ class XISFConverter:
     def get_header_cards(self) -> dict[str, Any]:
         """
         Get the extracted header cards as a dictionary.
-        
+
         Returns:
             Dict[str, Any]: Dictionary of header cards
         """
@@ -572,7 +572,7 @@ class XISFConverter:
     def get_image_info(self) -> dict[str, Any]:
         """
         Get information about the image.
-        
+
         Returns:
             Dict[str, Any]: Image information dictionary
         """

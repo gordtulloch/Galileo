@@ -62,7 +62,7 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
                                    min_files: int | None = None, progress_callback=None) -> dict[str, Any] | None:
     """
     Analyze calibration sessions to identify master frame creation opportunities.
-    
+
     Returns:
         Dict with analysis results or None if failed
     """
@@ -206,7 +206,7 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
                         force: bool = False, dry_run: bool = False, verbose: bool = False, progress_callback=None) -> bool:
     """
     Create master calibration frames from calibration sessions.
-    
+
     Args:
         config: Configuration object
         session_id: Optional specific session ID to process
@@ -214,7 +214,7 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
         dry_run: Show what would be done without making changes
         verbose: Enable verbose output showing which files are used
         progress_callback: Optional callback for progress updates
-    
+
     Returns:
         True if successful, False otherwise
     """
@@ -357,14 +357,14 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
                           force_recalibrate: bool = False, dry_run: bool = False, progress_callback=None) -> bool:
     """
     Calibrate light frames using available master frames.
-    
+
     Args:
         config: Configuration object
         session_id: Optional specific session ID to calibrate
         force_recalibrate: If True, recalibrate even if frames are already calibrated
         dry_run: If True, show what would be done without making changes
         progress_callback: Optional callback for progress updates
-    
+
     Returns:
         True if successful, False otherwise
     """
@@ -391,10 +391,7 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
             progress_callback(10, "Finding light sessions...")
 
         # Find light frame sessions
-        if session_id:
-            light_sessions = [session_id]
-        else:
-            light_sessions = find_light_sessions_for_calibration()
+        light_sessions = [session_id] if session_id else find_light_sessions_for_calibration()
 
         logger.info(f"Found {len(light_sessions)} light frame sessions")
 
@@ -482,7 +479,7 @@ def generate_quality_report(results_by_file: list[Any], session_id: str | None =
         "star_count", "avg_fwhm_arcsec", "avg_eccentricity", "avg_hfr_arcsec",
         "image_snr", "image_scale", "message",
     ]
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     suffix = f"-{session_id}" if session_id else ""
     report_path = get_reports_dir() / f"quality-report{suffix}-{timestamp}.csv"
 
@@ -515,7 +512,7 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
                               generate_report: bool = False, progress_callback=None) -> bool:
     """
     Perform enhanced quality assessment on frames using SEP-based star detection.
-    
+
     Returns:
         True if successful, False otherwise
     """
@@ -618,7 +615,7 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: str | N
                          force: bool = False, dry_run: bool = False, progress_callback=None) -> bool:
     """
     Run the complete auto-calibration workflow.
-    
+
     Returns:
         True if successful, False otherwise
     """

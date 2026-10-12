@@ -335,7 +335,7 @@ class AppWindowCoreMixin:
 
         pages: dict[str, int] = {}
         self._science_nav = None
-        for section_id, label, icon_name in PRIMARY_SECTIONS:
+        for section_id, label, _icon_name in PRIMARY_SECTIONS:
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             tag_help_screen(page, section_id)

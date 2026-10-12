@@ -155,7 +155,7 @@ class AppWindowWhatsUpPageMixin:
             client with no coordinates at all, silently fetching the
             Gulf-of-Guinea forecast, lat/lon 0,0, for every Observatory)."""
             import datetime as _dt
-            if night_date != _dt.date.today().isoformat():
+            if night_date != _dt.date.today().isoformat():  # noqa: DTZ011 -- local calendar date by design
                 return None, None, None
             location = _current_location()
             if location is None:
@@ -684,7 +684,7 @@ class AppWindowWhatsUpPageMixin:
                     ))
 
             uncached: list[tuple] = []
-            for rec, thumb_label in zip(shown, thumb_labels):
+            for rec, thumb_label in zip(shown, thumb_labels, strict=True):
                 obj = rec.obj
                 field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
                 data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)

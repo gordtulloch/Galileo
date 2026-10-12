@@ -24,6 +24,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def write_report(exc_type, exc, tb, *, origin: str = "main thread", directory: P
             directory = get_crash_reports_dir()
         text = build_report(exc_type, exc, tb, origin=origin)
         with _report_lock:
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            stamp = datetime.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
             path = Path(directory) / f"crash_{stamp}.txt"
             path.write_text(text, encoding="utf-8")
             _prune(Path(directory))
@@ -118,10 +119,8 @@ def write_report(exc_type, exc, tb, *, origin: str = "main thread", directory: P
 
 
 def _handle(exc_type, exc, tb, origin: str, *, fatal: bool) -> Path | None:
-    try:
+    with contextlib.suppress(Exception):
         logger.critical("Unhandled exception in %s", origin, exc_info=(exc_type, exc, tb))
-    except Exception:
-        pass
     path = write_report(exc_type, exc, tb, origin=origin)
     notify = _state.get("notify")
     if notify is not None:
@@ -160,10 +159,8 @@ def asyncio_exception_handler(loop, context: dict) -> None:
     if exc is not None:
         _handle(type(exc), exc, exc.__traceback__, "asyncio task", fatal=False)
     else:
-        try:
+        with contextlib.suppress(Exception):
             logger.error("asyncio: %s", scrub_secrets(str(context.get("message", ""))))
-        except Exception:
-            pass
     loop.default_exception_handler(context)
 
 
@@ -178,8 +175,8 @@ def enable_faulthandler(path: Path | None = None) -> Path | None:
         if path is None:
             from galileo.platform import get_log_dir
             path = get_log_dir() / "faulthandler.log"
-        fh: TextIO = open(path, "a", encoding="utf-8")  # noqa: SIM115 - must stay open for the process
-        fh.write(f"\n--- Galileo {_version()} started {datetime.datetime.now().isoformat(timespec='seconds')} ---\n")
+        fh: TextIO = open(path, "a", encoding="utf-8")
+        fh.write(f"\n--- Galileo {_version()} started {datetime.datetime.now().astimezone().isoformat(timespec='seconds')} ---\n")
         fh.flush()
         faulthandler.enable(file=fh, all_threads=True)
         old = _state.get("fault_file")

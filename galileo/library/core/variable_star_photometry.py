@@ -20,6 +20,7 @@ from galileo.library.core.photometry import (
     extract_sources_sep,
     instrumental_mag,
 )
+import contextlib
 
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,10 @@ class VariableStarPhotometryOptions:
 
 
 def _fetch_json(url: str, timeout_s: float = 30.0) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "Galileo"})
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise ValueError(f"Refusing to fetch non-HTTP(S) URL: {url!r}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Galileo"})  # noqa: S310 -- scheme checked above
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
         payload = resp.read().decode("utf-8")
     return json.loads(payload)
 
@@ -171,7 +174,7 @@ def ensemble_fit(
     instrumental_mags: np.ndarray,
     catalog_mags: np.ndarray,
 ) -> tuple[np.poly1d, np.ndarray]:
-    fit, residuals, rank, singular_values, rcond = np.polyfit(
+    fit, residuals, _rank, _singular_values, _rcond = np.polyfit(
         instrumental_mags, catalog_mags, 1, full=True
     )
     return np.poly1d(fit), residuals
@@ -271,13 +274,10 @@ def run_variable_star_photometry(
             check_mag = float(fit_fn(float(check_rows[0]["instrumental_mag"])))
 
     # Observation date for AAVSO summary
-    obs_dt = None
     date_obs = header.get("DATE-OBS")
     if date_obs:
-        try:
-            obs_dt = datetime.fromisoformat(str(date_obs).replace("Z", "+00:00"))
-        except Exception:
-            obs_dt = None
+        with contextlib.suppress(Exception):
+            datetime.fromisoformat(str(date_obs))
 
     return {
         "star_name": star_name,

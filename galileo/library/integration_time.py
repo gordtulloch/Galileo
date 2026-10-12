@@ -34,7 +34,7 @@ def prior_integration_hours(object_name: str) -> float | None:
         query = fitsFile.select().where(
             (fitsFile.fitsFileObject == object_name)
             & (peewee.fn.UPPER(fitsFile.fitsFileType) == "LIGHT FRAME")
-            & ((fitsFile.fitsFileSoftDelete.is_null(True)) | (fitsFile.fitsFileSoftDelete == False))  # noqa: E712
+            & ((fitsFile.fitsFileSoftDelete.is_null(True)) | (fitsFile.fitsFileSoftDelete == False))
         )
         total_seconds = 0.0
         found = False

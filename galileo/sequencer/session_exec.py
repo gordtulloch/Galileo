@@ -31,13 +31,13 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class RunState(str, Enum):
+class RunState(StrEnum):
     IDLE = "idle"
     RUNNING = "running"
     PAUSED = "paused"
@@ -465,7 +465,7 @@ class SessionExecutor:
 
     async def _checkpoint(self) -> None:
         """Between blocks and frames: honour Stop and Pause."""
-        while not self._resume.is_set():  # noqa: ASYNC110 - a threading.Event, set from the UI thread
+        while not self._resume.is_set():
             await asyncio.sleep(_POLL_S)
         if self._stop.is_set():
             raise _Stopped

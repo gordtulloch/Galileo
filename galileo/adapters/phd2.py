@@ -27,6 +27,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 
 from galileo.guiding import GuiderError
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,8 @@ class Phd2Adapter:
     def close(self) -> None:
         sock, self._sock = self._sock, None
         if sock is not None:
-            try:
+            with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             sock.close()
         self._fail_pending(Phd2Error("disconnected"))
 

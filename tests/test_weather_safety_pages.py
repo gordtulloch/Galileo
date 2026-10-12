@@ -91,7 +91,7 @@ def _connect_weather(window, adapter):
     """Build the Weather page, and connect it to *adapter* through the real Connect button."""
     page = window._build_weather_page()
     window._connect_device_adapter = lambda *a, **k: adapter
-    device_combo = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+    device_combo = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
     device_combo.setEditText("Fake Weather Station")
     _button(page, "Connect").click()
     return page
@@ -163,7 +163,7 @@ def _tabs(page):
 def _add_device(page, window, label):
     """Pick *label* from the "+" button's menu (a child of the button, popped up on click rather than set via setMenu)."""
     menu = _button(page, "+").findChild(QtWidgets.QMenu)
-    [a for a in menu.actions() if a.text() == label][0].trigger()
+    next(a for a in menu.actions() if a.text() == label).trigger()
 
 
 @pytest.mark.requirement("TC-EQP-WX-020")
@@ -197,14 +197,14 @@ def test_tc_eqp_wx_020_unsafe_monitor_blocks_dome_opening_across_tabs(window):
     """EQP-WX-020: a connected Safety Monitor reporting not-safe makes the Safety screen's overall verdict unsafe, even with calm weather."""
     page = window._build_weather_page()
     window._connect_device_adapter = lambda *a, **k: FakeWeatherStation(rain=0.0, wind_speed=5.0)
-    primary_device = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+    primary_device = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
     primary_device.setEditText("Calm Weather")
     _button(page, "Connect").click()
 
     _add_device(page, window, "Safety Monitor")
     window._connect_device_adapter = lambda *a, **k: FakeSafetyMonitor(is_safe=False)
     monitor_tab = _tabs(page).widget(1)
-    [c for c in monitor_tab.findChildren(QtWidgets.QComboBox) if c.isEditable()][0].setEditText("Roof Sensor")
+    next(c for c in monitor_tab.findChildren(QtWidgets.QComboBox) if c.isEditable()).setEditText("Roof Sensor")
     _button(monitor_tab, "Connect").click()
 
     connected, safe, reasons = window._device_pages["weather"]["evaluate"]()
@@ -221,7 +221,7 @@ def test_tc_eqp_wx_020_extra_devices_and_their_rules_persist_per_slot(window):
     page = window._build_weather_page()
     _add_device(page, window, "Safety Monitor")
     monitor_tab = _tabs(page).widget(1)
-    [c for c in monitor_tab.findChildren(QtWidgets.QComboBox) if c.isEditable()][0].setEditText("Roof Sensor")
+    next(c for c in monitor_tab.findChildren(QtWidgets.QComboBox) if c.isEditable()).setEditText("Roof Sensor")
     _button(monitor_tab, "Save").click()
 
     assert get_device_config(window._current_pier, "safety_monitor", slot="safety_monitor_2").device_name == "Roof Sensor"

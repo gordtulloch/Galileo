@@ -21,8 +21,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from galileo import derotation  # noqa: E402
-from galileo.exceptions import DevicePropertyError  # noqa: E402
+from galileo import derotation
+from galileo.exceptions import DevicePropertyError
 
 
 class FakeRotator:
@@ -87,7 +87,7 @@ def _connect(window, adapter):
     """Build the page, and connect it to *adapter* through the real Connect button."""
     page = window._build_rotator_page()
     window._connect_device_adapter = lambda *a, **k: adapter
-    device_combo = [c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()][0]
+    device_combo = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable())
     device_combo.setEditText("Fake Rotator")
     _button(page, "Connect").click()
     return page
@@ -132,7 +132,7 @@ def test_tc_eqp_rot_010_connect_shows_position_and_sends_commands(window):
     assert "Mechanical 12.50° · Sky 158.29°" in labels        # both angles, per EQP-ROT-010
     assert _button(page, "Goto").isEnabled()
 
-    spin = [s for s in page.findChildren(QtWidgets.QDoubleSpinBox) if s.suffix() == "°"][0]
+    spin = next(s for s in page.findChildren(QtWidgets.QDoubleSpinBox) if s.suffix() == "°")
     assert spin.value() == pytest.approx(158.29)              # seeded from the live position
     spin.setValue(45.5)
     _button(page, "Goto").click()
@@ -148,16 +148,16 @@ def test_tc_eqp_rot_010_connect_shows_position_and_sends_commands(window):
 def test_tc_eqp_rot_010_backlash_only_enabled_when_the_driver_supports_it(window):
     """EQP-ROT-010: the backlash slider is disabled (with an explanation) for a driver that has no backlash setting."""
     page = _connect(window, FakeRotator(backlash_supported=False))
-    slider = [s for s in page.findChildren(QtWidgets.QSlider) if s.maximum() == 1000][0]
+    slider = next(s for s in page.findChildren(QtWidgets.QSlider) if s.maximum() == 1000)
     assert not slider.isEnabled() and "no backlash" in slider.toolTip()
 
     rotator = FakeRotator(backlash_supported=True)
     page = _connect(window, rotator)
-    slider = [s for s in page.findChildren(QtWidgets.QSlider) if s.maximum() == 1000][0]
+    slider = next(s for s in page.findChildren(QtWidgets.QSlider) if s.maximum() == 1000)
     assert slider.isEnabled() and slider.value() == 5         # driver's 0.5 shown in tenths
     slider.setValue(25)
     # Two "OK" buttons: backlash (added first) and derotation-rate correction.
-    [b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "OK"][0].click()
+    next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "OK").click()
     assert ("set_backlash", 2.5) in rotator.calls
 
 
@@ -173,10 +173,10 @@ def test_derotation_target_gives_altaz_and_a_signed_rate_that_reverse_flips(wind
     lon.setValue(0.0)
     lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.UTC), 0.0) / 15.0
     _, h, m, s = derotation.to_sexagesimal(lst_hours)
-    ints = [w for w in page.findChildren(QtWidgets.QSpinBox)]
-    ra_h, ra_m, dec_d = [w for w in ints if w.suffix() == " h"][0], [w for w in ints if w.suffix() == " m"][0], \
-        [w for w in ints if w.suffix() == " °"][0]
-    ra_s = [w for w in page.findChildren(QtWidgets.QDoubleSpinBox) if w.suffix() == " s"][0]
+    ints = list(page.findChildren(QtWidgets.QSpinBox))
+    ra_h, ra_m, dec_d = next(w for w in ints if w.suffix() == " h"), next(w for w in ints if w.suffix() == " m"), \
+        next(w for w in ints if w.suffix() == " °")
+    ra_s = next(w for w in page.findChildren(QtWidgets.QDoubleSpinBox) if w.suffix() == " s")
     ra_h.setValue(h)
     ra_m.setValue(m)
     ra_s.setValue(s)
@@ -203,11 +203,11 @@ def test_start_derotation_needs_a_target_then_locks_goto_while_running(window):
     lat.setValue(60.0)
     lon.setValue(0.0)
     lst_hours = derotation.local_sidereal_deg(datetime.datetime.now(datetime.UTC), 0.0) / 15.0
-    _, h, m, s = derotation.to_sexagesimal(lst_hours)
+    _, h, m, _s = derotation.to_sexagesimal(lst_hours)
     ints = page.findChildren(QtWidgets.QSpinBox)
-    [w for w in ints if w.suffix() == " h"][0].setValue(h)
-    [w for w in ints if w.suffix() == " m"][0].setValue(m)
-    [w for w in ints if w.suffix() == " °"][0].setValue(30)
+    next(w for w in ints if w.suffix() == " h").setValue(h)
+    next(w for w in ints if w.suffix() == " m").setValue(m)
+    next(w for w in ints if w.suffix() == " °").setValue(30)
 
     _button(page, "Start Derotation").click()
     stop = _button(page, "Stop Derotation")

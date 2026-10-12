@@ -244,13 +244,13 @@ class AppWindowImagingSupportMixin:
         if pier is not None:
             try:
                 obs = pier.observatory
-                site = dict(latitude=obs.latitude, longitude=obs.longitude,
-                            elevation=getattr(obs, "elevation_m", None))
+                site = {"latitude": obs.latitude, "longitude": obs.longitude,
+                            "elevation": getattr(obs, "elevation_m", None)}
             except Exception:
                 logger.exception("Could not read the Observatory location to send to the devices")
         tube = self.active_optical_tube()
-        optics = dict(focal_length_mm=getattr(tube, "focal_length_mm", 0.0) or 0.0,
-                      aperture_mm=getattr(tube, "aperture_mm", 0.0) or 0.0)
+        optics = {"focal_length_mm": getattr(tube, "focal_length_mm", 0.0) or 0.0,
+                      "aperture_mm": getattr(tube, "aperture_mm", 0.0) or 0.0}
         if adapters is None:
             adapters = list(self._camera_backends.values())
             adapters += [page.get("adapter") for page in self._device_pages.values()

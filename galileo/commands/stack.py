@@ -148,7 +148,7 @@ def stack_session(session_id: str, dry_run: bool, logger: logging.Logger, photom
     try:
         session = FitsSessionModel.get_by_id(session_id)
     except Exception:
-        logger.error(f"Session not found: {session_id}")
+        logger.exception(f"Session not found: {session_id}")
         return False
 
     object_name = session.fitsSessionObjectName or 'Unknown'
@@ -286,7 +286,7 @@ def main() -> int:
 
     logger = setup_logging(args.verbose)
     logger.info('=== Galileo Stack Starting ===')
-    logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Started at: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
         from galileo.library.database import setup_database
@@ -318,7 +318,7 @@ def main() -> int:
         return 0
 
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.exception(f"Fatal error: {e}")
         return 1
 
 

@@ -6,7 +6,7 @@ different astronomical image file formats in an extensible manner.
 """
 
 from abc import ABC, abstractmethod
-from typing import Protocol, Optional, Dict, Any
+from typing import Protocol
 from ...types import FilePath
 from ...exceptions import FileProcessingError
 
@@ -17,10 +17,10 @@ class FileFormatHandler(Protocol):
     def can_handle(self, file_path: FilePath) -> bool:
         """
         Check if this handler can process the given file.
-        
+
         Args:
             file_path: Path to the file to check
-            
+
         Returns:
             True if this handler can process the file
         """
@@ -29,7 +29,7 @@ class FileFormatHandler(Protocol):
     def get_supported_extensions(self) -> list[str]:
         """
         Get list of file extensions supported by this handler.
-        
+
         Returns:
             List of supported file extensions (with dots, e.g., ['.fits', '.fit'])
         """
@@ -38,13 +38,13 @@ class FileFormatHandler(Protocol):
     def process_file(self, file_path: FilePath) -> FilePath:
         """
         Process the file and return path to the processed/converted file.
-        
+
         Args:
             file_path: Path to the input file
-            
+
         Returns:
             Path to the processed file (may be same as input for native formats)
-            
+
         Raises:
             FileProcessingError: If processing fails
         """
@@ -53,7 +53,7 @@ class FileFormatHandler(Protocol):
     def get_format_name(self) -> str:
         """
         Get human-readable name of the format handled.
-        
+
         Returns:
             Format name (e.g., "FITS", "ZIP Archive", "XISF")
         """
@@ -91,13 +91,13 @@ class BaseFileFormatHandler(ABC):
     def process_file(self, file_path: FilePath) -> FilePath:
         """
         Process file with error handling and validation.
-        
+
         Args:
             file_path: Path to input file
-            
+
         Returns:
             Path to processed file
-            
+
         Raises:
             FileProcessingError: If file cannot be processed
         """
@@ -122,7 +122,7 @@ class BaseFileFormatHandler(ABC):
 class FileFormatProcessor:
     """
     Central processor for handling multiple file formats.
-    
+
     Follows Open/Closed Principle - can be extended with new handlers
     without modifying existing code.
     """
@@ -147,7 +147,7 @@ class FileFormatProcessor:
     def register_handler(self, handler: FileFormatHandler) -> None:
         """
         Register a new file format handler.
-        
+
         Args:
             handler: File format handler to register
         """
@@ -156,10 +156,10 @@ class FileFormatProcessor:
     def unregister_handler(self, format_name: str) -> bool:
         """
         Unregister a file format handler by name.
-        
+
         Args:
             format_name: Name of the format handler to remove
-            
+
         Returns:
             True if handler was found and removed
         """
@@ -172,7 +172,7 @@ class FileFormatProcessor:
     def get_supported_formats(self) -> dict[str, list[str]]:
         """
         Get dictionary of all supported formats and their extensions.
-        
+
         Returns:
             Dict mapping format names to lists of supported extensions
         """
@@ -184,10 +184,10 @@ class FileFormatProcessor:
     def find_handler(self, file_path: FilePath) -> FileFormatHandler | None:
         """
         Find the appropriate handler for a file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             Handler that can process the file, or None if no handler found
         """
@@ -199,10 +199,10 @@ class FileFormatProcessor:
     def can_process(self, file_path: FilePath) -> bool:
         """
         Check if any registered handler can process the file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             True if a handler is available for the file
         """
@@ -211,13 +211,13 @@ class FileFormatProcessor:
     def process_file(self, file_path: FilePath) -> FilePath:
         """
         Process a file using the appropriate handler.
-        
+
         Args:
             file_path: Path to the input file
-            
+
         Returns:
             Path to the processed file
-            
+
         Raises:
             FileProcessingError: If no handler available or processing fails
         """
@@ -249,7 +249,7 @@ _global_processor: FileFormatProcessor | None = None
 def get_file_format_processor() -> FileFormatProcessor:
     """
     Get the global file format processor instance.
-    
+
     Returns:
         Singleton FileFormatProcessor instance
     """
@@ -258,8 +258,3 @@ def get_file_format_processor() -> FileFormatProcessor:
         _global_processor = FileFormatProcessor()
     return _global_processor
 
-
-def reset_file_format_processor() -> None:
-    """Reset the global processor (mainly for testing)."""
-    global _global_processor
-    _global_processor = None

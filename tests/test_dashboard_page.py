@@ -67,7 +67,7 @@ def test_tc_obs_060_unreadable_queue_does_not_break_the_dashboard():
 
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-from PySide6 import QtCore  # noqa: E402
+from PySide6 import QtCore
 
 
 @pytest.fixture

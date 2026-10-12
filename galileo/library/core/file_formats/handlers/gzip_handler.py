@@ -84,10 +84,10 @@ class GzipFileHandler(BaseFileFormatHandler):
                 f"File system error during gzip decompression: {e}",
                 file_path=str(file_path),
                 error_code="GZIP_IO_ERROR",
-            )
+            ) from e
         except Exception as e:
             raise FileProcessingError(
                 f"Unexpected error decompressing gzip FITS: {e}",
                 file_path=str(file_path),
                 error_code="GZIP_DECOMPRESS_ERROR",
-            )
+            ) from e

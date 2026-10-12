@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import io
 import socket
+from typing import ClassVar
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -23,6 +24,7 @@ import zlib
 from xml.sax.saxutils import quoteattr
 
 import numpy as np
+import contextlib
 
 IMAGE = np.arange(12, dtype=np.uint16).reshape(3, 4) * 1000
 
@@ -128,7 +130,7 @@ class FakeIndiServer:
     as ``(tag, device, property, {element: text})`` for assertions."""
 
     # Properties whose changes show as Busy before Ok, like a real move.
-    _SLOW = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "ABS_ROTATOR_ANGLE"}
+    _SLOW: ClassVar[set[str]] = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "ABS_ROTATOR_ANGLE"}
 
     def __init__(self, preconnected: tuple[str, ...] = ()) -> None:
         self.devices = _devices()
@@ -150,10 +152,8 @@ class FakeIndiServer:
         self._running = False
         self._listener.close()
         for sock in list(self._clients):
-            try:
+            with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             sock.close()
 
     # -- plumbing ----------------------------------------------------------
@@ -168,11 +168,8 @@ class FakeIndiServer:
             threading.Thread(target=self._serve, args=(sock,), daemon=True).start()
 
     def _send(self, sock: socket.socket, xml: str) -> None:
-        with self._lock:
-            try:
-                sock.sendall(xml.encode())
-            except OSError:
-                pass
+        with self._lock, contextlib.suppress(OSError):
+            sock.sendall(xml.encode())
 
     def _serve(self, sock: socket.socket) -> None:
         parser = ET.XMLPullParser(events=("start", "end"))

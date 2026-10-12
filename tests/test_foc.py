@@ -78,7 +78,7 @@ async def test_tc_foc_030_report_failure_distinctly(mock_indi_camera, mock_focus
 
     foc_service._measure_hfr = AsyncMock(return_value=float("nan"))
 
-    foc_mod = pytest.importorskip("galileo.autofocus")
+    pytest.importorskip("galileo.autofocus")
     result = await foc_service.run(step_size=250, num_points=5)
 
     assert result.success is False

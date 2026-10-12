@@ -4,9 +4,7 @@
 """PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-120)."""
 
 import io
-import json
 import zipfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

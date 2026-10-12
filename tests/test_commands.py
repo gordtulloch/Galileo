@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_lib import ingest, library, write_calibration_frames, write_frame, write_light_frames  # noqa: F401, F811  (library is a fixture)
+from tests.test_lib import ingest, library, write_calibration_frames, write_frame, write_light_frames  # noqa: F401  (library is a fixture)
 
 
 # ---------------------------------------------------------------------------

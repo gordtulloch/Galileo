@@ -114,9 +114,7 @@ class SafetyMonitorService:
             return True
         if not self._monitor.is_safe:
             return False
-        if self._require_user_confirm:
-            return False
-        return True
+        return not self._require_user_confirm
 
     # --- Advisory data sources (SAFE-050, SAFE-090, SAFE-100) -----------
 
@@ -161,7 +159,7 @@ class WeatherLoggingService:
             import datetime
             self._event_bus.publish(WeatherReadingEvent(
                 source=getattr(self._station, "name", ""),
-                timestamp=datetime.datetime.utcnow().isoformat(),
+                timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
             ))
 
 
@@ -604,7 +602,7 @@ class NoaaSmokeClient:
     def _rate(self, kml: bytes) -> float | None:
         import xml.etree.ElementTree as ET
         KML = "http://www.opengis.net/kml/2.2"
-        root = ET.fromstring(kml)  # noqa: S314 -- fixed NOAA endpoint
+        root = ET.fromstring(kml)
         box = (self.longitude - 0.5, self.latitude - 0.5, self.longitude + 0.5, self.latitude + 0.5)
         found_folder = False
         for folder_name, aqi in _HMS_FOLDER_AQI:  # heaviest first: first match wins

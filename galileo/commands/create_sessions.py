@@ -29,22 +29,22 @@ Requirements:
 Example:
     # Create both light and calibration sessions
     python -m galileo.commands.create_sessions
-    
+
     # Create sessions with verbose output
     python -m galileo.commands.create_sessions -v
-    
+
     # Only create light sessions
     python -m galileo.commands.create_sessions -l
-    
+
     # Only create calibration sessions
     python -m galileo.commands.create_sessions -C
-    
+
     # Regenerate all sessions (clear existing first)
     python -m galileo.commands.create_sessions -r
-    
+
     # Only create sessions for unassigned files
     python -m galileo.commands.create_sessions -n
-    
+
     # Update quality metrics for all existing sessions
     python -m galileo.commands.create_sessions -q
 """
@@ -88,7 +88,7 @@ def create_light_sessions(processor, logger):
         # Quality metrics are automatically updated by createLightSessions
         return len(created_sessions)
     except Exception as e:
-        logger.error(f"Error creating light sessions: {e}")
+        logger.exception(f"Error creating light sessions: {e}")
         raise
 
 def update_session_quality_metrics(processor, logger):
@@ -111,7 +111,7 @@ def update_session_quality_metrics(processor, logger):
         logger.info(f"Quality metrics updated for {len(session_ids)} sessions")
         return len(session_ids)
     except Exception as e:
-        logger.error(f"Error updating session quality metrics: {e}")
+        logger.exception(f"Error updating session quality metrics: {e}")
         raise
 
 def create_calibration_sessions(processor, logger):
@@ -122,7 +122,7 @@ def create_calibration_sessions(processor, logger):
         logger.info(f"Calibration sessions created: {len(created_sessions)}")
         return len(created_sessions)
     except Exception as e:
-        logger.error(f"Error creating calibration sessions: {e}")
+        logger.exception(f"Error creating calibration sessions: {e}")
         raise
 
 def clear_existing_sessions(logger):
@@ -139,7 +139,7 @@ def clear_existing_sessions(logger):
 
         return sessions_deleted
     except Exception as e:
-        logger.error(f"Error clearing existing sessions: {e}")
+        logger.exception(f"Error clearing existing sessions: {e}")
         raise
 
 def main():
@@ -189,11 +189,11 @@ Examples:
 
     try:
         logger.info("=== Galileo Session Creator Starting ===")
-        logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Started at: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Load configuration
         logger.info(f"Loading configuration from: {args.config or 'library.ini'}")
-        config = load_config(args.config)
+        load_config(args.config)
 
         # Setup database
         logger.info("Setting up database...")
@@ -306,7 +306,7 @@ Examples:
 
         # Handle database errors gracefully without traceback
         if isinstance(e, DatabaseError):
-            logger.error(f"Database error: {e}")
+            logger.exception(f"Database error: {e}")
             print(f"\n{'='*70}")
             print("DATABASE ERROR")
             print(f"{'='*70}")
@@ -315,10 +315,10 @@ Examples:
             return 1
 
         # For other exceptions, show traceback if verbose
-        logger.error(f"Error during session creation: {e}")
+        logger.exception(f"Error during session creation: {e}")
         if args.verbose:
             import traceback
-            logger.error(traceback.format_exc())
+            logger.exception(traceback.format_exc())
         else:
             print(f"\nError: {e}")
             print("Use -v/--verbose for detailed error information")

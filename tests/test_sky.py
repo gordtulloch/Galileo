@@ -213,7 +213,7 @@ def test_tc_sky_030_rise_transit_set_for_a_normal_object(sky_atlas, observing_lo
 def test_tc_sky_030_rise_transit_set_circumpolar_never_sets(observing_location):
     """SKY-030: a circumpolar object (always above the horizon at this latitude) has a transit but no
     rise or set within the night — it never crosses the horizon at all."""
-    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    pytest.importorskip("galileo.planning.sky_atlas")
     from galileo.planning.visibility import rise_transit_set
 
     # High declination, close to the north celestial pole, from a mid-northern latitude.
@@ -251,7 +251,7 @@ def test_tc_sky_030_altitude_charts_batch_matches_individual_calls(sky_atlas, ob
     batched = sky_atlas.altitude_charts_batch([m42, m31], observing_location, date="2026-09-16")
 
     assert len(batched) == 2
-    for ind, batch in zip(individual, batched):
+    for ind, batch in zip(individual, batched, strict=False):
         assert batch["times"] == ind["times"]
         assert batch["altitudes"] == pytest.approx(ind["altitudes"], abs=1e-6)
 

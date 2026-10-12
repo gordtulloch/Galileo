@@ -666,7 +666,7 @@ async def test_tc_plt_010_real_astap_solves_a_synthetic_star_field(tmp_path):
     inside = (q > 0) & (px > 8) & (px < width - 8) & (py > 8) & (py < height - 8)
     image = np.random.default_rng(7).normal(500, 15, (height, width))
     yy, xx = np.mgrid[0:height, 0:width]
-    for x, y, mag in zip(px[inside], py[inside], cat_mag[inside]):
+    for x, y, mag in zip(px[inside], py[inside], cat_mag[inside], strict=True):
         window = (slice(max(int(y) - 7, 0), int(y) + 8), slice(max(int(x) - 7, 0), int(x) + 8))
         image[window] += 40000 * 10 ** (-0.4 * (mag - 1.0)) * np.exp(-((xx[window] - x) ** 2 + (yy[window] - y) ** 2) / (2 * 1.8 ** 2))
     if inside.sum() < 20:

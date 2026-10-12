@@ -28,7 +28,7 @@ import os
 import logging
 import hashlib
 import numpy as np
-from datetime import datetime
+from datetime import UTC, datetime
 from collections.abc import Callable
 from astropy.io import fits
 from ..models import fitsFile as FitsFileModel, fitsSession as FitsSessionModel
@@ -41,29 +41,29 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
                          output_path: str | None = None, progress_callback: Callable | None = None) -> dict:
     """
     Calibrate a single light frame using master calibration frames.
-    
+
     This function applies the standard astronomical calibration pipeline:
     1. Bias correction of dark master (Dark - Bias) to remove bias signal from dark
     2. Dark subtraction (Light - BiasCorrectDark) to remove thermal noise
     3. Flat field correction with full-frame median normalization
-    
+
     The calibration formula is: (Light - (Dark - Bias)) / (Flat / median(Flat))
-    
+
     IMPORTANT: Dark masters created by Galileo contain uncorrected bias signal
     because bias is not subtracted during dark master creation. This function
     corrects for that by subtracting bias from the dark master before applying it.
-    
+
     Args:
         light_path (str): Path to the light frame FITS file
         dark_master (str, optional): Path to master dark frame
-        flat_master (str, optional): Path to master flat frame  
+        flat_master (str, optional): Path to master flat frame
         bias_master (str, optional): Path to master bias frame (REQUIRED for proper dark correction)
         output_path (str, optional): Path for calibrated output file (auto-generated if not provided)
         progress_callback (callable, optional): Callback for progress updates
-        
+
     Returns:
         dict: Calibration result with success status, output path, and metadata
-        
+
     Example:
         >>> result = calibrate_light_frame(
         ...     light_path='light_001.fits',
@@ -170,7 +170,7 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
                     logger.debug(f"Applied dark correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
 
             except Exception as e:
-                logger.error(f"Failed to apply dark correction: {e}")
+                logger.exception(f"Failed to apply dark correction: {e}")
                 if progress_callback:
                     progress_callback(f"Warning: Failed to apply dark correction: {e}")
 
@@ -191,7 +191,7 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
                     logger.debug(f"Applied bias correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
 
             except Exception as e:
-                logger.error(f"Failed to apply bias correction: {e}")
+                logger.exception(f"Failed to apply bias correction: {e}")
                 if progress_callback:
                     progress_callback(f"Warning: Failed to apply bias correction: {e}")
 
@@ -233,7 +233,7 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
                     logger.debug(f"Applied flat correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
 
             except Exception as e:
-                logger.error(f"Failed to apply flat correction: {e}")
+                logger.exception(f"Failed to apply flat correction: {e}")
                 if progress_callback:
                     progress_callback(f"Warning: Failed to apply flat correction: {e}")
 
@@ -326,7 +326,7 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
         }
 
     except Exception as e:
-        logger.error(f"Failed to calibrate light frame: {e}")
+        logger.exception(f"Failed to calibrate light frame: {e}")
         return {"error": f"Failed to calibrate light frame: {e!s}"}
 
 
@@ -335,12 +335,12 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
                             force_recalibrate: bool = False) -> dict:
     """
     Calibrate all light frames in a session using available master frames.
-    
+
     Args:
         session_id (str): Database ID of the session to calibrate
         progress_callback (callable, optional): Callback for progress updates
         force_recalibrate (bool): If True, recalibrate even if already calibrated
-        
+
     Returns:
         dict: Calibration results with statistics
     """
@@ -350,7 +350,7 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
 
         # Get session and check if it exists
         try:
-            session = FitsSessionModel.get(FitsSessionModel.fitsSessionId == session_id)
+            FitsSessionModel.get(FitsSessionModel.fitsSessionId == session_id)
         except FitsSessionModel.DoesNotExist:
             return {"error": f"Session {session_id} not found"}
 
@@ -406,7 +406,7 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
                 for attempt in range(max_retries):
                     try:
                         light_file.fitsFileCalibrated = 1
-                        light_file.fitsFileCalibrationDate = datetime.now()
+                        light_file.fitsFileCalibrationDate = datetime.now(UTC).replace(tzinfo=None)
                         light_file.save()
                         db_updated = True
                         break  # Success, exit retry loop
@@ -416,7 +416,7 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
                             time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
                             logger.debug(f"Database locked, retrying ({attempt + 1}/{max_retries})...")
                         else:
-                            logger.error(f"Failed to update database for calibrated file {light_file.fitsFileName} after {max_retries} retries: {e}")
+                            logger.exception(f"Failed to update database for calibrated file {light_file.fitsFileName} after {max_retries} retries: {e}")
                             break
 
                 if not db_updated:
@@ -454,13 +454,13 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
 def get_session_master_frames(session_id: str) -> dict[str, str | None]:
     """
     Get the paths to master calibration frames for a session.
-    
+
     This function looks for master frames that match the session's characteristics
     (telescope, instrument, binning, etc.) and returns their file paths.
-    
+
     Args:
         session_id (str): Database ID of the session
-        
+
     Returns:
         dict: Paths to master frames (dark, flat, bias) or None if not available
     """
@@ -497,7 +497,7 @@ def get_session_master_frames(session_id: str) -> dict[str, str | None]:
                     masters[master_type] = master.master_path
 
     except Exception as e:
-        logger.error(f"Error getting session master frames: {e}")
+        logger.exception(f"Error getting session master frames: {e}")
 
     return masters
 
@@ -507,14 +507,14 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
                                    calibrated_data: np.ndarray, light_path: str) -> None:
     """
     Update FITS header of calibrated light frame with comprehensive metadata.
-    
+
     Adds astronomy-standard headers for calibrated light frames including:
     - Calibration identification and status
     - Master frame references with full paths and checksums
     - Processing history and timestamps
     - Quality metrics and statistics
     - Software version and processing parameters
-    
+
     Args:
         header: FITS header object to update
         calibration_steps: List of calibration steps applied
@@ -530,12 +530,12 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
     # =================================================================
 
     header['CALIBRAT'] = (True, 'Frame has been calibrated')
-    header['CALDATE'] = (datetime.now().isoformat(), 'Calibration processing date/time')
+    header['CALDATE'] = (datetime.now(UTC).replace(tzinfo=None).isoformat(), 'Calibration processing date/time')
     header['CALSOFTW'] = ('Galileo', 'Calibration software name')
     header['CALVER'] = ('1.2.0', 'Calibration software version')
 
     # Processing history
-    header['HISTORY'] = f'Calibrated by Galileo on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+    header['HISTORY'] = f'Calibrated by Galileo on {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")}'
     header['HISTORY'] = f'Original file: {os.path.basename(light_path)}'
 
     # =================================================================
@@ -629,7 +629,7 @@ def _update_calibrated_frame_header(header, calibration_steps: list[str], bias_m
 def find_light_sessions_for_calibration() -> list[str]:
     """
     Find all light frame sessions that could benefit from calibration.
-    
+
     Returns:
         list: List of session IDs for light frame sessions
     """
@@ -643,14 +643,14 @@ def find_light_sessions_for_calibration() -> list[str]:
         return [session.fitsSessionId for session in light_sessions]
 
     except Exception as e:
-        logger.error(f"Error finding light sessions: {e}")
+        logger.exception(f"Error finding light sessions: {e}")
         return []
 
 
 def get_calibration_statistics() -> dict:
     """
     Get statistics about light frame calibration status.
-    
+
     Returns:
         dict: Statistics about calibrated vs uncalibrated light frames
     """
@@ -680,7 +680,7 @@ def get_calibration_statistics() -> dict:
         }
 
     except Exception as e:
-        logger.error(f"Error getting calibration statistics: {e}")
+        logger.exception(f"Error getting calibration statistics: {e}")
         return {
             "total_light_frames": 0,
             "calibrated_frames": 0,

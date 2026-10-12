@@ -134,7 +134,7 @@ def build_channels(
     The recipient e-mail / phone come from the owning Observatory's contact details when it has
     them (NOTIF-040) and from *settings* otherwise; the Observatory's channel choice (OBS-090)
     narrows the set further. SMS needs a gateway (see :func:`sms_gateway_address`)."""
-    wanted = set((getattr(contacts, "channels", None) or ["email", "sms"]))
+    wanted = set(getattr(contacts, "channels", None) or ["email", "sms"])
     email = getattr(contacts, "email", None) or settings.get("email_address") or ""
     phone = getattr(contacts, "phone_number", None) or settings.get("phone_number") or ""
     kwargs = smtp_kwargs(settings, password)

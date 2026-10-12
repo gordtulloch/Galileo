@@ -213,7 +213,7 @@ class _AltitudeChart(QWidget if _HAS_QT else object):
             for i, alt in enumerate(self.altitudes)
         ]
         painter.setPen(QPen(QColor("#4da6ff"), 2))
-        for a, b in zip(points, points[1:]):
+        for a, b in zip(points, points[1:], strict=False):
             painter.drawLine(a, b)
 
         # Time-axis ticks — a handful of "HH:MM" labels, converted from the

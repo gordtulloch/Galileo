@@ -127,7 +127,6 @@ async def test_tc_prof_060_warn_on_missing_device_at_load(minimal_profile, tmp_p
     async def always_unreachable(device_config):
         raise ConnectionError(f"Cannot reach {device_config['name']}")
 
-    warnings = []
     with pytest.warns(profiles.DeviceUnreachableWarning):
         loaded = await mgr.load("TestSetup", connect_fn=always_unreachable)
 

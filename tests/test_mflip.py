@@ -25,7 +25,7 @@ def test_tc_mflip_010_compute_time_to_flip(mflip_service, mock_indi_mount):
     mock_indi_mount.pier_side = "East"
     mock_indi_mount.hour_angle = 5.5  # near meridian limit of 6h
 
-    mflip_mod = pytest.importorskip("galileo.meridianflip")
+    pytest.importorskip("galileo.meridianflip")
     mflip_service.set_flip_limit_ha(6.0)
     time_remaining_min = mflip_service.time_to_flip_minutes()
 
@@ -68,7 +68,7 @@ async def test_tc_mflip_030_recenter_and_restart_guiding_after_flip(mflip_servic
     recentered = []
     guider_started = []
 
-    plt_mod = pytest.importorskip("galileo.platesolve")
+    pytest.importorskip("galileo.platesolve")
     mock_solver = MagicMock()
     mock_solver.solve_and_center = AsyncMock(side_effect=lambda **kw: recentered.append(True))
     mock_guider.start_guiding = AsyncMock(side_effect=lambda: guider_started.append(True))

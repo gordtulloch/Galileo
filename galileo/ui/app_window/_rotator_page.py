@@ -375,7 +375,7 @@ class AppWindowRotatorPageMixin:
             return alt, az, rate
 
         def _recompute() -> None:
-            now = datetime.datetime.now()
+            now = datetime.datetime.now().astimezone()
             date_value.setText(now.strftime("%Y - %m - %d"))
             time_value.setText(now.strftime("%H : %M : %S"))
             result = _current_rate()
@@ -445,7 +445,7 @@ class AppWindowRotatorPageMixin:
             backlash_ok.setToolTip(tip)
             if supported and status.get("backlash") is not None and not backlash_slider.isSliderDown():
                 backlash_slider.blockSignals(True)
-                backlash_slider.setValue(int(round(status["backlash"] * 10)))
+                backlash_slider.setValue(round(status["backlash"] * 10))
                 backlash_slider.blockSignals(False)
                 backlash_value.setText(f"{status['backlash']:.1f}")
             if connected and not derotating:

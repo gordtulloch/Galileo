@@ -4,13 +4,13 @@ Type definitions for AstroFiler application.
 This module provides type aliases and protocols for better type safety.
 """
 
-from typing import Protocol, Any, Union
+from typing import Any, Protocol
 from pathlib import Path
 from datetime import datetime
 
 # Type aliases for common data structures
 FitsHeaderDict = dict[str, Any]
-FilePath = Union[str, Path]
+FilePath = str | Path
 SessionId = str
 FileId = str
 QualityMetrics = dict[str, float]

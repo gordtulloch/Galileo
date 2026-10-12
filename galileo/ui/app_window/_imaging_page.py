@@ -210,7 +210,7 @@ class AppWindowImagingPageMixin:
         nudge_stop_btn = QPushButton("Stop")
         nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
         nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn}
-        for key, btn in nudge_dir_buttons.items():
+        for _key, btn in nudge_dir_buttons.items():
             btn.setProperty("helpKey", "n s e w")
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
             btn.setObjectName("AccentButton")

@@ -289,9 +289,8 @@ class DomeInstruction(BaseInstruction):
     action: str = "park"  # park | sync
 
     async def execute(self, context: dict) -> None:
-        if "dome" in context:
-            if self.action == "park":
-                await context["dome"].park()
+        if "dome" in context and self.action == "park":
+            await context["dome"].park()
 
 
 @dataclass
@@ -366,7 +365,9 @@ class LoopUntilTimeCondition(BaseCondition):
         if not self.time_utc:
             return False
         target = datetime.datetime.fromisoformat(self.time_utc)
-        return datetime.datetime.utcnow() < target
+        if target.tzinfo is None:  # a bare timestamp is read as UTC (the field is time_utc)
+            target = target.replace(tzinfo=datetime.UTC)
+        return datetime.datetime.now(datetime.UTC) < target
 
 
 class LoopWhileSafeCondition(BaseCondition):
@@ -393,7 +394,9 @@ class WaitUntilTimeCondition(BaseCondition):
         if not self.time_utc:
             return False
         target = datetime.datetime.fromisoformat(self.time_utc)
-        return datetime.datetime.utcnow() < target
+        if target.tzinfo is None:  # a bare timestamp is read as UTC (the field is time_utc)
+            target = target.replace(tzinfo=datetime.UTC)
+        return datetime.datetime.now(datetime.UTC) < target
 
 
 @dataclass

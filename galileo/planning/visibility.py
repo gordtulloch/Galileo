@@ -43,7 +43,7 @@ def _configure_iers_cache() -> None:
         iers_path.parent.mkdir(parents=True, exist_ok=True)
 
         needs_update = not iers_path.exists() or (
-            datetime.datetime.now() - datetime.datetime.fromtimestamp(iers_path.stat().st_mtime)
+            datetime.datetime.now().astimezone() - datetime.datetime.fromtimestamp(iers_path.stat().st_mtime, tz=datetime.UTC)
         ).days >= _IERS_MAX_AGE_DAYS
 
         if needs_update:
@@ -97,7 +97,7 @@ class HorizonProfile:
         az = np.asarray(azimuth_deg, dtype=float)
         if not self.points:
             return np.zeros_like(az)
-        xp, fp = zip(*self.points)
+        xp, fp = zip(*self.points, strict=True)
         return np.interp(az, xp, fp, period=360.0)
 
     def is_obstructed(self, altitude_deg: float, azimuth_deg: float) -> bool:
@@ -172,7 +172,7 @@ def altitude_chart(
         _configure_iers_cache()
 
         if date_str is None:
-            date_str = datetime.date.today().isoformat()
+            date_str = datetime.date.today().isoformat()  # noqa: DTZ011 -- local calendar date by design
 
         loc = EarthLocation(
             lat=location.latitude * u.deg,
@@ -198,7 +198,7 @@ def altitude_chart(
         if eff_horizon is not None:
             result["above_horizon"] = [
                 alt >= eff_horizon.min_altitude_at(az)
-                for alt, az in zip(alt_list, az_list)
+                for alt, az in zip(alt_list, az_list, strict=True)
             ]
 
         return result
@@ -206,7 +206,7 @@ def altitude_chart(
     except Exception:
         # astropy not available or calculation failed — return empty chart
         times_iso = [
-            (datetime.datetime(2026, 9, 16, 12, 0, 0) + datetime.timedelta(minutes=i * resolution_min)).isoformat()
+            (datetime.datetime(2026, 9, 16, 12, 0, 0) + datetime.timedelta(minutes=i * resolution_min)).isoformat()  # noqa: DTZ001 -- calendar/epoch arithmetic, zone-free
             for i in range(48)
         ]
         return {"times": times_iso, "altitudes": [0.0] * 48}
@@ -242,7 +242,7 @@ def altitude_charts_batch(
         _configure_iers_cache()
 
         if date_str is None:
-            date_str = datetime.date.today().isoformat()
+            date_str = datetime.date.today().isoformat()  # noqa: DTZ011 -- local calendar date by design
 
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
@@ -391,7 +391,7 @@ def moon_position_deg(location: ObservingLocation, date_str: str | None = None) 
         _configure_iers_cache()
 
         if date_str is None:
-            date_str = datetime.date.today().isoformat()
+            date_str = datetime.date.today().isoformat()  # noqa: DTZ011 -- local calendar date by design
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
         )
@@ -632,7 +632,7 @@ def moon_phase_info(date_str: str | None = None) -> dict | None:
         _configure_iers_cache()
 
         if date_str is None:
-            date_str = datetime.date.today().isoformat()
+            date_str = datetime.date.today().isoformat()  # noqa: DTZ011 -- local calendar date by design
         time = Time(f"{date_str}T12:00:00", scale="utc")
 
         frame = GeocentricTrueEcliptic(equinox=time)

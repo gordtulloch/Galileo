@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     # *other* mixin's attributes/methods -- mypy's documented
     # pattern for mixin classes. No runtime effect; this class's
     # actual base stays plain `object`.
+    from galileo.scheduler import ObservatoryScheduler
+
     from ._state import AppWindowState
 
 

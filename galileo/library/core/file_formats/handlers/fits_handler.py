@@ -26,13 +26,13 @@ class FitsFileHandler(BaseFileFormatHandler):
     def _process_file_internal(self, file_path: FilePath) -> FilePath:
         """
         Process FITS file - no conversion needed.
-        
+
         Args:
             file_path: Path to FITS file
-            
+
         Returns:
             Same path (no processing needed for native format)
-            
+
         Raises:
             FileProcessingError: If file validation fails
         """
@@ -41,7 +41,7 @@ class FitsFileHandler(BaseFileFormatHandler):
             from astropy.io import fits
             with fits.open(file_path, mode='readonly') as hdul:
                 # Basic validation - ensure we can read the header
-                hdr = hdul[0].header
+                _ = hdul[0].header  # raises if the primary header is unreadable
                 logger.debug(f"Successfully validated FITS file: {file_path}")
                 return file_path
         except Exception as e:
@@ -49,4 +49,4 @@ class FitsFileHandler(BaseFileFormatHandler):
                 f"Invalid FITS file: {e}",
                 file_path=str(file_path),
                 error_code="INVALID_FITS_FILE"
-            )
+            ) from e

@@ -78,7 +78,7 @@ def build_xisf(
             f'<?xml version="1.0" encoding="UTF-8"?><xisf version="1.0"{ns}>'
             f'<Image geometry="{geometry}" sampleFormat="{sample_format}" location="{loc}"{compression}{image_attrs}>'
             f"{keyword_xml}</Image>{extra_xml}</xisf>"
-        ).encode("utf-8")
+        ).encode()
 
     xml = document(0)                    # the attachment offset is fixed-width, so the length is the same for any offset
     xml = document(16 + len(xml))

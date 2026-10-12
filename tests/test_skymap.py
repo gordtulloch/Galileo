@@ -43,7 +43,7 @@ def test_tc_skymap_010_real_time_sky_view_renders():
 @pytest.mark.priority("MVP")
 def test_tc_skymap_020_click_to_identify_double_click_to_center(skymap):
     """SKYMAP-020: Clicking an object identifies it; double-clicking centers and tracks it."""
-    skymap_mod = pytest.importorskip("galileo.ui.skymap")
+    pytest.importorskip("galileo.ui.skymap")
 
     skymap._objects_at = MagicMock(return_value=[MagicMock(primary_name="M42", ra=83.8, dec=-5.4)])
     identified = skymap.identify_at_pixel(x=400, y=300)
@@ -80,7 +80,7 @@ def test_tc_skymap_030_constellation_lines_and_grid_toggleable(skymap):
 @pytest.mark.priority("P2")
 def test_tc_skymap_040_comets_asteroids_satellites(skymap):
     """SKYMAP-040: Display comets, asteroids, and artificial satellites from periodically updated orbital elements."""
-    skymap_mod = pytest.importorskip("galileo.ui.skymap")
+    pytest.importorskip("galileo.ui.skymap")
     skymap.load_solar_system_objects(
         comets=[{"name": "C/2023 A3", "elements": {}}],
         asteroids=[{"name": "1 Ceres", "elements": {}}],

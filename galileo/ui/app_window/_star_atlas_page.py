@@ -254,7 +254,7 @@ class AppWindowStarAtlasPageMixin:
             query = find_edit.text().strip()
             if not query:
                 return
-            obj = view.find(query)
+            obj = view.find_object(query)
             if obj is None:
                 self._window.statusBar().showMessage(f"Nothing called {query!r} in the loaded catalogs.", 6000)
                 return

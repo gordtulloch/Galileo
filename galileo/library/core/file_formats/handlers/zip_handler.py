@@ -28,13 +28,13 @@ class ZipFileHandler(BaseFileFormatHandler):
     def _process_file_internal(self, file_path: FilePath) -> FilePath:
         """
         Extract FITS file from ZIP archive.
-        
+
         Args:
             file_path: Path to ZIP file
-            
+
         Returns:
             Path to extracted FITS file
-            
+
         Raises:
             FileProcessingError: If extraction fails or no FITS files found
         """
@@ -78,27 +78,27 @@ class ZipFileHandler(BaseFileFormatHandler):
                 f"Invalid ZIP file: {e}",
                 file_path=str(file_path),
                 error_code="INVALID_ZIP"
-            )
+            ) from e
         except OSError as e:
             raise FileProcessingError(
                 f"File system error during extraction: {e}",
                 file_path=str(file_path),
                 error_code="EXTRACTION_IO_ERROR"
-            )
+            ) from e
         except Exception as e:
             raise FileProcessingError(
                 f"Unexpected error extracting zip file: {e}",
                 file_path=str(file_path),
                 error_code="EXTRACTION_ERROR"
-            )
+            ) from e
 
     def _is_fits_zip(self, file_path: FilePath) -> bool:
         """
         Check if ZIP file contains FITS files based on filename.
-        
+
         Args:
             file_path: Path to ZIP file
-            
+
         Returns:
             True if this appears to be a FITS ZIP file
         """
@@ -108,7 +108,7 @@ class ZipFileHandler(BaseFileFormatHandler):
     def can_handle(self, file_path: FilePath) -> bool:
         """
         Check if this handler can process the ZIP file.
-        
+
         Only handles ZIP files that contain FITS files.
         """
         if not super().can_handle(file_path):

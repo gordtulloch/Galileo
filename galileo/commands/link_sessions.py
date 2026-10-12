@@ -43,7 +43,7 @@ def setup_logging(verbose=False):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    log_file = os.path.join(log_dir, 'linksessions.log')
+    os.path.join(log_dir, 'linksessions.log')
 
     # Configure logging - using central library.log
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -88,7 +88,7 @@ Examples:
         try:
             load_config(args.config)
         except FileNotFoundError as e:
-            logger.error(str(e))
+            logger.exception(str(e))
             sys.exit(1)
 
         # Initialize database
@@ -107,11 +107,11 @@ Examples:
 
         # Run session linking
         logger.info("Starting session linking...")
-        start_time = datetime.now()
+        start_time = datetime.now().astimezone()
 
         updated_sessions = fits_processor.linkSessions(progress_callback=progress_callback)
 
-        end_time = datetime.now()
+        end_time = datetime.now().astimezone()
         processing_time = end_time - start_time
 
         # Log results
@@ -132,7 +132,7 @@ Examples:
         print("Session linking cancelled by user")
         sys.exit(1)
     except Exception as e:
-        logger.error(f"Error during session linking: {e}")
+        logger.exception(f"Error during session linking: {e}")
         print(f"Error: {e}")
         sys.exit(1)
 

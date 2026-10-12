@@ -143,11 +143,6 @@ def get_repository_path() -> str:
     return get_setting("repo")
 
 
-def get_incoming_path() -> str:
-    """The configured incoming (source) folder (may be empty when unconfigured)."""
-    return get_setting("source")
-
-
 def get_temp_folder() -> str:
     """The configured scratch folder (created if needed), else the system temp directory."""
     temp_folder = get_setting("temp_folder")
@@ -163,6 +158,12 @@ def get_temp_folder() -> str:
 
 _KEYRING_SERVICE = "galileo-library"
 _KEYRING_ITELESCOPE_USER = "itelescope"
+
+
+def get_itelescope_verify_tls() -> bool:
+    """Whether to verify the iTelescope FTPS server certificate (Options > Library; on by default)."""
+    value = load_config().get("DEFAULT", "itelescope_verify_tls", fallback="True")
+    return value.strip().lower() in ("true", "1", "yes", "on")
 
 
 def get_itelescope_password() -> str:

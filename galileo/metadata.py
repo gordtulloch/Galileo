@@ -198,7 +198,7 @@ class FitsMetadataWriter:
 
         # Build output path
         if filename is None:
-            ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+            ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
             obj = metadata.get("object", "frame").replace(" ", "_")
             filename = f"{obj}_{ts}.fits"
 

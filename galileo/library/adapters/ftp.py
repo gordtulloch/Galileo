@@ -18,7 +18,7 @@ class SmartTelescopeFtpAdapter(ManagerSourceAdapter):
 
     telescope_type = "iTelescope"
 
-    def __init__(self, host: str = "", user: str = "", password: str = "") -> None:
+    def __init__(self, host: str = "", user: str = "", password: str = "") -> None:  # nosec B107 -- empty means 'ask/none', not a credential
         super().__init__(host, user or None, password or None)
 
     async def browse(self, host: str = "", use_tls: bool = True, path: str = "/") -> list[str]:

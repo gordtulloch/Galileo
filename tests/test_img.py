@@ -230,7 +230,7 @@ async def test_tc_img_110_service_previews_in_colour_only_when_debayer_is_on(moc
     assert imaging_service.current_preview.shape == raw.shape and imaging_service.debayer_note == ""
 
     imaging_service.set_debayer(True)
-    assert imaging_service.current_preview.shape == raw.shape + (3,)
+    assert imaging_service.current_preview.shape == (*raw.shape, 3)
     assert imaging_service.debayer_note == "Debayered (RGGB)."
     imaging_service.set_debayer(False)
     assert imaging_service.current_preview.shape == raw.shape

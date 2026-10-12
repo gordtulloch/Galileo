@@ -17,9 +17,9 @@ def find_matching_masters_for_light_session(session, light_files: Iterable) -> l
     """
     master_files: list[tuple[str, str]] = []
 
-    filters: set[str] = set(
-        [getattr(lf, 'fitsFileFilter', None) for lf in light_files if getattr(lf, 'fitsFileFilter', None)]
-    )
+    filters: set[str] = {
+        getattr(lf, 'fitsFileFilter', None) for lf in light_files if getattr(lf, 'fitsFileFilter', None)
+    }
 
     session_data = {
         'telescope': getattr(session, 'fitsSessionTelescope', None),

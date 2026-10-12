@@ -325,7 +325,7 @@ def test_star_atlas_view_pans_and_zooms(view):
 @pytest.mark.priority("MVP")
 def test_star_atlas_click_identifies_object(view):
     """SKYMAP-020: clicking an object on the map identifies it."""
-    vega = view.find("vega")
+    vega = view.find_object("vega")
     assert vega is not None and vega["name"] == "Vega" and vega["alt"] > 85.0
     view.center_on(vega)
     picked = view.object_at(400, 300)
@@ -341,7 +341,7 @@ def test_star_atlas_click_identifies_object(view):
 @pytest.mark.priority("MVP")
 def test_star_atlas_double_click_centres_and_tracks(view):
     """SKYMAP-020: centring an object tracks it — the view follows it as time advances."""
-    vega = view.find("Vega")
+    vega = view.find_object("Vega")
     view.center_on(vega, track=True)
     az_before = view.view.az0
     view.set_time(view.when + dt.timedelta(hours=3))
@@ -365,9 +365,9 @@ def test_star_atlas_daylight_hides_faint_stars(view):
 @pytest.mark.priority("MVP")
 def test_star_atlas_find_solar_system_body(view):
     """SKYMAP-010: the Sun, Moon and planets are on the map and can be found by name."""
-    jupiter = view.find("jupiter")
+    jupiter = view.find_object("jupiter")
     assert jupiter is not None and jupiter["type"] == "Planet"
-    assert view.find("no such thing") is None
+    assert view.find_object("no such thing") is None
 
 
 # --- the Star Atlas page ----------------------------------------------------------
@@ -583,7 +583,7 @@ def test_star_atlas_page_catalog_list_adds_and_removes_catalogs(window):
 def test_star_atlas_remembers_toggles_and_catalogs_between_runs(window):
     """SKYMAP-010: the Star Atlas remembers which options are ticked and which deep-sky catalogs are on the map."""
     from galileo.ui.star_atlas import StarAtlasView, load_display_prefs
-    view = window._window.findChildren(StarAtlasView)[0]
+    window._window.findChildren(StarAtlasView)[0]
     assert load_display_prefs() == {}                     # nothing is written until the user changes something
     grid = next(b for b in window._window.findChildren(QtWidgets.QCheckBox) if b.text() == "Coordinate grid")
     grid.setChecked(False)
@@ -627,7 +627,7 @@ def test_star_atlas_right_click_offers_the_object_under_the_cursor(view):
     """SKYMAP-020: right-clicking the map selects the object under the cursor and asks for a context menu for it."""
     from PySide6.QtCore import QPoint
     from PySide6.QtGui import QContextMenuEvent
-    view.center_on(view.find("Vega"))
+    view.center_on(view.find_object("Vega"))
     seen = []
     view.contextMenuRequested.connect(lambda obj, pos: seen.append((obj, pos)))
     view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(400, 300), QPoint(1400, 900)))
@@ -1202,7 +1202,7 @@ def test_tc_skymap_090_reticle_follows_the_mount_and_moves_as_it_slews(window):
 def test_tc_skymap_090_a_mount_reporting_jnow_is_converted_for_the_map(window):
     """SKYMAP-090: a mount that reports coordinates of date is converted to J2000, which is what the map draws in."""
     from galileo.platesolve import j2000_to_mount_frame
-    pier_a, _ = _two_piers(window)
+    _pier_a, _ = _two_piers(window)
     j2000 = (37.95, 89.26)                                  # Polaris, which has precessed a long way
     jnow = j2000_to_mount_frame(*j2000, "JNOW")
     window._device_pages["mount"]["adapter"] = _ReticleMount(ra_deg=jnow[0], dec_deg=jnow[1], system="JNOW")

@@ -130,7 +130,7 @@ class XISFGeometry:
     def __init__(self, geometry_str: str):
         """
         Initialize from geometry string.
-        
+
         Args:
             geometry_str: Colon-separated dimensions like "1024:1024" or "1024:1024:3"
         """
@@ -181,7 +181,7 @@ class XISFGeometry:
     def to_fits_shape(self) -> tuple[int, ...]:
         """
         Convert to FITS array shape.
-        
+
         FITS uses (height, width) for 2D and (channels, height, width) for 3D.
         """
         if self.channels == 1:

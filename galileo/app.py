@@ -159,7 +159,7 @@ def _schedule_library_preload() -> None:
     """
     def _preload() -> None:
         try:
-            import galileo.library.core  # noqa: F401
+            import galileo.library.core
             import galileo.ui.library.pages  # noqa: F401
         except Exception:
             logger.debug("Library preload failed", exc_info=True)

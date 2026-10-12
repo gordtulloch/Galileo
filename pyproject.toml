@@ -55,11 +55,20 @@ ignore = [
 "tests/**/*.py" = [
     "S101",     # `assert` is the normal pytest idiom, not a security smell, in test files
     "S105", "S106", "S107",  # fixture credentials/tokens are fake test doubles, not hardcoded secrets
+    "DTZ",      # tests build fixed, zone-free datetimes for astronomy/epoch maths on purpose
+    "E402",     # GUI tests call pytest.importorskip("PySide6") / set QT_QPA_PLATFORM before importing the code under test
 ]
 
 [tool.mypy]
 python_version = "3.11"    # type-check against 3.11's stdlib, so a 3.12+-only API (itertools.batched, ...) is flagged;
                            # ruff's target-version only catches newer *syntax*. Keep both in step with requires-python.
+
+# Third-party packages that ship no type stubs / py.typed marker: without this every import is an error and
+# real first-party findings drown in ~70 "import-untyped" lines. First-party code stays checked.
+[[tool.mypy.overrides]]
+module = ["astropy.*", "sep", "httpx", "astroalign", "photutils.*", "astroquery.*", "peewee_migrate.*",
+          "playhouse.*", "smb.*", "zeroconf.*", "google.*", "skyfield.*", "pandas.*", "scipy.*"]
+ignore_missing_imports = true
 
 [project]
 name = "galileo"
@@ -129,6 +138,10 @@ test = [
 dev = [
     "ruff",
     "mypy",
+    "bandit",       # deeper security scan than ruff's "S" rules
+    "pip-audit",    # known-vulnerability scan of the installed dependencies
+    "vulture",      # dead-code finder (expect Qt/Peewee false positives at <80% confidence)
+    "radon",        # cyclomatic complexity / maintainability index
 ]
 
 [tool.setuptools.packages.find]

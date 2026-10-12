@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 class FileHashCalculator:
     """
     Service for calculating file hashes.
-    
+
     Single responsibility: File hash calculation with various algorithms.
     """
 
     def __init__(self, buffer_size: int = 4096):
         """
         Initialize hash calculator.
-        
+
         Args:
             buffer_size: Size of read buffer in bytes (default 4096)
         """
@@ -32,13 +32,13 @@ class FileHashCalculator:
     def calculate_sha256(self, file_path: FilePath) -> str:
         """
         Calculate SHA-256 hash of a file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             SHA-256 hash hex string
-            
+
         Raises:
             FileProcessingError: If file cannot be read
         """
@@ -49,30 +49,30 @@ class FileHashCalculator:
                     hash_sha256.update(chunk)
             return hash_sha256.hexdigest()
         except OSError as e:
-            logger.error(f"Error reading file for SHA-256 calculation: {file_path}")
+            logger.exception(f"Error reading file for SHA-256 calculation: {file_path}")
             raise FileProcessingError(
                 f"Cannot read file for hash calculation: {e}",
                 file_path=str(file_path),
                 error_code="FILE_READ_ERROR"
-            )
+            ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calculating SHA-256 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating SHA-256 for {file_path}: {e!s}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
                 error_code="HASH_CALC_ERROR"
-            )
+            ) from e
 
     def calculate_md5(self, file_path: FilePath) -> str:
         """
         Calculate MD5 hash of a file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             MD5 hash hex string
-            
+
         Raises:
             FileProcessingError: If file cannot be read
         """
@@ -83,30 +83,30 @@ class FileHashCalculator:
                     hash_md5.update(chunk)
             return hash_md5.hexdigest()
         except OSError as e:
-            logger.error(f"Error reading file for MD5 calculation: {file_path}")
+            logger.exception(f"Error reading file for MD5 calculation: {file_path}")
             raise FileProcessingError(
                 f"Cannot read file for hash calculation: {e}",
                 file_path=str(file_path),
                 error_code="FILE_READ_ERROR"
-            )
+            ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calculating MD5 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating MD5 for {file_path}: {e!s}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
                 error_code="HASH_CALC_ERROR"
-            )
+            ) from e
 
     def calculate_sha1(self, file_path: FilePath) -> str:
         """
         Calculate SHA-1 hash of a file.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             SHA-1 hash hex string
-            
+
         Raises:
             FileProcessingError: If file cannot be read
         """
@@ -117,32 +117,32 @@ class FileHashCalculator:
                     hash_sha1.update(chunk)
             return hash_sha1.hexdigest()
         except OSError as e:
-            logger.error(f"Error reading file for SHA-1 calculation: {file_path}")
+            logger.exception(f"Error reading file for SHA-1 calculation: {file_path}")
             raise FileProcessingError(
                 f"Cannot read file for hash calculation: {e}",
                 file_path=str(file_path),
                 error_code="FILE_READ_ERROR"
-            )
+            ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calculating SHA-1 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating SHA-1 for {file_path}: {e!s}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
                 error_code="HASH_CALC_ERROR"
-            )
+            ) from e
 
-    def calculate_multiple_hashes(self, file_path: FilePath, algorithms: list[str] = None) -> dict[str, str]:
+    def calculate_multiple_hashes(self, file_path: FilePath, algorithms: list[str] | None = None) -> dict[str, str]:
         """
         Calculate multiple hashes for a file in a single pass.
-        
+
         Args:
             file_path: Path to the file
             algorithms: List of algorithms to use ['sha256', 'md5', 'sha1']
                        If None, defaults to ['sha256']
-            
+
         Returns:
             Dictionary mapping algorithm names to hash values
-            
+
         Raises:
             FileProcessingError: If file cannot be read
         """
@@ -180,19 +180,19 @@ class FileHashCalculator:
             return {algorithm: hasher.hexdigest() for algorithm, hasher in hashers.items()}
 
         except OSError as e:
-            logger.error(f"Error reading file for hash calculation: {file_path}")
+            logger.exception(f"Error reading file for hash calculation: {file_path}")
             raise FileProcessingError(
                 f"Cannot read file for hash calculation: {e}",
                 file_path=str(file_path),
                 error_code="FILE_READ_ERROR"
-            )
+            ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calculating hashes for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating hashes for {file_path}: {e!s}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
                 error_code="HASH_CALC_ERROR"
-            )
+            ) from e
 
 
 # Global instance for convenience
@@ -202,7 +202,7 @@ _global_calculator: FileHashCalculator | None = None
 def get_file_hash_calculator() -> FileHashCalculator:
     """
     Get the global file hash calculator instance.
-    
+
     Returns:
         Singleton FileHashCalculator instance
     """
@@ -211,8 +211,3 @@ def get_file_hash_calculator() -> FileHashCalculator:
         _global_calculator = FileHashCalculator()
     return _global_calculator
 
-
-def reset_file_hash_calculator() -> None:
-    """Reset the global calculator (mainly for testing)."""
-    global _global_calculator
-    _global_calculator = None

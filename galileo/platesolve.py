@@ -15,7 +15,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from galileo.bus import Event, SolveCompleteEvent, SolveStartedEvent, get_bus
@@ -520,7 +520,7 @@ def nearest_object_name(ra_deg: float, dec_deg: float, max_separation_deg: float
 # Capture-solve-correct workflow (PLT-070)
 # ---------------------------------------------------------------------------
 
-class SolveAction(str, Enum):
+class SolveAction(StrEnum):
     """What to do with the mount once a frame is solved."""
     SYNC = "sync"                      # tell the mount where it is really pointing
     SLEW_TO_TARGET = "slew"            # sync, then slew back to the target; repeat until close enough
@@ -609,7 +609,7 @@ class SolveWorkflow:
         """``solve_<object>_<timestamp>_<suffix>`` — the ``solve_`` prefix is what pruning looks for."""
         from galileo.current_object import safe_file_stem
         name = safe_file_stem(self.object_name)
-        return f"solve_{name + '_' if name else ''}{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{suffix}"
+        return f"solve_{name + '_' if name else ''}{dt.datetime.now().astimezone():%Y%m%d_%H%M%S_%f}_{suffix}"
 
     def _prune_work_dir(self) -> None:
         """Frames are only kept so the screen can show them; drop all but the newest few."""

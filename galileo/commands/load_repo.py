@@ -29,19 +29,19 @@ Requirements:
 Examples:
     # Load new images with default settings
     python -m galileo.commands.load_repo
-    
+
     # Load with verbose output
     python -m galileo.commands.load_repo -v
-    
+
     # Load with custom config file
     python -m galileo.commands.load_repo -c /path/to/config.ini
-    
+
     # Load from specific source folder
     python -m galileo.commands.load_repo --source /path/to/source
-    
+
     # Load with temporary one-time mapping (map Unknown objects to M31)
     python -m galileo.commands.load_repo -s OBJECT/Unknown/M31
-    
+
     # Load with multiple temporary mappings
     python -m galileo.commands.load_repo -s OBJECT/Unknown/M31 -s FILTER//RGB -s TELESCOP/Unknown/MyScope
 
@@ -66,14 +66,14 @@ from galileo.commands._common import get_log_path, load_config
 def apply_mappings_to_fits(file_path):
     """
     Apply header mappings to a FITS file before registration.
-    
+
     This function reads the FITS header, applies any defined mappings
     from the database, and updates the FITS file with the new values.
     This ensures files are named correctly during registration.
-    
+
     Args:
         file_path: Path to the FITS file
-        
+
     Returns:
         bool: True if any mappings were applied, False otherwise
     """
@@ -140,7 +140,7 @@ def apply_mappings_to_fits(file_path):
         return changes_made
 
     except Exception as e:
-        logger.error(f"Error applying mappings to {file_path}: {e}")
+        logger.exception(f"Error applying mappings to {file_path}: {e}")
         return False
 
 def setup_logging(verbose=False):
@@ -171,7 +171,7 @@ def validate_paths(source_folder, repo_folder):
             os.makedirs(repo_folder, exist_ok=True)
             logger.info(f"Created repository folder: {repo_folder}")
         except Exception as e:
-            raise RuntimeError(f"Cannot create repository folder {repo_folder}: {e}")
+            raise RuntimeError(f"Cannot create repository folder {repo_folder}: {e}") from e
 
     # Check write permissions
     if not os.access(repo_folder, os.W_OK):
@@ -191,7 +191,7 @@ Examples:
     python -m galileo.commands.load_repo -s OBJECT/Unknown/M31     # Temporary mapping for this run only
     python -m galileo.commands.load_repo -s OBJECT/Unknown/M31 -s FILTER//RGB  # Multiple temporary mappings
 
-Note: 
+Note:
     - For database synchronization with existing files, use SyncRepo.py instead.
     - Temporary mappings (-s) are applied only for this run and removed after completion.
     - Use empty INPUT for default mappings (e.g., -s FILTER//RGB maps empty/missing FILTER to RGB)
@@ -216,7 +216,7 @@ Note:
 
     try:
         logger.info("=== Galileo New Image Loader Starting ===")
-        logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Started at: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
         # Load configuration
@@ -255,7 +255,7 @@ Note:
 
                     card, current, replace = parts
                     card = card.strip().upper()
-                    current = current.strip() if current.strip() else None
+                    current = current.strip() or None
                     replace = replace.strip()
 
                     # Validate card name
@@ -280,7 +280,7 @@ Note:
                     logger.info(f"Created temporary mapping: {card} '{current or '(default)'}' -> '{replace}'")
 
                 except Exception as e:
-                    logger.error(f"Failed to create temporary mapping from {mapping_spec}: {e}")
+                    logger.exception(f"Failed to create temporary mapping from {mapping_spec}: {e}")
                     continue
 
         # Create processor instance
@@ -296,7 +296,7 @@ Note:
         logger.info("Checking for FITS files to apply mappings...")
         files_mapped = 0
         try:
-            for root, dirs, files in os.walk(source_folder):
+            for root, _dirs, files in os.walk(source_folder):
                 for file in files:
                     if file.lower().endswith(('.fit', '.fits')):
                         file_path = os.path.join(root, file)
@@ -343,7 +343,7 @@ Note:
                 deleted_count = MappingModel.delete().where(MappingModel.id.in_(temp_mapping_ids)).execute()
                 logger.info(f"Removed {deleted_count} temporary mapping(s) from database")
             except Exception as e:
-                logger.error(f"Error removing temporary mappings: {e}")
+                logger.exception(f"Error removing temporary mappings: {e}")
 
         if len(registered_files) == 0:
             if duplicate_count > 0:
@@ -359,10 +359,10 @@ Note:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1
     except Exception as e:
-        logger.error(f"Error during repository load: {e}")
+        logger.exception(f"Error during repository load: {e}")
         if args.verbose:
             import traceback
-            logger.error(traceback.format_exc())
+            logger.exception(traceback.format_exc())
         return 1
 
 if __name__ == "__main__":

@@ -248,7 +248,7 @@ class ImagingService:
         """A name for the frame being saved, e.g. ``M_31_20260921T213045.fits`` — ``.png`` while
         Annotate will save the labelled overlay instead of the raw frame (IMG-210)."""
         ext = "png" if self.save_preview is not None else "fits"
-        return f"{self.file_stem}_{datetime.datetime.now():%Y%m%dT%H%M%S}.{ext}"
+        return f"{self.file_stem}_{datetime.datetime.now().astimezone():%Y%m%dT%H%M%S}.{ext}"
 
     # --- FITS header (IMG-150) --------------------------------------------
 
@@ -518,7 +518,7 @@ class ImagingService:
     def _stack_fits_filename(self, ext: str = "fits") -> str:
         exposure = self.last_shot.get("duration", 0.0)
         return (f"{self.file_stem}_stack_{self.active_stacker.frames}x{exposure:g}s_"
-                f"{datetime.datetime.now():%Y%m%dT%H%M%S}.{ext}")
+                f"{datetime.datetime.now().astimezone():%Y%m%dT%H%M%S}.{ext}")
 
     def save_stack_to_library(self) -> str | None:
         """Write the stack to the scratch folder and register it in the Library, which files it in
@@ -640,7 +640,7 @@ class ImagingService:
 
         if save_dir is not None:
             out_dir = Path(save_dir)
-            p = out_dir / f"{self.file_stem}_{datetime.datetime.utcnow().strftime('%H%M%S')}.fits"
+            p = out_dir / f"{self.file_stem}_{datetime.datetime.now(datetime.UTC).strftime('%H%M%S')}.fits"
             # A full-frame FITS write takes long enough to stall the event loop, so do it on a worker
             # thread; the metadata is read here, on the loop, before the thread starts.
             metadata = self.frame_metadata()

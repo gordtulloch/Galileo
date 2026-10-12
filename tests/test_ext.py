@@ -95,7 +95,7 @@ async def test_tc_ext_030_unreachable_alpaca_device_raises_device_connection_err
 
     # Port 1 on loopback refuses immediately.
     adapter = alpaca.AlpacaAdapter(host="127.0.0.1", port=1)
-    with pytest.raises(DeviceConnectionError, match="127.0.0.1:1 is not responding"):
+    with pytest.raises(DeviceConnectionError, match=r"127\.0\.0\.1:1 is not responding"):
         await adapter.connect()
 
 

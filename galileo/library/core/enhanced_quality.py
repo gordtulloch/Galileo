@@ -3,7 +3,7 @@ Enhanced quality analysis with SEP star detection and photometry for AstroFiler.
 
 This module provides advanced quality metrics including:
 - SEP-based star detection and source extraction
-- FWHM measurement in arcseconds 
+- FWHM measurement in arcseconds
 - Star eccentricity analysis
 - Half Flux Radius (HFR) calculation
 - Signal-to-noise ratio assessment
@@ -37,8 +37,7 @@ except ImportError:
     logger.warning("SEP not available. Star detection will be limited.")
 
 try:
-    from scipy.optimize import curve_fit
-    from scipy import ndimage
+    import scipy  # noqa: F401 -- availability probe only
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -69,11 +68,11 @@ class EnhancedQualityAnalyzer:
         worker threads (NFR-PERF-020). A callback can't be called from inside the worker process,
         so progress is reported when the file starts and when it finishes, and a cancel request
         is honoured before the file starts.
-        
+
         Args:
             fits_file_path: Path to FITS file
             progress_callback: Optional progress callback function
-            
+
         Returns:
             dict: Quality analysis results including:
                 - avg_fwhm_arcsec: Average FWHM in arcseconds
@@ -88,7 +87,7 @@ class EnhancedQualityAnalyzer:
         try:
             results = run_cpu_sync(self._analyze_file, fits_file_path)
         except Exception as e:          # the worker process died (the analysis itself catches its own errors)
-            logger.error(f"Error analyzing {fits_file_path}: {e}")
+            logger.exception(f"Error analyzing {fits_file_path}: {e}")
             return {"status": "error", "message": str(e), "file_path": fits_file_path}
         if progress_callback and results.get("status") == "success":
             progress_callback(100, 100, "Quality analysis completed!")
@@ -110,7 +109,7 @@ class EnhancedQualityAnalyzer:
                     "image_snr": None,
                     "star_count": 0,
                     "image_scale": None,
-                    "analysis_timestamp": datetime.datetime.now().isoformat(),
+                    "analysis_timestamp": datetime.datetime.now().astimezone().isoformat(),
                     "status": "success"
                 }
 
@@ -131,7 +130,7 @@ class EnhancedQualityAnalyzer:
                 return results
 
         except Exception as e:
-            logger.error(f"Error analyzing {fits_file_path}: {e}")
+            logger.exception(f"Error analyzing {fits_file_path}: {e}")
             return {
                 "status": "error",
                 "message": str(e),
@@ -141,11 +140,11 @@ class EnhancedQualityAnalyzer:
     def update_file_quality_metrics(self, fits_file_id: str, quality_results: dict) -> bool:
         """
         Update quality metrics in the database for a specific FITS file.
-        
+
         Args:
             fits_file_id: ID of the FITS file to update
             quality_results: Quality analysis results dictionary
-            
+
         Returns:
             bool: True if update was successful, False otherwise
         """
@@ -191,19 +190,19 @@ class EnhancedQualityAnalyzer:
                 return False
 
         except Exception as e:
-            logger.error(f"Error updating quality metrics for {fits_file_id}: {e}")
+            logger.exception(f"Error updating quality metrics for {fits_file_id}: {e}")
             return False
 
     def analyze_and_update_file(self, fits_file_path: str, fits_file_id: str,
                               progress_callback: Callable | None = None) -> dict:
         """
         Perform quality analysis and update the database in one operation.
-        
+
         Args:
             fits_file_path: Path to FITS file
             fits_file_id: Database ID of the FITS file
             progress_callback: Optional progress callback function
-            
+
         Returns:
             dict: Quality analysis results
         """
@@ -219,10 +218,10 @@ class EnhancedQualityAnalyzer:
     def _calculate_image_scale(self, header: fits.Header) -> float | None:
         """
         Calculate image scale in arcsec/pixel from FITS header.
-        
+
         Args:
             header: FITS header
-            
+
         Returns:
             float: Image scale in arcsec/pixel, or None if not determinable
         """
@@ -270,7 +269,7 @@ class EnhancedQualityAnalyzer:
 
             # Method 6: Try to estimate from telescope/instrument (fallback)
             telescope = header.get('TELESCOP', '').lower()
-            instrument = header.get('INSTRUME', '').lower()
+            header.get('INSTRUME', '').lower()
 
             # Common telescope/instrument combinations
             if 'seestar' in telescope:
@@ -288,16 +287,16 @@ class EnhancedQualityAnalyzer:
     def _calculate_image_snr(self, data: np.ndarray) -> float:
         """
         Calculate overall image signal-to-noise ratio.
-        
+
         Args:
             data: Image data array
-            
+
         Returns:
             float: Signal-to-noise ratio
         """
         try:
             # Use sigma-clipped statistics to get robust estimates
-            mean, median, std = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
+            _mean, median, std = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
 
             # SNR = signal / noise
             # Use median as signal estimate, std as noise estimate
@@ -314,10 +313,10 @@ class EnhancedQualityAnalyzer:
     def _get_pixel_size(self, header: fits.Header) -> float | None:
         """
         Determine pixel size in microns based on camera/instrument information.
-        
+
         Args:
             header: FITS header
-            
+
         Returns:
             float: Pixel size in microns, or None if not determinable
         """
@@ -393,10 +392,10 @@ class EnhancedQualityAnalyzer:
     def _detect_stars(self, data: np.ndarray) -> np.ndarray | None:
         """
         Detect stars in the image using SEP.
-        
+
         Args:
             data: Image data array
-            
+
         Returns:
             numpy.ndarray: Array of detected sources or None if detection fails
         """
@@ -408,10 +407,10 @@ class EnhancedQualityAnalyzer:
     def _detect_stars_sep(self, data: np.ndarray) -> np.ndarray | None:
         """
         Detect stars using SEP (Source Extractor Python).
-        
+
         Args:
             data: Image data array
-            
+
         Returns:
             numpy.ndarray: Array of detected sources or None if detection fails
         """
@@ -443,7 +442,7 @@ class EnhancedQualityAnalyzer:
                     return None
 
                 # Calculate Kron radius for flux measurements
-                kronrad, krflag = sep.kron_radius(data_sub, valid_objects['x'], valid_objects['y'],
+                kronrad, _krflag = sep.kron_radius(data_sub, valid_objects['x'], valid_objects['y'],
                                                  valid_objects['a'], valid_objects['b'],
                                                  valid_objects['theta'], 6.0)
 
@@ -451,7 +450,7 @@ class EnhancedQualityAnalyzer:
                 kronrad = np.maximum(kronrad, 2.5)  # Minimum radius of 2.5 pixels
 
                 # Calculate flux within Kron apertures
-                flux, fluxerr, flag = sep.sum_ellipse(data_sub, valid_objects['x'], valid_objects['y'],
+                flux, _fluxerr, _flag = sep.sum_ellipse(data_sub, valid_objects['x'], valid_objects['y'],
                                                      valid_objects['a'], valid_objects['b'],
                                                      valid_objects['theta'],
                                                      2.5*kronrad, subpix=1, err=bkg.globalrms)
@@ -519,12 +518,12 @@ class EnhancedQualityAnalyzer:
                                image_scale: float | None) -> dict:
         """
         Analyze properties of detected stars.
-        
+
         Args:
             data: Image data array
             sources: Detected sources from SEP or DAOStarFinder
             image_scale: Image scale in arcsec/pixel
-            
+
         Returns:
             dict: Star analysis results
         """
@@ -542,11 +541,11 @@ class EnhancedQualityAnalyzer:
     def _analyze_sep_measurements(self, sources, image_scale: float | None) -> dict:
         """
         Analyze star properties from SEP measurements.
-        
+
         Args:
             sources: SEP sources with calculated measurements
             image_scale: Image scale in arcsec/pixel
-            
+
         Returns:
             dict: Star analysis results
         """
@@ -599,16 +598,16 @@ class EnhancedQualityAnalyzer:
     def _measure_star_properties(self, cutout: np.ndarray) -> dict:
         """
         Measure FWHM, eccentricity, and HFR for a single star cutout.
-        
+
         Args:
             cutout: Star cutout image
-            
+
         Returns:
             dict: Star properties
         """
         try:
             # Calculate background
-            mean, median, std = sigma_clipped_stats(cutout, sigma=2.0)
+            _mean, median, std = sigma_clipped_stats(cutout, sigma=2.0)
             cutout_sub = cutout - median
 
             # Find the peak
@@ -641,11 +640,11 @@ class EnhancedQualityAnalyzer:
                            center_y: float) -> float | None:
         """
         Measure FWHM using radial profile method.
-        
+
         Args:
             cutout: Background-subtracted star cutout
             center_x, center_y: Star center coordinates
-            
+
         Returns:
             float: FWHM in pixels, or None if measurement fails
         """
@@ -734,11 +733,11 @@ class EnhancedQualityAnalyzer:
                                     center_y: float) -> float | None:
         """
         Measure eccentricity using image moments.
-        
+
         Args:
             cutout: Background-subtracted star cutout
             center_x, center_y: Star center coordinates
-            
+
         Returns:
             float: Eccentricity (0=circular, 1=highly elongated), or None if fails
         """
@@ -795,11 +794,11 @@ class EnhancedQualityAnalyzer:
     def _measure_hfr(self, cutout: np.ndarray, center_x: float, center_y: float) -> float | None:
         """
         Measure Half Flux Radius (HFR).
-        
+
         Args:
             cutout: Background-subtracted star cutout
             center_x, center_y: Star center coordinates
-            
+
         Returns:
             float: HFR in pixels, or None if measurement fails
         """

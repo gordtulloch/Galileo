@@ -156,7 +156,7 @@ class BasicSequencer:
 
         for target in seq.targets:
             for step in target.steps:
-                for i in range(step.count):
+                for _i in range(step.count):
                     await self._pause_event.wait()
                     if self.state == SequencerState.STOPPED:
                         return
@@ -253,7 +253,7 @@ class BasicSequencer:
         else:
             raise RuntimeError("All retries exhausted")
 
-        date_str = datetime.date.today().isoformat()
+        date_str = datetime.date.today().isoformat()  # noqa: DTZ011 -- local calendar date by design
         out_path = self._file_namer.make_path(
             self._output_dir,
             target=target.name,
@@ -291,7 +291,7 @@ class BasicSequencer:
             hdr["XBINNING"] = step.binning
             hdr["YBINNING"] = step.binning
             hdr["IMAGETYP"] = step.frame_type
-            hdr["DATE-OBS"] = datetime.datetime.utcnow().isoformat()
+            hdr["DATE-OBS"] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()  # FITS: UTC, no zone suffix
             fits.PrimaryHDU(data, header=hdr).writeto(path, overwrite=True)
         except Exception:
             logger.exception("Failed to write FITS file %s", path)

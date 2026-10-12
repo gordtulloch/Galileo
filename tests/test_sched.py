@@ -230,7 +230,7 @@ async def test_tc_sched_070_priority_preemption(scheduler):
 @pytest.mark.priority("P2")
 def test_tc_sched_080_altitude_trajectory_chart(scheduler, sample_job):
     """SCHED-080: Display each queued job's altitude trajectory and projected run window as a chart."""
-    sched_mod = pytest.importorskip("galileo.scheduler")
+    pytest.importorskip("galileo.scheduler")
     sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
     loc = sky_mod.ObservingLocation(name="Home", latitude=51.5, longitude=-1.0, elevation_m=100, timezone="UTC")
     scheduler.set_location(loc)
@@ -377,7 +377,7 @@ def test_tc_sched_120_right_click_sets_start_end_duration(window):
     sessions = _sessions_page(window)
     page = _schedule_page(window)
 
-    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region = sessions.sessions_screen.create_session_for_target("M31", 10.68, 41.27)
     region._scheduler = sessions._scheduler_for(region._pier_name)
     region.schedule()
     job = region._job
@@ -435,7 +435,7 @@ def test_tc_sched_140_completed_and_error_borders_and_log_dialog(window):
     sessions = _sessions_page(window)
     page = _schedule_page(window)
 
-    region = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region = sessions.sessions_screen.create_session_for_target("M31", 10.68, 41.27)
     region._scheduler = sessions._scheduler_for(region._pier_name)
     region.schedule()
     job = region._job
@@ -460,14 +460,14 @@ def test_tc_sched_150_run_now_positions_immediately_and_reports_conflicts(window
     now and reports (without blocking) any overlap with existing entries."""
     sessions = _sessions_page(window)
 
-    region1 = sessions.screen.create_session_for_target("M31", 10.68, 41.27)
+    region1 = sessions.sessions_screen.create_session_for_target("M31", 10.68, 41.27)
     region1._scheduler = sessions._scheduler_for(region1._pier_name)
     conflicts = region1.run_now()
     assert conflicts == []
     assert region1.is_scheduled is True
     assert region1._job.scheduled_start_utc is not None
 
-    region2 = sessions.screen.create_session_for_target("M42", 83.8, -5.4)
+    region2 = sessions.sessions_screen.create_session_for_target("M42", 83.8, -5.4)
     region2._scheduler = sessions._scheduler_for(region2._pier_name)
     conflicts2 = region2.run_now()
     assert region1._job in conflicts2   # both "now", so their default-duration windows overlap

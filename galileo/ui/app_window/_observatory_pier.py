@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import logging
 
@@ -70,7 +70,7 @@ class AppWindowObservatoryPierMixin:
             return name or None
         return None
 
-    def _prompt_new_observatory(self: AppWindowState, record=None) -> dict | None:
+    def _prompt_new_observatory(self: AppWindowState, record: Any = None) -> dict | None:
         """Modal Name/Lat/Long/Elevation/Timezone/Physical Address/Owner/Notification dialog
         for New Observatory — or, given an existing *record*, Edit Observatory with its
         saved values filled in. Returns every ``ObservatoryRecord`` field, or None if cancelled."""

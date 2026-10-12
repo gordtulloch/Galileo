@@ -2,6 +2,7 @@ import os
 import logging
 import shutil
 import time
+from typing import ClassVar
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QScrollArea,
@@ -96,23 +97,23 @@ class MappingsWidget(QWidget):
         """Get current values for a specific FITS header card from the database"""
         try:
             if card == "TELESCOP":
-                values = set([f.fitsFileTelescop for f in FitsFileModel.select().distinct() if f.fitsFileTelescop])
+                values = {f.fitsFileTelescop for f in FitsFileModel.select().distinct() if f.fitsFileTelescop}
             elif card == "INSTRUME":
-                values = set([f.fitsFileInstrument for f in FitsFileModel.select().distinct() if f.fitsFileInstrument])
+                values = {f.fitsFileInstrument for f in FitsFileModel.select().distinct() if f.fitsFileInstrument}
             elif card == "OBSERVER":
-                values = set([f.fitsFileObserver for f in FitsFileModel.select().distinct() if f.fitsFileObserver])
+                values = {f.fitsFileObserver for f in FitsFileModel.select().distinct() if f.fitsFileObserver}
             elif card == "FILTER":
-                values = set([f.fitsFileFilter for f in FitsFileModel.select().distinct() if f.fitsFileFilter])
+                values = {f.fitsFileFilter for f in FitsFileModel.select().distinct() if f.fitsFileFilter}
             elif card == "NOTES":
-                values = set([f.fitsFileNotes for f in FitsFileModel.select().distinct() if f.fitsFileNotes])
+                values = {f.fitsFileNotes for f in FitsFileModel.select().distinct() if f.fitsFileNotes}
             elif card == "OBJECT":
-                values = set([f.fitsFileObject for f in FitsFileModel.select().distinct() if f.fitsFileObject])
+                values = {f.fitsFileObject for f in FitsFileModel.select().distinct() if f.fitsFileObject}
             else:
                 values = set()
 
-            return sorted(list(values))
+            return sorted(values)
         except Exception as e:
-            logger.error(f"Error getting current values for {card}: {e}")
+            logger.exception(f"Error getting current values for {card}: {e}")
             return [""]
 
     def add_mapping_row(self, card="TELESCOP", current="", replace="", is_default=False):
@@ -260,7 +261,7 @@ class MappingsWidget(QWidget):
                 logger.info(f"Loaded {mappings_loaded} existing mappings from database")
 
         except Exception as e:
-            logger.error(f"Error loading existing mappings: {e}")
+            logger.exception(f"Error loading existing mappings: {e}")
             # Add a default mapping row if there was an error
             if not self.mapping_rows:
                 self.add_mapping_row()
@@ -299,7 +300,7 @@ class MappingsWidget(QWidget):
             self.mappings_applied.emit()
 
         except Exception as e:
-            logger.error(f"Error saving mappings: {e}")
+            logger.exception(f"Error saving mappings: {e}")
             QMessageBox.critical(self, "Error", f"Error saving mappings: {e}")
 
     def update_current_values(self, row_widget):
@@ -319,6 +320,26 @@ class MappingsWidget(QWidget):
         replace_combo.clear()
         replace_combo.addItems(current_values)
 
+    # The FITS cards whose mapping is also applied to the catalog, and the catalog column each one lives in.
+    _MAPPED_CARD_FIELDS: ClassVar[dict[str, str]] = {'TELESCOP': 'fitsFileTelescop', 'INSTRUME': 'fitsFileInstrument', 'OBJECT': 'fitsFileObject'}
+
+    _APPLIED_BUTTON_STYLE = """
+                        QPushButton {
+                            background-color: #2d4d2d;
+                            color: #88ff88;
+                            border: 1px solid #44aa44;
+                            border-radius: 3px;
+                            font-size: 10px;
+                            padding: 2px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #3d5d3d;
+                            color: #99ff99;
+                            border: 1px solid #55bb55;
+                        }
+                    """
+
     def apply_single_mapping(self, row_widget):
         """Apply a single mapping immediately"""
         try:
@@ -336,11 +357,7 @@ class MappingsWidget(QWidget):
                 return
 
             # Confirm the action
-            if current:
-                message = f"Apply mapping for {card}:\n'{current}' → '{replace}'\n\nThis will update the database immediately."
-            else:
-                message = f"Apply mapping for {card}:\n'(empty/null)' → '{replace}'\n\nThis will update the database immediately."
-
+            message = f"Apply mapping for {card}:\n'{current or '(empty/null)'}' → '{replace}'\n\nThis will update the database immediately."
             reply = QMessageBox.question(
                 self,
                 "Confirm Apply Mapping",
@@ -368,23 +385,7 @@ class MappingsWidget(QWidget):
                 if progress.wasCanceled():
                     return
 
-                try:
-                    existing_mapping = MappingModel.get(
-                        (MappingModel.card == card) &
-                        (MappingModel.current == (current or None))
-                    )
-                    # Update existing mapping
-                    existing_mapping.replace = replace or None
-                    existing_mapping.save()
-                    logger.info(f"Updated existing mapping: {card} '{current}' -> '{replace}'")
-                except MappingModel.DoesNotExist:
-                    # Create new mapping
-                    MappingModel.create(
-                        card=card,
-                        current=current or None,
-                        replace=replace or None
-                    )
-                    logger.info(f"Created new mapping: {card} '{current}' -> '{replace}'")
+                self._save_mapping(card, current, replace)
 
                 # Step 2: Apply to database records (50%)
                 progress.setLabelText(f"Applying {card} mapping to database records...")
@@ -394,104 +395,10 @@ class MappingsWidget(QWidget):
                 if progress.wasCanceled():
                     return
 
-                # Create a single mapping to apply
-                mapping_to_apply = {
-                    'card': card,
-                    'current': current,
-                    'replace': replace
-                }
-
-                # Apply the mapping to database records
-                apply_to_db = self.apply_to_database_checkbox.isChecked()
-                update_headers = self.update_files_checkbox.isChecked()
-                reorganize_files = self.reorganize_files_checkbox.isChecked()
-                total_updates = 0
-                headers_updated = 0
-                files_moved = 0
-
-                if mapping_to_apply['card'] in ['TELESCOP', 'INSTRUME', 'OBJECT']:
-                    if mapping_to_apply['card'] == 'TELESCOP':
-                        field_name = 'fitsFileTelescop'
-                    elif mapping_to_apply['card'] == 'INSTRUME':
-                        field_name = 'fitsFileInstrument'
-                    else:  # OBJECT
-                        field_name = 'fitsFileObject'
-
-                    # Find files that match the current value
-                    if mapping_to_apply['current']:
-                        # Specific value mapping
-                        query = FitsFileModel.select().where(getattr(FitsFileModel, field_name) == mapping_to_apply['current'])
-                    else:
-                        # Default mapping for null/empty values
-                        query = FitsFileModel.select().where(
-                            (getattr(FitsFileModel, field_name).is_null()) |
-                            (getattr(FitsFileModel, field_name) == '')
-                        )
-
-                    # Step 3: Update database records and files (75% - 95%)
-                    file_count = query.count()
-                    progress.setLabelText(f"Updating {file_count} database records...")
-                    progress.setValue(75)
-                    QApplication.processEvents()
-
-                    if progress.wasCanceled():
-                        return
-
-                    # Update matching files with progress tracking
-                    files_list = list(query)
-                    for index, fits_file in enumerate(files_list):
-                        # Update progress for each file (75% to 95%)
-                        if file_count > 0:
-                            file_progress = 75 + int((index / file_count) * 20)  # 75% to 95%
-                            progress.setValue(file_progress)
-                            progress.setLabelText(f"Processing file {index + 1} of {file_count}: {os.path.basename(fits_file.fitsFileName or 'Unknown')}")
-                            QApplication.processEvents()
-
-                        if progress.wasCanceled():
-                            return
-
-                        if mapping_to_apply['replace']:
-                            old_file_path = fits_file.fitsFileName
-
-                            # Update the catalog record's own field (Apply mappings to database)
-                            if apply_to_db:
-                                setattr(fits_file, field_name, mapping_to_apply['replace'])
-                                fits_file.save()
-                                total_updates += 1
-
-                            # Rewrite the FITS header on disk (Update FITS headers on disk)
-                            if update_headers and old_file_path and os.path.exists(old_file_path):
-                                try:
-                                    with fits.open(old_file_path, mode='update') as hdul:
-                                        hdul[0].header[mapping_to_apply['card']] = mapping_to_apply['replace']
-                                        hdul[0].header.comments[mapping_to_apply['card']] = 'Updated via Galileo mapping'
-                                        hdul.flush()
-                                    headers_updated += 1
-                                except Exception as e:
-                                    logger.error(f"Error updating FITS header for {old_file_path}: {e}")
-
-                            # Move the file to the mapped folder structure (Reorganize repository folders)
-                            if reorganize_files and old_file_path and os.path.exists(old_file_path):
-                                try:
-                                    new_file_path = self._calculate_new_file_path(old_file_path, mapping_to_apply)
-
-                                    if new_file_path and new_file_path != old_file_path:
-                                        new_dir = os.path.dirname(new_file_path)
-                                        os.makedirs(new_dir, exist_ok=True)
-
-                                        shutil.move(old_file_path, new_file_path)
-                                        files_moved += 1
-
-                                        # Keep the catalog's file pointer in sync with the move
-                                        fits_file.fitsFileName = new_file_path.replace('\\', '/')
-                                        fits_file.save()
-
-                                        logger.info(f"Moved file: {old_file_path} -> {new_file_path}")
-                                except Exception as e:
-                                    logger.error(f"Error moving file {old_file_path}: {e}")
-
-                    if files_moved > 0:
-                        logger.info(f"Moved {files_moved} files to new folder structure")
+                counts = self._apply_mapping_to_records({'card': card, 'current': current, 'replace': replace}, progress)
+                if counts is None:  # cancelled
+                    return
+                total_updates, headers_updated, files_moved = counts
 
                 # Step 4: Clear cache and update UI (95% - 100%)
                 progress.setLabelText("Clearing mapping cache...")
@@ -524,22 +431,7 @@ class MappingsWidget(QWidget):
                 if hasattr(row_widget, 'apply_button'):
                     row_widget.apply_button.setText("✓")
                     row_widget.apply_button.setToolTip("Mapping applied and saved to database")
-                    row_widget.apply_button.setStyleSheet("""
-                        QPushButton {
-                            background-color: #2d4d2d;
-                            color: #88ff88;
-                            border: 1px solid #44aa44;
-                            border-radius: 3px;
-                            font-size: 10px;
-                            padding: 2px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #3d5d3d;
-                            color: #99ff99;
-                            border: 1px solid #55bb55;
-                        }
-                    """)
+                    row_widget.apply_button.setStyleSheet(self._APPLIED_BUTTON_STYLE)
 
                 # Show success message
                 if total_updates > 0 or headers_updated > 0 or files_moved > 0:
@@ -563,14 +455,136 @@ class MappingsWidget(QWidget):
                         "Mapping saved to database successfully. No matching records found to update."
                     )
 
-            except Exception as e:
+            except Exception:
                 if 'progress' in locals():
                     progress.close()
-                raise e
+                raise
 
         except Exception as e:
-            logger.error(f"Error applying single mapping: {e}")
+            logger.exception(f"Error applying single mapping: {e}")
             QMessageBox.critical(self, "Error", f"Error applying mapping: {e}")
+
+    @staticmethod
+    def _save_mapping(card, current, replace) -> None:
+        """Create the ``card``/``current`` -> ``replace`` mapping row, or update it if it already exists."""
+        try:
+            existing_mapping = MappingModel.get(
+                (MappingModel.card == card) &
+                (MappingModel.current == (current or None))
+            )
+            # Update existing mapping
+            existing_mapping.replace = replace or None
+            existing_mapping.save()
+            logger.info(f"Updated existing mapping: {card} '{current}' -> '{replace}'")
+        except MappingModel.DoesNotExist:
+            # Create new mapping
+            MappingModel.create(
+                card=card,
+                current=current or None,
+                replace=replace or None
+            )
+            logger.info(f"Created new mapping: {card} '{current}' -> '{replace}'")
+
+    def _apply_mapping_to_records(self, mapping_to_apply, progress):
+        """Apply one mapping to the catalog rows, FITS headers and folders as the checkboxes ask.
+
+        Returns ``(catalog_updates, headers_updated, files_moved)``, or ``None`` if the user cancelled.
+        """
+        field_name = self._MAPPED_CARD_FIELDS.get(mapping_to_apply['card'])
+        if field_name is None:
+            return 0, 0, 0
+
+        apply_to_db = self.apply_to_database_checkbox.isChecked()
+        update_headers = self.update_files_checkbox.isChecked()
+        reorganize_files = self.reorganize_files_checkbox.isChecked()
+        total_updates = 0
+        headers_updated = 0
+        files_moved = 0
+
+        # Find files that match the current value
+        column = getattr(FitsFileModel, field_name)
+        if mapping_to_apply['current']:
+            # Specific value mapping
+            query = FitsFileModel.select().where(column == mapping_to_apply['current'])
+        else:
+            # Default mapping for null/empty values
+            query = FitsFileModel.select().where((column.is_null()) | (column == ''))
+
+        # Step 3: Update database records and files (75% - 95%)
+        file_count = query.count()
+        progress.setLabelText(f"Updating {file_count} database records...")
+        progress.setValue(75)
+        QApplication.processEvents()
+
+        if progress.wasCanceled():
+            return None
+
+        # Update matching files with progress tracking
+        for index, fits_file in enumerate(list(query)):
+            # Update progress for each file (75% to 95%)
+            if file_count > 0:
+                progress.setValue(75 + int((index / file_count) * 20))  # 75% to 95%
+                progress.setLabelText(f"Processing file {index + 1} of {file_count}: {os.path.basename(fits_file.fitsFileName or 'Unknown')}")
+                QApplication.processEvents()
+
+            if progress.wasCanceled():
+                return None
+
+            if not mapping_to_apply['replace']:
+                continue
+            old_file_path = fits_file.fitsFileName
+
+            # Update the catalog record's own field (Apply mappings to database)
+            if apply_to_db:
+                setattr(fits_file, field_name, mapping_to_apply['replace'])
+                fits_file.save()
+                total_updates += 1
+
+            # Rewrite the FITS header on disk (Update FITS headers on disk)
+            if update_headers and old_file_path and os.path.exists(old_file_path):
+                headers_updated += self._rewrite_fits_header(old_file_path, mapping_to_apply)
+
+            # Move the file to the mapped folder structure (Reorganize repository folders)
+            if reorganize_files and old_file_path and os.path.exists(old_file_path):
+                files_moved += self._move_to_mapped_folder(fits_file, old_file_path, mapping_to_apply)
+
+        if files_moved > 0:
+            logger.info(f"Moved {files_moved} files to new folder structure")
+        return total_updates, headers_updated, files_moved
+
+    @staticmethod
+    def _rewrite_fits_header(file_path, mapping) -> int:
+        """Write the mapped value into the file's FITS header. Returns 1 on success, 0 if it failed."""
+        try:
+            with fits.open(file_path, mode='update') as hdul:
+                hdul[0].header[mapping['card']] = mapping['replace']
+                hdul[0].header.comments[mapping['card']] = 'Updated via Galileo mapping'
+                hdul.flush()
+            return 1
+        except Exception as e:
+            logger.exception(f"Error updating FITS header for {file_path}: {e}")
+            return 0
+
+    def _move_to_mapped_folder(self, fits_file, old_file_path, mapping) -> int:
+        """Move the file to the folder the mapping implies and update its catalog row. Returns 1 if it moved."""
+        moved = 0
+        try:
+            new_file_path = self._calculate_new_file_path(old_file_path, mapping)
+            if not new_file_path or new_file_path == old_file_path:
+                return 0
+
+            os.makedirs(os.path.dirname(new_file_path), exist_ok=True)
+            shutil.move(old_file_path, new_file_path)
+            moved = 1
+
+            # Keep the catalog's file pointer in sync with the move
+            fits_file.fitsFileName = new_file_path.replace('\\', '/')
+            fits_file.save()
+
+            logger.info(f"Moved file: {old_file_path} -> {new_file_path}")
+        except Exception as e:
+            logger.exception(f"Error moving file {old_file_path}: {e}")
+        return moved
 
     def _calculate_new_file_path(self, old_file_path, mapping):
         """Calculate the new file path based on the mapping change."""
@@ -666,5 +680,5 @@ class MappingsWidget(QWidget):
             return new_path.replace('/', os.sep)  # Convert to OS-appropriate separators
 
         except Exception as e:
-            logger.error(f"Error calculating new file path for {old_file_path}: {e}")
+            logger.exception(f"Error calculating new file path for {old_file_path}: {e}")
             return None

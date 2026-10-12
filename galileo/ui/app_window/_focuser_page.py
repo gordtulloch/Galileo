@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _new_form_layout, _when_visible, _DEFAULT_PORTS, QWidget
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -476,10 +477,8 @@ class AppWindowFocuserPageMixin:
             extra_count = 0
             for slot in saved_slots:
                 if slot.startswith("focuser_"):
-                    try:
+                    with contextlib.suppress(ValueError):
                         extra_count = max(extra_count, int(slot.rsplit("_", 1)[1]) - 1)
-                    except ValueError:
-                        pass
             _set_panel_count(1 + extra_count)
 
             primary_cfg = None

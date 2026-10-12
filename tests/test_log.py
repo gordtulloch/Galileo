@@ -29,7 +29,7 @@ def test_tc_log_010_structured_timestamped_logs_to_platform_dir(diag_service, tm
     content = log_files[0].read_text()
     assert "Test info message" in content
     # Structured: each line must contain a timestamp component
-    lines = [l for l in content.splitlines() if l.strip()]
+    lines = [ln for ln in content.splitlines() if ln.strip()]
     assert all(any(c.isdigit() for c in line) for line in lines), "Log lines must contain timestamps"
 
 

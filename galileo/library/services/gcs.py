@@ -10,20 +10,19 @@ have to import PySide6.
 import os
 import logging
 import base64
+from galileo.library.exceptions import CloudSyncError
+from galileo.library.services.cloud import _calculate_md5_hash, _get_cloud_file_hashes  # noqa: F401  (hash helpers re-exported for duplicate detection)
 
 logger = logging.getLogger(__name__)
-
-# Hash helpers used for duplicate detection
-from galileo.library.services.cloud import _calculate_md5_hash, _get_cloud_file_hashes  # noqa: F401
 
 
 def _get_gcs_client(auth_info):
     """
     Create and return a Google Cloud Storage client.
-    
+
     Args:
         auth_info (dict): Authentication information
-        
+
     Returns:
         storage.Client: Authenticated GCS client
     """
@@ -50,21 +49,21 @@ def _get_gcs_client(auth_info):
 
         return client
 
-    except ImportError:
-        raise ImportError("Google Cloud Storage library not installed. Run: pip install google-cloud-storage")
+    except ImportError as exc:
+        raise ImportError("Google Cloud Storage library not installed. Run: pip install google-cloud-storage") from exc
     except Exception as e:
-        raise Exception(f"Failed to authenticate with Google Cloud: {e}")
+        raise CloudSyncError(f"Failed to authenticate with Google Cloud: {e}") from e
 
 
 def check_file_exists_in_gcs(client, bucket_name, gcs_object_name):
     """
     Check if a file exists in Google Cloud Storage.
-    
+
     Args:
         client: GCS client
         bucket_name (str): Name of the GCS bucket
         gcs_object_name (str): Object name in GCS
-        
+
     Returns:
         bool: True if file exists, False otherwise
     """
@@ -73,20 +72,20 @@ def check_file_exists_in_gcs(client, bucket_name, gcs_object_name):
         blob = bucket.blob(gcs_object_name)
         return blob.exists()
     except Exception as e:
-        logger.error(f"Failed to check if file exists: gs://{bucket_name}/{gcs_object_name}: {e}")
+        logger.exception(f"Failed to check if file exists: gs://{bucket_name}/{gcs_object_name}: {e}")
         return False
 
 
 def upload_file_to_backup(bucket_name, auth_info, local_file_path, relative_path):
     """
     Upload a single file to cloud backup if it doesn't already exist.
-    
+
     Args:
         bucket_name (str): Name of the GCS bucket
         auth_info (dict): Authentication information
         local_file_path (str): Full path to local file
         relative_path (str): Relative path to maintain directory structure
-        
+
     Returns:
         tuple: (success: bool, cloud_url: str, message: str)
     """
@@ -114,14 +113,14 @@ def upload_file_to_backup(bucket_name, auth_info, local_file_path, relative_path
         return True, cloud_url, "File uploaded successfully"
 
     except Exception as e:
-        logger.error(f"Failed to upload file to backup: {local_file_path}: {e}")
+        logger.exception(f"Failed to upload file to backup: {local_file_path}: {e}")
         return False, "", str(e)
 
 
 def _upload_file_to_gcs(client, bucket_name, local_file_path, gcs_object_name):
     """
     Upload a file to Google Cloud Storage, preserving the local directory structure.
-    
+
     Args:
         client: GCS client
         bucket_name (str): Name of the GCS bucket
@@ -136,19 +135,19 @@ def _upload_file_to_gcs(client, bucket_name, local_file_path, gcs_object_name):
         logger.debug(f"Successfully uploaded: {local_file_path} -> gs://{bucket_name}/{gcs_object_name}")
 
     except Exception as e:
-        logger.error(f"Failed to upload {local_file_path}: {e}")
+        logger.exception(f"Failed to upload {local_file_path}: {e}")
         raise
 
 
 def list_gcs_bucket_files(bucket_name, auth_info, prefix=""):
     """
     List all files in a Google Cloud Storage bucket.
-    
+
     Args:
         bucket_name (str): Name of the GCS bucket
         auth_info (dict): Authentication information
         prefix (str): Optional prefix to filter files
-        
+
     Returns:
         list: List of dictionaries containing file information
     """
@@ -196,30 +195,30 @@ def list_gcs_bucket_files(bucket_name, auth_info, prefix=""):
         return files
 
     except Exception as e:
-        logger.error(f"Error listing bucket files: {e}")
+        logger.exception(f"Error listing bucket files: {e}")
         error_msg = str(e)
 
         # Provide more specific error messages for common issues
         if "404" in error_msg or "not found" in error_msg.lower():
-            raise Exception(f"Failed to list files in bucket {bucket_name}: 404 GET https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?projection=noAcl&prefix=&prettyPrint=false: The specified bucket does not exist.")
+            raise CloudSyncError(f"Failed to list files in bucket {bucket_name}: 404 GET https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?projection=noAcl&prefix=&prettyPrint=false: The specified bucket does not exist.") from e
         elif "403" in error_msg or "access denied" in error_msg.lower():
-            raise Exception(f"Failed to list files in bucket {bucket_name}: Access denied. Check your service account permissions.")
+            raise CloudSyncError(f"Failed to list files in bucket {bucket_name}: Access denied. Check your service account permissions.") from e
         elif "401" in error_msg or "unauthorized" in error_msg.lower():
-            raise Exception(f"Failed to list files in bucket {bucket_name}: Authentication failed. Check your service account key file.")
+            raise CloudSyncError(f"Failed to list files in bucket {bucket_name}: Authentication failed. Check your service account key file.") from e
         else:
-            raise Exception(f"Failed to list files in bucket {bucket_name}: {error_msg}")
+            raise CloudSyncError(f"Failed to list files in bucket {bucket_name}: {error_msg}") from e
 
 
 def download_file_from_gcs(bucket_name, auth_info, gcs_object_name, local_file_path):
     """
     Download a file from Google Cloud Storage to local disk.
-    
+
     Args:
         bucket_name (str): Name of the GCS bucket
         auth_info (dict): Authentication information
         gcs_object_name (str): Object name in GCS
         local_file_path (str): Full path where to save the file locally
-        
+
     Returns:
         tuple: (success: bool, message: str)
     """
@@ -242,17 +241,17 @@ def download_file_from_gcs(bucket_name, auth_info, gcs_object_name, local_file_p
         return True, "File downloaded successfully"
 
     except Exception as e:
-        logger.error(f"Failed to download gs://{bucket_name}/{gcs_object_name}: {e}")
+        logger.exception(f"Failed to download gs://{bucket_name}/{gcs_object_name}: {e}")
         return False, str(e)
 
 
 def find_cloud_duplicates(cloud_files):
     """
     Find duplicate files in cloud storage based on MD5 hash.
-    
+
     Args:
         cloud_files (list): List of cloud file dictionaries
-        
+
     Returns:
         dict: Dictionary with duplicate statistics and details
     """
@@ -296,7 +295,7 @@ def find_cloud_duplicates(cloud_files):
         }
 
     except Exception as e:
-        logger.error(f"Error finding cloud duplicates: {e}")
+        logger.exception(f"Error finding cloud duplicates: {e}")
         return {
             'total_files': len(cloud_files) if cloud_files else 0,
             'files_with_hashes': 0,
@@ -316,7 +315,7 @@ def format_file_size(size_bytes):
 
     size_names = ["B", "KB", "MB", "GB", "TB"]
     import math
-    i = int(math.floor(math.log(size_bytes, 1024)))
+    i = math.floor(math.log(size_bytes, 1024))
     p = math.pow(1024, i)
     s = round(size_bytes / p, 2)
     return f"{s} {size_names[i]}"

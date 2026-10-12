@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+from galileo.exceptions import LibraryError
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +50,11 @@ def get_decompressed_dest_path(dest_path: str) -> str:
     lower = dest_path.lower()
     if lower.endswith('.fits.fz'):
         return dest_path[:-3]  # strip .fz
-    if lower.endswith('.fit.fz') or lower.endswith('.fts.fz'):
+    if lower.endswith(('.fit.fz', '.fts.fz')):
         return dest_path[:-3]
     if lower.endswith('.fits.gz'):
         return dest_path[:-3]
-    if lower.endswith('.fit.gz') or lower.endswith('.fts.gz'):
+    if lower.endswith(('.fit.gz', '.fts.gz')):
         return dest_path[:-3]
     if lower.endswith('.gz'):
         return dest_path[:-3]
@@ -116,7 +117,7 @@ def decompress_to(src_path: str, dest_path: str) -> bool:
         return False
 
     except Exception as e:
-        logger.error(f"Failed to decompress {src_path} -> {dest_path}: {e}")
+        logger.exception(f"Failed to decompress {src_path} -> {dest_path}: {e}")
         return False
 
 
@@ -135,14 +136,14 @@ def create_symlink(src_path: str, dest_path: str) -> bool:
                 text=True,
             )
             if result.returncode != 0:
-                raise Exception(f"mklink failed: {result.stderr}")
+                raise LibraryError(f"mklink failed: {result.stderr}")
             return True
 
         os.symlink(src_path, dest_path)
         return True
 
     except Exception as e:
-        logger.error(f"Failed to create symlink {dest_path} -> {src_path}: {e}")
+        logger.exception(f"Failed to create symlink {dest_path} -> {src_path}: {e}")
         return False
 
 
@@ -173,5 +174,5 @@ def materialize_file(*, src_path: str, dest_path: str, copy_files: bool, decompr
         return create_symlink(src_path, dest_path)
 
     except Exception as e:
-        logger.error(f"Failed to materialize {src_path} -> {dest_path}: {e}")
+        logger.exception(f"Failed to materialize {src_path} -> {dest_path}: {e}")
         return False

@@ -182,7 +182,7 @@ def test_tc_meta_030_tile_compressed_fits_via_astropy(tmp_path):
 def test_tc_meta_040_read_decompress_tile_compressed_fits(tmp_path):
     """META-040: Read and correctly decompress tile-compressed FITS transparently."""
     fits = pytest.importorskip("astropy.io.fits")
-    np_loc = pytest.importorskip("numpy")
+    pytest.importorskip("numpy")
 
     # Write compressed
     data = np.arange(10000, dtype=np.int32).reshape(100, 100)

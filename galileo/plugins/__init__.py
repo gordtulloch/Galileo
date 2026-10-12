@@ -57,7 +57,7 @@ class PluginManifest:
     entry_point: str = ""              # defaults to galileo.plugins.<name> if empty
 
     @classmethod
-    def from_toml_text(cls, text: str) -> "PluginManifest":
+    def from_toml_text(cls, text: str) -> PluginManifest:
         """Parse a ``plugin.toml`` string.  Uses the stdlib ``tomllib`` on
         Python 3.11+ (Galileo's floor — PSD §7) so no extra dependency."""
         import tomllib  # stdlib since 3.11
@@ -81,7 +81,7 @@ class PluginManifest:
     @property
     def resolved_entry_point(self) -> str:
         ep = self.entry_point.strip()
-        return ep if ep else f"galileo.plugins.{self.name}"
+        return ep or f"galileo.plugins.{self.name}"
 
 
 @dataclass
@@ -108,7 +108,7 @@ class PluginBase(ABC):
     panel_label: str = ""
 
     @abstractmethod
-    def activate(self, ctx: "PluginContext") -> None:
+    def activate(self, ctx: PluginContext) -> None:
         """Called when the plugin is enabled."""
 
     @abstractmethod
