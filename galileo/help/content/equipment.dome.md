@@ -37,6 +37,26 @@ Stops the dome moving immediately, whatever it was doing.
 
 Whether the dome is at its park position.
 
+## Slaving
+
+Makes the dome follow the telescope. Once a dome and a mount are both connected, the dome is slewed to the mount's azimuth whenever the mount is tracking and the dome has fallen more than a couple of degrees behind. Nothing moves while the mount is parked, slewing or not tracking.
+
+## Slave dome to mount
+
+Turns azimuth slaving on or off for this Pier. Leave it off for a dome run by independent third-party slaving hardware or software, so the two never fight over the dome.
+
+## Open/close dome with sessions
+
+When ticked, a session opens the shutter as it starts and closes the shutter and parks the dome as it ends (even if it was stopped or failed). The shutter also stays open through a meridian flip, and the dome re-follows the mount afterwards. Off by default; the Dome Open / Close / Sync blocks work either way.
+
+## Slaving status
+
+Whether slaving is off, waiting for a mount or for the mount to start tracking, or the azimuth the dome was last sent to.
+
+## Sync to mount
+
+Slews the dome to the mount's current azimuth once, even if slaving is off. The same thing the Dome Sync session block does.
+
 ## Observatory Status
 
 A read-only summary of whether the observatory is safe to open and use.

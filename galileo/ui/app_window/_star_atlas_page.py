@@ -109,7 +109,8 @@ class AppWindowStarAtlasPageMixin:
                    ("Sun, Moon && planets", "show_bodies"), ("Labels", "show_labels"),
                    ("Ground", "show_ground"), ("Daylight sky", "daylight_sky"),
                    ("Horizon", "show_horizon"),
-                   ("Telescope markers", "show_pier_markers"))
+                   ("Telescope markers", "show_pier_markers"), ("Field of view", "show_fov"),
+                   ("Comets", "show_comets"), ("Asteroids", "show_asteroids"), ("Satellites", "show_satellites"))
         for text, attr in toggles:
             box = QCheckBox(text)
             box.setChecked(getattr(view, attr))
@@ -292,11 +293,12 @@ class AppWindowStarAtlasPageMixin:
 
         def refresh_site() -> None:
             """Take latitude/longitude from the selected Pier's Observatory."""
-            pier = self._current_pier
-            if pier is None:
+            # From the Observatory, not the Pier: a brand-new Observatory has no Piers yet, and its
+            # coordinates must reach the sky view all the same.
+            observatory = getattr(self, "_current_observatory", None)
+            if observatory is None:
                 return
             try:
-                observatory = pier.observatory
                 lat = observatory.latitude if observatory.latitude is not None else lat_spin.value()
                 lon = observatory.longitude if observatory.longitude is not None else lon_spin.value()
             except Exception:
@@ -306,6 +308,7 @@ class AppWindowStarAtlasPageMixin:
                 spin.blockSignals(True)
                 spin.setValue(value)
                 spin.blockSignals(False)
+            view.elevation_m = float(observatory.elevation_m or 0.0)     # satellites are close enough to care
             view.set_location(lat, lon)
             if lat < 0:
                 view.center_on_altaz(40.0, 0.0)   # look north from the southern hemisphere
@@ -324,9 +327,11 @@ class AppWindowStarAtlasPageMixin:
 
         def on_selection_changed(obj) -> None:
             has_obj = obj is not None
-            detail_goto_btn.setEnabled(has_obj)
-            detail_sync_btn.setEnabled(has_obj)
-            detail_session_btn.setEnabled(has_obj)
+            # A satellite crosses the sky in minutes: there is nothing to slew to, sync on or plan.
+            targetable = has_obj and obj.get("type") != "Satellite"
+            detail_goto_btn.setEnabled(targetable)
+            detail_sync_btn.setEnabled(targetable)
+            detail_session_btn.setEnabled(targetable)
             if not has_obj:
                 for key in detail_values:
                     detail_values[key].setText("—")
@@ -352,9 +357,10 @@ class AppWindowStarAtlasPageMixin:
                 "Create a new session pre-populated with a Target block for this object (SES-160). "
                 "A plain click only selects it — this is the explicit way to build a session from it."
             )
-            goto.setEnabled(obj is not None or sky_point is not None)
-            sync.setEnabled(obj is not None)
-            add_to_session.setEnabled(obj is not None)
+            is_satellite = obj is not None and obj.get("type") == "Satellite"
+            goto.setEnabled((obj is not None or sky_point is not None) and not is_satellite)
+            sync.setEnabled(obj is not None and not is_satellite)
+            add_to_session.setEnabled(obj is not None and not is_satellite)
 
             def do_goto() -> None:
                 if obj is not None:
@@ -394,6 +400,13 @@ class AppWindowStarAtlasPageMixin:
 
         view.catalogsLoaded.connect(show_catalog_status)
 
+        def show_minor_status(kind: str, count: int) -> None:
+            if count == 0:
+                self._window.statusBar().showMessage(
+                    f"No {kind.lower()} elements available - connect to the internet once to download them.", 8000)
+
+        view.minorBodiesLoaded.connect(show_minor_status)
+
         # Telescope reticles (SKYMAP-090). The mount is polled only while this page is on
         # screen, and more often while a slew is running so the reticle keeps up with it.
         def refresh_markers() -> None:
@@ -416,4 +429,5 @@ class AppWindowStarAtlasPageMixin:
         sync_time_field()
         on_live(True)
         view.load_catalogs()
+        view.refresh_minor_bodies()           # downloads elements for whichever of these were left switched on
         return page

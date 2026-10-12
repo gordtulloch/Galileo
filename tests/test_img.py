@@ -1564,19 +1564,18 @@ def test_tc_img_160_the_summary_says_how_the_frames_were_aligned(monkeypatch):
 
 @pytest.mark.requirement("TC-IMG-170")
 @pytest.mark.priority("P2")
-def test_tc_img_170_imaging_options_default_to_auto_and_round_trip(tmp_path, monkeypatch):
+def test_tc_img_170_imaging_options_default_to_auto_and_round_trip(settings_db):
     """IMG-170: Options > Imaging defaults to Auto, an unrecognised saved value falls back to it, and a valid choice round-trips."""
-    import galileo.platform as platform_mod
     from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
     from galileo.metadata import BITPIX_AUTO
-    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: tmp_path)
+    from galileo.settings_store import set_setting
 
     assert load_imaging_settings() == {"bitpix": BITPIX_AUTO}
 
     save_imaging_settings({"bitpix": 16})
     assert load_imaging_settings() == {"bitpix": 16}
 
-    (tmp_path / "imaging.json").write_text('{"bitpix": "not a real choice"}', encoding="utf-8")
+    set_setting("imaging", "bitpix", "not a real choice")
     assert load_imaging_settings() == {"bitpix": BITPIX_AUTO}, "an unrecognised value is not trusted"
 
 
@@ -1608,12 +1607,10 @@ def test_tc_img_170_a_desired_bitpix_forces_every_saved_frame_to_that_format():
 
 @pytest.mark.requirement("TC-IMG-170")
 @pytest.mark.priority("P2")
-def test_tc_img_170_a_new_service_picks_up_the_saved_setting(tmp_path, monkeypatch):
+def test_tc_img_170_a_new_service_picks_up_the_saved_setting(settings_db):
     """IMG-170: a freshly built ImagingService starts on whatever Options > Imaging last saved."""
-    import galileo.platform as platform_mod
     from galileo.imaging_settings import save_imaging_settings
     from galileo.ui.imaging import ImagingService
-    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: tmp_path)
 
     save_imaging_settings({"bitpix": -32})
     assert ImagingService().bitpix == -32
@@ -1635,11 +1632,9 @@ def test_tc_img_170_options_imaging_page_offers_the_bitpix_choices(window):
 
 @pytest.mark.requirement("TC-IMG-170")
 @pytest.mark.priority("P2")
-def test_tc_img_170_changing_the_option_saves_it_and_updates_the_running_service(window, tmp_path, monkeypatch):
+def test_tc_img_170_changing_the_option_saves_it_and_updates_the_running_service(window):
     """IMG-170: picking a BITPIX on the settings page saves it and takes effect on the Imaging page already built, not only after a restart."""
-    import galileo.platform as platform_mod
     from galileo.imaging_settings import load_imaging_settings
-    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: tmp_path)
 
     page = window._build_imaging_settings_page()
     combo = page.findChildren(window.QtWidgets.QComboBox)[0]
@@ -2356,3 +2351,40 @@ async def test_tc_img_220_annotated_frames_never_reach_the_library(library_repo,
         assert row.fitsFileName.lower().endswith((".fits", ".fit")), \
             f"{row.fitsFileName} reached the Library despite Annotate being on"
     assert not list(library_repo.repo.rglob("*.png")), "no annotated image was ever written into the repository"
+
+
+@pytest.mark.requirement("TC-UI-020")
+@pytest.mark.priority("P2")
+def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_path, monkeypatch):
+    """UI-020: the Imaging page hides/reorders panels from the saved layout at start-up,
+    and the Panels dialog's Reset Layout restores the default and persists it."""
+    from PySide6.QtWidgets import QDialog, QListWidget, QPushButton
+    from galileo.ui.imaging_layout import ImagingLayout, ImagingLayoutStore
+
+    saved = ImagingLayout()
+    saved.set_visible("histogram", False)
+    saved.move("log", -5)
+    ImagingLayoutStore().save(saved)
+
+    page = window._build_imaging_page()
+    hist = next(w for w in page.findChildren(window.QtWidgets.QWidget) if type(w).__name__ == "_HistogramWidget")
+    assert hist.isHidden()
+    lay = hist.parentWidget().layout()
+    names = [lay.itemAt(i).widget() for i in range(lay.count())]
+    log_idx = next(i for i, w in enumerate(names) if w is not None and w.__class__.__name__ == "QLabel" and w.text() == "Log")
+    stretch_idx = next(i for i, w in enumerate(names) if w is not None and w.findChildren(window.QtWidgets.QSlider))
+    assert log_idx < stretch_idx
+
+    def fake_exec(self):
+        assert self.findChildren(QListWidget)[0].count() == 6
+        next(b for b in self.findChildren(QPushButton) if b.text() == "Reset Layout").click()
+        return QDialog.Accepted
+
+    orig = QDialog.exec
+    QDialog.exec = fake_exec
+    try:
+        next(b for b in page.findChildren(QPushButton) if b.text() == "Panels…").click()
+    finally:
+        QDialog.exec = orig
+    assert not hist.isHidden()
+    assert ImagingLayoutStore().load().is_default()

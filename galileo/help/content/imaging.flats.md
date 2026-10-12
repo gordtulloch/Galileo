@@ -1,13 +1,13 @@
 <!-- order: 21 -->
 # Flats Assistant
 
-The Flats Assistant captures a set of flat frames — evenly lit exposures that record dust, vignetting and uneven illumination so they can be divided out of your light frames. Open it from the Imaging screen's **Flats…** button. It needs a connected camera; set the camera's *Max well depth* on Equipment › Camera so it can calculate exposures.
+The Flats Assistant captures a set of flat frames — evenly lit exposures that record dust, vignetting and uneven illumination so they can be divided out of your light frames. Open it from the Imaging screen's **Flats…** button. It needs a connected camera; set the camera's *Max well depth* on Equipment › Camera — every flat method needs it to know the target brightness, and Start refuses without it.
 
 Do flats with the same optical train, focus and camera angle as your lights. Pick a method, set the options, and press **Start**.
 
 ## Flat Method
 
-How the light source is provided. **Sky Flats**: Galileo waits for twilight, points the mount at a star-poor patch of sky and adjusts each exposure to the right brightness. **Observatory Panel**: a fixed light panel in the observatory. **Flat Panel**: a motorised cover with a built-in light (Equipment › Flat Panel).
+How the light source is provided. **Sky Flats**: Galileo waits for twilight, points the mount at a star-poor patch of sky and adjusts each exposure to the right brightness. **Observatory Panel**: a fixed light panel or dome screen you have already pointed the scope at; Galileo only adjusts the exposure towards 50% of the max well depth. **Flat Panel**: a motorised cover with a built-in light (Equipment › Flat Panel); Galileo opens it, switches the light on, tunes the exposure (and the panel brightness if the exposure alone cannot reach the target) and closes it afterwards. Flat Panel is greyed out unless a flat panel is connected. If the target brightness cannot be reached, the run stops and says why.
 
 ## Exposure
 

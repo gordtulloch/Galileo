@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
 
 from galileo.bus import SolveCompleteEvent, SolveStartedEvent, get_bus
 from galileo.current_object import get_current_objects
+from galileo.observatory import make_pier_solver
 from galileo.platesolve import (
     PlateSolver,
     SolveAction,
@@ -270,6 +271,8 @@ class SolvePage(QWidget):
         self._set_running(False)
         self.refresh_view()
         self.refresh_target()
+        self._select_saved_backend()
+        self.refresh_filters()
 
         self.solve_started.connect(self._on_solve_started)
         self.solve_finished.connect(self._on_solve_finished)
@@ -428,7 +431,25 @@ class SolvePage(QWidget):
         self.exposure_spin.setValue(5.0)
         self.exposure_spin.setSuffix(" s")
         form.addRow("Exp:", self.exposure_spin)
+        self.bin_combo = QComboBox()
+        self.bin_combo.addItems(["1x1", "2x2", "3x3", "4x4"])
+        self.bin_combo.setToolTip("Camera binning for solve frames. Binning makes stars brighter and the frame smaller, "
+                                  "so it solves faster.")
+        form.addRow("Bin:", self.bin_combo)
+        self.gain_spin = QSpinBox()
+        self.gain_spin.setRange(0, 100000)
+        self.gain_spin.setSpecialValueText("Camera")
+        self.gain_spin.setToolTip("Gain for solve frames (the ISO value for a DSLR). Camera leaves it as configured.")
+        form.addRow("Gain/ISO:", self.gain_spin)
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItem("Current")
+        self.filter_combo.setToolTip("Filter to solve through. Current leaves the filter wheel where it is.")
+        form.addRow("Filter:", self.filter_combo)
         layout.addLayout(form)
+        self.dark_check = QCheckBox("Dark")
+        self.dark_check.setToolTip("Take a dark frame of the same exposure after each solve frame and subtract it, "
+                                   "which removes hot pixels that can confuse the solver.")
+        layout.addWidget(self.dark_check)
         box.addWidget(options)
 
         # Solver Mode ------------------------------------------------------
@@ -438,6 +459,16 @@ class SolvePage(QWidget):
         self.astap_radio.setChecked(True)
         self.astap_radio.setToolTip("The local ASTAP solver; works with no internet connection.")
         mode_row.addWidget(self.astap_radio)
+        self.astrometry_radio = QRadioButton("Astrometry.net")
+        self.astrometry_radio.setToolTip("A local astrometry.net installation (solve-field) with its index files; "
+                                         "works with no internet connection.")
+        mode_row.addWidget(self.astrometry_radio)
+        self.nova_radio = QRadioButton("Nova (web)")
+        self.nova_radio.setToolTip("The nova.astrometry.net web service. Needs an internet connection and an API key "
+                                   "(Options > Solve); the frame is uploaded to the service.")
+        mode_row.addWidget(self.nova_radio)
+        self._mode_backends = {self.astap_radio: "astap", self.astrometry_radio: "astrometry_local",
+                               self.nova_radio: "astrometry_web"}
         layout.addLayout(mode_row)
         box.addWidget(mode)
 
@@ -575,6 +606,7 @@ class SolvePage(QWidget):
         super().showEvent(event)
         self._in_focus = True
         self.refresh_target()
+        self.refresh_filters()
         self.refresh_view()
         self._show_latest_frame()
         self.poll_mount()
@@ -612,9 +644,44 @@ class SolvePage(QWidget):
         self.scope_ra.clear()
         self.scope_dec.clear()
         self._set_running(self._running.get(key, False), key)
+        self._select_saved_backend()
+        self.refresh_filters()
         if self.isVisible():
             self.refresh_view()
             self.poll_mount()
+
+    def _select_saved_backend(self) -> None:
+        """Preselect the Solver Mode saved for the current Pier in Options > Solve."""
+        from galileo.observatory import get_solver_backend
+        try:
+            backend = get_solver_backend(self._window._current_pier)[0]
+        except Exception:
+            logger.exception("Could not read the saved solver backend")
+            return
+        for radio, name in self._mode_backends.items():
+            if name == backend:
+                radio.setChecked(True)
+
+    def _selected_backend(self) -> str:
+        return next((name for radio, name in self._mode_backends.items() if radio.isChecked()), "astap")
+
+    def _filter_wheel(self):
+        return (self._window._device_pages.get("filter_wheel") or {}).get("adapter")
+
+    def refresh_filters(self) -> None:
+        """List the filter wheel's filters in the Filter box, keeping the choice if it is still there."""
+        wheel = self._filter_wheel()
+        try:
+            names = list(wheel.get_filter_names()) if wheel is not None else []
+        except Exception:
+            logger.debug("Could not read the filter names", exc_info=True)
+            names = []
+        chosen = self.filter_combo.currentText()
+        self.filter_combo.clear()
+        self.filter_combo.addItem("Current")
+        self.filter_combo.addItems(names)
+        index = self.filter_combo.findText(chosen)
+        self.filter_combo.setCurrentIndex(max(index, 0))
 
     # --- Bus (worker threads) ---------------------------------------------
 
@@ -888,14 +955,12 @@ class SolvePage(QWidget):
     # --- Running ----------------------------------------------------------
 
     def _default_solver(self) -> PlateSolver | None:
-        from galileo.observatory import get_solver_settings
-        executable, params = get_solver_settings(self._window._current_pier)
-        solver = PlateSolver(backend="astap", executable=executable, params=params, pier_key=self._pier_key())
-        if not solver.executable:
-            QMessageBox.information(
-                self._window._window, "ASTAP not found",
-                "Solving needs the ASTAP solver and a star database (both free from hnsky.org/astap.htm). "
-                "Install them, then try again.")
+        backend = self._selected_backend()
+        solver = make_pier_solver(self._window._current_pier, pier_key=self._pier_key(), backend=backend)
+        if not solver.is_available():
+            title = {"astap": "ASTAP not found", "astrometry_local": "solve-field not found"}.get(
+                backend, "nova.astrometry.net API key needed")
+            QMessageBox.information(self._window._window, title, solver.missing_message())
             return None
         return solver
 
@@ -928,7 +993,7 @@ class SolvePage(QWidget):
             return
         workflow = self._workflows[key] = (make_workflow or SolveWorkflow)(
             solver, camera=self._camera(), mount=self._mount(), log=self._post,
-            frame_metadata=self._frame_metadata())
+            frame_metadata=self._frame_metadata(), filter_wheel=self._filter_wheel())
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
             workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)
@@ -954,7 +1019,10 @@ class SolvePage(QWidget):
         settings = SolveSettings(
             exposure_s=self.exposure_spin.value(), action=self._selected_action(),
             accuracy_arcsec=float(self.accuracy_spin.value()), settle_s=self.settle_spin.value() / 1000.0,
-            scale_hint_arcsec_px=self._scale_hint(),
+            scale_hint_arcsec_px=self._scale_hint(), binning=self.bin_combo.currentIndex() + 1,
+            gain=self.gain_spin.value(),
+            filter_name="" if self.filter_combo.currentIndex() <= 0 else self.filter_combo.currentText(),
+            subtract_dark=self.dark_check.isChecked(),
         )
         self._begin(lambda workflow: workflow.capture_and_solve(settings), use_current_object=True)
 

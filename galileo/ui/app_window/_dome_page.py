@@ -168,6 +168,28 @@ class AppWindowDomePageMixin:
 
         layout.addLayout(main_row)
 
+        # --- Slaving (DOME-010/020/030) -------------------------------------
+        from PySide6.QtWidgets import QCheckBox
+        slave_frame, slave_box = _panel()
+        slave_box.addWidget(_heading("Slaving"))
+        slave_check = QCheckBox("Slave dome to mount")
+        slave_check.setToolTip(
+            "Follow the mount's azimuth while it tracks. Turn off for a dome driven by "
+            "independent third-party slaving hardware or software."
+        )
+        slave_box.addWidget(slave_check)
+        session_sync_check = QCheckBox("Open/close dome with sessions")
+        session_sync_check.setToolTip(
+            "Open the shutter when a session starts; close it and park the dome when it ends."
+        )
+        slave_box.addWidget(session_sync_check)
+        slave_status = QLabel("—")
+        slave_status.setProperty("helpKey", "slaving status")
+        slave_box.addWidget(slave_status)
+        sync_btn = QPushButton("Sync to mount")
+        slave_box.addWidget(sync_btn)
+        layout.addWidget(slave_frame)
+
         # --- Observatory Status (read-only, EQP-DOME-010 + EQP-WX-020) ----
         obs_frame = QFrame()
         obs_frame.setObjectName("DeviceSlotPanel")
@@ -255,6 +277,100 @@ class AppWindowDomePageMixin:
         state: dict = {"adapter": None}
         adapters_by_pier: dict = {}
         device_controls = (open_btn, close_btn, park_btn, abort_btn)
+        services_by_pier: dict = {}
+
+        # --- DomeService per Pier (DOME-010/020/030) ------------------------
+        def _mount_adapter():
+            return (self._device_pages.get("mount") or {}).get("adapter")
+
+        def get_service():
+            """This Pier's DomeService, created once a dome is connected and kept pointed at
+            the Pier's current mount (so connect order doesn't matter). ``None`` without a dome."""
+            from galileo.current_object import pier_key
+            adapter = state.get("adapter")
+            if adapter is None:
+                return None
+            key = pier_key(self._current_pier)
+            service = services_by_pier.get(key)
+            if service is None:
+                from galileo.bus import get_bus
+                from galileo.dome import DomeService
+                service = DomeService(dome=adapter, mount=_mount_adapter(), event_bus=get_bus())
+                services_by_pier[key] = service
+            service.set_dome(adapter)
+            service.set_mount(_mount_adapter())
+            return service
+
+        def _sync_checks() -> None:
+            service = get_service()
+            for box, value in (
+                (slave_check, bool(service and service.slaving_enabled)),
+                (session_sync_check, bool(service and service.sequence_sync_enabled)),
+            ):
+                box.blockSignals(True)
+                box.setChecked(value)
+                box.blockSignals(False)
+                box.setEnabled(service is not None)
+            sync_btn.setEnabled(service is not None)
+
+        def _update_slave_status() -> None:
+            service = get_service()
+            if service is None:
+                slave_status.setText("—")
+            elif not service.slaving_enabled:
+                slave_status.setText("Slaving off")
+            elif not service.ready:
+                slave_status.setText("Waiting for a connected mount")
+            elif service.last_slaved_azimuth is None:
+                slave_status.setText("Slaving on — waiting for the mount to track")
+            else:
+                slave_status.setText(f"Slaving on — followed mount to {service.last_slaved_azimuth:.1f}°")
+
+        def _slave_toggled(checked: bool) -> None:
+            service = get_service()
+            if service is not None:
+                service.set_slaving(checked)
+                if checked:
+                    service.last_slaved_azimuth = None
+                logger.info("Dome: slaving %s", "enabled" if checked else "disabled")
+            _update_slave_status()
+
+        def _session_sync_toggled(checked: bool) -> None:
+            service = get_service()
+            if service is not None:
+                service.set_sequence_sync(checked)
+            _update_slave_status()
+
+        def _sync_clicked() -> None:
+            service = get_service()
+            if service is None:
+                return
+            if _mount_adapter() is None:
+                QMessageBox.information(self._window, "No mount", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                asyncio.run(service.sync_to_mount(force=True))
+            except Exception:
+                logger.exception("Dome sync to mount failed")
+                self._window.statusBar().showMessage("Dome sync failed — see log.", 6000)
+                return
+            _refresh_status()
+
+        slave_check.toggled.connect(_slave_toggled)
+        session_sync_check.toggled.connect(_session_sync_toggled)
+        sync_btn.clicked.connect(_sync_clicked)
+
+        def _slave_tick() -> None:
+            service = get_service()
+            if service is None or not service.slaving_enabled:
+                return
+            import asyncio
+            try:
+                asyncio.run(service.track_mount())
+            except Exception:
+                logger.exception("Dome slaving step failed")
+            _update_slave_status()
 
         # --- device status / actions --------------------------------------
         def _call(method: str, *args, action: str) -> bool:
@@ -294,6 +410,8 @@ class AppWindowDomePageMixin:
                     "padding: 3px 10px; border-radius: 3px;"
                 )
             _refresh_observatory_status()
+            _sync_checks()
+            _update_slave_status()
 
         def _refresh_status() -> dict | None:
             adapter = state.get("adapter")
@@ -513,12 +631,14 @@ class AppWindowDomePageMixin:
                 asyncio.run(adapter.disconnect())
             except Exception:
                 logger.exception("Could not disconnect Dome")
+            services_by_pier.pop(pier_key(self._current_pier), None)
             state["adapter"] = None
             _apply_status({})
             self._window.statusBar().showMessage("Dome disconnected.", 4000)
 
         def _tick() -> None:
             if state.get("adapter") is not None:
+                _slave_tick()
                 _refresh_status()
             else:
                 _refresh_observatory_status()
@@ -530,6 +650,7 @@ class AppWindowDomePageMixin:
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page
         state["disconnect"] = disconnect_page
+        state["get_service"] = get_service
         state["connected"] = lambda: state.get("adapter") is not None
         self._device_pages["dome"] = state
         reload_page()

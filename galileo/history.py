@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import threading
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -44,17 +45,21 @@ class SessionHistory:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, SessionRecord] = {}
         self._current_session: SessionRecord | None = None
+        # The sequencer records from its worker thread while the History screen reads on the UI thread.
+        self._lock = threading.RLock()
         self._load_from_disk()
 
     # --- Session lifecycle -----------------------------------------------
 
     def start_session(self, name: str) -> None:
-        self._current_session = SessionRecord(name=name, frames=[])
-        self._sessions[name] = self._current_session
+        with self._lock:
+            self._current_session = SessionRecord(name=name, frames=[])
+            self._sessions[name] = self._current_session
 
     def end_session(self) -> None:
-        self._flush()
-        self._current_session = None
+        with self._lock:
+            self._flush()
+            self._current_session = None
 
     # --- Frame recording (HIST-010) -------------------------------------
 
@@ -66,8 +71,6 @@ class SessionHistory:
         guide_rms_ra: float = 0.0,
         guide_rms_dec: float = 0.0,
     ) -> None:
-        if self._current_session is None:
-            return
         record = FrameRecord(
             timestamp=timestamp,
             hfr=hfr,
@@ -75,7 +78,9 @@ class SessionHistory:
             guide_rms_ra=guide_rms_ra,
             guide_rms_dec=guide_rms_dec,
         )
-        self._current_session.frames.append(record)
+        with self._lock:
+            if self._current_session is not None:
+                self._current_session.frames.append(record)
 
     # --- Queries (HIST-020) -----------------------------------------------
 
@@ -87,7 +92,15 @@ class SessionHistory:
     def get_session_report(self) -> dict:
         if self._current_session is None:
             return {}
-        frames = self._current_session.frames
+        return self.get_report_for_session(self._current_session.name)
+
+    def get_report_for_session(self, name: str) -> dict:
+        """Frames plus averages for any recorded session (HIST-020); ``{}`` if unknown."""
+        with self._lock:
+            session = self._sessions.get(name)
+            frames = list(session.frames) if session is not None else None
+        if frames is None:
+            return {}
         if not frames:
             return {"frames": [], "avg_hfr": 0.0, "avg_star_count": 0.0}
         return {
@@ -97,13 +110,20 @@ class SessionHistory:
         }
 
     def list_sessions(self) -> list[dict]:
-        return [{"name": name, "frame_count": s.frame_count} for name, s in self._sessions.items()]
+        with self._lock:
+            return [{"name": name, "frame_count": s.frame_count} for name, s in self._sessions.items()]
 
     def get_frames_for_session(self, name: str) -> list[dict]:
-        session = self._sessions.get(name)
-        if session is None:
-            return []
-        return [asdict(f) for f in session.frames]
+        with self._lock:
+            session = self._sessions.get(name)
+            return [] if session is None else [asdict(f) for f in session.frames]
+
+    def delete_session(self, name: str) -> None:
+        with self._lock:
+            if self._current_session is not None and self._current_session.name == name:
+                self._current_session = None
+            if self._sessions.pop(name, None) is not None:
+                self._flush()
 
     # --- Export (HIST-040) -----------------------------------------------
 
@@ -137,3 +157,17 @@ class SessionHistory:
                 self._sessions[name] = SessionRecord(name=name, frames=frames)
         except Exception:
             logger.exception("Failed to load session history from %s", self._path)
+
+
+_shared: SessionHistory | None = None
+_shared_lock = threading.Lock()
+
+
+def get_history() -> SessionHistory:
+    """The application-wide history store, shared by the session executor (which records) and the
+    History screen (which reviews)."""
+    global _shared
+    with _shared_lock:
+        if _shared is None:
+            _shared = SessionHistory()
+        return _shared

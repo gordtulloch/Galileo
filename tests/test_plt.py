@@ -1156,3 +1156,177 @@ async def test_tc_plt_080_workflow_stops_when_a_solve_fails(tmp_path):
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, direction="west"))
     assert workflow.error is None
     assert "did not solve" in seen[-1].message and seen[-1].error is None
+
+
+# ---------------------------------------------------------------------------
+# astrometry.net backends (PLT-010, PLT-020, PLT-050, PLT-060) and solve_and_center (PLT-040)
+# ---------------------------------------------------------------------------
+
+def _wcs_text(ra: float, dec: float, scale_deg: float) -> bytes:
+    from astropy.io import fits
+    header = fits.Header()
+    header["CRVAL1"], header["CRVAL2"] = ra, dec
+    header["CD1_1"], header["CD1_2"], header["CD2_1"], header["CD2_2"] = -scale_deg, 0.0, 0.0, scale_deg
+    import io
+    buffer = io.BytesIO()
+    fits.PrimaryHDU(header=header).writeto(buffer)
+    return buffer.getvalue()
+
+
+def _fake_solve_field(monkeypatch, write_wcs: bool = True, returncode: int = 0, stderr: bytes = b""):
+    """Replace ``solve-field``. Like the real program it writes ``<--dir>/<--out>.wcs`` on success."""
+    import asyncio
+    from pathlib import Path
+    commands: list[list[str]] = []
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = returncode
+
+        async def communicate(self):
+            return b"", stderr
+
+    async def fake_exec(*cmd, **kwargs):
+        commands.append(list(cmd))
+        if write_wcs:
+            out = Path(cmd[cmd.index("--dir") + 1]) / (cmd[cmd.index("--out") + 1] + ".wcs")
+            out.write_bytes(_wcs_text(150.0, 30.0, 2.0 / 3600.0))
+        return _Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return commands
+
+
+@pytest.mark.requirement("TC-PLT-010")
+@pytest.mark.priority("P2")
+async def test_tc_plt_010_local_astrometry_reads_the_wcs_it_writes(tmp_path, monkeypatch):
+    """PLT-010/PLT-060: solve-field is run with the FOV, downsample and position hints, and the
+    solution is read from the WCS file it writes."""
+    import sys
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    solver = plt_mod.PlateSolver(
+        backend="astrometry_local", executable=sys.executable,
+        params=plt_mod.SolverParams(fov_hint_deg=2.0, search_radius_deg=10.0, downsample=3))
+    commands = _fake_solve_field(monkeypatch)
+    result = await solver.solve(tmp_path / "frame.fits", hint=(150.5, 30.5))
+    assert result.success is True
+    assert result.ra_deg == pytest.approx(150.0) and result.dec_deg == pytest.approx(30.0)
+    assert result.scale_arcsec_px == pytest.approx(2.0, abs=1e-6)
+    cmd = commands[0]
+    assert cmd[cmd.index("--downsample") + 1] == "3"
+    assert cmd[cmd.index("--radius") + 1] == "10"
+    assert cmd[cmd.index("--ra") + 1] == "150.500000"
+    assert float(cmd[cmd.index("--scale-low") + 1]) < 2.0 < float(cmd[cmd.index("--scale-high") + 1])
+
+
+@pytest.mark.requirement("TC-PLT-050")
+@pytest.mark.priority("P2")
+async def test_tc_plt_050_local_astrometry_failure_and_missing_program(tmp_path, monkeypatch):
+    """PLT-050: A solve-field run that finds no solution, or a missing program, reports a failure reason."""
+    import sys
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    solver = plt_mod.PlateSolver(backend="astrometry_local", executable=sys.executable)
+    _fake_solve_field(monkeypatch, write_wcs=False)
+    result = await solver.solve(tmp_path / "frame.fits")
+    assert result.success is False and result.failure_reason == "No solution found"
+    missing = plt_mod.PlateSolver(backend="astrometry_local", executable=str(tmp_path / "nope"))
+    assert (await missing.solve(tmp_path / "frame.fits")).failure_reason == "solve-field not found"
+
+
+@pytest.mark.requirement("TC-PLT-020")
+@pytest.mark.priority("P2")
+def test_tc_plt_020_only_the_web_backend_needs_internet():
+    """PLT-020: ASTAP and local astrometry.net work offline; nova.astrometry.net does not."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    assert plt_mod.PlateSolver.is_offline_capable("astap")
+    assert plt_mod.PlateSolver.is_offline_capable("astrometry_local")
+    assert not plt_mod.PlateSolver.is_offline_capable("astrometry_web")
+
+
+@pytest.mark.requirement("TC-PLT-010")
+@pytest.mark.priority("P2")
+async def test_tc_plt_010_nova_uploads_polls_and_reads_the_calibration(tmp_path, monkeypatch):
+    """PLT-010: The web backend logs in with the API key, uploads the frame with the hints, polls
+    the submission and job, and returns the job's calibration."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    monkeypatch.setattr(plt_mod, "_NOVA_POLL_S", 0.0)
+    solver = plt_mod.PlateSolver(backend="astrometry_web", api_key="KEY",
+                                 params=plt_mod.SolverParams(fov_hint_deg=2.0, downsample=2))
+    calls: list = []
+    statuses = iter(["solving", "success"])
+
+    def fake(path, fields=None, file=None):
+        calls.append((path, fields, file))
+        if path == "login":
+            return {"status": "success", "session": "S"}
+        if path == "upload":
+            return {"status": "success", "subid": 7}
+        if path == "submissions/7":
+            return {"jobs": [None] if len(calls) < 4 else [9]}
+        if path == "jobs/9":
+            return {"status": next(statuses)}
+        if path == "jobs/9/calibration":
+            return {"ra": 10.5, "dec": -20.25, "pixscale": 1.5, "orientation": 12.0}
+        raise AssertionError(path)
+
+    solver._nova_request = fake
+    frame = tmp_path / "frame.fits"
+    frame.write_bytes(b"x")
+    result = await solver.solve(frame, hint=(10.0, -20.0))
+    assert (result.success, result.ra_deg, result.dec_deg, result.scale_arcsec_px, result.rotation_deg) == \
+        (True, 10.5, -20.25, 1.5, 12.0)
+    assert calls[0][1] == {"apikey": "KEY"}
+    upload = next(c for c in calls if c[0] == "upload")
+    assert upload[1]["session"] == "S" and upload[1]["center_ra"] == 10.0 and upload[1]["downsample_factor"] == 2
+    assert upload[2] == frame
+
+
+@pytest.mark.requirement("TC-PLT-050")
+@pytest.mark.priority("P2")
+async def test_tc_plt_050_nova_reports_missing_key_and_job_failure(tmp_path, monkeypatch):
+    """PLT-050: No API key, a failed job and a network error are each reported as a failed solve."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    monkeypatch.setattr(plt_mod, "_NOVA_POLL_S", 0.0)
+    frame = tmp_path / "frame.fits"
+    frame.write_bytes(b"x")
+    assert "API key" in (await plt_mod.PlateSolver(backend="astrometry_web").solve(frame)).failure_reason
+
+    solver = plt_mod.PlateSolver(backend="astrometry_web", api_key="KEY")
+    solver._nova_request = lambda path, fields=None, file=None: {
+        "login": {"session": "S"}, "upload": {"status": "success", "subid": 1},
+        "submissions/1": {"jobs": [2]}, "jobs/2": {"status": "failure"}}[path]
+    assert (await solver.solve(frame)).failure_reason == "No solution found"
+
+    def boom(path, fields=None, file=None):
+        raise OSError("offline")
+    solver._nova_request = boom
+    result = await solver.solve(frame)
+    assert not result.success and "offline" in result.failure_reason
+
+
+@pytest.mark.requirement("TC-PLT-040")
+@pytest.mark.priority("MVP")
+async def test_tc_plt_040_solve_and_center_syncs_before_slewing_and_uses_cos_dec(solver, mock_indi_camera):
+    """PLT-040: Each correction syncs the mount to the solution before slewing, and closeness is
+    measured on the sky (RA difference x cos Dec): at Dec 60 a 0.01 deg RA error is under 30 arcsec."""
+    import numpy as np
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    order: list[str] = []
+    mount = MagicMock()
+    mount.sync_to_coordinates = AsyncMock(side_effect=lambda **kw: order.append("sync"))
+    mount.slew_to_coordinates = AsyncMock(side_effect=lambda **kw: order.append("slew"))
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((20, 20), dtype=np.float32))
+    solver._run_solver = AsyncMock(side_effect=[
+        plt_mod.SolveResult(success=True, ra_deg=100.0, dec_deg=60.5, rotation_deg=0.0, scale_arcsec_px=1.0),
+        plt_mod.SolveResult(success=True, ra_deg=100.0, dec_deg=60.0001, rotation_deg=0.0, scale_arcsec_px=1.0),
+    ])
+    with patch("galileo.platesolve.asyncio.sleep", new=AsyncMock()):
+        assert await solver.solve_and_center(100.0, 60.0, mount, mock_indi_camera) is True
+    assert order == ["sync", "slew"]
+
+    # 18 arcsec on the sky, but 36 arcsec if RA were compared raw.
+    solver._run_solver = AsyncMock(return_value=plt_mod.SolveResult(
+        success=True, ra_deg=100.01, dec_deg=60.0, rotation_deg=0.0, scale_arcsec_px=1.0))
+    mount.reset_mock()
+    assert await solver.solve_and_center(100.0, 60.0, mount, mock_indi_camera) is True
+    mount.sync_to_coordinates.assert_not_called()

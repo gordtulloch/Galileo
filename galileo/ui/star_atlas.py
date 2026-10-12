@@ -13,7 +13,6 @@ maths lives in :mod:`galileo.planning.star_atlas`; this module only draws.
 from __future__ import annotations
 
 import datetime as _dt
-import json
 import logging
 import math
 import threading
@@ -24,6 +23,7 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from galileo.planning import minor_bodies as mb
 from galileo.planning import star_atlas as sa
 from galileo.planning.sky_atlas import DSO_CATALOGS, catalogs_of
 
@@ -49,6 +49,12 @@ _SELECT_COLOR = QColor(255, 90, 90)
 _PIER_COLOR = QColor(120, 225, 255)
 _PIER_SLEWING_COLOR = QColor(255, 190, 90)
 _PIER_TARGET_COLOR = QColor(140, 175, 200)
+# Comets, asteroids and satellites (SKYMAP-040).
+_COMET_COLOR = QColor(150, 235, 255)
+_ASTEROID_COLOR = QColor(255, 170, 120)
+_SATELLITE_COLOR = QColor(190, 255, 150)
+_SATELLITE_ECLIPSED_COLOR = QColor(110, 130, 105)
+_FOV_COLOR = QColor(120, 225, 255, 230)
 # Horizon obstructions: translucent, so the stars behind them can still be seen.
 _OBSTRUCTION_RGBA = (220, 40, 40, 95)
 
@@ -58,27 +64,22 @@ MAX_MAG_LIMIT = 7.0
 # catalogs are remembered between runs.
 PERSISTED_TOGGLES = ("show_grid", "show_boundaries", "show_lines", "abbreviate_constellations",
                      "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky", "show_horizon",
-                     "show_pier_markers")
+                     "show_pier_markers", "show_fov", "show_comets", "show_asteroids", "show_satellites")
+
+#: Display option -> the kind of orbital-element data it needs (downloaded on first use).
+MINOR_BODY_TOGGLES = {"show_comets": mb.COMET, "show_asteroids": mb.ASTEROID, "show_satellites": mb.SATELLITE}
 
 
-def _prefs_path():
-    from galileo.platform import get_config_dir
-    return get_config_dir() / "star_atlas.json"
+PREFS_NAMESPACE = "star_atlas"
+_PREFS_LEGACY_FILE = "star_atlas.json"   # one-time import, then renamed *.migrated
 
 
 def load_display_prefs() -> dict[str, Any]:
     """The remembered toggles and catalogs: ``{option: bool, ..., "dso_catalogs": [name, ...]}``.
 
     Missing, unreadable or unrecognised entries are left out so the view's defaults apply."""
-    try:
-        raw = json.loads(_prefs_path().read_text("utf-8"))
-    except FileNotFoundError:
-        return {}
-    except Exception:
-        logger.exception("Could not read the saved Star Atlas display options")
-        return {}
-    if not isinstance(raw, dict):
-        return {}
+    from galileo.settings_store import load_with_legacy
+    raw = load_with_legacy(PREFS_NAMESPACE, _PREFS_LEGACY_FILE)
     prefs: dict[str, Any] = {k: raw[k] for k in PERSISTED_TOGGLES if isinstance(raw.get(k), bool)}
     if isinstance(raw.get("dso_catalogs"), list):
         prefs["dso_catalogs"] = [c for c in raw["dso_catalogs"] if c in DSO_CATALOGS]
@@ -87,14 +88,10 @@ def load_display_prefs() -> dict[str, Any]:
 
 def save_display_prefs(view: StarAtlasView) -> None:
     """Remember the view's toggles and deep-sky catalogs."""
+    from galileo.settings_store import set_namespace
     data: dict[str, Any] = {k: bool(getattr(view, k)) for k in PERSISTED_TOGGLES}
     data["dso_catalogs"] = [c for c in DSO_CATALOGS if c in view.dso_catalogs]
-    try:
-        path = _prefs_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except Exception:
-        logger.exception("Could not save the Star Atlas display options")
+    set_namespace(PREFS_NAMESPACE, data)
 
 
 def format_ra(deg: float) -> str:
@@ -123,7 +120,10 @@ class StarAtlasView(QWidget):
     contextMenuRequested = Signal(object, QPoint, object)
     viewChanged = Signal()
     catalogsLoaded = Signal(int, int)
+    # (kind, number of orbits/TLEs loaded) once a comet/asteroid/satellite download finishes.
+    minorBodiesLoaded = Signal(str, int)
     _catalogsReady = Signal(object, object, object, object)
+    _minorReady = Signal(str, object)
 
     LIVE_INTERVAL_MS = 10_000
     HIT_RADIUS_PX = 12
@@ -156,6 +156,16 @@ class StarAtlasView(QWidget):
         # Telescope reticles, one per Pier (SKYMAP-090); the page refills these as the mounts move.
         self.show_pier_markers = True
         self.pier_markers: list[dict[str, Any]] = []
+        self.show_fov = True            # the field-of-view rectangle around a marker that has one (SKYMAP-050)
+        # Comets, asteroids and satellites (SKYMAP-040), downloaded when first switched on.
+        self.show_comets = False
+        self.show_asteroids = False
+        self.show_satellites = False
+        self._minor_data: dict[str, Any] = {}
+        self._minor_loading: set[str] = set()
+        self._minor: list[dict[str, Any]] = []
+        self._minor_alt = self._minor_az = np.empty(0)
+        self.elevation_m = 0.0
 
         self.view = sa.Viewport()
         self.selected: dict[str, Any] | None = None
@@ -179,6 +189,7 @@ class StarAtlasView(QWidget):
         self._live.setInterval(self.LIVE_INTERVAL_MS)
         self._live.timeout.connect(self._tick_live)
         self._catalogsReady.connect(self._on_catalogs)
+        self._minorReady.connect(self._on_minor_loaded)
 
         self._recompute()
 
@@ -269,7 +280,38 @@ class StarAtlasView(QWidget):
 
     def set_option(self, name: str, value: Any) -> None:
         setattr(self, name, value)
+        if name in MINOR_BODY_TOGGLES:
+            self.refresh_minor_bodies()
         self.update()
+
+    def refresh_minor_bodies(self) -> None:
+        """Download the orbital elements of every enabled kind that isn't loaded yet (off the UI
+        thread; cached on disk and refreshed when stale - SKYMAP-040), then recompute positions."""
+        for option, kind in MINOR_BODY_TOGGLES.items():
+            if getattr(self, option) and kind not in self._minor_data and kind not in self._minor_loading:
+                self._minor_loading.add(kind)
+                threading.Thread(target=self._load_minor, args=(kind,), name=f"star-atlas-{kind.lower()}",
+                                 daemon=True).start()
+        self._recompute_minor()
+
+    def _load_minor(self, kind: str) -> None:
+        try:
+            data = mb.load_satellites() if kind == mb.SATELLITE else mb.load_orbits(kind)
+        except Exception:
+            logger.exception("Could not load %s elements", kind)
+            data = None
+        try:
+            self._minorReady.emit(kind, data)
+        except RuntimeError:
+            pass  # widget was destroyed while loading
+
+    def _on_minor_loaded(self, kind: str, data) -> None:
+        self._minor_loading.discard(kind)
+        if data is not None:
+            self._minor_data[kind] = data
+        self._recompute_minor()
+        self.update()
+        self.minorBodiesLoaded.emit(kind, 0 if data is None else len(data))
 
     def set_pier_markers(self, markers: list[dict[str, Any]]) -> None:
         """Show a reticle for each Pier (SKYMAP-090). Each marker is a dict with J2000
@@ -313,6 +355,9 @@ class StarAtlasView(QWidget):
         for i, body in enumerate(self._bodies):
             if body["name"].lower() == q:
                 return self._body_object(i)
+        for i, body in enumerate(self._minor):
+            if q in body["name"].lower():
+                return self._minor_object(i)
         best = None
         for i in range(len(self._stars)):
             names = (self._stars.names[i].lower(), self._stars.designations[i].lower())
@@ -352,6 +397,29 @@ class StarAtlasView(QWidget):
             self._sun_alt = -30.0
         self._body_alt = np.array([b["alt"] for b in self._bodies])
         self._body_az = np.array([b["az"] for b in self._bodies])
+        self._recompute_minor()
+
+    def _recompute_minor(self) -> None:
+        """Positions of the enabled comets, asteroids and satellites at the view's time and place."""
+        found: list[dict[str, Any]] = []
+        try:
+            for option, kind in MINOR_BODY_TOGGLES.items():
+                data = self._minor_data.get(kind)
+                if not getattr(self, option) or data is None:
+                    continue
+                if kind == mb.SATELLITE:
+                    found += mb.satellite_positions(data, self.when, self.latitude, self.longitude, self.elevation_m)
+                else:
+                    found += mb.minor_body_positions(data, self.when)
+        except Exception:
+            logger.exception("Could not compute comet/asteroid/satellite positions")
+            found = []
+        self._minor = found
+        if found:
+            self._minor_alt, self._minor_az = self._altaz_arrays(
+                np.array([b["ra_deg"] for b in found]), np.array([b["dec_deg"] for b in found]))
+        else:
+            self._minor_alt = self._minor_az = np.empty(0)
 
     def _altaz_arrays(self, ra, dec):
         if len(ra) == 0:
@@ -364,6 +432,10 @@ class StarAtlasView(QWidget):
             for b in self._bodies:
                 if b["name"] == obj["name"]:
                     return b["alt"], b["az"]
+        if obj.get("kind") == "minor":
+            for b, alt, az in zip(self._minor, self._minor_alt, self._minor_az):
+                if b["name"] == obj["name"]:      # these move; the live position beats the one captured on click
+                    return float(alt), float(az)
         alt, az = self._altaz_arrays(np.array([obj["ra_deg"]]), np.array([obj["dec_deg"]]))
         return float(alt[0]), float(az[0])
 
@@ -407,6 +479,12 @@ class StarAtlasView(QWidget):
         return {"kind": "body", "name": b["name"], "designation": "", "type": kind, "ra_deg": b["ra_deg"],
                 "dec_deg": b["dec_deg"], "mag": b["mag"], "alt": b["alt"], "az": b["az"]}
 
+    def _minor_object(self, i: int) -> dict[str, Any]:
+        b = self._minor[i]
+        return {"kind": "minor", "name": b["name"], "designation": "", "type": b["kind"], "ra_deg": b["ra_deg"],
+                "dec_deg": b["dec_deg"], "mag": b["mag"], "alt": float(self._minor_alt[i]),
+                "az": float(self._minor_az[i])}
+
     # -- projection of the visible sets --------------------------------------
 
     def _viewport(self) -> sa.Viewport:
@@ -432,6 +510,7 @@ class StarAtlasView(QWidget):
                         if self.show_dsos else (np.empty(0, dtype=int), np.empty(0), np.empty(0)))
         sets["bodies"] = (self._visible(self._body_alt, self._body_az, np.ones(len(self._bodies), dtype=bool), vp)
                           if self.show_bodies else (np.empty(0, dtype=int), np.empty(0), np.empty(0)))
+        sets["minor"] = self._visible(self._minor_alt, self._minor_az, np.ones(len(self._minor), dtype=bool), vp)
         return sets
 
     def _star_radius(self, mag: float) -> float:
@@ -460,6 +539,7 @@ class StarAtlasView(QWidget):
         self._draw_dsos(p, vp, sets["dsos"])
         self._draw_stars(p, sets["stars"])
         self._draw_bodies(p, sets["bodies"])
+        self._draw_minor_bodies(p, sets["minor"])
         if self.show_ground:
             self._draw_ground(p, vp, brightness)
         if self.show_horizon and self._horizon is not None:
@@ -584,6 +664,37 @@ class StarAtlasView(QWidget):
                 r = float(min(6.0, max(2.5, 3.0 - 0.4 * self._bodies[i]["mag"])))
                 p.drawEllipse(QPointF(x, y), r, r)
 
+    def _draw_minor_bodies(self, p: QPainter, minor_set) -> None:
+        """Comets (a dot in a soft coma), asteroids (a small square) and satellites (a triangle, dim
+        while in the Earth's shadow) - SKYMAP-040."""
+        idx, xs, ys = minor_set
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+            body = self._minor[i]
+            kind = body["kind"]
+            if kind == mb.COMET:
+                p.setPen(Qt.PenStyle.NoPen)
+                halo = QColor(_COMET_COLOR)
+                halo.setAlpha(70)
+                p.setBrush(halo)
+                p.drawEllipse(QPointF(x, y), 8, 8)
+                p.setPen(QPen(_COMET_COLOR, 1.2))
+                p.setBrush(_COMET_COLOR)
+                p.drawEllipse(QPointF(x, y), 2.5, 2.5)
+            elif kind == mb.ASTEROID:
+                p.setPen(QPen(_ASTEROID_COLOR, 1))
+                p.setBrush(_ASTEROID_COLOR)
+                p.drawRect(QRectF(x - 2.5, y - 2.5, 5, 5))
+            else:
+                color = _SATELLITE_COLOR if body.get("sunlit", True) else _SATELLITE_ECLIPSED_COLOR
+                p.setPen(QPen(color, 1))
+                p.setBrush(color)
+                tri = QPainterPath()
+                tri.moveTo(x, y - 4)
+                tri.lineTo(x + 3.6, y + 3)
+                tri.lineTo(x - 3.6, y + 3)
+                tri.closeSubpath()
+                p.drawPath(tri)
+
     def _draw_ground(self, p: QPainter, vp, brightness: float) -> None:
         """Shade everything below the horizon, computed on a coarse pixel grid
         (the horizon is a circle in this projection, but not always one that
@@ -657,6 +768,15 @@ class StarAtlasView(QWidget):
         idx, xs, ys = sets["bodies"]
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
             p.drawText(QPointF(x + 10, y - 4), self._bodies[i]["name"])
+        idx, xs, ys = sets["minor"]
+        for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist()):
+            body = self._minor[i]
+            if body["kind"] == mb.ASTEROID and (vp.fov_deg > 40.0 or body["mag"] > 9.5):
+                continue                    # hundreds of asteroids: label only the bright ones, zoomed in
+            if body["kind"] == mb.SATELLITE and vp.fov_deg > 70.0:
+                continue
+            p.setPen({mb.COMET: _COMET_COLOR, mb.ASTEROID: _ASTEROID_COLOR}.get(body["kind"], _SATELLITE_COLOR))
+            p.drawText(QPointF(x + 8, y - 4), body["name"])
         if len(self._bounds):       # names don't depend on the boundary lines being shown
             self._draw_constellation_names(p, vp)
 
@@ -706,10 +826,33 @@ class StarAtlasView(QWidget):
                 p.drawLine(QPointF(*here), QPointF(*there))
                 self._draw_reticle(p, there, _PIER_TARGET_COLOR, dashed=False, radius=8)
             self._draw_reticle(p, here, color, dashed=slewing)
+            if self.show_fov and marker.get("fov"):
+                self._draw_fov(p, vp, marker, color)
             label = str(marker.get("label") or "")
             if label:
                 p.setPen(color)
                 p.drawText(QPointF(here[0] + 20, here[1] - 8), label)
+
+    def _draw_fov(self, p: QPainter, vp, marker: dict[str, Any], color: QColor) -> None:
+        """The telescope's field-of-view rectangle around its pointing position (SKYMAP-050),
+        from the same ``FOV`` the Framing Assistant computes (FRAME-010). Drawn only once it is big
+        enough on screen to read as a rectangle rather than a dot inside the reticle."""
+        from galileo.planning.framing import fov_outline_radec
+
+        fov = marker["fov"]
+        try:
+            ra, dec = fov_outline_radec(float(marker["ra_deg"]), float(marker["dec_deg"]),
+                                        float(fov["width_deg"]), float(fov["height_deg"]),
+                                        float(fov.get("rotation_deg", 0.0)))
+        except (KeyError, TypeError, ValueError):
+            return
+        alt, az = self._altaz_arrays(ra, dec)
+        x, y, vis = vp.project(alt, az)
+        if not vis.all() or (x.max() - x.min() < 6 and y.max() - y.min() < 6):
+            return
+        p.setPen(QPen(color, 1.4))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        self._polyline(p, x, y, vis)
 
     def _marker_point(self, vp, marker) -> tuple[float, float] | None:
         """Screen position of a marker's J2000 coordinates, or ``None`` if it isn't in view."""
@@ -773,8 +916,9 @@ class StarAtlasView(QWidget):
         """Nearest visible object within a few pixels of screen position (x, y)."""
         sets = self._sets(self._viewport())
         best, best_d = None, float(self.HIT_RADIUS_PX)
-        makers = {"bodies": self._body_object, "stars": self._star_object, "dsos": self._dso_object}
-        for key in ("bodies", "stars", "dsos"):      # bodies win ties, then stars, then DSOs
+        makers = {"bodies": self._body_object, "minor": self._minor_object,
+                  "stars": self._star_object, "dsos": self._dso_object}
+        for key in ("bodies", "minor", "stars", "dsos"):      # bodies win ties, then comets etc., stars, DSOs
             idx, xs, ys = sets[key]
             if len(idx) == 0:
                 continue

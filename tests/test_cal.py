@@ -144,3 +144,100 @@ def test_tc_cal_060_flat_wizard_is_not_a_top_level_navigation_section():
     section_ids = [section[0] for section in PRIMARY_SECTIONS]
     assert "flat_wizard" not in section_ids
     assert "imaging" in section_ids
+
+
+# ---------------------------------------------------------------------------
+# TC-CAL-090
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-CAL-090")
+@pytest.mark.priority("MVP")
+async def test_tc_cal_090_panel_flats_converge_exposure_and_drive_panel(mock_indi_camera, mock_flat_panel, tmp_path):
+    """CAL-090: Flat Panel / Observatory Panel flats converge exposure to the target ADU, driving the panel port."""
+    import numpy as np
+    cal_mod = pytest.importorskip("galileo.calibration")
+    mock_flat_panel.light_on, mock_flat_panel.light_off = AsyncMock(), AsyncMock()
+    state = {"exp": 0.0}
+
+    async def expose(duration, **kw):
+        state["exp"] = duration
+
+    async def frame():
+        return np.full((10, 10), int(20000 * state["exp"]), dtype=np.uint16)   # linear in exposure
+
+    mock_indi_camera.start_exposure = AsyncMock(side_effect=expose)
+    mock_indi_camera.get_image_array = AsyncMock(side_effect=frame)
+    svc = cal_mod.CalibrationService(camera=mock_indi_camera, flat_panel=mock_flat_panel, output_dir=tmp_path)
+    svc._register_with_library = lambda path: None
+    results = await svc.run_panel_flats_all_filters("Flat Panel", ["L"], 2, max_well_depth=60000)
+    assert results[0].frames_captured == 2
+    assert abs(20000 * results[0].final_exposure_s - 30000) <= 3000
+    mock_flat_panel.open_cover.assert_called()
+    mock_flat_panel.set_brightness.assert_called()
+    mock_flat_panel.close_cover.assert_called()
+
+    mock_flat_panel.open_cover.reset_mock()
+    svc2 = cal_mod.CalibrationService(camera=mock_indi_camera, flat_panel=mock_flat_panel, output_dir=tmp_path)
+    svc2._register_with_library = lambda path: None
+    res = await svc2.run_panel_flats_all_filters("Observatory Panel", None, 1, max_well_depth=60000)
+    assert res[0].frames_captured == 1
+    mock_flat_panel.open_cover.assert_not_called()          # fixed panel: no device driven
+
+
+@pytest.mark.requirement("TC-CAL-090")
+@pytest.mark.priority("MVP")
+async def test_tc_cal_090_panel_flats_rescale_brightness_or_fail(mock_indi_camera, mock_flat_panel, tmp_path):
+    """CAL-090/CAL-050: brightness is rescaled when exposure bounds can't reach the target; unreachable fails."""
+    import numpy as np
+    cal_mod = pytest.importorskip("galileo.calibration")
+    mock_flat_panel.light_on, mock_flat_panel.light_off = AsyncMock(), AsyncMock()
+    level = {"b": 128}
+    state = {"exp": 0.0}
+    mock_flat_panel.set_brightness = AsyncMock(side_effect=lambda b: level.__setitem__("b", b))
+    mock_indi_camera.start_exposure = AsyncMock(side_effect=lambda duration, **kw: state.__setitem__("exp", duration))
+
+    async def frame():   # far too bright at brightness 128 even at the minimum exposure
+        return np.full((10, 10), int(min(65535, 5e8 * state["exp"] * level["b"] / 128)), dtype=np.uint16)
+
+    mock_indi_camera.get_image_array = AsyncMock(side_effect=frame)
+    svc = cal_mod.CalibrationService(camera=mock_indi_camera, flat_panel=mock_flat_panel, output_dir=tmp_path)
+    svc._register_with_library = lambda path: None
+    res = await svc.run_panel_flats_all_filters("Flat Panel", ["L"], 1, max_well_depth=60000, exposure_s=0.001)
+    assert res[0].frames_captured == 1 and level["b"] < 128
+
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((10, 10), dtype=np.uint16))
+    with pytest.raises(cal_mod.FlatCalibrationError):
+        await svc.run_panel_flats_all_filters("Observatory Panel", ["L"], 1, max_well_depth=60000)
+    with pytest.raises(cal_mod.FlatCalibrationError):
+        await cal_mod.CalibrationService(camera=mock_indi_camera, output_dir=tmp_path).run_panel_flats_all_filters(
+            "Flat Panel", None, 1)
+    # Max Well Depth is required for every flat method, panel ones included.
+    with pytest.raises(cal_mod.FlatCalibrationError, match="Max Well Depth"):
+        await svc.run_panel_flats_all_filters("Observatory Panel", ["L"], 1)
+
+
+@pytest.mark.requirement("TC-CAL-090")
+@pytest.mark.priority("MVP")
+def test_tc_cal_090_flats_thread_dispatches_panel_methods():
+    """CAL-090: the Flats Assistant's worker runs panel methods via run_panel_flats_all_filters and surfaces errors."""
+    pytest.importorskip("PySide6")
+    from unittest.mock import MagicMock
+    from galileo.exceptions import FlatCalibrationError
+    from galileo.ui.app_window._threads import _FlatsThread
+
+    svc = MagicMock()
+    svc.run_panel_flats_all_filters = AsyncMock(return_value=["r"])
+    svc.run_sky_flats_all_filters = AsyncMock(return_value=["sky"])
+    thread = _FlatsThread(svc, ["L"], 3, None, None, "Median", None, 0.1, method="Flat Panel")
+    done, bad = [], []
+    thread.finished_ok.connect(done.append)
+    thread.failed.connect(bad.append)
+    thread.run()
+    assert done == [["r"]] and not bad
+    args, kwargs = svc.run_panel_flats_all_filters.call_args
+    assert args[:3] == ("Flat Panel", ["L"], 3) and kwargs["measure"] == "Median"
+    svc.run_sky_flats_all_filters.assert_not_called()
+
+    svc.run_panel_flats_all_filters = AsyncMock(side_effect=FlatCalibrationError("unreachable"))
+    thread.run()
+    assert bad == ["unreachable"]

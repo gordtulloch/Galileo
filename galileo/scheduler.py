@@ -309,9 +309,18 @@ class ObservatoryScheduler:
     def set_location(self, location) -> None:
         self._location = location
 
+    def safety_block_reason(self) -> str:
+        """Why the safety monitor currently blocks jobs (SCHED-060), or ``""`` when nothing
+        does — shown on the Schedule screen so a held job isn't a mystery."""
+        monitor = self._safety_monitor
+        if monitor is None or monitor.is_safe:
+            return ""
+        reason = getattr(monitor, "reason", "") or ""
+        return reason if isinstance(reason, str) and reason else "the safety monitor reports unsafe conditions"
+
     async def can_start_job(self, job: SchedulerJob) -> bool:
         """Return True when the job's constraints and safety allow it to start."""
-        if self._safety_monitor and not self._safety_monitor.is_safe:
+        if self.safety_block_reason():
             return False
         return True
 
@@ -347,7 +356,9 @@ class ObservatoryScheduler:
         if self.active_job is not None and self.active_job is not job:
             raise RuntimeError(f"{self.active_job.name!r} is already running on this scheduler")
         if not await self.can_start_job(job):
-            job.run_log.append("Not started: conditions are unsafe.")
+            reason = self.safety_block_reason()
+            job.run_log.append(f"Not started: conditions are unsafe ({reason})." if reason
+                               else "Not started: conditions are unsafe.")
             self.save()
             return job.run_state
         self.active_job = job

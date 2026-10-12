@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import operator
+import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -290,58 +292,186 @@ def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> W
     return WeatherSafetyStatus(is_safe=not violations, violations=violations)
 
 
+class LiveSafetyMonitor:
+    """A Pier's live safety verdict for the scheduler (SCHED-060), backed by a callable
+    returning ``(any device connected, safe, reasons)`` — the Equipment > Safety page's
+    ``evaluate``. Re-evaluated on every access, so it follows devices connecting and
+    disconnecting without being re-registered. With no safety device connected it reports
+    safe (there is nothing to gate on); an evaluation failure is treated as unsafe."""
+
+    def __init__(self, evaluate) -> None:
+        self._evaluate = evaluate
+
+    def _status(self) -> tuple[bool, bool, list[str]]:
+        try:
+            connected, safe, reasons = self._evaluate()
+        except Exception:
+            logger.exception("Safety evaluation failed; treating conditions as unsafe")
+            return True, False, ["the safety evaluation failed"]
+        return bool(connected), bool(safe), list(reasons)
+
+    @property
+    def is_safe(self) -> bool:
+        connected, safe, _ = self._status()
+        return safe or not connected
+
+    @property
+    def reason(self) -> str:
+        connected, safe, reasons = self._status()
+        if safe or not connected:
+            return ""
+        return "; ".join(reasons) or "the safety monitor reports unsafe conditions"
+
+
 # ---------------------------------------------------------------------------
 # Watchdog (SAFE-060)
 # ---------------------------------------------------------------------------
 
 class WatchdogService:
-    """Heartbeat-timeout watchdog that parks mount and dome autonomously (SAFE-060)."""
+    """Heartbeat-timeout watchdog that parks the mount and closes the dome (SAFE-060).
 
-    def __init__(self, mount=None, dome=None, timeout_s: float = 300.0) -> None:
+    It runs on its **own daemon thread**, not on the application's event loop, so it still
+    fires when the Qt/asyncio loop is hung or blocked — which is the whole point: a
+    watchdog scheduled on the loop it is watching would hang with it. The application calls
+    :meth:`heartbeat` from its event loop; if no heartbeat arrives for *timeout_s* seconds
+    the watchdog trips once: it parks the mount, then closes the dome shutter (each on a
+    private event loop in the watchdog thread), publishes a ``SafetyUnsafeEvent`` on the
+    bus and invokes the *on_trip* callbacks (notifications, UI). It does not protect
+    against the whole process being killed; where an INDI server is in use the server-side
+    ``indi_watchdog`` driver covers that (SDD 4.16).
+
+    *mount* / *dome* may be devices or zero-argument callables returning the device that is
+    connected **now** (``None`` if none), so devices connected after start-up are covered.
+    """
+
+    #: Longest a single park/close call may take before the watchdog moves on (seconds).
+    ACTION_TIMEOUT_S = 120.0
+
+    def __init__(self, mount=None, dome=None, timeout_s: float = 300.0, event_bus=None,
+                 on_trip=None) -> None:
         self._mount = mount
         self._dome = dome
         self.timeout_s = timeout_s
-        self._last_heartbeat = asyncio.get_event_loop().time()
-        self._task: asyncio.Task | None = None
-        self._running = False
+        self._event_bus = event_bus
+        self._on_trip: list = [on_trip] if on_trip else []
+        self._lock = threading.Lock()
+        self._last_heartbeat = time.monotonic()
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._tripped = False
+        self.trip_detail: str = ""
+
+    # --- control ---------------------------------------------------------
+
+    def add_trip_handler(self, handler) -> None:
+        """*handler(detail: str)* is called, on the watchdog thread, after a trip."""
+        self._on_trip.append(handler)
 
     def heartbeat(self) -> None:
-        """Call periodically to prevent the watchdog from firing."""
-        self._last_heartbeat = asyncio.get_event_loop().time()
+        """Call periodically (from any thread) to prevent the watchdog from firing."""
+        with self._lock:
+            self._last_heartbeat = time.monotonic()
 
     def start(self) -> None:
-        self._running = True
-        self._task = asyncio.ensure_future(self._run())
+        """Arm the watchdog (a fresh heartbeat is recorded). No-op when already running."""
+        if self.running:
+            return
+        self._stop_event.clear()
+        self._tripped = False
+        self.trip_detail = ""
+        self.heartbeat()
+        self._thread = threading.Thread(target=self._run, name="galileo-watchdog", daemon=True)
+        self._thread.start()
+
+    def stop_sync(self, join_timeout: float = 5.0) -> None:
+        """Disarm and wait (briefly) for the thread to exit. Safe to call when not running."""
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(join_timeout)
+        self._thread = None
 
     async def stop(self) -> None:
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await asyncio.to_thread(self.stop_sync)
 
-    async def _run(self) -> None:
-        while self._running:
-            await asyncio.sleep(min(self.timeout_s / 10, 5.0))
-            elapsed = asyncio.get_event_loop().time() - self._last_heartbeat
-            if elapsed >= self.timeout_s:
-                logger.warning("Watchdog timeout — parking mount and closing dome")
-                await self._emergency_park()
+    # --- status ----------------------------------------------------------
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def tripped(self) -> bool:
+        return self._tripped
+
+    @property
+    def status(self) -> str:
+        """``"tripped"``, ``"armed"`` (running) or ``"stopped"``."""
+        if self._tripped:
+            return "tripped"
+        return "armed" if self.running else "stopped"
+
+    @property
+    def seconds_since_heartbeat(self) -> float:
+        with self._lock:
+            return time.monotonic() - self._last_heartbeat
+
+    # --- thread body -----------------------------------------------------
+
+    def _run(self) -> None:
+        interval = max(0.005, min(self.timeout_s / 20, 5.0))
+        while not self._stop_event.wait(interval):
+            if self.seconds_since_heartbeat >= self.timeout_s:
+                self._trip()
                 return
 
-    async def _emergency_park(self) -> None:
-        if self._mount:
+    def _trip(self) -> None:
+        detail = (f"No application heartbeat for {self.seconds_since_heartbeat:.0f} s "
+                  f"(limit {self.timeout_s:g} s): parking the mount and closing the dome.")
+        logger.warning("Watchdog timeout — %s", detail)
+        self._tripped = True
+        self.trip_detail = detail
+        self._emergency_park()
+        if self._event_bus:
             try:
-                await self._mount.park()
+                from galileo.bus import SafetyUnsafeEvent
+                self._event_bus.publish(SafetyUnsafeEvent(source="Watchdog", explanation=detail))
             except Exception:
-                logger.exception("Watchdog: failed to park mount")
-        if self._dome:
+                logger.exception("Watchdog: failed to publish the unsafe event")
+        for handler in list(self._on_trip):
             try:
-                await self._dome.close_shutter()
+                handler(detail)
             except Exception:
-                logger.exception("Watchdog: failed to close dome shutter")
+                logger.exception("Watchdog: trip handler raised")
+
+    @staticmethod
+    def _resolve(device):
+        return device() if callable(device) and not hasattr(device, "park") and not hasattr(device, "close_shutter") else device
+
+    def _emergency_park(self) -> None:
+        mount = self._safe_resolve(self._mount)
+        dome = self._safe_resolve(self._dome)
+        if mount is not None:
+            self._run_action("park the mount", mount.park)
+        if dome is not None:
+            self._run_action("close the dome shutter", dome.close_shutter)
+
+    def _safe_resolve(self, device):
+        try:
+            return self._resolve(device)
+        except Exception:
+            logger.exception("Watchdog: could not resolve a device")
+            return None
+
+    def _run_action(self, what: str, call) -> None:
+        async def _go():
+            result = call()
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                await asyncio.wait_for(result, self.ACTION_TIMEOUT_S)
+        try:
+            asyncio.run(_go())
+        except Exception:
+            logger.exception("Watchdog: failed to %s", what)
 
 
 # ---------------------------------------------------------------------------

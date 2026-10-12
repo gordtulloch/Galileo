@@ -30,6 +30,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from galileo.history import get_history
 from galileo.sequencer.session_exec import (
     SessionContext,
     SessionExecutor,
@@ -41,6 +42,7 @@ from galileo.sequencer.session_exec import (
 logger = logging.getLogger(__name__)
 
 TICK_INTERVAL_MS = 15_000
+SAFETY_INTERVAL_MS = 5_000
 
 
 # ---------------------------------------------------------------------------
@@ -65,10 +67,34 @@ def _page_adapter(window: Any, page: str) -> Any:
     return (getattr(window, "_device_pages", {}).get(page) or {}).get("adapter")
 
 
+def _dome_service(window: Any) -> Any:
+    """The active Pier's ``DomeService`` (DOME-010), or ``None`` without a connected dome."""
+    getter = (getattr(window, "_device_pages", {}).get("dome") or {}).get("get_service")
+    return getter() if getter else None
+
+
+def _observatory_arbiter(window: Any) -> Any:
+    """The ``ResourceArbiter`` shared by every Pier of the current Observatory (OBS-100).
+
+    The UI's Observatory is a database record with no arbiter of its own, so the window keeps
+    one per Observatory name; each Pier's run gets the same instance and so sees the others'
+    activity on the shared dome."""
+    from galileo.observatory import ResourceArbiter
+    arbiters = getattr(window, "_observatory_arbiters", None)
+    if arbiters is None:
+        arbiters = {}
+        window._observatory_arbiters = arbiters
+    name = getattr(getattr(window, "_current_observatory", None), "name", "") or ""
+    if name not in arbiters:
+        arbiters[name] = ResourceArbiter()
+    return arbiters[name]
+
+
 def _build_notify_service(window: Any) -> Any:
     """A ``NotificationService`` bound to the current Observatory, with the operator's e-mail /
     SMS channels from its contact details (OBS-090, NOTIF-040) and in-app delivery to the log."""
-    from galileo.notify import EmailChannel, NotificationService, SmsChannel
+    from galileo.notify import NotificationService
+    from galileo.notify_settings import configure_service, load_notify_settings
     service = NotificationService()
     observatory = getattr(window, "_current_observatory", None)
     contacts = None
@@ -77,12 +103,9 @@ def _build_notify_service(window: Any) -> Any:
     if observatory is not None and hasattr(observatory, "contact_details"):
         service.set_owning_observatory(observatory)
         contacts = service.resolve_delivery_contacts()
-    wanted = set((contacts.channels if contacts and contacts.channels else None) or ["email", "sms"])
-    if contacts is not None:
-        if contacts.email and "email" in wanted:
-            service.add_channel(EmailChannel(contacts.email))
-        if contacts.phone_number and "sms" in wanted:
-            service.add_channel(SmsChannel(contacts.phone_number))
+    # Recipients: the Observatory's contact details when set, else Options > Notifications;
+    # SMTP server, credentials, gateway and per-event switches always come from Options > Notifications.
+    configure_service(service, load_notify_settings(), contacts)
     service.subscribe(lambda n: logger.info("Notification: %r", n))
     return service
 
@@ -111,9 +134,11 @@ def build_session_context(window: Any) -> SessionContext:
         pier_name=getattr(pier, "name", "") or "",
         camera=camera, mount=mount, filter_wheel=wheel, focuser=focuser,
         rotator=_page_adapter(window, "rotator"), dome=_page_adapter(window, "dome"),
+        dome_service=_dome_service(window), arbiter=_observatory_arbiter(window),
         guider=guider, flat_panel=_page_adapter(window, "flat_panel"),
         observatory=getattr(window, "_current_observatory", None),
         notify_service=_build_notify_service(window),
+        history=get_history(),
     )
 
     location_getter = getattr(window, "_flats_observing_location", None)
@@ -167,12 +192,11 @@ def build_session_context(window: Any) -> SessionContext:
         await service.apply_filter_offset(from_filter, to_filter)
 
     def make_solve_workflow():
-        from galileo.observatory import get_solver_settings
-        from galileo.platesolve import PlateSolver, SolveWorkflow
-        executable, params = get_solver_settings(pier)
-        solver = PlateSolver(backend="astap", executable=executable, params=params, pier_key=key)
-        if not solver.executable:
-            raise RuntimeError("the ASTAP solver was not found — install it, or set its path in Options > Solve")
+        from galileo.observatory import make_pier_solver
+        from galileo.platesolve import SolveWorkflow
+        solver = make_pier_solver(pier, pier_key=key)
+        if not solver.is_available():
+            raise RuntimeError(f"the plate solver is not set up — {solver.missing_message()}")
         return SolveWorkflow(solver, camera=camera, mount=mount, log=logger.info,
                              frame_metadata=dict(frame_context))
 
@@ -246,14 +270,22 @@ class SessionRunController(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
         self._timer.timeout.connect(self._tick)
+        self._blocked: dict[Any, str] = {}          # Pier key -> why the safety monitor holds its jobs
+        self._safety_paused: set[Any] = set()       # runs we paused for unsafe conditions
+        self._safety_timer = QTimer(self)
+        self._safety_timer.setInterval(SAFETY_INTERVAL_MS)
+        self._safety_timer.timeout.connect(self._enforce_safety)
 
     def start_ticking(self) -> None:
         """Begin servicing the active Pier's scheduler queue (call once the window is real)."""
         if not self._timer.isActive():
             self._timer.start()
+        if not self._safety_timer.isActive():
+            self._safety_timer.start()
 
     def stop_ticking(self, *_args) -> None:
         self._timer.stop()
+        self._safety_timer.stop()
 
     # --- Queries --------------------------------------------------------------
 
@@ -266,6 +298,17 @@ class SessionRunController(QObject):
 
     def is_running(self, region: Any = None) -> bool:
         return (self.run_for(region) is not None) if region is not None else bool(self._runs)
+
+    def run_snapshot(self) -> dict[Any, tuple[str, str]]:
+        """``{pier_key: (state, session name)}`` for every Pier with a run in flight — what
+        the Observatory dashboard (OBS-060) shows. A copy: safe to hand to another thread."""
+        snapshot = {}
+        for key, run in list(self._runs.items()):
+            state = getattr(run.progress, "state", "running")
+            text = str(getattr(state, "value", state))
+            # A run exists, so it is at least starting, even before its first progress report.
+            snapshot[key] = ("running" if text == "idle" else text, str(getattr(run.region, "name", "")))
+        return snapshot
 
     # --- Starting -------------------------------------------------------------
 
@@ -336,6 +379,7 @@ class SessionRunController(QObject):
 
     def _on_finished(self, key: Any, state: str) -> None:
         run = self._runs.pop(key, None)
+        self._safety_paused.discard(key)
         if run is None:
             return
         if run.thread is not None:
@@ -366,6 +410,35 @@ class SessionRunController(QObject):
 
     # --- Scheduler tick -----------------------------------------------------------
 
+    def _set_blocked(self, key: Any, reason: str) -> None:
+        if self._blocked.get(key, "") != reason:
+            self._blocked[key] = reason
+            self.changed.emit(key)
+
+    def blocked_reason(self, key: Any = None) -> str:
+        """Why the Pier's scheduled jobs are held by the safety monitor, or ``""``."""
+        return self._blocked.get(self._key() if key is None else key, "")
+
+    def _enforce_safety(self) -> None:
+        """Pause a scheduler-started run while conditions are unsafe and resume it once they
+        are safe again (SCHED-060). A manual Run is left to the user. Runs on the UI thread
+        every few seconds, since the safety page's rules are Qt-side state."""
+        for key, run in list(self._runs.items()):
+            if run.manual:
+                continue
+            reason = run.scheduler.safety_block_reason()
+            if reason:
+                self._set_blocked(key, reason)
+                if run.executor.state.value == "running":
+                    run.job.run_log.append(f"Paused: conditions are unsafe ({reason}).")
+                    run.executor.pause()
+                    self._safety_paused.add(key)
+            elif key in self._safety_paused:
+                self._safety_paused.discard(key)
+                self._set_blocked(key, "")
+                run.job.run_log.append("Conditions are safe again — resuming.")
+                run.executor.resume()
+
     def _tick(self) -> None:
         """Start the active Pier's next due scheduled job, if the Pier is idle."""
         main = getattr(self._window, "_window", None)
@@ -383,6 +456,12 @@ class SessionRunController(QObject):
         if scheduler_for is None:
             return
         scheduler = scheduler_for(pier.name)
+        reason = scheduler.safety_block_reason()
+        if reason:
+            # Unsafe conditions hold every due job (SCHED-060); the Schedule screen shows why.
+            self._set_blocked(key, reason)
+            return
+        self._set_blocked(key, "")
         for job in scheduler.due_jobs():
             region = job.sequence
             context = build_session_context(self._window)

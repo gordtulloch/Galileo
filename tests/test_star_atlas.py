@@ -376,9 +376,6 @@ def test_star_atlas_find_solar_system_body(view):
 def window(tmp_path, monkeypatch):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     monkeypatch.setattr(sa, "load_star_catalog", sa._fallback_catalog)
-    # Built before any test body runs, so isolate the Planning options here: otherwise the page reads the
-    # developer's real planning.json and its checkboxes start in whatever state they last saved.
-    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
     from galileo.library.database import db, init_db
     init_db(tmp_path / "star_atlas_page.db")
     from galileo.ui.app_window import AppWindow
@@ -409,10 +406,10 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     screens. None of those is a top-level section any more."""
     from galileo.ui.app_window import LIBRARY_ITEMS, PLANNING_ITEMS, PRIMARY_SECTIONS, SCIENCE_ITEMS
     ids = [s[0] for s in PRIMARY_SECTIONS]
-    assert ids == ["star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science", "equipment"]
+    assert ids == ["dashboard", "star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science", "equipment"]
     assert [i[:2] for i in PLANNING_ITEMS] == [
         ("whats_up", "What's Up Tonight"), ("targets", "Targets"), ("sessions", "Sessions"),
-        ("schedule", "Schedule"),
+        ("schedule", "Schedule"), ("history", "History"),
     ]
     assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
     assert [i[:2] for i in LIBRARY_ITEMS] == [
@@ -428,7 +425,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     ]
     # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
     # Science), so check that the core items come first rather than that the menu is exactly them.
-    assert ["What's Up Tonight", "Targets", "Sessions", "Schedule"] in menus
+    assert ["What's Up Tonight", "Targets", "Sessions", "Schedule", "History"] in menus
     assert any(menu[:1] == ["Variable Stars"] for menu in menus)
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
@@ -612,15 +609,15 @@ def test_star_atlas_remembers_toggles_and_catalogs_between_runs(window):
 
 @pytest.mark.requirement("TC-SKYMAP-010")
 @pytest.mark.priority("MVP")
-def test_star_atlas_display_prefs_ignore_bad_entries(tmp_path, monkeypatch):
-    """SKYMAP-010: an unreadable or partly invalid options file falls back to the defaults instead of breaking the page."""
+def test_star_atlas_display_prefs_ignore_bad_entries(settings_db, config_folder):
+    """SKYMAP-010: an unreadable legacy file or partly invalid saved options fall back to the defaults instead of breaking the page."""
     import galileo.ui.star_atlas as ui
-    path = tmp_path / "prefs.json"
-    monkeypatch.setattr(ui, "_prefs_path", lambda: path)
-    path.write_text("not json", encoding="utf-8")
+    from galileo.settings_store import set_namespace
+    legacy = config_folder / "star_atlas.json"
+    legacy.write_text("not json", encoding="utf-8")
     assert ui.load_display_prefs() == {}
-    path.write_text('{"show_grid": "yes", "show_labels": false, "dso_catalogs": ["NGC", "Bogus"], "mag_limit": 1}',
-                    encoding="utf-8")
+    legacy.unlink()
+    set_namespace("star_atlas", {"show_grid": "yes", "show_labels": False, "dso_catalogs": ["NGC", "Bogus"], "mag_limit": 1})
     assert ui.load_display_prefs() == {"show_labels": False, "dso_catalogs": ["NGC"]}
 
 
@@ -781,9 +778,8 @@ def test_star_atlas_goto_refusals_are_logged(window, caplog):
 
 @pytest.fixture
 def horizon_env(tmp_path, monkeypatch):
-    """Keep the Planning options file out of the real config folder and put the process-wide slew guard back afterwards."""
+    """Put the process-wide slew guard back afterwards."""
     from galileo.core.slew_guard import get_slew_guard
-    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
     guard = get_slew_guard()
     saved = (guard.enabled, guard.horizon, guard.latitude, guard.longitude)
     yield guard
@@ -946,7 +942,6 @@ def test_slew_guard_is_scoped_per_pier(window, tmp_path, monkeypatch):
     from galileo.current_object import pier_key
     from galileo.exceptions import SlewObstructedError
     from galileo.observatory import create_observatory, create_pier, save_horizon_points
-    monkeypatch.setattr("galileo.planning.settings._path", lambda: tmp_path / "planning.json")
 
     home = create_observatory("Slew Home", 40.0, 0.0)
     away = create_observatory("Slew Away", -10.0, 0.0)
@@ -1293,11 +1288,9 @@ def test_tc_skymap_090_a_marker_off_the_map_or_malformed_is_skipped(view):
 
 @pytest.mark.requirement("TC-SKYMAP-090")
 @pytest.mark.priority("P2")
-def test_tc_skymap_090_telescope_markers_is_a_remembered_option(tmp_path, monkeypatch):
+def test_tc_skymap_090_telescope_markers_is_a_remembered_option(settings_db):
     """SKYMAP-090: Telescope markers is on by default and remembered between runs, like the other display options."""
-    import galileo.platform as platform_mod
     from galileo.ui.star_atlas import PERSISTED_TOGGLES, StarAtlasView, load_display_prefs, save_display_prefs
-    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: tmp_path)
     assert "show_pier_markers" in PERSISTED_TOGGLES
 
     QtWidgets.QApplication.instance() or QtWidgets.QApplication([])

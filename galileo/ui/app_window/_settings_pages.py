@@ -307,9 +307,10 @@ class AppWindowSettingsPagesMixin:
         worker.start()
 
     def _build_imaging_settings_page(self: AppWindowState) -> QWidget:
-        """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)."""
-        from PySide6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
-        from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
+        """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)
+        and how much neighbouring mosaic panes overlap (FRAME-040)."""
+        from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel, QVBoxLayout, QWidget
+        from galileo.imaging_settings import MOSAIC_OVERLAP_RANGE, load_imaging_settings, save_imaging_settings
         from galileo.metadata import BITPIX_AUTO, BITPIX_CHOICES
 
         page = QWidget()
@@ -351,6 +352,17 @@ class AppWindowSettingsPagesMixin:
         bitpix_combo.setCurrentIndex(max(idx, 0))
         form.addRow("Desired BITPIX", bitpix_combo)
 
+        overlap_spin = QDoubleSpinBox()
+        overlap_spin.setRange(*MOSAIC_OVERLAP_RANGE)
+        overlap_spin.setDecimals(1)
+        overlap_spin.setSuffix(" %")
+        overlap_spin.setValue(settings["mosaic_overlap_pct"])
+        overlap_spin.setToolTip(
+            "How much neighbouring panes of a mosaic overlap, as a percentage of a pane (FRAME-040). "
+            "Used by the Framing Assistant opened from the Imaging tab and from a Session's Image block."
+        )
+        form.addRow("Mosaic pane overlap", overlap_spin)
+
         hint = QLabel(
             "Applies to frames the Imaging tab saves. Frames captured for plate solving always use "
             "whichever of these formats best fits, regardless of this setting, since that is about "
@@ -369,7 +381,13 @@ class AppWindowSettingsPagesMixin:
             for service in getattr(self, "_imaging_services", {}).values():
                 service.bitpix = settings["bitpix"]
 
+        def overlap_changed(value: float) -> None:
+            from galileo.planning.framing import MosaicSettings
+            settings["mosaic_overlap_pct"] = value
+            MosaicSettings.instance().set_pane_overlap_pct(value)   # remembers it too
+
         bitpix_combo.currentIndexChanged.connect(changed)
+        overlap_spin.valueChanged.connect(overlap_changed)
         return page
 
     def _build_focus_settings_page(self: AppWindowState) -> QWidget:
@@ -471,13 +489,19 @@ class AppWindowSettingsPagesMixin:
     def _build_solve_settings_page(self: AppWindowState) -> QWidget:
         """Options > Solve: the current Pier's saved solver defaults —
         an ASTAP executable-path override, field-of-view hint, search radius
-        and downsample factor (PLT-060). Scoped per Pier, like Options > Focus."""
+        and downsample factor (PLT-060), plus the solver backend (ASTAP, local astrometry.net or
+        nova.astrometry.net). Scoped per Pier, like Options > Focus."""
         from PySide6.QtWidgets import (
-            QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+            QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
             QPushButton, QSpinBox, QVBoxLayout, QWidget,
         )
-        from galileo.observatory import get_solver_settings, save_solver_settings
-        from galileo.platesolve import SolverParams
+        from galileo.observatory import (
+            get_solver_backend,
+            get_solver_settings,
+            save_solver_backend,
+            save_solver_settings,
+        )
+        from galileo.platesolve import BACKENDS, SolverParams
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -496,6 +520,13 @@ class AppWindowSettingsPagesMixin:
         form.setSpacing(8)
         layout.addLayout(form)
 
+        backend_combo = QComboBox()
+        for key, label in BACKENDS.items():
+            backend_combo.addItem(label, key)
+        backend_combo.setToolTip("Which solver the application uses by default: ASTAP, a local astrometry.net "
+                                 "installation, or the nova.astrometry.net web service.")
+        form.addRow("Solver", backend_combo)
+
         exe_row = QHBoxLayout()
         exe_edit = QLineEdit()
         exe_edit.setPlaceholderText("Auto-detected if left blank")
@@ -505,6 +536,20 @@ class AppWindowSettingsPagesMixin:
         exe_row.addWidget(exe_edit, 1)
         exe_row.addWidget(browse_btn)
         form.addRow("ASTAP executable", exe_row)
+
+        astrometry_row = QHBoxLayout()
+        astrometry_edit = QLineEdit()
+        astrometry_edit.setPlaceholderText("Auto-detected if left blank")
+        astrometry_edit.setToolTip("Path to astrometry.net's solve-field program. Leave blank to auto-detect it on PATH.")
+        astrometry_browse_btn = QPushButton("Browse…")
+        astrometry_row.addWidget(astrometry_edit, 1)
+        astrometry_row.addWidget(astrometry_browse_btn)
+        form.addRow("solve-field executable", astrometry_row)
+
+        api_key_edit = QLineEdit()
+        api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        api_key_edit.setToolTip("Your nova.astrometry.net API key (from your profile on nova.astrometry.net).")
+        form.addRow("nova.astrometry.net API key", api_key_edit)
 
         fov_spin = QDoubleSpinBox()
         fov_spin.setRange(0.0, 60.0)
@@ -536,6 +581,13 @@ class AppWindowSettingsPagesMixin:
 
         browse_btn.clicked.connect(browse)
 
+        def browse_astrometry() -> None:
+            path, _ = QFileDialog.getOpenFileName(self._window, "solve-field executable")
+            if path:
+                astrometry_edit.setText(path)
+
+        astrometry_browse_btn.clicked.connect(browse_astrometry)
+
         save_btn = QPushButton("Save")
         save_btn.setObjectName("AccentButton")
         layout.addWidget(save_btn)
@@ -553,10 +605,15 @@ class AppWindowSettingsPagesMixin:
             fov_spin.setValue(params.fov_hint_deg)
             radius_spin.setValue(params.search_radius_deg)
             downsample_spin.setValue(params.downsample)
+            backend, astrometry_exe, api_key = get_solver_backend(pier)
+            backend_combo.setCurrentIndex(max(backend_combo.findData(backend), 0))
+            astrometry_edit.setText(astrometry_exe)
+            api_key_edit.setText(api_key)
             status.setText(f"Editing defaults for Pier {pier.name!r}." if pier is not None
                            else "Select a Pier first — these settings are saved per Pier.")
             save_btn.setEnabled(pier is not None)
-            for widget in (exe_edit, browse_btn, fov_spin, radius_spin, downsample_spin):
+            for widget in (backend_combo, exe_edit, browse_btn, astrometry_edit, astrometry_browse_btn,
+                           api_key_edit, fov_spin, radius_spin, downsample_spin):
                 widget.setEnabled(pier is not None)
 
         def save() -> None:
@@ -567,6 +624,11 @@ class AppWindowSettingsPagesMixin:
                 downsample=downsample_spin.value(),
             )
             save_solver_settings(self._current_pier, exe_edit.text().strip(), params)
+            save_solver_backend(self._current_pier, backend_combo.currentData(),
+                                astrometry_edit.text().strip(), api_key_edit.text().strip())
+            solve_page = self._device_pages.get("solve")
+            if solve_page is not None:
+                solve_page["reload"]()
             self._window.statusBar().showMessage(f"Saved Solve settings for Pier {self._current_pier.name!r}.", 4000)
 
         save_btn.clicked.connect(save)

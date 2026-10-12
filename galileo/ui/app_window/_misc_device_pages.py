@@ -56,8 +56,21 @@ class AppWindowMiscDevicePagesMixin:
             scheduler = ObservatoryScheduler()
             scheduler.set_persistence(key)
             scheduler.load()
+            # Gate jobs on this window's connected safety devices (SCHED-060). The monitor
+            # re-reads the Safety page on every check, so connecting/disconnecting a device
+            # needs no re-registration.
+            from galileo.safety import LiveSafetyMonitor
+            scheduler.set_safety_monitor(LiveSafetyMonitor(self._safety_evaluation))
             self._schedulers[key] = scheduler
         return self._schedulers[key]
+
+    def _safety_evaluation(self: AppWindowState) -> tuple[bool, bool, list[str]]:
+        """``(any safety device connected, safe, reasons)`` for the active Pier, from the
+        Equipment > Safety page; ``(False, True, [])`` while that page or its devices don't exist."""
+        evaluate = (getattr(self, "_device_pages", {}).get("weather") or {}).get("evaluate")
+        if evaluate is None:
+            return False, True, []
+        return evaluate()
 
     def _build_sessions_page(self: AppWindowState) -> QWidget:
         """Planning > Sessions (SES-100 … SES-230): per-Pier, block-based session
@@ -76,6 +89,23 @@ class AppWindowMiscDevicePagesMixin:
         from galileo.ui.schedule import SchedulePageWidget
         page = SchedulePageWidget(self)
         self._device_pages["schedule"] = {"reload": page.reload}
+        return page
+
+    def _build_history_page(self: AppWindowState) -> QWidget:
+        """Planning > History (HIST-020, HIST-040): per-frame HFR / star count / guide RMS of
+        past and running sessions — see ``galileo.ui.history``."""
+        from galileo.ui.history import HistoryPageWidget
+        page = HistoryPageWidget(self)
+        self._device_pages["history"] = {"reload": page.reload}
+        return page
+
+    def _build_dashboard_page(self: AppWindowState) -> QWidget:
+        """Dashboard page (a primary sidebar section): every Pier of the selected
+        Observatory at a glance (OBS-060) — see ``galileo.ui.dashboard``. It
+        refreshes itself, off the UI thread, while it is on screen."""
+        from galileo.ui.dashboard import DashboardPage
+        page = DashboardPage(self)
+        self._device_pages["dashboard"] = {"reload": page.reload}
         return page
 
     def _build_solve_page(self: AppWindowState) -> QWidget:

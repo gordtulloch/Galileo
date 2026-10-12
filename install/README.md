@@ -2,6 +2,8 @@
 
 > **Prebuilt single-file installers** (Windows `.exe`, macOS `.dmg`, Linux x86_64/aarch64 `.AppImage`) are built by `.github/workflows/release.yml` from `packaging/` and attached to each GitHub release. The scripts below are the git-clone alternative, which also gives automatic updates on every launch.
 
+Need help installing? Ask in the [Galileo Discord](https://discord.gg/cnTuRwejd).
+
 ## Windows
 
 | File | Purpose |

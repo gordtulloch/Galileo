@@ -115,13 +115,37 @@ Settings for the exposure taken by **Capture & Solve** and by polar alignment.
 
 The exposure length for solve frames, in seconds. Long enough to show plenty of stars; much longer than needed only slows things down.
 
+## Bin
+
+Camera binning for solve frames (1x1 to 4x4). Binning makes stars brighter and the frame smaller, so it solves faster.
+
+## Gain/ISO
+
+Gain for solve frames, or the ISO value for a DSLR. **Camera** leaves it as the camera is configured.
+
+## Filter
+
+The filter to solve through. **Current** leaves the filter wheel where it is. The list comes from the connected filter wheel.
+
+## Dark
+
+Takes a dark frame of the same exposure after each solve frame and subtracts it, removing hot pixels that can confuse the solver.
+
 ## Solver Mode
 
-Which solver to use.
+Which solver to use for this run. It starts as the one chosen for the Pier in Options › Solve.
 
 ## ASTAP
 
 The local ASTAP solver, which works with no internet connection. Its location and defaults are set in Options › Solve.
+
+## Astrometry.net
+
+A local astrometry.net installation (`solve-field` with its index files); works with no internet connection. Set its location in Options › Solve.
+
+## Nova (web)
+
+The nova.astrometry.net web service. Needs an internet connection and an API key set in Options › Solve; the frame is uploaded to the service.
 
 ## Frame
 

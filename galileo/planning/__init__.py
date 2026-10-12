@@ -9,6 +9,7 @@ from galileo.planning.sky_atlas import (
     LocationManager,
     ObjectType,
     SkyAtlas,
+    geocode_address,
     geocode_location,
 )
 from galileo.planning.visibility import (
@@ -32,6 +33,7 @@ __all__ = [
     "SkyAtlas",
     "altitude_chart",
     "day_night_bands",
+    "geocode_address",
     "geocode_location",
     "is_observable_tonight",
 ]

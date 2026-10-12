@@ -191,3 +191,119 @@ def test_tc_arch_080_multiple_device_pools_per_pier():
 
     assert pool1.get("Camera") is cam1
     assert pool2.get("Camera") is cam2
+
+
+# ---------------------------------------------------------------------------
+# TC-ARCH-090 — configuration lives in the shared database
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_settings_store_round_trips_namespaces_and_scopes(settings_db):
+    """ARCH-090: configuration is stored in the shared database through one settings store, per namespace, key and scope."""
+    from galileo import settings_store as store
+    assert store.available()
+    assert store.get_setting("demo", "a", "dflt") == "dflt"
+    assert store.set_setting("demo", "a", {"x": [1, 2]})
+    assert store.set_setting("demo", "a", {"x": [3]})                    # overwrite, not duplicate
+    assert store.get_setting("demo", "a") == {"x": [3]}
+    store.set_setting("demo", "a", "pier-specific", scope="Pier A")
+    assert store.get_setting("demo", "a") == {"x": [3]}
+    assert store.get_namespace("demo", scope="Pier A") == {"a": "pier-specific"}
+    store.set_namespace("demo", {"b": 1}, replace=True)
+    assert store.get_namespace("demo") == {"b": 1}
+    store.delete_setting("demo", "b")
+    assert store.get_namespace("demo") == {}
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_settings_fall_back_to_defaults_without_a_database():
+    """ARCH-090: with no database available, reads return defaults and writes are dropped instead of raising (early start-up, the watchdog)."""
+    from galileo import settings_store as store
+    from galileo.watchdog_settings import DEFAULTS, load_watchdog_settings, save_watchdog_settings
+    assert not store.available()
+    assert store.get_setting("demo", "a", 5) == 5
+    assert store.set_setting("demo", "a", 1) is False
+    save_watchdog_settings({"enabled": False, "timeout_s": 60})          # must not raise
+    assert load_watchdog_settings() == DEFAULTS
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_legacy_json_is_imported_once_and_renamed(settings_db, tmp_path):
+    """ARCH-090: an old settings JSON file is imported into the database once and renamed *.migrated, never deleted."""
+    from galileo import settings_store as store
+    legacy = tmp_path / "old.json"
+    legacy.write_text('{"k": 1, "j": [true]}', encoding="utf-8")
+    assert store.import_legacy_json("legacy_demo", legacy) == {"k": 1, "j": [True]}
+    assert not legacy.exists() and (tmp_path / "old.json.migrated").exists()
+    legacy.write_text('{"k": 99}', encoding="utf-8")                      # a second file never overwrites the database
+    assert store.import_legacy_json("legacy_demo", legacy)["k"] == 1
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_library_settings_live_in_the_database_without_passwords(settings_db, config_folder, monkeypatch):
+    """ARCH-090: the Options > Library settings are stored in the database, an old library.ini is imported once, and no password is stored."""
+    import galileo.library.config as library_config
+    config_dir = config_folder
+    ini = config_dir / "library.ini"
+    ini.write_text("[DEFAULT]\nrepo = /data/repo\nitelescope_password = hunter2\nsftp_password = pw\n", encoding="utf-8")
+    saved = []
+    monkeypatch.setattr(library_config, "set_itelescope_password", saved.append)   # no real keychain
+    assert library_config.get_repository_path() == "/data/repo"
+    assert saved == ["hunter2"] and not ini.exists() and (config_dir / "library.ini.migrated").exists()
+
+    from galileo.settings_store import get_namespace
+    config = library_config.load_config()
+    config.set("DEFAULT", "source", "/data/in")
+    config.set("DEFAULT", "sftp_password", "nope")
+    library_config.save_config(config)
+    stored = get_namespace("library")
+    assert stored["repo"] == "/data/repo" and stored["source"] == "/data/in"
+    assert not any("password" in key for key in stored)
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_equipment_profiles_live_in_the_database(settings_db, tmp_path, minimal_profile):
+    """ARCH-090: equipment profiles and the last-used name are database rows; old *.gpf files are imported once and renamed."""
+    import json
+    from galileo.equipment.profiles import ProfileManager
+    legacy = tmp_path / "profiles"
+    legacy.mkdir()
+    (legacy / "Old.gpf").write_text(json.dumps(dict(minimal_profile, name="Old")), encoding="utf-8")
+    (legacy / ".last_used").write_text("Old", encoding="utf-8")
+    mgr = ProfileManager(storage_dir=legacy)
+    assert (legacy / "Old.gpf.migrated").exists() and not (legacy / "Old.gpf").exists()
+    mgr.save(minimal_profile)
+    fresh = ProfileManager(storage_dir=tmp_path / "elsewhere")             # nothing in memory: reads the database
+    assert set(fresh.list_names()) == {"Old", "TestSetup"}
+    assert fresh.get("TestSetup").piers[0].optical_trains[0].name == "MainScope"
+    assert fresh.get_last_used_name() == "Old"
+    fresh.delete("Old")
+    assert not ProfileManager(storage_dir=tmp_path / "x").exists("Old")
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
+def test_tc_arch_090_migration_028_survives_fake_replay(tmp_path):
+    """ARCH-090: the app_settings migration is idempotent and survives peewee-migrate's fake replay."""
+    import importlib
+    from unittest.mock import MagicMock
+    mod = importlib.import_module("galileo.library.migrations.028_add_app_settings")
+    migrator = MagicMock()
+    mod.migrate(migrator, MagicMock(), fake=True)
+    mod.migrate(migrator, MagicMock(), fake=True)
+    statements = " ".join(str(c.args[0]) for c in migrator.sql.call_args_list)
+    assert "CREATE TABLE IF NOT EXISTS app_settings" in statements and "CREATE UNIQUE INDEX IF NOT EXISTS" in statements
+
+    from galileo.library.database import db, get_migration_status, init_db
+    init_db(tmp_path / "twice.db")
+    try:
+        init_db(tmp_path / "twice.db")                                      # re-running migrations is a no-op
+        assert db.table_exists("app_settings")
+        assert not get_migration_status()["undone"]
+    finally:
+        db.close()

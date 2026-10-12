@@ -60,12 +60,23 @@ def main() -> None:
     diag = DiagnosticsService()
     logger.info("Galileo %s starting", _version())
 
+    # Last-chance crash reporting (LOG-070): excepthooks, faulthandler, fatal-error dialog.
+    from galileo.crashreport import install_crash_handlers, show_fatal_dialog
+    install_crash_handlers(dialog=show_fatal_dialog)
+
     from galileo.library.database import init_db
     init_db()
 
     from galileo.ui.app_window import AppWindow
     window = AppWindow()
     window.show()
+
+    # Crash/hang watchdog (SAFE-060): beaten from the event loop, stopped on aboutToQuit.
+    try:
+        from galileo.ui.app_window._watchdog import start_watchdog
+        start_watchdog(window)
+    except Exception:
+        logger.exception("Could not start the watchdog")
 
     if splash is not None:
         _schedule_splash_finish(splash, getattr(window, "_window", None), splash_started_at)

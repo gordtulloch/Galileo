@@ -153,6 +153,7 @@ def test_tc_obs_060_multi_pier_status_dashboard(two_pier_observatory):
         assert "pier_name" in entry
         assert "equipment_state" in entry
         assert "sequence_state" in entry
+        assert entry["scheduler_state"] == "idle"
 
 
 # ---------------------------------------------------------------------------
@@ -431,3 +432,107 @@ def test_edit_buttons_follow_the_selection_and_edits_update_the_selectors(tmp_pa
     finally:
         win._window.close()
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# TC-OBS-100 ... TC-OBS-130  (cross-Pier shared-resource arbitration)
+# ---------------------------------------------------------------------------
+
+class _DomeCloseBlock:
+    label = "Dome Close"
+    indent = 0
+
+
+@pytest.mark.requirement("TC-OBS-100")
+@pytest.mark.priority("P2")
+def test_tc_obs_100_dome_close_denied_while_other_pier_images():
+    """OBS-100: A disruptive dome action is denied while another Pier is active; non-disruptive and Pier-scoped are not."""
+    m = pytest.importorskip("galileo.observatory")
+    obs = m.Observatory(name="Roof")
+    arb = obs.arbiter
+    arb.begin_activity("Pier-1", "dome", "imaging")
+    denied = arb.check("Pier-2", "dome", "close")
+    assert not denied.granted and denied.blocked_by == ("Pier-1",)
+    assert not arb.check("Pier-2", "dome", "slew").granted
+    assert arb.check("Pier-2", "dome", "open").granted
+    assert arb.check("Pier-1", "dome", "close").granted  # own work never blocks itself
+    obs.set_dome(object(), scope="pier")
+    assert arb.check("Pier-2", "dome", "close").granted
+
+
+@pytest.mark.requirement("TC-OBS-110")
+@pytest.mark.priority("P2")
+async def test_tc_obs_110_request_queues_until_released_or_times_out():
+    """OBS-110: A queued request is granted on release, denied on timeout; a denied session block is skipped, not fatal."""
+    import asyncio
+    m = pytest.importorskip("galileo.observatory")
+    arb = m.ResourceArbiter(bus=MagicMock(), poll_s=0.01)
+    arb.begin_activity("Pier-1", "dome")
+    assert not (await arb.request("Pier-2", "dome", "close", wait_s=0.05)).granted
+    asyncio.get_running_loop().call_later(0.05, arb.end_activity, "Pier-1", "dome")
+    assert (await arb.request("Pier-2", "dome", "close", wait_s=1.0)).granted
+
+    from galileo.sequencer.session_exec import SessionContext, SessionExecutor
+    arb.begin_activity("Pier-1", "dome")
+    block = type("DomeCloseBlock", (_DomeCloseBlock,), {})()
+    ex = SessionExecutor(SessionContext(pier_name="Pier-2", dome=AsyncMock(), arbiter=arb))
+    result = await ex.run([block])
+    assert result.succeeded and result.errors  # skipped and logged, run completes
+    ex.context.dome.close_shutter.assert_not_called()
+
+
+@pytest.mark.requirement("TC-OBS-120")
+@pytest.mark.priority("P2")
+async def test_tc_obs_120_outcomes_published_on_bus():
+    """OBS-120: Granted, denied and released outcomes are published on the event bus."""
+    m = pytest.importorskip("galileo.observatory")
+    bus = MagicMock()
+    arb = m.ResourceArbiter(bus=bus)
+    arb.begin_activity("Pier-1", "dome")
+    await arb.request("Pier-2", "dome", "close")
+    await arb.request("Pier-2", "dome", "open")
+    arb.end_activity("Pier-1", "dome")
+    kinds = [type(c.args[0]) for c in bus.publish.call_args_list]
+    assert kinds == [m.ResourceClaimDeniedEvent, m.ResourceClaimGrantedEvent, m.ResourceReleasedEvent]
+    assert bus.publish.call_args_list[0].args[0].blocked_by == ["Pier-1"]
+
+
+@pytest.mark.requirement("TC-OBS-130")
+@pytest.mark.priority("P2")
+async def test_tc_obs_130_emergency_overrides_imaging():
+    """OBS-130: A safety-driven (emergency) request overrides another Pier's imaging."""
+    m = pytest.importorskip("galileo.observatory")
+    arb = m.ResourceArbiter(bus=MagicMock())
+    arb.begin_activity("Pier-1", "dome")
+    assert (await arb.request("Pier-2", "dome", "close", priority=m.PRIORITY_EMERGENCY)).granted
+
+    from galileo.sequencer.session_exec import SessionContext, SessionExecutor
+    ctx = SessionContext(pier_name="Pier-2", dome=AsyncMock(), arbiter=arb, is_safe=lambda: False)
+    block = type("DomeCloseBlock", (_DomeCloseBlock,), {})()
+    await SessionExecutor(ctx).run([block])
+    ctx.dome.close_shutter.assert_awaited_once()
+
+
+@pytest.mark.requirement("TC-OBS-100")
+@pytest.mark.priority("P2")
+def test_tc_obs_100_session_context_shares_one_arbiter_per_observatory():
+    """OBS-100: Every Pier's run of one Observatory gets the same ResourceArbiter; another
+    Observatory gets its own."""
+    from galileo.ui.session_runner import _observatory_arbiter
+
+    class _Obs:
+        def __init__(self, name):
+            self.name = name
+
+    class _Win:
+        pass
+
+    win = _Win()
+    win._current_observatory = _Obs("Backyard")
+    first = _observatory_arbiter(win)
+    win._current_pier = "Pier-2"          # switching Pier within the Observatory
+    assert _observatory_arbiter(win) is first
+    win._current_observatory = _Obs("Remote")
+    assert _observatory_arbiter(win) is not first
+    win._current_observatory = _Obs("Backyard")
+    assert _observatory_arbiter(win) is first

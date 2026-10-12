@@ -141,6 +141,77 @@ async def test_tc_safe_060_watchdog_parks_on_heartbeat_timeout(mock_indi_mount, 
     mock_dome.close_shutter.assert_called()
 
 
+@pytest.mark.requirement("TC-SAFE-060")
+@pytest.mark.priority("MVP")
+async def test_tc_safe_060_heartbeats_keep_watchdog_quiet_and_trip_is_reported(mock_indi_mount, mock_dome, event_bus):
+    """SAFE-060: Heartbeats prevent a trip; a trip parks mount then dome, publishes an unsafe event and calls handlers."""
+    safe_mod = pytest.importorskip("galileo.safety")
+    tripped = []
+    # Devices are resolved at trip time, so ones connected after start-up are covered.
+    watchdog = safe_mod.WatchdogService(
+        mount=lambda: mock_indi_mount, dome=lambda: mock_dome, timeout_s=0.3,
+        event_bus=event_bus, on_trip=tripped.append,
+    )
+    watchdog.start()
+    assert watchdog.status == "armed"
+    for _ in range(8):
+        await asyncio.sleep(0.1)
+        watchdog.heartbeat()
+    assert watchdog.status == "armed"
+    mock_indi_mount.park.assert_not_called()
+
+    await asyncio.sleep(0.8)  # heartbeats stop
+    assert watchdog.status == "tripped"
+    mock_indi_mount.park.assert_called_once()
+    mock_dome.close_shutter.assert_called_once()
+    assert len(tripped) == 1 and "heartbeat" in tripped[0]
+    event_bus.publish.assert_called_once()
+    assert event_bus.publish.call_args.args[0].source == "Watchdog"
+    await watchdog.stop()
+
+
+@pytest.mark.requirement("TC-SAFE-060")
+@pytest.mark.priority("MVP")
+async def test_tc_safe_060_watchdog_fires_when_event_loop_is_blocked(mock_indi_mount):
+    """SAFE-060: The watchdog runs off the event loop, so a hung loop still trips it."""
+    import time
+    safe_mod = pytest.importorskip("galileo.safety")
+    watchdog = safe_mod.WatchdogService(mount=mock_indi_mount, timeout_s=0.2)
+    watchdog.start()
+    time.sleep(0.6)  # block this (the event-loop) thread, as a hang would
+    watchdog.stop_sync()
+    mock_indi_mount.park.assert_called_once()
+
+
+@pytest.mark.requirement("TC-SAFE-060")
+@pytest.mark.priority("MVP")
+def test_tc_safe_060_clean_stop_never_parks(mock_indi_mount, mock_dome):
+    """SAFE-060: Stopping the watchdog on exit disarms it without parking anything."""
+    import time
+    safe_mod = pytest.importorskip("galileo.safety")
+    watchdog = safe_mod.WatchdogService(mount=mock_indi_mount, dome=mock_dome, timeout_s=0.2)
+    watchdog.start()
+    watchdog.stop_sync()
+    time.sleep(0.4)
+    assert watchdog.status == "stopped"
+    mock_indi_mount.park.assert_not_called()
+    mock_dome.close_shutter.assert_not_called()
+
+
+@pytest.mark.requirement("TC-SAFE-060")
+@pytest.mark.priority("MVP")
+def test_tc_safe_060_settings_defaults_and_clamping(settings_db, config_folder):
+    """SAFE-060: The heartbeat timeout is configurable, defaulting to 300 s and clamped to a sane range."""
+    from galileo import watchdog_settings as ws
+    assert ws.load_watchdog_settings() == {"enabled": True, "timeout_s": 300.0}
+    (config_folder / "watchdog.json").write_text('{"enabled": false, "timeout_s": 1}')   # legacy file, imported once
+    assert ws.load_watchdog_settings() == {"enabled": False, "timeout_s": ws.MIN_TIMEOUT_S}
+    assert (config_folder / "watchdog.json.migrated").exists()
+    from galileo.settings_store import set_namespace
+    set_namespace("watchdog", {"enabled": "maybe", "timeout_s": "soon"}, replace=True)
+    assert ws.load_watchdog_settings() == {"enabled": True, "timeout_s": 300.0}
+
+
 # ---------------------------------------------------------------------------
 # TC-SAFE-070
 # ---------------------------------------------------------------------------

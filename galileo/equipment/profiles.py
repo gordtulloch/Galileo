@@ -3,7 +3,7 @@
 
 """Equipment profiles — Pier / optical-train management (PROF-010 … PROF-090).
 
-Profiles are persisted as JSON files in the platform data directory.
+Profiles are persisted in the shared database (``galileo.settings_store``).
 Each profile contains one or more Piers; each Pier has one or more
 optical trains.  Plate scale is auto-derived from the train parameters.
 """
@@ -87,49 +87,81 @@ class EquipmentProfile:
 # ---------------------------------------------------------------------------
 
 class ProfileManager:
-    """Loads, saves, and manages equipment profiles on disk.
+    """Loads, saves, and manages equipment profiles in the shared database.
 
-    Profiles are stored as JSON files in *storage_dir* (default: platform
-    data directory).
+    Profiles are ``app_settings`` rows (namespace ``equipment_profiles``, one key per profile
+    name); the last-used name is ``equipment.last_used``. With no database available they live in
+    memory for the session only. *storage_dir* names a folder of legacy ``*.gpf`` profile files
+    (default: ``<data dir>/profiles``) that are imported once and renamed ``*.gpf.migrated``.
+    ``.gpf`` files remain the portable interchange format for :meth:`export` / :meth:`import_profile`.
     """
+
+    NAMESPACE = "equipment_profiles"
+    META_NAMESPACE = "equipment"
 
     def __init__(self, storage_dir: Path | str | None = None) -> None:
         if storage_dir is None:
             from galileo.platform import get_data_dir
-            self._dir = get_data_dir() / "profiles"
+            self._legacy_dir = get_data_dir() / "profiles"
         else:
-            self._dir = Path(storage_dir)
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._last_used_path = self._dir / ".last_used"
+            self._legacy_dir = Path(storage_dir)
         self._in_memory: dict[str, EquipmentProfile] = {}
+        self._last_used: str | None = None
+        self._import_legacy()
+
+    def _import_legacy(self) -> None:
+        """One-time upgrade of ``*.gpf`` files (and ``.last_used``) into the database."""
+        from galileo import settings_store
+        try:
+            if not self._legacy_dir.is_dir() or not settings_store.available():
+                return
+            for path in sorted(self._legacy_dir.glob(f"*{_PROFILE_SUFFIX}")):
+                try:
+                    data = json.loads(path.read_text("utf-8"))
+                    name = _profile_from_dict(data).name or path.stem
+                    if settings_store.get_setting(self.NAMESPACE, name) is None:
+                        settings_store.set_setting(self.NAMESPACE, name, _profile_to_dict(_profile_from_dict(data)))
+                    settings_store.mark_migrated(path)
+                except Exception:
+                    logger.warning("Could not import the legacy profile %s", path, exc_info=True)
+            last = self._legacy_dir / ".last_used"
+            if last.exists():
+                if settings_store.get_setting(self.META_NAMESPACE, "last_used") is None:
+                    settings_store.set_setting(self.META_NAMESPACE, "last_used", last.read_text("utf-8").strip())
+                settings_store.mark_migrated(last)
+        except Exception:
+            logger.exception("Could not import the legacy equipment profiles")
 
     # --- CRUD -----------------------------------------------------------------
 
     def save(self, profile_data: dict | EquipmentProfile) -> None:
-        """Persist *profile_data* to disk and update the in-memory cache."""
+        """Persist *profile_data* to the database and update the in-memory cache."""
+        from galileo import settings_store
         if isinstance(profile_data, EquipmentProfile):
             profile = profile_data
         else:
             profile = _profile_from_dict(profile_data)
         self._in_memory[profile.name] = profile
-        path = self._dir / (profile.name + _PROFILE_SUFFIX)
-        path.write_text(json.dumps(_profile_to_dict(profile), indent=2), encoding="utf-8")
+        settings_store.set_setting(self.NAMESPACE, profile.name, _profile_to_dict(profile))
 
     def exists(self, name: str) -> bool:
-        return name in self._in_memory or (self._dir / (name + _PROFILE_SUFFIX)).exists()
+        from galileo import settings_store
+        return name in self._in_memory or settings_store.get_setting(self.NAMESPACE, name) is not None
 
     def get(self, name: str) -> EquipmentProfile:
         if name not in self._in_memory:
-            path = self._dir / (name + _PROFILE_SUFFIX)
-            if not path.exists():
+            from galileo import settings_store
+            data = settings_store.get_setting(self.NAMESPACE, name)
+            if not isinstance(data, dict):
                 from galileo.exceptions import ProfileNotFoundError
                 raise ProfileNotFoundError(name)
-            self._in_memory[name] = _profile_from_dict(json.loads(path.read_text("utf-8")))
+            self._in_memory[name] = _profile_from_dict(data)
         return self._in_memory[name]
 
     def list_names(self) -> list[str]:
-        on_disk = {p.stem for p in self._dir.glob(f"*{_PROFILE_SUFFIX}")}
-        return sorted(on_disk | set(self._in_memory.keys()))
+        from galileo import settings_store
+        stored = set(settings_store.get_namespace(self.NAMESPACE))
+        return sorted(stored | set(self._in_memory.keys()))
 
     def rename(self, old_name: str, new_name: str) -> None:
         profile = self.get(old_name)
@@ -138,10 +170,9 @@ class ProfileManager:
         self.save(profile)
 
     def delete(self, name: str) -> None:
+        from galileo import settings_store
         self._in_memory.pop(name, None)
-        path = self._dir / (name + _PROFILE_SUFFIX)
-        if path.exists():
-            path.unlink()
+        settings_store.delete_setting(self.NAMESPACE, name)
 
     def export(self, name: str, dest: Path | str) -> None:
         """Export a profile to a portable .gpf file."""
@@ -156,12 +187,14 @@ class ProfileManager:
     # --- Persistence helpers --------------------------------------------------
 
     def set_last_used(self, name: str) -> None:
-        self._last_used_path.write_text(name, encoding="utf-8")
+        from galileo import settings_store
+        self._last_used = name
+        settings_store.set_setting(self.META_NAMESPACE, "last_used", name)
 
     def get_last_used_name(self) -> str | None:
-        if self._last_used_path.exists():
-            return self._last_used_path.read_text("utf-8").strip() or None
-        return None
+        from galileo import settings_store
+        name = settings_store.get_setting(self.META_NAMESPACE, "last_used", self._last_used)
+        return (name or "").strip() or None
 
     # --- Connect / load -------------------------------------------------------
 

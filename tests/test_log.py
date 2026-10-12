@@ -141,3 +141,92 @@ def test_tc_log_060_recent_log_pane_on_equipment_screens(diag_service):
     visible = pane.get_visible_entries()
     assert len(visible) >= 10
     assert visible[-1].message == "Camera event 14", "most recent entries are shown"
+
+
+# ---------------------------------------------------------------------------
+# TC-LOG-070
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def crash_env(tmp_path, monkeypatch):
+    import faulthandler
+    import sys
+    import threading
+
+    from galileo import crashreport
+    monkeypatch.setattr("galileo.platform.get_crash_reports_dir", lambda: tmp_path / "crash", raising=True)
+    (tmp_path / "crash").mkdir()
+    saved = (sys.excepthook, threading.excepthook)
+    yield crashreport, tmp_path
+    crashreport.uninstall_crash_handlers()
+    sys.excepthook, threading.excepthook = saved
+    if faulthandler.is_enabled():
+        faulthandler.disable()
+
+
+@pytest.mark.requirement("TC-LOG-070")
+@pytest.mark.priority("MVP")
+def test_tc_log_070_crash_handlers_write_scrubbed_report(crash_env):
+    """LOG-070: Install last-chance crash handlers that write a scrubbed crash report and hook faulthandler."""
+    import sys
+    import threading
+
+    crashreport, tmp_path = crash_env
+    shown = []
+    crashreport.install_crash_handlers(dialog=lambda t, e, p: shown.append(p), fault_log=tmp_path / "fh.log")
+    assert sys.excepthook is crashreport._excepthook
+    assert threading.excepthook is crashreport._threading_excepthook
+    import faulthandler
+    assert faulthandler.is_enabled()
+    assert (tmp_path / "fh.log").exists()
+
+    try:
+        raise RuntimeError("boom password=hunter2 url=http://bob:s3cret@host/x")
+    except RuntimeError as e:
+        crashreport._handle(type(e), e, e.__traceback__, "main thread", fatal=True)
+
+    reports = list((tmp_path / "crash").glob("crash_*.txt"))
+    assert len(reports) == 1
+    text = reports[0].read_text(encoding="utf-8")
+    assert "RuntimeError" in text and "Traceback" in text and "Version:" in text and "Platform:" in text
+    assert "hunter2" not in text and "s3cret" not in text
+    assert shown == [reports[0]]
+
+
+@pytest.mark.requirement("TC-LOG-070")
+@pytest.mark.priority("MVP")
+def test_tc_log_070_thread_and_asyncio_failures_reported(crash_env):
+    """LOG-070: Unhandled thread and asyncio-task exceptions are reported without a fatal dialog."""
+    import asyncio
+    import threading
+
+    crashreport, tmp_path = crash_env
+    shown = []
+    crashreport.install_crash_handlers(dialog=lambda t, e, p: shown.append(p), fault_log=tmp_path / "fh.log")
+
+    t = threading.Thread(target=lambda: 1 / 0, name="worker-x")
+    t.start()
+    t.join()
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        crashreport.install_loop_handler(loop)
+        loop.call_soon(lambda: (_ for _ in ()).throw(ValueError("loop fail")))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+
+    text = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "crash").glob("crash_*.txt"))
+    assert "ZeroDivisionError" in text and "thread worker-x" in text
+    assert "ValueError" in text and "asyncio task" in text
+    assert shown == []
+
+
+@pytest.mark.requirement("TC-LOG-070")
+@pytest.mark.priority("MVP")
+def test_tc_log_070_scrub_secrets():
+    """LOG-070: Credentials are removed from crash reports."""
+    from galileo.crashreport import scrub_secrets
+    out = scrub_secrets('api_key=abc123 "token": "xyz789" Authorization: Bearer abcdefghijkl ftp://u:pw@h/')
+    for leaked in ("abc123", "xyz789", "abcdefghijkl", ":pw@"):
+        assert leaked not in out

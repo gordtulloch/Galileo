@@ -167,8 +167,9 @@ class _FlatsThread(QThread if _HAS_QT else object):
     failed = Signal(str) if _HAS_QT else None
 
     def __init__(self, service, filters, count: int, max_well_depth: int, location, measure: str,
-                 exposure_s, exposure_increment_s: float, parent=None) -> None:
+                 exposure_s, exposure_increment_s: float, parent=None, method: str = "Sky Flats") -> None:
         super().__init__(parent)
+        self._method = method
         self._service = service
         self._filters = filters
         self._count = count
@@ -181,12 +182,21 @@ class _FlatsThread(QThread if _HAS_QT else object):
     def run(self) -> None:
         import asyncio
         try:
-            results = asyncio.run(self._service.run_sky_flats_all_filters(
-                self._filters, self._count, self._max_well_depth, location=self._location,
-                measure=self._measure, exposure_s=self._exposure_s,
-                exposure_increment_s=self._exposure_increment_s,
-                on_filter_start=self.filter_started.emit, on_frame_done=self.frame_done.emit,
-            ))
+            if self._method == "Sky Flats":
+                coro = self._service.run_sky_flats_all_filters(
+                    self._filters, self._count, self._max_well_depth, location=self._location,
+                    measure=self._measure, exposure_s=self._exposure_s,
+                    exposure_increment_s=self._exposure_increment_s,
+                    on_filter_start=self.filter_started.emit, on_frame_done=self.frame_done.emit,
+                )
+            else:   # Flat Panel / Observatory Panel (CAL-090)
+                coro = self._service.run_panel_flats_all_filters(
+                    self._method, self._filters, self._count, self._max_well_depth,
+                    measure=self._measure, exposure_s=self._exposure_s,
+                    exposure_increment_s=self._exposure_increment_s,
+                    on_filter_start=self.filter_started.emit, on_frame_done=self.frame_done.emit,
+                )
+            results = asyncio.run(coro)
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -295,6 +305,28 @@ class _MountPositionThread(QThread if _HAS_QT else object):
             logger.debug("Could not read the mount position for the Star Atlas", exc_info=True)
             status = None
         self.position.emit(status)
+
+
+class _GeocodeThread(QThread if _HAS_QT else object):
+    """Looks a place name up through Open-Meteo's geocoding service (SKY-090) off the Qt UI thread, for
+    the Observatory dialog's Look Up button. Reports ``{}`` when nothing was found or the service
+    could not be reached."""
+
+    found = Signal(dict) if _HAS_QT else None
+
+    def __init__(self, query: str, parent=None) -> None:
+        super().__init__(parent)
+        self._query = query
+
+    def run(self) -> None:
+        import asyncio
+        from galileo.planning.sky_atlas import geocode_address
+        try:
+            result = asyncio.run(geocode_address(self._query))
+        except Exception:
+            logger.debug("Could not geocode %r", self._query, exc_info=True)
+            result = {}
+        self.found.emit(result)
 
 
 class _MountGuardThread(QThread if _HAS_QT else object):

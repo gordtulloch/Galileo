@@ -83,6 +83,10 @@ By default the screen arranges itself to suit the frame: a portrait frame gets t
 
 **Landscape** or **Portrait** arrangement of the screen. Available only when **Choose layout manually** is ticked.
 
+## Panels
+
+Opens a list of the screen's movable panels (View, Mount Nudge, Stretch slider, Histogram, Progress, Log). Untick a panel to hide it; select one and use **Move Up** / **Move Down** to change its order within its column. **Reset Layout** restores the default arrangement. The arrangement is saved for your user account and restored the next time Galileo starts.
+
 ## Tools
 
 A group for extra tools that plugins add. Hidden when none are installed.

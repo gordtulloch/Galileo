@@ -128,10 +128,16 @@ class SessionContext:
     focuser: Any = None
     rotator: Any = None
     dome: Any = None
+    # The Pier's DomeService (slaving / shutter-with-session sync); ``None`` uses ``dome`` directly.
+    dome_service: Any = None
     guider: Any = None
     flat_panel: Any = None
     notify_service: Any = None
+    # Where each light frame's HFR / star count / guide RMS is recorded (HIST-010); ``None`` records nothing.
+    history: Any = None
     observatory: Any = None
+    # The Observatory's ``ResourceArbiter`` (OBS-100); ``None`` = no cross-Pier arbitration.
+    arbiter: Any = None
     location: Any = None
     max_well_depth: int | None = None
     # True while conditions are safe; ``None`` means no safety monitor is configured.
@@ -289,6 +295,7 @@ class SessionExecutor:
         self.target: tuple[str, float, float] | None = None   # (name, ra_deg, dec_deg), J2000
         self.current_filter: str | None = None
         self._unsafe_logged = False
+        self._history_started = False
 
     def set_progress_callback(self, callback: Callable[[SessionProgress], None] | None) -> None:
         """Where progress snapshots go; called on whichever thread is running the session."""
@@ -383,10 +390,14 @@ class SessionExecutor:
         self._frames_total = estimate_frames(tree)
         started = datetime.datetime.now(datetime.UTC).isoformat()
         self._set_state(RunState.RUNNING, f"Session {self.name!r} started ({len(blocks)} block(s)).")
+        arbiter = self.context.arbiter
+        if arbiter is not None:
+            arbiter.begin_activity(self.context.pier_name, "dome", "imaging")   # OBS-100
         try:
             problems = validate_blocks(blocks)
             if problems:
                 raise SessionBlockError("; ".join(problems))
+            await self._dome_session_sync(start=True)
             await self._run_nodes(tree)
             if self._stop.is_set():
                 raise _Stopped
@@ -407,12 +418,35 @@ class SessionExecutor:
             self._set_state(RunState.ERROR)
             self._record(f"Unexpected error: {exc}", error=True)
             self._emit(str(exc))
+        await self._dome_session_sync(start=False)
+        if arbiter is not None:
+            arbiter.end_activity(self.context.pier_name, "dome")
+        if self._history_started:
+            try:
+                self.context.history.end_session()
+            except Exception:
+                logger.exception("Could not save the session history")
         await self._notify_outcome()
         return SessionRunResult(
             state=self.state, frames_captured=self.frames_captured, log=list(self.log),
             errors=list(self.errors), started_utc=started,
             ended_utc=datetime.datetime.now(datetime.UTC).isoformat(),
         )
+
+    async def _dome_session_sync(self, start: bool) -> None:
+        """DOME-020: open the shutter at session start / close and park at its end, only when
+        the operator enabled "open/close with sessions" on the Dome page. A failure is logged
+        and never ends the run."""
+        service = self.context.dome_service
+        if service is None or not service.sequence_sync_enabled:
+            return
+        try:
+            if start:
+                await service.on_sequence_start()
+            else:
+                await service.on_sequence_end()
+        except Exception as exc:
+            self._record(f"Dome {'open' if start else 'close/park'} with the session failed: {exc}", error=True)
 
     async def _notify_outcome(self) -> None:
         """NOTIF-010: tell the Observatory's channels how the session ended."""
@@ -581,8 +615,36 @@ class SessionExecutor:
             self._record(f"Frame failed: {exc}", error=True)
             return False
         self.frames_captured += 1
+        if frame_type.lower().startswith("light"):
+            await self._record_history(svc)
         self._emit(f"Frame {self.frames_captured} of {self._frames_total}")
         return True
+
+    async def _record_history(self, svc: Any) -> None:
+        """HIST-010: log the frame just taken (HFR, stars, guide RMS) to the session history. A
+        failure here is logged and never costs the session a frame."""
+        history = self.context.history
+        frame = getattr(svc, "current_frame", None)
+        if history is None or frame is None:
+            return
+        try:
+            from galileo.autofocus import _measure_stars
+            from galileo.core.compute import run_cpu
+            hfr, stars = await run_cpu(_measure_stars, frame)
+            rms_ra = rms_dec = 0.0
+            if self.context.guider is not None:
+                try:
+                    rms = self.context.guider.get_rms()
+                    rms_ra, rms_dec = float(rms.get("ra") or 0.0), float(rms.get("dec") or 0.0)
+                except Exception:
+                    logger.debug("Guide RMS unavailable for the session history", exc_info=True)
+            if not self._history_started:
+                history.start_session(f"{self.name or 'Session'} — {datetime.datetime.now().astimezone():%Y-%m-%d %H:%M}")
+                self._history_started = True
+            history.record_frame(datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                                 hfr, stars, rms_ra, rms_dec)
+        except Exception:
+            logger.exception("Could not record the frame in the session history")
 
     # --- Block handlers -----------------------------------------------------
 
@@ -700,18 +762,34 @@ class SessionExecutor:
             await self._expose(svc, exposure, block.filter or self.current_filter or "", "Dark")
 
     async def _do_FlatCaptureBlock(self, block: Any) -> None:
+        from galileo.exceptions import FlatCalibrationError
         self._need("camera")
-        if block.method != "Sky Flats":
-            raise SessionBlockError(f"{block.method} flats are not implemented yet — only Sky Flats runs a real capture", fatal=False)
+        sky = block.method == "Sky Flats"
+        if not sky and block.method not in ("Flat Panel", "Observatory Panel"):
+            raise SessionBlockError(f"Unknown flat method {block.method!r}", fatal=False)
         if not self.context.max_well_depth:
-            raise SessionBlockError("Sky Flats needs the camera's Max Well Depth set on Equipment > Camera", fatal=False)
+            raise SessionBlockError(
+                f"{block.method} needs the camera's Max Well Depth set on Equipment > Camera", fatal=False)
+        if block.method == "Flat Panel" and self.context.flat_panel is None:
+            raise SessionBlockError("Flat Panel flats need a connected flat panel (Equipment > Flat Panel)", fatal=False)
         service = self._make("make_calibration", "Flat capture")
         filters = None if block.filter == "All" else [block.filter]
-        results = await self._run_tracked(service, service.run_sky_flats_all_filters(
-            filters, block.count, self.context.max_well_depth, location=self.context.location,
-            measure=block.adu_method, exposure_s=block.exposure or None,
-            exposure_increment_s=block.exposure_increment,
-        ))
+        if sky:
+            run = service.run_sky_flats_all_filters(
+                filters, block.count, self.context.max_well_depth, location=self.context.location,
+                measure=block.adu_method, exposure_s=block.exposure or None,
+                exposure_increment_s=block.exposure_increment,
+            )
+        else:   # CAL-090: panel / dome-screen flats converge exposure (and panel brightness) to the target ADU
+            run = service.run_panel_flats_all_filters(
+                block.method, filters, block.count, self.context.max_well_depth,
+                measure=block.adu_method, exposure_s=block.exposure or None,
+                exposure_increment_s=block.exposure_increment,
+            )
+        try:
+            results = await self._run_tracked(service, run)
+        except FlatCalibrationError as exc:   # CAL-050: target ADU unreachable
+            raise SessionBlockError(str(exc), fatal=False) from exc
         got = sum(r.frames_captured for r in results)
         self.frames_captured += got
         if self._stop.is_set():
@@ -737,6 +815,11 @@ class SessionExecutor:
             mount=mount, config=MeridianFlipConfig(post_flip_recenter=False, post_flip_restart_guiding=False))
         await service.execute_flip(target_ra=ra, target_dec=dec)
         await resume_tracking(mount, self.target[0] if self.target else None)
+        if self.context.dome_service is not None:  # DOME-020: shutter stays open; re-slave to the new azimuth
+            try:
+                await self.context.dome_service.on_meridian_flip()
+            except Exception as exc:
+                self._record(f"Could not re-slave the dome after the flip: {exc}", error=True)
         guider = self.context.guider
         if guider is not None:
             try:
@@ -744,14 +827,37 @@ class SessionExecutor:
             except Exception as exc:
                 self._record(f"Could not restart guiding after the flip: {exc}", error=True)
 
+    async def _arbitrate_dome(self, action: str) -> None:
+        """OBS-100/110/130: ask the Observatory's arbiter before disturbing a shared dome. A
+        denial skips the block (non-fatal); a safety close (unsafe conditions) overrides."""
+        arbiter = self.context.arbiter
+        if arbiter is None:
+            return
+        from galileo.observatory import PRIORITY_EMERGENCY, PRIORITY_NORMAL
+        unsafe = self.context.is_safe is not None and not self.context.is_safe()
+        decision = await arbiter.request(
+            self.context.pier_name, "dome", action,
+            PRIORITY_EMERGENCY if unsafe else PRIORITY_NORMAL)
+        if not decision.granted:
+            raise SessionBlockError(decision.reason, fatal=False)
+
     async def _do_DomeOpenBlock(self, block: Any) -> None:
-        await self._need("dome").open_shutter()
+        await self._arbitrate_dome("open")
+        # DOME-020: through the Pier's DomeService when the app built one.
+        dome = self._need("dome")
+        await (self.context.dome_service or dome).open_shutter()
 
     async def _do_DomeCloseBlock(self, block: Any) -> None:
-        await self._need("dome").close_shutter()
+        await self._arbitrate_dome("close")
+        dome = self._need("dome")
+        await (self.context.dome_service or dome).close_shutter()
 
     async def _do_DomeSyncBlock(self, block: Any) -> None:
         dome, mount = self._need("dome"), self._need("mount")
+        await self._arbitrate_dome("slew")
+        if self.context.dome_service is not None:  # DOME-010: the service reads the mount's azimuth
+            await self.context.dome_service.sync_to_mount(force=True)
+            return
         azimuth = (await mount.get_status() or {}).get("azimuth")
         if azimuth is None:
             raise SessionBlockError("the mount does not report its azimuth", fatal=False)

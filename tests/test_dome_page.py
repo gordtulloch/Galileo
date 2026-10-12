@@ -166,3 +166,50 @@ def test_tc_eqp_dome_010_observatory_status_reads_the_weather_page_without_a_sec
     window._device_pages["dome"]["reload"]()
     unsafe_labels = [w for w in page.findChildren(QtWidgets.QLabel) if w.text().startswith("Unsafe")]
     assert unsafe_labels
+
+
+class FakeMount:
+    def __init__(self, azimuth=90.0) -> None:
+        self.azimuth = azimuth
+
+    async def get_status(self) -> dict:
+        return {"azimuth": self.azimuth, "tracking": True, "slewing": False, "at_park": False}
+
+
+@pytest.mark.requirement("TC-DOME-010")
+@pytest.mark.priority("P2")
+def test_tc_dome_010_page_builds_domeservice_and_slaves_to_mount(window):
+    """DOME-010/030: connecting a dome creates the Pier's DomeService; ticking the Slave checkbox
+    follows the connected mount, and Sync to mount works with slaving off."""
+    dome = FakeDome()
+    dome.slewed = []
+
+    async def slew(az):
+        dome.slewed.append(az)
+    dome.slew_to_azimuth = slew
+    page = _connect(window, dome)
+    window._device_pages["mount"] = {"adapter": FakeMount(90.0)}
+    state = window._device_pages["dome"]
+    service = state["get_service"]()
+    assert service is not None and service.dome is dome and not service.slaving_enabled
+
+    _button(page, "Sync to mount").click()
+    assert dome.slewed == [90.0]
+
+    _find(page, QtWidgets.QCheckBox, "Slave dome to mount").setChecked(True)
+    assert service.slaving_enabled
+    window._device_pages["dome"]["get_service"]().last_slaved_azimuth = None
+    import asyncio
+    assert asyncio.run(service.track_mount()) is True
+    assert service.mount is window._device_pages["mount"]["adapter"]
+
+
+@pytest.mark.requirement("TC-DOME-020")
+@pytest.mark.priority("P2")
+def test_tc_dome_020_session_context_carries_dome_service(window):
+    """DOME-020: the session context exposes the Pier's DomeService so Dome blocks use it."""
+    dome = FakeDome()
+    _connect(window, dome)
+    from galileo.ui.session_runner import build_session_context
+    ctx = build_session_context(window)
+    assert ctx.dome is dome and ctx.dome_service is not None

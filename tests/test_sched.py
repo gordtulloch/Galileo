@@ -475,9 +475,9 @@ def test_tc_sched_150_run_now_positions_immediately_and_reports_conflicts(window
 
 @pytest.mark.requirement("TC-SCHED-160")
 @pytest.mark.priority("P3")
-def test_tc_sched_160_autoschedule_control_present_but_unimplemented(window, monkeypatch):
-    """SCHED-160: an Autoschedule control exists on the Schedule screen; automatic
-    placement logic is deferred (same scope boundary as SCHED-070)."""
+def test_tc_sched_160_autoschedule_control_reports_when_nothing_to_place(window, monkeypatch):
+    """SCHED-160: the Schedule screen's Autoschedule control runs the autoscheduler
+    and tells the user when there is nothing to place."""
     from PySide6.QtWidgets import QMessageBox
     page = _schedule_page(window)
     calls = []
@@ -486,3 +486,221 @@ def test_tc_sched_160_autoschedule_control_present_but_unimplemented(window, mon
     assert page._autoschedule_btn.text() == "Autoschedule"
     page._autoschedule_btn.click()
     assert len(calls) == 1
+    assert "no unscheduled" in calls[0][2].lower()
+
+
+class _FakeSky:
+    """Sun below -20 deg for the first 8 h of the window, then up; target 60 deg
+    except an optional low stretch; Moon far away."""
+
+    def __init__(self, dark_hours=8, low_after_hours=None, moon_sep=90.0, horizon=0.0):
+        self.dark_hours, self.low_after, self.moon, self.horizon = dark_hours, low_after_hours, moon_sep, horizon
+        self.t0 = None
+
+    def _h(self, times):
+        self.t0 = self.t0 or times[0]
+        return [(t - self.t0).total_seconds() / 3600 for t in times]
+
+    def sun_altitudes(self, times):
+        return [-30.0 if h < self.dark_hours else 10.0 for h in self._h(times)]
+
+    def target_altaz(self, ra, dec, times):
+        hs = self._h(times)
+        return [10.0 if self.low_after is not None and h >= self.low_after else 60.0 for h in hs], [180.0] * len(hs)
+
+    def moon_separations(self, ra, dec, times):
+        return [self.moon] * len(times)
+
+    def horizon_altitudes(self, azimuths):
+        return [self.horizon] * len(azimuths)
+
+
+def _night():
+    import datetime
+    start = datetime.datetime(2026, 1, 10, 18, 0, tzinfo=datetime.UTC)
+    return start, start + datetime.timedelta(hours=12)
+
+
+def _job(name, priority=5, minutes=60.0, pier="Pier-1"):
+    from galileo.scheduler import SchedulerJob
+    job = SchedulerJob(name=name, pier_name=pier, priority=priority, target_ra=10.0, target_dec=20.0)
+    job.duration_minutes = minutes
+    return job
+
+
+@pytest.mark.requirement("TC-SCHED-160")
+@pytest.mark.priority("P3")
+def test_tc_sched_160_autoschedule_places_by_priority_without_overlap(scheduler):
+    """SCHED-160: every unpositioned entry is placed in priority order, in dark
+    time, with no overlap on the same Pier; positioned jobs are left alone and a
+    dry run changes nothing until the plan is applied."""
+    import datetime
+    from galileo.autoschedule import apply_plan, plan_autoschedule
+    start, end = _night()
+    fixed = _job("Fixed")
+    fixed.scheduled_start_utc = start.isoformat()          # occupies the first hour
+    low, high, other_pier = _job("Low", priority=9), _job("High", priority=1), _job("Other", priority=5, pier="Pier-2")
+    for j in (fixed, low, high, other_pier):
+        scheduler.add_job(j)
+
+    plan = plan_autoschedule(scheduler, _FakeSky(), start, end)
+    assert low.scheduled_start_utc is None                  # dry run
+    by_name = {p.job.name: p for p in plan.placements}
+    assert by_name["High"].start == start + datetime.timedelta(hours=1)
+    assert by_name["Low"].start == start + datetime.timedelta(hours=2)
+    assert by_name["Other"].start == start                  # other Pier: no conflict with Fixed
+    assert apply_plan(scheduler, plan) == 3
+    for j in (low, high, fixed):
+        assert scheduler.overlapping_jobs(j) == []
+    assert fixed.scheduled_start_utc == start.isoformat()
+
+
+@pytest.mark.requirement("TC-SCHED-160")
+@pytest.mark.priority("P3")
+def test_tc_sched_160_autoschedule_honours_constraints(scheduler):
+    """SCHED-160: placement respects twilight, minimum altitude, horizon and Moon
+    separation, and reports why a job could not be placed."""
+    import datetime
+    from galileo.autoschedule import plan_autoschedule
+    start, end = _night()
+    long_job = _job("TooLong", minutes=600)                 # dark for only 8 h
+    scheduler.add_job(long_job)
+    plan = plan_autoschedule(scheduler, _FakeSky(), start, end)
+    assert plan.placements == [] and "free slot" in plan.unplaced[0][1]
+
+    scheduler.jobs.clear()
+    j = _job("LowAlt")
+    j.constraints.min_altitude_deg = 30
+    scheduler.add_job(j)
+    plan = plan_autoschedule(scheduler, _FakeSky(low_after_hours=3), start, end)
+    assert plan.placements[0].end <= start + datetime.timedelta(hours=3)
+
+    scheduler.jobs.clear()
+    j = _job("Horizon")
+    scheduler.add_job(j)
+    assert plan_autoschedule(scheduler, _FakeSky(horizon=70.0), start, end).placements == []
+    j.constraints.respect_horizon = False
+    assert len(plan_autoschedule(scheduler, _FakeSky(horizon=70.0), start, end).placements) == 1
+
+    scheduler.jobs.clear()
+    j = _job("Moon")
+    j.constraints.min_moon_separation_deg = 45
+    scheduler.add_job(j)
+    assert plan_autoschedule(scheduler, _FakeSky(moon_sep=10.0), start, end).placements == []
+    assert len(plan_autoschedule(scheduler, _FakeSky(moon_sep=60.0), start, end).placements) == 1
+
+
+@pytest.mark.requirement("TC-SCHED-160")
+@pytest.mark.priority("P3")
+def test_tc_sched_160_autoschedule_without_location_places_nothing(scheduler):
+    """SCHED-160: with no observatory location nothing is placed and the reason is given."""
+    from galileo.autoschedule import plan_autoschedule
+    start, end = _night()
+    scheduler.add_job(_job("A"))
+    plan = plan_autoschedule(scheduler, None, start, end)
+    assert plan.placements == [] and "location" in plan.unplaced[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Schedule screen: job editing and trajectory chart (SCHED-020/030/040/050/080)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SCHED-020")
+@pytest.mark.priority("MVP")
+def test_tc_sched_020_schedule_screen_edit_job_dialog(window, sample_job):
+    """SCHED-020/030/040/050: the Schedule screen's right-click "Edit…" opens a
+    dialog that modifies a job's priority, constraints, startup/completion
+    conditions and frames required."""
+    from galileo.scheduler import JobConstraints, RepeatNTimes, StartAtCulmination
+    from galileo.ui.schedule import _EditJobDialog
+    _sessions_page(window)
+
+    dialog = _EditJobDialog(sample_job)
+    dialog.priority_spin.setValue(3)
+    dialog.min_alt_spin.setValue(35.0)
+    dialog.min_moon_spin.setValue(20.0)
+    dialog.twilight_combo.setCurrentText("astronomical")
+    dialog.horizon_combo.setCurrentIndex(1)
+    dialog.startup_combo.setCurrentIndex(1)
+    dialog.completion_combo.setCurrentIndex(1)
+    dialog.repeat_spin.setValue(4)
+    dialog.total_spin.setValue(120)
+    dialog.apply()
+
+    assert sample_job.priority == 3
+    assert sample_job.constraints == JobConstraints(
+        min_altitude_deg=35.0, min_moon_separation_deg=20.0,
+        twilight_restriction="astronomical", respect_horizon=False)
+    assert isinstance(sample_job.startup_condition, StartAtCulmination)
+    assert sample_job.completion_condition == RepeatNTimes(n=4)
+    assert sample_job.total_required == 120
+
+
+@pytest.mark.requirement("TC-SCHED-080")
+@pytest.mark.priority("MVP")
+def test_tc_sched_080_schedule_screen_trajectory_dialog(window, sample_job):
+    """SCHED-080: the Schedule screen's "Show Trajectory…" charts the job
+    target's altitude over time with the shared _AltitudeChart."""
+    from galileo.ui.app_window._widgets import _AltitudeChart
+    from galileo.ui.schedule import _TrajectoryDialog
+    page = _sessions_page(window) and _schedule_page(window)
+    scheduler = page._scheduler()
+    scheduler.set_location(page.current_location())
+
+    data = scheduler.get_job_trajectory_chart(sample_job)
+    assert data["altitudes"]
+    dialog = _TrajectoryDialog(sample_job, data)
+    assert isinstance(dialog.chart, _AltitudeChart)
+    assert "M42" in dialog.windowTitle()
+
+
+# ---------------------------------------------------------------------------
+# SCHED-060 / SAFE-010 — weather-gated scheduling in the running app
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SCHED-060")
+@pytest.mark.priority("MVP")
+async def test_tc_sched_060_live_monitor_blocks_with_reason(scheduler, sample_job):
+    """SCHED-060: an unsafe verdict from the live safety monitor blocks job start, with the
+    reason; no connected safety device blocks nothing; it follows devices connecting."""
+    from galileo.safety import LiveSafetyMonitor
+    status = {"value": (False, True, [])}            # no safety device connected
+    scheduler.set_safety_monitor(LiveSafetyMonitor(lambda: status["value"]))
+    assert scheduler.safety_block_reason() == ""
+    assert await scheduler.can_start_job(sample_job) is True
+
+    status["value"] = (True, False, ["Wind Speed >= 20 km/h"])
+    assert "Wind Speed" in scheduler.safety_block_reason()
+    assert await scheduler.can_start_job(sample_job) is False
+
+    async def runner(job):                            # must not be called while unsafe
+        raise AssertionError("ran while unsafe")
+    assert await scheduler.run_job(sample_job, runner) == "pending"
+    assert "Wind Speed" in sample_job.run_log[-1]
+
+    status["value"] = (True, True, [])
+    assert scheduler.safety_block_reason() == ""
+
+
+@pytest.mark.requirement("TC-SCHED-060")
+@pytest.mark.priority("MVP")
+def test_tc_sched_060_live_monitor_failure_is_unsafe():
+    """SCHED-060/SAFE-010: a failing safety evaluation is treated as unsafe."""
+    from galileo.safety import LiveSafetyMonitor
+
+    def boom():
+        raise RuntimeError("x")
+    assert LiveSafetyMonitor(boom).is_safe is False
+
+
+@pytest.mark.requirement("TC-SCHED-060")
+@pytest.mark.priority("MVP")
+def test_tc_sched_060_app_window_wires_monitor(window):
+    """SCHED-060: AppWindow gives each Pier's scheduler a safety monitor reading the Safety page."""
+    scheduler = window._scheduler_for_pier("WiredPier")
+    assert scheduler._safety_monitor is not None
+    window._device_pages["weather"] = {"evaluate": lambda: (True, False, ["Rain is YES"])}
+    assert scheduler.safety_block_reason() == "Rain is YES"
+    window._device_pages["weather"] = {"evaluate": lambda: (True, True, [])}
+    assert scheduler.safety_block_reason() == ""
+    window._schedulers.pop("WiredPier", None)

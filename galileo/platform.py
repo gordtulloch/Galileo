@@ -81,6 +81,13 @@ def get_reports_dir() -> Path:
     return d
 
 
+def get_crash_reports_dir() -> Path:
+    """Return the directory crash reports are written to (``reports/crash``), creating it if needed."""
+    d = get_reports_dir() / "crash"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def get_plugins_dir() -> Path:
     """Return the directory where installed plugin packages live, creating it if needed."""
     d = get_data_dir() / "plugins"

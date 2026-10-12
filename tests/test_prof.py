@@ -75,7 +75,7 @@ def test_tc_prof_030_multiple_profiles_crud(minimal_profile, tmp_path):
 
 @pytest.mark.requirement("TC-PROF-040")
 @pytest.mark.priority("MVP")
-def test_tc_prof_040_persist_last_used_profile(minimal_profile, tmp_path):
+def test_tc_prof_040_persist_last_used_profile(minimal_profile, tmp_path, settings_db):
     """PROF-040: Persist the last-used profile and offer to reload it on application start."""
     profiles = pytest.importorskip("galileo.equipment.profiles")
     mgr = profiles.ProfileManager(storage_dir=tmp_path)

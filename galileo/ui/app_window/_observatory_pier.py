@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _new_form_layout, _NEW_OBSERVATORY_LABEL, _NEW_PIER_LABEL
-from ._threads import _MountPositionThread, _ResumeTrackingThread
+from ._threads import _GeocodeThread, _MountPositionThread, _ResumeTrackingThread
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ class AppWindowObservatoryPierMixin:
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QLineEdit, QDoubleSpinBox, QDialogButtonBox, QComboBox,
+            QHBoxLayout, QLabel, QPushButton,
         )
 
         dialog = QDialog(self._window)
@@ -136,7 +137,52 @@ class AppWindowObservatoryPierMixin:
         form.addRow("Timezone", tz_edit)
 
         address_edit = QLineEdit()
-        form.addRow("Physical Address", address_edit)
+        address_edit.setPlaceholderText("Town, region, country - then Look Up")
+        lookup_btn = QPushButton("Look Up")
+        lookup_btn.setToolTip(
+            "Find the latitude, longitude, elevation and timezone of this address (or, if it is empty, "
+            "the Observatory's name) through Open-Meteo's geocoding service. Needs an internet connection.")
+        lookup_btn.setProperty("helpKey", "look up")
+        address_row = QHBoxLayout()
+        address_row.addWidget(address_edit, 1)
+        address_row.addWidget(lookup_btn)
+        form.addRow("Physical Address", address_row)
+        lookup_status = QLabel("")
+        lookup_status.setObjectName("StatusHint")
+        lookup_status.setWordWrap(True)
+        form.addRow("", lookup_status)
+
+        def apply_lookup(found: dict) -> None:
+            lookup_btn.setEnabled(True)
+            if not found:
+                lookup_status.setText("Nothing found for that place (or no internet connection). "
+                                      "Try just the town and region, or enter the coordinates by hand.")
+                return
+            lat_edit.setValue(found["latitude"])
+            long_edit.setValue(found["longitude"])
+            if found.get("elevation") is not None:
+                elevation_edit.setValue(found["elevation"])
+            zone = found.get("timezone") or ""
+            code = country_of_zone(zone)
+            if code in country_names:
+                country_combo.setCurrentIndex(country_combo.findData(code))
+                _fill_zones()
+            tz_edit.setCurrentText(zone)
+            lookup_status.setText(f"Found {found.get('name') or 'the place'}: {found['latitude']:.4f}, "
+                                  f"{found['longitude']:.4f}, {zone}. Check it, then press OK.")
+
+        def look_up() -> None:
+            query = address_edit.text().strip() or name_edit.text().strip()
+            if not query:
+                lookup_status.setText("Enter an address (or the Observatory's name) to look up.")
+                return
+            lookup_btn.setEnabled(False)
+            lookup_status.setText("Looking up...")
+            thread = _GeocodeThread(query, dialog)
+            thread.found.connect(apply_lookup)
+            thread.start()
+
+        lookup_btn.clicked.connect(look_up)
 
         owner_edit = QLineEdit()
         form.addRow("Owner", owner_edit)
@@ -175,7 +221,10 @@ class AppWindowObservatoryPierMixin:
             email_edit.setText(record.email_address or "")
             cell_edit.setText(record.cell_number or "")
 
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        for lookup_thread in dialog.findChildren(_GeocodeThread):
+            lookup_thread.wait(12000)       # never destroy the dialog under a running lookup
+        if not accepted:
             return None
         name = name_edit.text().strip()
         if not name:
@@ -211,6 +260,11 @@ class AppWindowObservatoryPierMixin:
                 combo.insertItem(combo.count() - 1, observatory.name)
                 combo.setCurrentIndex(combo.count() - 2)
                 self._select_observatory(observatory)
+                # A new Observatory has no Piers yet, so nothing else would hand its site to the Star Atlas.
+                refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
+                if refresh_star_atlas_site is not None:
+                    refresh_star_atlas_site()
+                self._apply_horizon()
             else:
                 combo.setCurrentIndex(self._index_of_current_observatory(combo))
         else:
@@ -605,6 +659,8 @@ class AppWindowObservatoryPierMixin:
             return []
 
         objects = get_current_objects()
+        current_id = getattr(self._current_pier, "id", None)
+        fov = self._current_pier_fov()
         markers = []
         for pier in piers:
             target = objects.get(pier)
@@ -619,7 +675,31 @@ class AppWindowObservatoryPierMixin:
                                 "target": target_point})
             elif target_point is not None:
                 markers.append({**target_point, "label": f"{pier.name} → {target.name}", "slewing": False})
+            else:
+                continue
+            if fov is not None and pier.id == current_id:
+                markers[-1]["fov"] = fov     # only the current Pier's train is known (SKYMAP-050)
         return markers
+
+    def _current_pier_fov(self: AppWindowState) -> dict | None:
+        """The current Pier's field of view, from the Imaging tab's active optical tube and camera
+        (the same ``FramingAssistant`` geometry the Framing dialog uses, FRAME-010), or ``None`` while
+        either is not configured enough to know it."""
+        from galileo.planning.framing import FramingAssistant
+
+        try:
+            tube = self.active_optical_tube()
+            if tube is None or not getattr(tube, "focal_length_mm", None):
+                return None
+            profile = self._imaging_optical_profile()
+            camera = profile["piers"][0]["optical_trains"][0]["camera"]
+            if not all(camera.get(key) for key in ("sensor_width_px", "sensor_height_px", "pixel_size_um")):
+                return None
+            fov = FramingAssistant.from_profile(profile).compute_fov()
+        except Exception:
+            logger.exception("Could not work out the field of view for the Star Atlas")
+            return None
+        return {"width_deg": fov.width_deg, "height_deg": fov.height_deg, "rotation_deg": 0.0}
 
     def _poll_pier_pointing(self: AppWindowState, on_done=None) -> None:
         """Read the connected mount's position off the Qt UI thread and remember it for the Star

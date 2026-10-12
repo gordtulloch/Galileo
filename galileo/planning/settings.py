@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Remembered Planning options (Options > Planning), kept in ``planning.json`` in the config folder."""
+"""Remembered Planning options (Options > Planning), kept in the shared database (``app_settings``, namespace ``planning``)."""
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -17,33 +16,21 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
-def _path():
-    from galileo.platform import get_config_dir
-    return get_config_dir() / "planning.json"
+NAMESPACE = "planning"
+LEGACY_FILE = "planning.json"   # one-time import, then renamed *.migrated
 
 
 def load_planning_settings() -> dict[str, Any]:
     """The saved options, with a default for anything missing or unreadable."""
+    from galileo.settings_store import load_with_legacy
     settings = dict(DEFAULTS)
-    try:
-        raw = json.loads(_path().read_text("utf-8"))
-    except FileNotFoundError:
-        return settings
-    except Exception:
-        logger.exception("Could not read the saved Planning options")
-        return settings
-    if isinstance(raw, dict):
-        for key, default in DEFAULTS.items():
-            if isinstance(raw.get(key), type(default)):
-                settings[key] = raw[key]
+    raw = load_with_legacy(NAMESPACE, LEGACY_FILE)
+    for key, default in DEFAULTS.items():
+        if isinstance(raw.get(key), type(default)):
+            settings[key] = raw[key]
     return settings
 
 
 def save_planning_settings(settings: dict[str, Any]) -> None:
-    data = {key: settings.get(key, default) for key, default in DEFAULTS.items()}
-    try:
-        path = _path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except Exception:
-        logger.exception("Could not save the Planning options")
+    from galileo.settings_store import set_namespace
+    set_namespace(NAMESPACE, {key: settings.get(key, default) for key, default in DEFAULTS.items()})

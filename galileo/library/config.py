@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Library settings — the ``library.ini`` file edited under Options > Library.
+"""Library settings — edited under Options > Library, stored in the shared database.
 
 AstroFiler read a ``astrofiler.ini`` from whatever directory it was launched in.
-Galileo keeps one per-user file in the platform config directory instead
-(``galileo.platform``), so the GUI and the command-line utilities always agree
-on where the repository lives. Values sit in the ``[DEFAULT]`` section, as they
-did in AstroFiler, so ``config.get("DEFAULT", "repo")`` keeps working.
+Galileo keeps the settings in the shared database instead (``app_settings``, namespace
+``library``; see ``galileo.settings_store``), so the GUI and the command-line utilities always
+agree on where the repository lives. They are still presented as a ``ConfigParser`` with the
+values in the ``[DEFAULT]`` section, as in AstroFiler, so ``config.get("DEFAULT", "repo")`` keeps
+working. Passwords are never stored here -- they go to the OS keychain. An old ``library.ini`` in
+the config folder is imported once and renamed ``library.ini.migrated``; a ``--config`` file
+named on the command line is a user-chosen file and is read and written as an ``.ini``.
 
 Recognised keys (all optional): ``source`` (incoming folder), ``repo``
 (repository folder), ``temp_folder``, ``refresh_on_startup``, ``min_files_per_master``,
@@ -28,7 +31,8 @@ from galileo.platform import get_config_dir
 
 logger = logging.getLogger(__name__)
 
-CONFIG_FILENAME = "library.ini"
+CONFIG_FILENAME = "library.ini"   # legacy file (imported once) / default name for --config files
+LIBRARY_NAMESPACE = "library"
 
 # Set by command-line utilities' ``--config`` option; ``None`` means the default file.
 _config_path_override: Path | None = None
@@ -41,21 +45,87 @@ def set_config_path(path: Path | str | None) -> None:
 
 
 def get_config_path() -> Path:
-    """The settings file in use: the ``--config`` override, else ``library.ini``."""
+    """The settings file in use: the ``--config`` override, else the legacy ``library.ini`` location.
+
+    Without an override the settings live in the database (``app_settings``, namespace
+    ``library``); the legacy path is then only where an old ``library.ini`` is imported from."""
     return _config_path_override or (get_config_dir() / CONFIG_FILENAME)
 
 
+def has_config_override() -> bool:
+    """Whether a ``--config`` file has been selected (so settings come from that file, not the database)."""
+    return _config_path_override is not None
+
+
+def _use_database(path: Path | str | None) -> bool:
+    """Database mode unless a file was named: ``--config`` files are user-chosen interchange files."""
+    return path is None and _config_path_override is None
+
+
+def _is_secret(key: str) -> bool:
+    """Passwords never go into the database (or ``library.ini``) -- they belong in the OS keychain."""
+    return "password" in key.lower()
+
+
+def _import_legacy_ini() -> None:
+    """One-time upgrade: copy the non-secret ``[DEFAULT]`` values of an old ``library.ini`` into the
+    database (a plaintext iTelescope/SFTP password goes to the keychain), then rename it ``*.migrated``."""
+    from galileo import settings_store
+    legacy = get_config_dir() / CONFIG_FILENAME
+    if not legacy.exists() or not settings_store.available():
+        return
+    try:
+        parser = configparser.ConfigParser()
+        parser.read(legacy, encoding="utf-8")
+        values = {k: v for k, v in parser.defaults().items() if not _is_secret(k)}
+        if not settings_store.get_namespace(LIBRARY_NAMESPACE) and values:
+            if not settings_store.set_namespace(LIBRARY_NAMESPACE, values):
+                return
+        legacy_password = parser.defaults().get("itelescope_password", "").strip()
+        if legacy_password:
+            set_itelescope_password(legacy_password)
+        settings_store.mark_migrated(legacy)
+    except Exception:
+        logger.exception("Could not import the legacy library.ini")
+
+
+def config_exists() -> bool:
+    """Whether any library settings have been saved (the named file exists, or the database has some)."""
+    if not _use_database(None):
+        return get_config_path().exists()
+    from galileo import settings_store
+    _import_legacy_ini()
+    return bool(settings_store.get_namespace(LIBRARY_NAMESPACE))
+
+
 def load_config(path: Path | str | None = None) -> configparser.ConfigParser:
-    """Return the library settings, empty if the file doesn't exist yet."""
+    """Return the library settings, empty if none are saved yet.
+
+    Normally these come from the database; a *path* (or the ``--config`` override) reads that
+    user-chosen ``.ini`` file instead."""
     config = configparser.ConfigParser()
+    if _use_database(path):
+        from galileo import settings_store
+        _import_legacy_ini()
+        for key, value in settings_store.get_namespace(LIBRARY_NAMESPACE).items():
+            config.set("DEFAULT", key, str(value).replace("%", "%%"))
+        return config
     target = Path(path) if path else get_config_path()
     if target.exists():
         config.read(target, encoding="utf-8")
     return config
 
 
-def save_config(config: configparser.ConfigParser, path: Path | str | None = None) -> Path:
-    """Write *config* to disk, creating the directory if needed. Returns the path written."""
+def save_config(config: configparser.ConfigParser, path: Path | str | None = None) -> Path | None:
+    """Save *config*'s ``[DEFAULT]`` values (never passwords) to the database.
+
+    With a *path* (or the ``--config`` override) it writes that user-chosen ``.ini`` file instead
+    and returns its path; the database case returns ``None``."""
+    if _use_database(path):
+        from galileo import settings_store
+        values = {k: v for k, v in config.defaults().items() if not _is_secret(k)}
+        settings_store.set_namespace(LIBRARY_NAMESPACE, values, replace=True)
+        return None
     target = Path(path) if path else get_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:

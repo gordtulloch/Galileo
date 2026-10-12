@@ -479,13 +479,57 @@ def _bootstrap_sky_atlas_catalog(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_star_atlas_prefs(tmp_path, monkeypatch):
-    """Give each test its own Star Atlas display-options file: windows read it
-    on build and every checkbox click writes it, so sharing the real per-user
-    file (or one file across tests) would leak state in and out."""
-    import galileo.ui.star_atlas as star_atlas_ui_mod
+def _isolate_config_dir(tmp_path_factory, monkeypatch):
+    """Point the per-user config (and data) folder at a throwaway one for every test.
 
-    monkeypatch.setattr(star_atlas_ui_mod, "_prefs_path", lambda: tmp_path / "star_atlas_prefs.json")
+    Configuration lives in the shared database, but the one-time legacy import looks for old
+    ``*.json`` / ``library.ini`` files in the config folder (and renames them), so a test must
+    never see -- or consume -- the developer's real ones. Tests that need their own folder
+    re-patch ``get_config_dir`` themselves."""
+    import galileo.library.config as library_config_mod
+    import galileo.platform as platform_mod
+
+    config_dir = tmp_path_factory.mktemp("config")      # not under tmp_path: tests list that folder
+    monkeypatch.setattr(platform_mod, "get_config_dir", lambda: config_dir)
+    monkeypatch.setattr(library_config_mod, "get_config_dir", lambda: config_dir)
+
+
+@pytest.fixture(autouse=True)
+def _forget_database_between_tests():
+    """Leave the ORM pointing at no database after every test.
+
+    A test that initialised its own throwaway database used to leave ``db`` pointing at it, so a
+    later test that never initialised one would silently read (and write) the earlier test's
+    saved settings. With none set, settings reads return defaults and writes are dropped."""
+    yield
+    from galileo.library.models.base import db
+    try:
+        if not db.is_closed():
+            db.close()
+        db.init(None)
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def config_folder():
+    """The throwaway per-user config folder the autouse isolation fixture set up (for legacy files)."""
+    import galileo.platform as platform_mod
+    return platform_mod.get_config_dir()
+
+
+@pytest.fixture
+def settings_db(tmp_path):
+    """A throwaway, fully migrated database for tests of the settings store (``app_settings``).
+
+    Without one, settings reads return defaults and writes are dropped (no database set)."""
+    from galileo.library.database import db, init_db
+
+    init_db(tmp_path / "settings.db")
+    yield db
+    if not db.is_closed():
+        db.close()
+    db.init(None)
 
 
 @pytest.fixture(scope="session", autouse=True)

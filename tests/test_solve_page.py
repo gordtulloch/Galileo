@@ -232,7 +232,7 @@ def test_tc_plt_070_screen_has_the_reference_elements(page):
         assert label in buttons
     assert "Manual" not in buttons and "Mount Model" not in buttons        # not offered
     assert buttons.count("Clear") == 1                                     # the results' Clear only; the log has none
-    assert _texts(page, QW.QRadioButton) == ["Sync", "Slew to Target", "Nothing", "ASTAP"]    # ASTAP is the only solver
+    assert _texts(page, QW.QRadioButton) == ["Sync", "Slew to Target", "Nothing", "ASTAP", "Astrometry.net", "Nova (web)"]
     tabs = page.findChild(QW.QTabWidget)
     assert [tabs.tabText(i) for i in range(tabs.count())] == ["Solution Results", "Polar Alignment"]
     assert [page.table.horizontalHeaderItem(i).text() for i in range(page.table.columnCount())] == \
@@ -698,3 +698,62 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     page.stop()
     assert _pump(window, lambda: page.polar_start_btn.isEnabled())
     assert not page.stop_btn.isEnabled()
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_backend_choice_is_saved_per_pier_and_preselects_solver_mode(window, page, monkeypatch):
+    """PLT-060: Options > Solve saves the solver backend, solve-field path and nova API key per Pier;
+    the Solve screen's Solver Mode starts on the saved backend and the solver is built from it."""
+    from PySide6.QtWidgets import QComboBox, QLineEdit, QPushButton
+
+    from galileo.observatory import get_solver_backend
+
+    window._on_pier_changed()
+    options = window._options_page
+    backend_combo = next(w for w in options.findChildren(QComboBox) if w.toolTip().startswith("Which solver"))
+    page_w = backend_combo.parentWidget()
+    path_edit = next(w for w in page_w.findChildren(QLineEdit) if w.toolTip().startswith("Path to astrometry.net"))
+    key_edit = next(w for w in page_w.findChildren(QLineEdit) if w.toolTip().startswith("Your nova"))
+    save_btn = next(b for b in page_w.findChildren(QPushButton) if b.text() == "Save")
+    backend_combo.setCurrentIndex(backend_combo.findData("astrometry_web"))
+    path_edit.setText("/usr/bin/solve-field")
+    key_edit.setText("SECRET")
+    save_btn.click()
+    assert get_solver_backend(window.pier) == ("astrometry_web", "/usr/bin/solve-field", "SECRET")
+    assert page.nova_radio.isChecked()
+    solver = page._default_solver()
+    assert solver.backend == "astrometry_web" and solver.api_key == "SECRET"
+
+    page.astrometry_radio.setChecked(True)             # a one-off override on the Solve screen
+    monkeypatch.setattr(PlateSolver, "_find_executable", staticmethod(lambda backend: ""))
+    solver = page._default_solver()
+    assert solver.backend == "astrometry_local" and solver.executable == "/usr/bin/solve-field"
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("P2")
+def test_tc_plt_070_capture_options_reach_the_camera_and_filter_wheel(window, page):
+    """PLT-070: Bin, Gain/ISO, Filter and Dark in Plate Solve Capture Options are applied to the
+    solve exposure: binning and gain reach the camera, the wheel moves, and a dark is subtracted."""
+    from galileo.platesolve import SolveAction
+
+    _open(window)
+    devices = _Devices(window, page, _Devices.near_mount())
+    wheel = MagicMock()
+    wheel.get_filter_names = MagicMock(return_value=["L", "R", "Ha"])
+    wheel.move_to_filter = AsyncMock()
+    window._device_pages["filter_wheel"] = {"adapter": wheel}
+    page.refresh_filters()
+    assert [page.filter_combo.itemText(i) for i in range(page.filter_combo.count())] == ["Current", "L", "R", "Ha"]
+    page.action_radios[SolveAction.NOTHING].setChecked(True)
+    page.bin_combo.setCurrentIndex(1)
+    page.gain_spin.setValue(120)
+    page.filter_combo.setCurrentText("Ha")
+    page.dark_check.setChecked(True)
+    page.capture_btn.click()
+    assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
+    wheel.move_to_filter.assert_awaited_once_with("Ha")
+    exposures = devices.camera.start_exposure.await_args_list
+    assert [c.kwargs["frame_type"] for c in exposures] == ["Light", "Dark"]
+    assert all(c.kwargs["binning"] == 2 and c.kwargs["gain"] == 120 for c in exposures)

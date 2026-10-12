@@ -95,10 +95,10 @@ def test_tc_ui_011_red_theme_has_no_green_or_blue_channel():
 
 @pytest.mark.requirement("TC-UI-020")
 @pytest.mark.priority("P2")
-def test_tc_ui_020_imaging_tab_panel_layout_persisted(tmp_path):
+def test_tc_ui_020_imaging_tab_panel_layout_persisted(settings_db):
     """UI-020: Allow imaging-tab panel arrangement to be customized and persisted across restarts."""
     theme_mod = pytest.importorskip("galileo.ui.theme")
-    layout_mgr = theme_mod.LayoutManager(config_path=tmp_path / "layout.json")
+    layout_mgr = theme_mod.LayoutManager()
 
     layout = {
         "histogram": {"position": "bottom-left", "visible": True},
@@ -107,10 +107,46 @@ def test_tc_ui_020_imaging_tab_panel_layout_persisted(tmp_path):
     }
     layout_mgr.save_layout("imaging", layout)
 
-    layout_mgr2 = theme_mod.LayoutManager(config_path=tmp_path / "layout.json")
+    layout_mgr2 = theme_mod.LayoutManager()
     loaded = layout_mgr2.load_layout("imaging")
     assert loaded["histogram"]["position"] == "bottom-left"
     assert loaded["preview"]["position"] == "center"
+
+
+@pytest.mark.requirement("TC-UI-020")
+@pytest.mark.priority("P2")
+def test_tc_ui_020_layout_model_show_hide_reorder_reset(settings_db):
+    """UI-020: the imaging-tab layout model hides, reorders and resets panels, and a saved
+    layout is restored by a fresh store (as at start-up)."""
+    from galileo.ui.imaging_layout import DEFAULT_ORDER, ImagingLayout, ImagingLayoutStore
+
+    layout = ImagingLayout()
+    assert layout.is_default()
+    layout.set_visible("log", False)
+    assert layout.move("log", -10) and layout.order[0] == "log"
+    assert not layout.move("log", -1)
+    store = ImagingLayoutStore()
+    store.save(layout)
+
+    restored = ImagingLayoutStore().load()
+    assert restored.order == layout.order and not restored.is_visible("log")
+    restored.reset()
+    assert restored.order == list(DEFAULT_ORDER) and restored.is_default()
+
+
+@pytest.mark.requirement("TC-UI-020")
+@pytest.mark.priority("P2")
+def test_tc_ui_020_layout_ignores_corrupt_saved_data(tmp_path):
+    """UI-020: unknown/duplicate/malformed saved entries are dropped and new panels appended."""
+    from galileo.ui.imaging_layout import DEFAULT_ORDER, ImagingLayout, ImagingLayoutStore
+
+    layout = ImagingLayout.from_dict({"order": ["log", "log", "bogus", 3, "histogram"], "hidden": ["x", "view"]})
+    assert layout.order[:2] == ["log", "histogram"]
+    assert sorted(layout.order) == sorted(DEFAULT_ORDER)
+    assert layout.hidden == {"view"}
+    assert ImagingLayout.from_dict("junk").is_default()
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert ImagingLayoutStore(tmp_path / "bad.json").load().is_default()
 
 
 # ---------------------------------------------------------------------------

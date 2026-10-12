@@ -113,6 +113,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | ARCH-060 | The system shall isolate a single misbehaving device connection so that it does not block or degrade control of other connected devices. | MVP |
 | ARCH-070 | The device-abstraction layer shall be the sole integration point plugins use to register new device backends (traces to `PLUG-010`). | P2 |
 | ARCH-080 | The device-abstraction layer shall support multiple concurrent, independently-addressable device pools (one per Pier), rather than assuming a single global set of connected devices, so that multi-Pier observatory support (`OBS`) does not require retrofitting the device layer. | MVP |
+| ARCH-090 | The system shall store all application and user configuration (Options pages, per-screen preferences, panel layouts, equipment profiles, library settings) in the shared Peewee database through one common settings store, not in per-module JSON/ini files; an older settings file found in the config folder shall be imported once and renamed `*.migrated`, and settings access shall fall back to defaults rather than fail when the database is unavailable. Secrets remain in the OS keychain (`NFR-SEC-030`). | MVP |
 
 ### 4.2 `EQP` — Equipment Control
 
@@ -195,6 +196,10 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | OBS-070 | The scheduler (`SCHED`) shall support assigning jobs to any Pier within an Observatory and shall coordinate Observatory-scoped shared-resource constraints (e.g. a shared dome/roof state) across the Piers that depend on them. | P2 |
 | OBS-080 | The system shall connect to and concurrently operate the device sets of multiple Piers within a single running application instance (traces to `ARCH-080`). | P2 |
 | OBS-090 | The system shall allow an Observatory record to carry the operator's own contact details — email address, phone/SMS number, and which channel(s) `NOTIF` should use (email, text, or both) — since being notified is scoped to the person running the Observatory, not to an individual Pier within it (traces to `NOTIF-020`, `NOTIF-040`). | P2 |
+| OBS-100 | The system shall arbitrate Observatory-scoped shared resources (the dome/roof) between Piers: each Pier registers the work it is doing against the resource (e.g. imaging), and a request by another Pier for a disruptive action on it (closing the roof, slewing the dome) shall be denied while that work is active. Non-disruptive actions (opening the roof) and Pier-scoped resources (`OBS-050`) are never denied. | P2 |
+| OBS-110 | A requester may queue for a contended shared resource for a bounded wait; the request is granted when the blocking Pier releases its work, or denied when the wait expires. A denied session block is skipped and logged, not fatal. | P2 |
+| OBS-120 | Every arbitration outcome (granted, denied with the blocking Pier(s), released) shall be published on the event bus rather than by direct calls between Piers (traces to `ARCH-060`). | P2 |
+| OBS-130 | Priority rules: a safety-driven action (unsafe conditions, `OBS-040`) carries emergency priority and overrides other Piers' imaging; all other requests have equal priority. | P2 |
 
 ### 4.4 `IMG` — Imaging Tab
 
@@ -366,7 +371,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 | SCHED-130 | The system shall let the user scroll the Schedule timeline backward up to 7 days, to review previously executed entries, and forward without limit to view upcoming ones. | MVP |
 | SCHED-140 | The system shall render a completed timeline entry with a green border and an entry that encountered an execution error with a red border, and shall provide a Log control on each entry that opens its execution log. | MVP |
 | SCHED-150 | The system shall provide a Run control on each session region in the Sessions screen (`SES-110`) that immediately schedules that session onto the Schedule timeline and reports any time-overlap conflicts with that Pier's existing timeline entries for the user to resolve. | MVP |
-| SCHED-160 | The system shall provide an Autoschedule control on the Schedule screen that automatically places every unpositioned timeline entry. | P3 |
+| SCHED-160 | The system shall provide an Autoschedule control on the Schedule screen that automatically places every unpositioned timeline entry, in priority order, in the earliest free slot of the displayed night where its altitude, horizon, Moon-separation and twilight constraints hold and which overlaps no other entry on the same Pier, after showing the user a preview to confirm; entries already positioned are not moved, and continuous replanning/preemption remains `SCHED-070`. | P3 |
 
 ### 4.9 `CAL` — Calibration / Flat Wizard
 
@@ -380,6 +385,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 | CAL-060 | The system shall present the flat-wizard workflow within the Imaging tab (`IMG`) rather than as a separate top-level navigation section. | MVP |
 | CAL-070 | The system shall provide a Sky Flats capture mode that: refuses to run outside the local dawn/dusk twilight window; slews the mount to a star-poor vantage point and disables tracking before capturing; adaptively converges each frame's exposure toward a configured fraction of the camera's configured maximum well depth, re-measuring and re-adjusting after every frame; and submits each captured frame to the Library. | MVP |
 | CAL-080 | The system shall present a Darks Assistant within the Imaging tab (in the zoom toolbar in landscape layout, in the Tools panel in portrait layout) that: accepts a comma-separated list of exposure lengths (default "10,20,30,60" s); accepts an optional filter selection; captures one dark frame at each listed exposure length in order; submits each captured frame to the Library; and prevents the dialog from being closed while a run is in progress. | MVP |
+| CAL-090 | The system shall provide panel flats for the Session Flat Capture block: a Flat Panel method that opens the cover, lights the connected flat panel and sets its brightness through the flat-panel port, and an Observatory Panel method for a fixed light source; both adaptively converge each frame's exposure (and, for a Flat Panel, the panel brightness) toward a fraction of the camera's configured maximum well depth (which is required — the block fails if it is not set), and fail the block when the target ADU cannot be reached. | MVP |
 
 ### 4.10 `FOC` — Autofocus
 
@@ -404,7 +410,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 | PLT-030 | The system shall support a solve-and-sync workflow that syncs the mount's reported position to the solved coordinates. | MVP |
 | PLT-040 | The system shall support a solve-and-center workflow that iteratively slews and re-solves until the target is within a configured tolerance of the frame center. | MVP |
 | PLT-050 | The system shall report plate-solve failure distinctly from success and allow the invoking workflow (manual or sequencer) to react accordingly. | MVP |
-| PLT-060 | The system shall allow configuration of solver search parameters (field-of-view hint, search radius, downsample) per equipment profile. | P2 |
+| PLT-060 | The system shall allow configuration of solver search parameters (field-of-view hint, search radius, downsample) per equipment profile, and shall allow choosing among the supported solvers (ASTAP, local astrometry.net, nova.astrometry.net) and setting the solve exposure's binning, gain, filter and dark subtraction. | P2 |
 | PLT-070 | The system shall provide a Solve screen that shows the frame being solved and its solution as a solve happens — whichever part of the application started it (that screen's own Capture & Solve or Load & Slew, or another workflow such as the sequencer) — and shall leave what it shows unchanged while the screen is not in view. From that screen the user shall be able to capture a frame with the selected camera and solve it, choose whether the mount is then synced, slewed back to the target, or left alone, stop a run in progress, and see each solution's position, its error against the target and a log of the run (traces to `PLT-010`, `PLT-030`, `PLT-040`, `PLT-050`). | MVP |
 | PLT-080 | The system shall provide polar alignment on the Solve screen's Polar Alignment tab. With a camera, a mount and the site's latitude and longitude available, it shall plate-solve three frames while turning the mount in RA between them, and find where the mount's RA axis points from where each frame was pointing in the Earth-fixed horizon frame at the time it was taken (not from the mount's own RA readout), allowing for atmospheric refraction unless the user turns that off. It shall show the axis's distance from the celestial pole, split into an altitude and an azimuth correction in plain words, for either hemisphere. It shall then keep solving at the final position and update the error as the user turns the mount's altitude and azimuth knobs, wherever the camera points and allowing for the mount's tracking meanwhile, until stopped. It shall refuse, with a message and without moving the mount, a rotation that would carry a German equatorial mount across the meridian, and shall end with a message rather than a result if a measuring solve fails or the positions cannot define an axis (traces to `PLT-010`, `PLT-070`). | P2 |
 
@@ -494,6 +500,7 @@ External delivery is narrowed to **email and/or text message (SMS)** as the two 
 | NOTIF-020 | The system shall support external delivery via email and/or text message (SMS), configurable by the user, delivering the same event set as `NOTIF-010`. | P3 |
 | NOTIF-030 | The system shall allow notification events to be individually enabled/disabled per channel. | P3 |
 | NOTIF-040 | The system shall read external-delivery contact details (email address, phone/SMS number, and which channel(s) to use) from the Observatory record (`OBS-090`) that owns the Pier/session raising the event, rather than maintaining a separate per-notification contact configuration. | P3 |
+| NOTIF-050 | The system shall provide an Options > Notifications page to configure external delivery — the e-mail (SMTP server, port, security, login, from address) and SMS (carrier e-mail-to-SMS gateway) channels, fallback recipient e-mail/phone used when the Observatory has no contact details, per-channel enable/disable of each event (`NOTIF-030`), and a test-send for each channel — persisted across restarts, applied to subsequent session runs, with the SMTP password held in the OS credential store rather than a config file (traces to `NOTIF-020`, `NOTIF-030`, `NFR-SEC-030`). | P3 |
 
 ### 4.19 `PLUG` — Plugin Framework
 
@@ -558,6 +565,7 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | LOG-040 | The system shall allow exporting a support bundle (recent logs plus non-sensitive configuration) for bug reports. | P2 |
 | LOG-050 | The logging service shall reset (start a new, truncated) datestamped log file at the beginning of every application run, rather than appending to a prior run's log. | MVP |
 | LOG-060 | The system shall display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer. | P2 |
+| LOG-070 | The system shall install last-chance crash handlers at start-up (`sys.excepthook`, `threading.excepthook`, the asyncio loop exception handler and `faulthandler`) that write a crash report (traceback, version, platform, recent log tail, with credentials scrubbed) to a crash-reports directory under the platform data directory and, where the Qt application is running, show a fatal-error dialog. | MVP |
 
 ### 4.22 `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -682,7 +690,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | SAFE | 10 | 2 | 5 | 3 |
 | HIST | 4 | 0 | 3 | 1 |
 | META | 5 | 3 | 1 | 1 |
-| NOTIF | 4 | 0 | 1 | 3 |
+| NOTIF | 5 | 0 | 1 | 4 |
 | PLUG | 8 | 7 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |

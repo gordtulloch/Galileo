@@ -203,15 +203,19 @@ class CameraComparison:
 
 
 class MosaicSettings:
-    """The shared, Imaging-settings-scoped pane-overlap value (FRAME-040) — one
-    process-wide instance, not configured separately per Framing Assistant entry
-    point. Backed by ``IMG-170``'s Options > Imaging screen once that setting is
-    wired up there; until then this is the in-memory default."""
+    """The shared pane-overlap value (FRAME-040) — one process-wide instance, not configured
+    separately per Framing Assistant entry point. Backed by Options > Imaging
+    (``galileo.imaging_settings``), so it survives a restart."""
 
     _instance: MosaicSettings | None = None
 
     def __init__(self) -> None:
         self.pane_overlap_pct: float = 10.0
+        try:
+            from galileo.imaging_settings import load_imaging_settings
+            self.pane_overlap_pct = load_imaging_settings()["mosaic_overlap_pct"]
+        except Exception:
+            logger.debug("Could not load the saved mosaic overlap", exc_info=True)
 
     @classmethod
     def instance(cls) -> MosaicSettings:
@@ -220,7 +224,49 @@ class MosaicSettings:
         return cls._instance
 
     def set_pane_overlap_pct(self, value: float) -> None:
+        """Set the overlap and remember it (Options > Imaging shows the same value)."""
         self.pane_overlap_pct = value
+        try:
+            from galileo.imaging_settings import load_imaging_settings, save_imaging_settings
+            settings = load_imaging_settings()
+            settings["mosaic_overlap_pct"] = value
+            save_imaging_settings(settings)
+        except Exception:
+            logger.debug("Could not save the mosaic overlap", exc_info=True)
+
+
+def fov_outline_radec(ra_deg: float, dec_deg: float, width_deg: float, height_deg: float,
+                      rotation_deg: float = 0.0, points_per_edge: int = 8):
+    """Closed outline of a ``width`` x ``height`` field centred on (``ra``, ``dec``) as arrays of
+    ``(ra_deg, dec_deg)`` — the geometry the Star Atlas draws the telescope's field of view with
+    (SKYMAP-050), computed from the same ``FOV`` the Framing Assistant produces (FRAME-010).
+
+    ``rotation_deg`` is the position angle of the field's "up" edge, east of north. Edges are
+    subdivided so they follow the curvature of the sky when the field is large."""
+    import numpy as np
+
+    n = max(1, points_per_edge)
+    hw, hh = width_deg / 2.0, height_deg / 2.0
+    corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh), (-hw, -hh)]
+    u: list[float] = []
+    v: list[float] = []
+    for (u0, v0), (u1, v1) in zip(corners[:-1], corners[1:]):
+        for k in range(n):
+            f = k / n
+            u.append(u0 + (u1 - u0) * f)
+            v.append(v0 + (v1 - v0) * f)
+    u.append(corners[0][0])
+    v.append(corners[0][1])
+    theta = math.radians(rotation_deg)
+    uu, vv = np.array(u), np.array(v)
+    # Tangent-plane offsets in radians: xi east, eta north (frame "right" points west at zero rotation).
+    xi = np.radians(-uu * math.cos(theta) + vv * math.sin(theta))
+    eta = np.radians(uu * math.sin(theta) + vv * math.cos(theta))
+    ra0, dec0 = math.radians(ra_deg), math.radians(dec_deg)
+    denom = math.cos(dec0) - eta * math.sin(dec0)
+    ra = ra0 + np.arctan2(xi, denom)
+    dec = np.arctan2((math.sin(dec0) + eta * math.cos(dec0)) * np.cos(ra - ra0), denom)
+    return np.degrees(ra) % 360.0, np.degrees(dec)
 
 
 class FramingAssistant:

@@ -114,3 +114,107 @@ async def test_tc_notif_040_reads_contact_details_from_owning_observatory(notif_
     assert sent.email == "operator@example.com"
     assert sent.phone_number == "+15551234567"
     assert sent.channels == ["email", "sms"]
+
+
+# ---------------------------------------------------------------------------
+# TC-NOTIF-050
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def notify_cfg(tmp_path, monkeypatch, settings_db):
+    """Config folder in tmp, and an in-memory stand-in for the OS credential store."""
+    import galileo.notify_settings as ns
+    store: dict = {}
+    monkeypatch.setattr(ns, "get_smtp_password", lambda: store.get("pw", ""))
+    monkeypatch.setattr(ns, "set_smtp_password", lambda pw: store.__setitem__("pw", pw))
+    return tmp_path, store
+
+
+@pytest.mark.requirement("TC-NOTIF-050")
+@pytest.mark.priority("P3")
+def test_tc_notif_050_settings_persist_and_password_not_in_file(notify_cfg):
+    """NOTIF-050: Notification delivery settings persist; the SMTP password is kept in the credential store, not the file."""
+    import galileo.notify_settings as ns
+    tmp_path, _store = notify_cfg
+    settings = ns.load_notify_settings()
+    assert settings["smtp_host"] == "localhost"
+    settings.update(email_address="me@example.com", smtp_host="smtp.example.com", smtp_port=587,
+                    smtp_security="starttls", smtp_username="me", sms_disabled_events=["meridian_flip", "bogus"])
+    ns.save_notify_settings(settings)
+    ns.set_smtp_password("s3cret")
+
+    from galileo.settings_store import get_namespace
+    text = repr(get_namespace("notifications"))
+    assert "s3cret" not in text
+    loaded = ns.load_notify_settings()
+    assert loaded["smtp_host"] == "smtp.example.com"
+    assert loaded["smtp_security"] == "starttls"
+    assert loaded["sms_disabled_events"] == ["meridian_flip"]   # unknown event dropped
+    assert ns.get_smtp_password() == "s3cret"
+
+
+@pytest.mark.requirement("TC-NOTIF-050")
+@pytest.mark.priority("P3")
+async def test_tc_notif_050_configure_service_applies_channels_and_event_switches(notify_cfg):
+    """NOTIF-050: The configured channels are built (Observatory contacts win) and per-event switches applied."""
+    import galileo.notify as notify_mod
+    import galileo.notify_settings as ns
+    from galileo.observatory import ContactDetails
+    settings = ns.load_notify_settings()
+    settings.update(email_address="fallback@example.com", phone_number="5551234567", sms_gateway="vtext.com",
+                    smtp_username="me", email_disabled_events=["autofocus_complete"])
+    ns.set_smtp_password("pw")
+
+    service = notify_mod.NotificationService()
+    ns.configure_service(service, settings, ContactDetails(email="op@example.com", channels=["email", "sms"]))
+    email, sms = service.channels
+    assert email.address == "op@example.com" and email.username == "me" and email.password == "pw"
+    assert sms.gateway_address == "5551234567@vtext.com"
+
+    sent = []
+
+    async def fake_deliver(self, n):
+        sent.append((self.address, n.event_type))
+
+    notify_mod.EmailChannel.deliver = fake_deliver   # restored below
+    try:
+        await service.emit(notify_mod.NotificationEvent.AUTOFOCUS_COMPLETE)
+        await service.emit(notify_mod.NotificationEvent.SEQUENCE_ERROR)
+    finally:
+        del notify_mod.EmailChannel.deliver
+    # e-mail skipped the disabled event; the SMS (via its gateway e-mail) got both
+    assert ("op@example.com", notify_mod.NotificationEvent.AUTOFOCUS_COMPLETE) not in sent
+    assert ("op@example.com", notify_mod.NotificationEvent.SEQUENCE_ERROR) in sent
+    assert len([s for s in sent if s[0] == "5551234567@vtext.com"]) == 2
+
+
+@pytest.mark.requirement("TC-NOTIF-050")
+@pytest.mark.priority("P3")
+def test_tc_notif_050_test_send_reports_errors_and_missing_recipient(notify_cfg):
+    """NOTIF-050: The test-send reports a missing recipient and SMTP failures instead of raising."""
+    import galileo.notify_settings as ns
+    from galileo.ui.app_window._notifications_page import run_test_send
+    settings = ns.load_notify_settings()
+    assert "e-mail address" in run_test_send("email", settings, "")
+    settings.update(email_address="me@example.com", smtp_host="127.0.0.1", smtp_port=1)  # nothing listens
+    assert run_test_send("email", settings, "") != ""
+    settings.update(phone_number="5551234567", sms_gateway="")
+    assert "gateway" in run_test_send("sms", settings, "")
+
+
+@pytest.mark.requirement("TC-NOTIF-050")
+@pytest.mark.priority("P3")
+def test_tc_notif_050_session_runner_uses_saved_settings(notify_cfg):
+    """NOTIF-050: The session runner's notification service is built from the saved settings."""
+    import galileo.notify_settings as ns
+    from galileo.ui.session_runner import _build_notify_service
+    settings = ns.load_notify_settings()
+    settings.update(email_address="me@example.com", sms_enabled=False)
+    ns.save_notify_settings(settings)
+
+    class _Win:
+        _current_observatory = None
+
+    service = _build_notify_service(_Win())
+    assert [type(c).__name__ for c in service.channels] == ["EmailChannel"]
+    assert service.channels[0].address == "me@example.com"

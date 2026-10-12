@@ -49,6 +49,7 @@ _DEFAULT_PORTS = {"Alpaca": 32323, "INDI": 7624}
 
 # (section_id, label, icon_name)
 PRIMARY_SECTIONS = [
+    ("dashboard", "Dashboard", "dashboard"),
     ("star_atlas", "Star Atlas", "star_atlas"),
     ("planning", "Planning", "sky_atlas"),
     ("imaging", "Imaging", "imaging"),
@@ -65,7 +66,8 @@ OPTIONS_SECTION = ("options", "Options", "options")
 # Options opens onto one settings page per primary section, in the same order,
 # plus a few Options-only entries that aren't primary sections themselves —
 # "plugins" is the in-app Plugin Manager (PLUG-030/PLUG-060).
-OPTIONS_ITEMS = [*PRIMARY_SECTIONS, ("plugins", "Plugins", "plugins")]
+OPTIONS_ITEMS = [*PRIMARY_SECTIONS, ("notifications", "Notifications", "notifications"),
+                 ("plugins", "Plugins", "plugins")]
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].
@@ -77,6 +79,7 @@ PLANNING_ITEMS = [
     ("targets", "Targets", "sky_atlas"),
     ("sessions", "Sessions", "sequencer"),
     ("schedule", "Schedule", "schedule"),
+    ("history", "History", "sessions"),
 ]
 SCIENCE_ITEMS = [
     ("variable_stars", "Variable Stars", "variable_stars"),

@@ -31,6 +31,12 @@ _SKY_FLAT_MIN_EXPOSURE_S = 0.0005
 _SKY_FLAT_MAX_EXPOSURE_S = 60.0
 _SKY_FLAT_MAX_ATTEMPTS = 15
 
+# Panel flats (CAL-090): a panel is far brighter than twilight sky, so shorter exposures are valid.
+_PANEL_MIN_EXPOSURE_S = 0.001
+_PANEL_START_EXPOSURE_S = 1.0
+_PANEL_START_BRIGHTNESS = 128
+_PANEL_MAX_BRIGHTNESS = 255
+
 
 @dataclass
 class CalibrationResult:
@@ -57,6 +63,7 @@ class CalibrationService:
         self._mount = mount
         self._output_dir = Path(output_dir)
         self.stop_requested = False
+        self._panel_brightness = _PANEL_START_BRIGHTNESS
 
     def request_stop(self) -> None:
         """Ask a running Sky Flats run to stop after its current exposure (CAL-070's
@@ -259,6 +266,126 @@ class CalibrationService:
         raise FlatCalibrationError(
             f"Sky Flats: target ADU {target_adu:.0f} not reached after {_SKY_FLAT_MAX_ATTEMPTS} attempts."
         )
+
+    # --- Panel flats: Flat Panel / Observatory Panel (CAL-010, CAL-040, CAL-090) ----
+
+    async def run_panel_flats_all_filters(
+        self,
+        method: str,
+        filters: list[str] | None,
+        count: int,
+        max_well_depth: int | None = None,
+        measure: str = "Average",
+        exposure_s: float | None = None,
+        exposure_increment_s: float = 0.1,
+        target_fraction: float = 0.5,
+        adu_tolerance: float = 0.10,
+        on_filter_start=None,
+        on_frame_done=None,
+    ) -> list[CalibrationResult]:
+        """Capture *count* flats per filter of an artificial light source (CAL-090).
+
+        *method* ``"Flat Panel"`` drives the connected flat-panel device through its port
+        (open the cover, light on, brightness — CAL-040) and closes it again afterwards;
+        ``"Observatory Panel"`` (a fixed panel, dome screen or other light the observer has
+        already pointed the scope at) has no device to drive, so only the exposure is tuned.
+        Each frame's exposure is converged toward *target_fraction* of *max_well_depth*
+        (required, as for Sky Flats) exactly like Sky Flats, and for a Flat Panel the panel
+        brightness is rescaled when the target is out of reach of the exposure bounds
+        (CAL-010 "or panel brightness"). Raises :class:`FlatCalibrationError` when the target
+        still cannot be reached (CAL-050), or a Flat Panel run has no panel connected."""
+        if method not in ("Flat Panel", "Observatory Panel"):
+            raise FlatCalibrationError(f"Unknown panel flat method: {method!r}")
+        panel = self._flat_panel if method == "Flat Panel" else None
+        if method == "Flat Panel" and panel is None:
+            raise FlatCalibrationError("Flat Panel flats need a connected flat panel (Equipment > Flat Panel).")
+        names = list(filters) if filters else ([""] if self._fw is None else [None])
+        if names == [None]:
+            names = list(self._fw.filter_names)
+        if not max_well_depth:
+            raise FlatCalibrationError(
+                "Panel flats need the camera's Max Well Depth set on Equipment > Camera "
+                "to work out the target ADU."
+            )
+        target_adu = max_well_depth * target_fraction
+        exposure = exposure_s if exposure_s is not None else _PANEL_START_EXPOSURE_S
+        self._panel_brightness = _PANEL_START_BRIGHTNESS
+
+        results: list[CalibrationResult] = []
+        if panel is not None:
+            await panel.open_cover()
+            await panel.light_on()
+            await panel.set_brightness(self._panel_brightness)
+        try:
+            for i, filter_name in enumerate(names):
+                if self.stop_requested:
+                    break
+                if on_filter_start is not None:
+                    on_filter_start(filter_name, i + 1, len(names))
+                if self._fw is not None and filter_name:
+                    await self._fw.move_to(self._fw.filter_names.index(filter_name))
+                got = 0
+                for n in range(count):
+                    if self.stop_requested:
+                        break
+                    converged = await self._converge_panel_flat_exposure(
+                        panel, exposure, target_adu, measure, adu_tolerance, exposure_increment_s)
+                    if converged is None:
+                        break
+                    exposure, data = converged
+                    path = self._save_frame(data, "flat", filter_name or "", n + 1, exposure)
+                    got += 1
+                    if path is not None:
+                        self._register_with_library(path)
+                    if on_frame_done is not None:
+                        on_frame_done(filter_name or "", n + 1, count)
+                results.append(CalibrationResult(frames_captured=got, final_exposure_s=exposure, filter_name=filter_name or ""))
+        finally:
+            if panel is not None:
+                try:
+                    await panel.light_off()
+                    await panel.close_cover()
+                except Exception:
+                    logger.exception("Could not switch the flat panel off after the flats run")
+        return results
+
+    async def _converge_panel_flat_exposure(
+        self, panel, exposure: float, target_adu: float, measure: str, tolerance: float, increment_s: float,
+    ):
+        """One panel flat: expose, measure and retake until within *tolerance* of
+        *target_adu*. Out-of-range exposures are clamped and, with a *panel*, the brightness
+        is rescaled instead; with no panel (or brightness exhausted) it raises (CAL-050).
+        Returns ``(exposure, data)``, or ``None`` if stopped before a frame landed."""
+        exposure = min(max(exposure, _PANEL_MIN_EXPOSURE_S), _SKY_FLAT_MAX_EXPOSURE_S)
+        for _ in range(_SKY_FLAT_MAX_ATTEMPTS):
+            if self.stop_requested:
+                return None
+            await self._camera.start_exposure(duration=exposure, frame_type="Flat Field", binning=1)
+            data = await self._camera.get_image_array()
+            measured = _mean_adu(data) if measure == "Average" else _median_adu(data)
+            if target_adu and abs(measured - target_adu) / target_adu <= tolerance:
+                return exposure, data
+            wanted = _adjust_sky_flat_exposure(exposure, measured, target_adu, increment_s)
+            if _PANEL_MIN_EXPOSURE_S <= wanted <= _SKY_FLAT_MAX_EXPOSURE_S:
+                exposure = wanted
+                continue
+            clamped = min(max(wanted, _PANEL_MIN_EXPOSURE_S), _SKY_FLAT_MAX_EXPOSURE_S)
+            if panel is None or (measured <= 0 and self._panel_brightness >= _PANEL_MAX_BRIGHTNESS):
+                raise FlatCalibrationError(
+                    f"Panel flats: target ADU {target_adu:.0f} not reachable within the "
+                    f"{_PANEL_MIN_EXPOSURE_S:g}s–{_SKY_FLAT_MAX_EXPOSURE_S:g}s exposure range.")
+            # Rescale brightness by the shortfall that the clamp could not cover.
+            scale = wanted / clamped if clamped else 1.0
+            new_level = int(min(max(round(self._panel_brightness * scale), 1), _PANEL_MAX_BRIGHTNESS))
+            if new_level == self._panel_brightness:
+                raise FlatCalibrationError(
+                    f"Panel flats: target ADU {target_adu:.0f} not reachable at any panel brightness "
+                    f"within the {_PANEL_MIN_EXPOSURE_S:g}s–{_SKY_FLAT_MAX_EXPOSURE_S:g}s exposure range.")
+            self._panel_brightness = new_level
+            await panel.set_brightness(new_level)
+            exposure = clamped
+        raise FlatCalibrationError(
+            f"Panel flats: target ADU {target_adu:.0f} not reached after {_SKY_FLAT_MAX_ATTEMPTS} attempts.")
 
     def _require_twilight(self, location) -> None:
         from galileo.planning.visibility import is_twilight

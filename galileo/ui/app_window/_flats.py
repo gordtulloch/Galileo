@@ -64,13 +64,15 @@ class AppWindowFlatsMixin:
         that repeats the run for every filter, CAL-020), an Average/Median
         ADU Method, and an Exposure Increment step.
 
-        Only Sky Flats is implemented (CAL-070): it checks the sky is
-        currently within local dawn/dusk twilight, slews the mount to a
-        star-poor vantage point in the East and turns tracking off, then
-        adaptively converges each frame's exposure toward 50% of the
-        camera's Max Well Depth (Equipment > Camera) before saving it.
-        Observatory Panel and Flat Panel are offered in the dropdown but
-        just explain they aren't wired up yet if chosen."""
+        Sky Flats (CAL-070) checks the sky is currently within local
+        dawn/dusk twilight, slews the mount to a star-poor vantage point in
+        the East and turns tracking off, then adaptively converges each
+        frame's exposure toward 50% of the camera's Max Well Depth
+        (Equipment > Camera) before saving it. Flat Panel and Observatory
+        Panel (CAL-090) run ``CalibrationService.run_panel_flats_all_filters``;
+        Flat Panel is only selectable while a flat panel is connected. The
+        run is off-thread (``_FlatsThread``); a ``FlatCalibrationError`` is
+        shown to the user."""
         from PySide6.QtWidgets import (
             QComboBox, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout,
             QLabel, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
@@ -159,7 +161,18 @@ class AppWindowFlatsMixin:
         button_row.addWidget(buttons)
         outer.addLayout(button_row)
 
-        run_state = {"service": None}
+        run_state = {"service": None, "method": "Sky Flats"}
+
+        def _connected_flat_panel():
+            return (self._device_pages.get("flat_panel") or {}).get("adapter")
+
+        # Flat Panel needs a connected panel device (CAL-090); disable that entry otherwise.
+        panel_index = method_combo.findText("Flat Panel")
+        if panel_index >= 0 and _connected_flat_panel() is None:
+            item = method_combo.model().item(panel_index)
+            if item is not None:
+                item.setEnabled(False)
+                item.setToolTip("Connect a flat panel on Equipment > Flat Panel to use this method.")
 
         def set_running(running: bool) -> None:
             dialog.running = running
@@ -181,56 +194,62 @@ class AppWindowFlatsMixin:
             self._flats_threads.pop(key, None)
             set_running(False)
             total_frames = sum(r.frames_captured for r in results)
-            summary = f"Sky Flats done — {total_frames} frame(s) captured."
+            summary = f"{run_state['method']} done — {total_frames} frame(s) captured."
             status_label.setText(summary)
             self._window.statusBar().showMessage(summary, 6000)
 
         def failed(message: str) -> None:
             self._flats_threads.pop(key, None)
             set_running(False)
-            logger.error("Sky Flats failed: %s", message)
+            name = run_state["method"]
+            logger.error("%s failed: %s", name, message)
             status_label.setText(f"Failed: {message}")
-            self._window.statusBar().showMessage("Sky Flats failed — see log.", 6000)
+            self._window.statusBar().showMessage(f"{name} failed — see log.", 6000)
+            QMessageBox.warning(dialog, f"{name} failed", message)
 
         def start() -> None:
             method = method_combo.currentText()
-            if method != "Sky Flats":
-                QMessageBox.information(
-                    self._window, "Not yet implemented",
-                    f"{method} isn't implemented yet — only Sky Flats currently runs a real capture.",
+            run_state["method"] = method
+            panel = _connected_flat_panel()
+            if method == "Flat Panel" and panel is None:
+                QMessageBox.warning(
+                    self._window, "No flat panel connected",
+                    "Flat Panel flats need a connected flat panel (Equipment > Flat Panel).",
                 )
                 return
 
-            location = self._flats_observing_location()
-            from galileo.planning.visibility import is_twilight
-            if location is None or not is_twilight(location):
-                QMessageBox.warning(
-                    self._window, "Outside twilight",
-                    "Sky Flats only works during local dawn or dusk twilight — the sky is either "
-                    "still bright (daylight) or already fully dark right now. Set the Observatory's "
-                    "latitude/longitude if this looks wrong.",
-                )
-                return
+            location = None
+            if method == "Sky Flats":
+                location = self._flats_observing_location()
+                from galileo.planning.visibility import is_twilight
+                if location is None or not is_twilight(location):
+                    QMessageBox.warning(
+                        self._window, "Outside twilight",
+                        "Sky Flats only works during local dawn or dusk twilight — the sky is either "
+                        "still bright (daylight) or already fully dark right now. Set the Observatory's "
+                        "latitude/longitude if this looks wrong.",
+                    )
+                    return
 
             camera_cfg = None
             try:
                 from galileo.observatory import get_device_config
                 camera_cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
             except Exception:
-                logger.exception("Could not load the camera's configuration for Sky Flats")
+                logger.exception("Could not load the camera's configuration for %s", method)
             max_well_depth = camera_cfg.max_well_depth if camera_cfg is not None else None
             if not max_well_depth:
                 QMessageBox.warning(
                     self._window, "No Max Well Depth set",
-                    "Sky Flats needs the camera's Max Well Depth set on Equipment > Camera to work "
-                    "out a target exposure.",
+                    f"{method} needs the camera's Max Well Depth set on Equipment > Camera to work "
+                    "out the target ADU (exposure, or panel brightness for a Flat Panel).",
                 )
                 return
 
             mount = (self._device_pages.get("mount") or {}).get("adapter")
             svc = CalibrationService(
-                camera=camera, filter_wheel=wheel, mount=mount,
-                output_dir=service._scratch_folder() / "flats",
+                camera=camera, filter_wheel=wheel, flat_panel=panel if method == "Flat Panel" else None,
+                mount=mount, output_dir=service._scratch_folder() / "flats",
             )
             run_state["service"] = svc
 
@@ -241,6 +260,7 @@ class AppWindowFlatsMixin:
             thread = _FlatsThread(
                 svc, filters, count_spin.value(), max_well_depth, location,
                 adu_method_combo.currentText(), exposure_s, increment_spin.value(), dialog,
+                method=method,
             )
             thread.filter_started.connect(on_filter_start)
             thread.frame_done.connect(on_frame_done)

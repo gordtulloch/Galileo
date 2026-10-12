@@ -490,6 +490,15 @@ class AlpacaCameraAdapter(AlpacaAdapter):
                 await self._put("gain", Gain=int(gain))
             except Exception:
                 logger.warning("Could not set gain %s on %s; exposing with its current gain", gain, self.base_url)
+        binning = int(kwargs.get("binning") or 1)
+        if binning != getattr(self, "_binning", 1):
+            try:
+                await self._put("binx", BinX=binning)
+                await self._put("biny", BinY=binning)
+                self._binning = binning
+            except Exception:
+                logger.warning("Could not set %sx%s binning on %s; exposing with its current binning",
+                               binning, binning, self.base_url)
         # ASCOM's Light flag is False for frames taken with the shutter closed.
         dark = any(word in frame_type.lower() for word in ("dark", "bias"))
         await self._put("startexposure", Duration=duration, Light=not dark)

@@ -67,6 +67,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `ARCH-060` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-ARCH-060` |
 | `ARCH-070` | P2 | SDD 4.1 `galileo.core.devices` | Test | `TC-ARCH-070` |
 | `ARCH-080` | MVP | SDD 4.1 `galileo.core.devices`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-ARCH-080` |
+| `ARCH-090` | MVP | SDD 4.1a `galileo.settings_store`; SDD Sec 5 Data Design | Test | `TC-ARCH-090` |
 
 ### `EQP` — Equipment Control
 
@@ -136,6 +137,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
 | `OBS-080` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-080` |
 | `OBS-090` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-090` |
+| `OBS-100` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-100` |
+| `OBS-110` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-110` |
+| `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-120` |
+| `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-130` |
 
 ### `IMG` — Imaging Tab
 
@@ -294,6 +299,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-060` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-060` |
 | `CAL-070` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-070` |
 | `CAL-080` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-080` |
+| `CAL-090` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-090` |
 
 ### `FOC` — Autofocus
 
@@ -395,6 +401,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `NOTIF-020` | P3 | SDD 4.19 `galileo.notify` | Test | `TC-NOTIF-020` |
 | `NOTIF-030` | P3 | SDD 4.19 `galileo.notify` | Test | `TC-NOTIF-030` |
 | `NOTIF-040` | P3 | SDD 4.19 `galileo.notify`; SDD 4.4a `galileo.observatory` | Test | `TC-NOTIF-040` |
+| `NOTIF-050` | P3 | SDD 4.19 `galileo.notify`, `galileo.notify_settings`; `galileo.ui.app_window._notifications_page` | Test | `TC-NOTIF-050` |
 
 ### `PLUG` — Plugin Framework
 
@@ -446,6 +453,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LOG-040` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-040` |
 | `LOG-050` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-050` |
 | `LOG-060` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-060` |
+| `LOG-070` | MVP | SDD 4.22 `galileo.diagnostics` / `galileo.crashreport` | Test | `TC-LOG-070` |
 
 ### `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -569,7 +577,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `SAFE` | 10 | 2 | 5 | 3 |
 | `HIST` | 4 | 0 | 3 | 1 |
 | `META` | 5 | 3 | 1 | 1 |
-| `NOTIF` | 4 | 0 | 1 | 3 |
+| `NOTIF` | 5 | 0 | 1 | 4 |
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |

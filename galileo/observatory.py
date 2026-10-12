@@ -12,8 +12,11 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from galileo.bus import Event, get_bus
 
 if TYPE_CHECKING:
     # ORM records, imported lazily inside the functions that use them (the domain
@@ -62,6 +65,7 @@ class Pier:
         self.dome = None
         self.guiding_service = None
         self.sequence_runner = None
+        self.scheduler = None          # galileo.scheduler.ObservatoryScheduler (the Pier's job queue)
         self._state = "idle"
 
     def set_safety_monitor(self, monitor) -> None:
@@ -88,8 +92,148 @@ class Pier:
 
 
 # ---------------------------------------------------------------------------
+# Cross-Pier shared-resource arbitration (OBS-100 … OBS-130)
+# ---------------------------------------------------------------------------
+
+#: Priorities: a safety action may override any imaging activity; everything else is equal.
+PRIORITY_NORMAL = 50
+PRIORITY_EMERGENCY = 100
+
+#: Resource names the arbiter knows about.
+RESOURCE_DOME = "dome"
+
+#: Actions that disturb other Piers' work on a shared resource. Anything not listed (e.g.
+#: opening the roof) never conflicts, so it is always granted.
+DISRUPTIVE_ACTIONS: dict[str, frozenset[str]] = {
+    RESOURCE_DOME: frozenset({"close", "slew"}),
+}
+
+
+class ResourceClaimDeniedEvent(Event):
+    """A Pier's request for a shared resource lost to another Pier's active work (OBS-120)."""
+
+
+class ResourceClaimGrantedEvent(Event):
+    """A Pier's request for a shared resource was granted (OBS-120)."""
+
+
+class ResourceReleasedEvent(Event):
+    """A Pier finished the work it had registered against a shared resource (OBS-120)."""
+
+
+@dataclass(frozen=True)
+class ArbitrationDecision:
+    """Outcome of :meth:`ResourceArbiter.request`."""
+
+    granted: bool
+    reason: str = ""
+    blocked_by: tuple[str, ...] = ()
+
+
+class ResourceArbiter:
+    """Decides which Pier may act on an Observatory-scoped shared resource (OBS-100).
+
+    Piers register the work they are doing against a resource (:meth:`begin_activity`, e.g.
+    "imaging" under a shared roof) and release it when done. A request for a *disruptive*
+    action (closing the roof, slewing the dome) is **denied** while another Pier holds
+    equal-or-higher-priority activity on that resource; a non-disruptive one is always granted.
+    A requester may ask to **queue** (``wait_s``): it is re-evaluated until the blockers release
+    or the wait expires (OBS-110). Safety actions use :data:`PRIORITY_EMERGENCY` and override
+    imaging (OBS-130). Resources scoped per-Pier are never arbitrated (OBS-050).
+    Thread-safe; decisions are published on the event bus.
+    """
+
+    def __init__(self, bus=None, poll_s: float = 0.1) -> None:
+        self._bus = bus
+        self._poll_s = poll_s
+        self._lock = threading.Lock()
+        # resource -> {pier_name: (activity, priority)}
+        self._activities: dict[str, dict[str, tuple[str, int]]] = {}
+        self._scopes: dict[str, str] = {}
+
+    def _publish(self, event: Event) -> None:
+        try:
+            (self._bus or get_bus()).publish(event)
+        except Exception:
+            logger.debug("Could not publish %r", event, exc_info=True)
+
+    def set_scope(self, resource: str, scope: str) -> None:
+        """``"observatory"`` (arbitrated, the default) or ``"pier"`` (independent, never arbitrated)."""
+        with self._lock:
+            self._scopes[resource] = scope
+
+    def scope(self, resource: str) -> str:
+        return self._scopes.get(resource, "observatory")
+
+    def begin_activity(self, pier: str, resource: str, activity: str = "imaging",
+                       priority: int = PRIORITY_NORMAL) -> None:
+        """Record that *pier* is actively using *resource* until :meth:`end_activity`."""
+        with self._lock:
+            self._activities.setdefault(resource, {})[pier] = (activity, priority)
+
+    def end_activity(self, pier: str, resource: str) -> None:
+        with self._lock:
+            held = self._activities.get(resource, {}).pop(pier, None)
+        if held is not None:
+            self._publish(ResourceReleasedEvent(source=pier, resource=resource, activity=held[0]))
+
+    def activities(self, resource: str) -> dict[str, str]:
+        """``{pier: activity}`` currently registered against *resource*."""
+        with self._lock:
+            return {p: a for p, (a, _prio) in self._activities.get(resource, {}).items()}
+
+    def check(self, pier: str, resource: str, action: str,
+              priority: int = PRIORITY_NORMAL) -> ArbitrationDecision:
+        """Decide now, without waiting or publishing."""
+        if self.scope(resource) != "observatory":
+            return ArbitrationDecision(True, "resource is Pier-scoped")
+        if action not in DISRUPTIVE_ACTIONS.get(resource, frozenset()):
+            return ArbitrationDecision(True, "non-disruptive action")
+        with self._lock:
+            blockers = tuple(sorted(
+                p for p, (_a, prio) in self._activities.get(resource, {}).items()
+                if p != pier and prio >= priority))
+        if blockers:
+            return ArbitrationDecision(
+                False, f"{resource} {action} denied: {', '.join(blockers)} is using the shared {resource}",
+                blockers)
+        return ArbitrationDecision(True, "no conflicting activity")
+
+    async def request(self, pier: str, resource: str, action: str,
+                      priority: int = PRIORITY_NORMAL, wait_s: float = 0.0) -> ArbitrationDecision:
+        """Ask to perform *action* on *resource*; with ``wait_s`` > 0, queue until free or timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, wait_s)
+        while True:
+            decision = self.check(pier, resource, action, priority)
+            if decision.granted or loop.time() >= deadline:
+                break
+            await asyncio.sleep(self._poll_s)
+        cls = ResourceClaimGrantedEvent if decision.granted else ResourceClaimDeniedEvent
+        self._publish(cls(source=pier, resource=resource, action=action, reason=decision.reason,
+                          blocked_by=list(decision.blocked_by)))
+        return decision
+
+
+# ---------------------------------------------------------------------------
 # Observatory
 # ---------------------------------------------------------------------------
+
+def _scheduler_summary(scheduler) -> tuple[str, int, str | None]:
+    """``(state, queued_jobs, running_job_name)`` for a Pier's job queue (OBS-060).
+
+    State is ``running`` while a job executes, ``queued`` while jobs are waiting,
+    else ``idle`` (also when the Pier has no scheduler at all)."""
+    if scheduler is None:
+        return "idle", 0, None
+    jobs = list(getattr(scheduler, "jobs", []) or [])
+    running = getattr(scheduler, "active_job", None) or next(
+        (j for j in jobs if getattr(j, "run_state", "") == "running"), None)
+    queued = sum(1 for j in jobs if getattr(j, "run_state", "pending") == "pending")
+    if running is not None:
+        return "running", queued, str(getattr(running, "name", running))
+    return ("queued" if queued else "idle"), queued, None
+
 
 class Observatory:
     """Groups multiple Piers; manages shared safety and dome resources."""
@@ -102,6 +246,7 @@ class Observatory:
         self._event_bus = None
         self.state = "idle"
         self.contact_details: ContactDetails | None = None
+        self.arbiter = ResourceArbiter()
 
     def add_pier(self, pier: Pier) -> None:
         self.piers.append(pier)
@@ -124,19 +269,25 @@ class Observatory:
             self.safety_monitor = monitor
 
     def set_dome(self, dome, scope: str = "observatory") -> None:
+        self.arbiter.set_scope(RESOURCE_DOME, scope)
         if scope == "observatory":
             self.dome = dome
 
     def get_dashboard(self) -> list[dict]:
-        """Return a status summary for every Pier (OBS-060)."""
-        return [
-            {
+        """Return a status summary for every Pier (OBS-060): equipment, sequence and
+        scheduler state, plus the scheduler's queue depth and running job."""
+        rows = []
+        for pier in self.piers:
+            scheduler_state, queued, active = _scheduler_summary(getattr(pier, "scheduler", None))
+            rows.append({
                 "pier_name": pier.name,
                 "equipment_state": "connected" if pier.device_pool else "disconnected",
                 "sequence_state": getattr(pier.sequence_runner, "state", "idle"),
-            }
-            for pier in self.piers
-        ]
+                "scheduler_state": scheduler_state,
+                "queued_jobs": queued,
+                "active_job": active,
+            })
+        return rows
 
     async def handle_safety_unsafe(self, source: str = "", explanation: str = "") -> None:
         """Abort and park ALL Piers when an Observatory-scoped unsafe event fires."""
@@ -562,6 +713,43 @@ def save_solver_settings(pier: PierRecord, executable: str, params: SolverParams
         return
     for key, value in fields.items():
         setattr(record, key, value)
+    record.save()
+
+
+def make_pier_solver(pier: PierRecord | None, pier_key=None, backend: str | None = None):
+    """A ``PlateSolver`` built from *pier*'s saved Options > Solve settings (PLT-060): the chosen
+    backend (or *backend* to override it for one run), its executable or API key, and the search
+    parameters."""
+    from galileo.platesolve import PlateSolver
+    executable, params = get_solver_settings(pier)
+    saved_backend, astrometry_executable, api_key = get_solver_backend(pier)
+    backend = backend or saved_backend
+    return PlateSolver(
+        backend=backend, executable=astrometry_executable if backend == "astrometry_local" else executable,
+        params=params, pier_key=pier_key, api_key=api_key)
+
+
+def get_solver_backend(pier: PierRecord | None) -> tuple[str, str, str]:
+    """Return *pier*'s saved ``(backend, astrometry_executable, nova_api_key)`` (Options > Solve,
+    PLT-060); ``("astap", "", "")`` when nothing is saved."""
+    if pier is None:
+        return "astap", "", ""
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    if record is None:
+        return "astap", "", ""
+    return record.backend or "astap", record.astrometry_executable or "", record.nova_api_key or ""
+
+
+def save_solver_backend(pier: PierRecord, backend: str, astrometry_executable: str = "", api_key: str = "") -> None:
+    """Save *pier*'s solver backend choice, creating its solver settings row if need be."""
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    if record is None:
+        record = SolverSettingsRecord(pier=pier)
+    record.backend = backend
+    record.astrometry_executable = astrometry_executable or None
+    record.nova_api_key = api_key or None
     record.save()
 
 

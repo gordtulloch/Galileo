@@ -352,6 +352,12 @@ class GuideModel:
         self._log.append(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}")
 
 
+def _options() -> dict:
+    """The saved Options > Guiding dither/settle parameters."""
+    from galileo.guiding_settings import load_guiding_settings
+    return load_guiding_settings()
+
+
 class GuidingService:
     """Drives one PHD2 instance (GUIDE-010 … GUIDE-090)."""
 
@@ -457,11 +463,19 @@ class GuidingService:
 
     async def dither_and_wait(
         self,
-        settle_timeout_s: float = 30.0,
-        settle_pixels: float = 0.5,
+        settle_timeout_s: float | None = None,
+        settle_pixels: float | None = None,
     ) -> None:
-        """Send dither command and wait for the guider to settle (GUIDE-030)."""
-        await self._client.dither(settle_pixels=settle_pixels, settle_timeout_s=settle_timeout_s)
+        """Send dither command and wait for the guider to settle (GUIDE-030). Anything not
+        given comes from Options > Guiding (``galileo.guiding_settings``)."""
+        opts = _options()
+        settle_timeout_s = opts["settle_timeout_s"] if settle_timeout_s is None else settle_timeout_s
+        settle_pixels = opts["settle_pixels"] if settle_pixels is None else settle_pixels
+        await self._client.dither(
+            amount_px=opts["dither_amount_px"], ra_only=opts["dither_ra_only"],
+            settle_pixels=settle_pixels, settle_time_s=opts["settle_time_s"],
+            settle_timeout_s=settle_timeout_s,
+        )
         await self._client.wait_for_settle(settle_timeout_s)
 
     async def dither(self) -> None:
@@ -475,8 +489,12 @@ class GuidingService:
     def loop(self) -> Future:
         return self._command("loop", None, "Looping exposures requested")
 
-    def guide(self, recalibrate: bool = False, settle_pixels: float = 1.5,
-              settle_time_s: float = 10, settle_timeout_s: float = 100) -> Future:
+    def guide(self, recalibrate: bool = False, settle_pixels: float | None = None,
+              settle_time_s: float | None = None, settle_timeout_s: float | None = None) -> Future:
+        opts = _options()
+        settle_pixels = opts["settle_pixels"] if settle_pixels is None else settle_pixels
+        settle_time_s = opts["settle_time_s"] if settle_time_s is None else settle_time_s
+        settle_timeout_s = opts["settle_timeout_s"] if settle_timeout_s is None else settle_timeout_s
         return self._command(
             "guide",
             [{"pixels": settle_pixels, "time": settle_time_s, "timeout": settle_timeout_s}, recalibrate],
@@ -489,9 +507,15 @@ class GuidingService:
     def find_star(self) -> Future:
         return self._command("find_star", None, "Auto star selection requested")
 
-    def request_dither(self, amount_px: float = 3.0, ra_only: bool = False,
-                       settle_pixels: float = 1.5, settle_time_s: float = 10,
-                       settle_timeout_s: float = 100) -> Future:
+    def request_dither(self, amount_px: float | None = None, ra_only: bool | None = None,
+                       settle_pixels: float | None = None, settle_time_s: float | None = None,
+                       settle_timeout_s: float | None = None) -> Future:
+        opts = _options()
+        amount_px = opts["dither_amount_px"] if amount_px is None else amount_px
+        ra_only = opts["dither_ra_only"] if ra_only is None else ra_only
+        settle_pixels = opts["settle_pixels"] if settle_pixels is None else settle_pixels
+        settle_time_s = opts["settle_time_s"] if settle_time_s is None else settle_time_s
+        settle_timeout_s = opts["settle_timeout_s"] if settle_timeout_s is None else settle_timeout_s
         return self._command(
             "dither",
             [amount_px, ra_only, {"pixels": settle_pixels, "time": settle_time_s, "timeout": settle_timeout_s}],

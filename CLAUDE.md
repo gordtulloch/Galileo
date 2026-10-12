@@ -95,6 +95,8 @@ Galileo uses a **layered, ports-and-adapters (hexagonal) architecture** (SDD §2
 
 **Persistence is unified**: one Peewee ORM database (`galileo.library`'s repository catalog, `galileo.history` session metrics, scheduler job queue, and VSTarget's variable-star data all share the same DB via `peewee-migrate`-managed schema) — not separate SQLite files per module. A schema change is a new numbered file in `galileo/library/migrations/` (never `create_tables` or hand-patched columns); `init_db` applies pending ones at start-up. The catalog models keep AstroFiler's names (`fitsFile`, `fitsSession`, …) and camelCase columns on purpose, so AstroFiler databases open unchanged.
 
+**Firm rule — configuration lives in the database, never in JSON files.** All application and user configuration (Options pages, per-screen preferences, layouts, notification/watchdog/guiding/imaging/planning settings, equipment profiles, and any new setting) is stored in the shared Peewee database through the common settings store, with schema changes as numbered `galileo/library/migrations/` files. Do not add new `*.json` / `*.ini` config files under `get_config_dir()` or anywhere else, and do not write a new per-module settings file "for consistency" with an old one. The only exceptions are (a) user-chosen interchange/export files (e.g. `.gses` session files, CSV/JSON exports) that the user explicitly saves or loads, and (b) the minimal bootstrap pointer needed to locate the database itself. A change that adds config JSON is not done.
+
 **FITS is the sole working image format** (project-wide constraint, SDD §4.18); XISF is accepted only on import via a best-effort converter in `galileo.library` and never read/written anywhere else in the codebase.
 
 ### Key modules at a glance

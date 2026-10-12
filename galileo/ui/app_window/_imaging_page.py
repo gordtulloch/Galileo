@@ -189,6 +189,11 @@ class AppWindowImagingPageMixin:
         orientation_combo.addItem("Portrait", PORTRAIT)
         orientation_combo.setEnabled(False)
         view_form.addRow("Layout", orientation_combo)
+        panels_btn = QPushButton("Panels…")
+        panels_btn.setToolTip(
+            "Choose which of this tab's panels are shown and in what order (UI-020). "
+            "The arrangement is remembered between sessions; Reset Layout restores the default.")
+        view_form.addRow(panels_btn)
 
         settings_layout.addWidget(view_group)
 
@@ -445,6 +450,117 @@ class AppWindowImagingPageMixin:
             log_pane.setFixedHeight(_log_height(8 if portrait else 10))
             content_layout.setContentsMargins(*((8, 8, 8, 8) if portrait else (24, 20, 24, 20)))
             _fit_preview_width()
+            _apply_user_layout()
+
+        # --- user panel layout (UI-020) -----------------------------------------
+        from galileo.ui.imaging_layout import ImagingLayoutStore, PANEL_LABELS
+        layout_store = ImagingLayoutStore()
+        try:
+            user_layout = layout_store.load()
+        except Exception:
+            logger.debug("Could not load the imaging panel layout", exc_info=True)
+            from galileo.ui.imaging_layout import ImagingLayout
+            user_layout = ImagingLayout()
+        panel_widgets = {
+            "view": (view_group,), "nudge": (nudge_group,), "stretch": (stretch_widget,),
+            "histogram": (histogram,), "progress": (progress_widget,), "log": (log_heading, log_pane),
+        }
+        widget_panel = {w: pid for pid, ws in panel_widgets.items() for w in ws}
+
+        def _apply_user_layout() -> None:
+            """Reorder the panels inside whichever column holds them, and hide the ones
+            the user switched off. Runs after every orientation change."""
+            rank = {pid: i for i, pid in enumerate(user_layout.order)}
+            for lay in (settings_layout, content_layout, dock_layout, log_bar_layout):
+                slots, present = [], []
+                for i in range(lay.count()):
+                    w = lay.itemAt(i).widget()
+                    if w is not None and w in widget_panel:
+                        slots.append(i)
+                        present.append(w)
+                if len(present) < 2:
+                    continue
+                wanted = sorted(dict.fromkeys(present), key=lambda w: (rank[widget_panel[w]], present.index(w)))
+                for w in present:
+                    lay.removeWidget(w)
+                for slot, w in zip(slots, wanted, strict=True):
+                    lay.insertWidget(slot, w)
+            for pid, widgets in panel_widgets.items():
+                for w in widgets:
+                    w.setVisible(user_layout.is_visible(pid))
+
+        def _save_user_layout() -> None:
+            try:
+                layout_store.save(user_layout)
+            except OSError:
+                logger.warning("Could not save the imaging panel layout", exc_info=True)
+
+        def _edit_panels() -> None:
+            from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem, QDialogButtonBox
+            dlg = QDialog(page)
+            dlg.setWindowTitle("Imaging Panels")
+            outer = QVBoxLayout(dlg)
+            outer.addWidget(QLabel("Tick the panels to show; use Move Up / Move Down to reorder."))
+            row = QHBoxLayout()
+            lst = QListWidget()
+            row.addWidget(lst, 1)
+            side = QVBoxLayout()
+            up_btn, down_btn = QPushButton("Move Up"), QPushButton("Move Down")
+            reset_btn = QPushButton("Reset Layout")
+            for b in (up_btn, down_btn, reset_btn):
+                side.addWidget(b)
+            side.addStretch(1)
+            row.addLayout(side)
+            outer.addLayout(row)
+            close_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            close_box.rejected.connect(dlg.accept)
+            outer.addWidget(close_box)
+
+            def _fill(select: str | None = None) -> None:
+                lst.blockSignals(True)
+                lst.clear()
+                for pid in user_layout.order:
+                    item = QListWidgetItem(PANEL_LABELS[pid])
+                    item.setData(Qt.ItemDataRole.UserRole, pid)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Checked if user_layout.is_visible(pid)
+                                       else Qt.CheckState.Unchecked)
+                    lst.addItem(item)
+                    if pid == select:
+                        lst.setCurrentItem(item)
+                lst.blockSignals(False)
+
+            def _changed() -> None:
+                _apply_user_layout()
+                _save_user_layout()
+
+            def _checked(item) -> None:
+                user_layout.set_visible(item.data(Qt.ItemDataRole.UserRole),
+                                        item.checkState() == Qt.CheckState.Checked)
+                _changed()
+
+            def _move(offset: int) -> None:
+                item = lst.currentItem()
+                if item is None:
+                    return
+                pid = item.data(Qt.ItemDataRole.UserRole)
+                if user_layout.move(pid, offset):
+                    _fill(pid)
+                    _changed()
+
+            def _reset() -> None:
+                user_layout.reset()
+                _fill()
+                _changed()
+
+            lst.itemChanged.connect(_checked)
+            up_btn.clicked.connect(lambda: _move(-1))
+            down_btn.clicked.connect(lambda: _move(1))
+            reset_btn.clicked.connect(_reset)
+            _fill()
+            dlg.exec()
+
+        panels_btn.clicked.connect(_edit_panels)
 
         class _PageResizeWatcher(QObject):
             def eventFilter(self, obj, event):
@@ -545,10 +661,8 @@ class AppWindowImagingPageMixin:
         self._imaging_annotate_threads = annotate_threads
 
         def _start_annotate(service) -> None:
-            from galileo.observatory import get_solver_settings
-            from galileo.platesolve import PlateSolver
-            executable, params = get_solver_settings(self._current_pier)
-            solver = PlateSolver(backend="astap", executable=executable, params=params)
+            from galileo.observatory import make_pier_solver
+            solver = make_pier_solver(self._current_pier)
             annotate_status.setText("Solving…")
             annotate_btn.setEnabled(False)
             thread = _AnnotateThread(service, solver, page)

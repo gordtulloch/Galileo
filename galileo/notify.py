@@ -68,28 +68,58 @@ class EmailChannel:
     ``WebhookChannel`` above stays for EXT-070's separate, broader
     "webhook/email/push integrations" requirement."""
 
-    def __init__(self, address: str, smtp_host: str = "localhost", smtp_port: int = 25) -> None:
+    def __init__(
+        self,
+        address: str,
+        smtp_host: str = "localhost",
+        smtp_port: int = 25,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        security: str = "none",
+        sender: str | None = None,
+    ) -> None:
+        """*security* is ``"none"`` (plain SMTP), ``"starttls"`` or ``"ssl"`` (implicit TLS);
+        *username*/*password* enable SMTP authentication; *sender* is the From address
+        (defaults to *address*)."""
         self.address = address
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port
+        self.username = username or None
+        self.password = password or None
+        self.security = security
+        self.sender = sender or None
 
-    async def send(self, notification: _Notification) -> None:
-        """Email *notification* to :attr:`address` via :attr:`smtp_host`."""
+    async def deliver(self, notification: _Notification) -> None:
+        """Email *notification* to :attr:`address` via :attr:`smtp_host`; raises on failure
+        (used by the Options > Notifications test button, which reports the error)."""
         import smtplib
         from email.message import EmailMessage
 
         message = EmailMessage()
         message["Subject"] = f"Galileo: {notification.event_type.value}"
-        message["From"] = self.address
+        message["From"] = self.sender or self.address
         message["To"] = self.address
         message.set_content(f"{notification.event_type.value}: {notification.detail}")
 
         def _send_sync() -> None:
-            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as smtp:
+            if self.security == "ssl":
+                smtp = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=10)
+            else:
+                smtp = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10)
+            with smtp:
+                if self.security == "starttls":
+                    smtp.starttls()
+                if self.username:
+                    smtp.login(self.username, self.password or "")
                 smtp.send_message(message)
 
+        await asyncio.to_thread(_send_sync)
+
+    async def send(self, notification: _Notification) -> None:
+        """Like :meth:`deliver`, but a failure is logged rather than raised."""
         try:
-            await asyncio.to_thread(_send_sync)
+            await self.deliver(notification)
         except Exception:
             logger.exception("EmailChannel: failed to send to %s", self.address)
 
@@ -102,9 +132,20 @@ class SmsChannel:
     unset, :meth:`send` logs that no gateway is configured rather than
     emailing a guessed, likely-wrong address."""
 
-    def __init__(self, phone_number: str, gateway_address: str | None = None) -> None:
+    def __init__(
+        self, phone_number: str, gateway_address: str | None = None, email_channel_kwargs: dict | None = None,
+    ) -> None:
+        """*email_channel_kwargs* are the SMTP settings (host, port, credentials, …) of the
+        :class:`EmailChannel` the gateway message is sent through."""
         self.phone_number = phone_number
         self.gateway_address = gateway_address
+        self.email_channel_kwargs = dict(email_channel_kwargs or {})
+
+    async def deliver(self, notification: _Notification) -> None:
+        """As :meth:`send`, but SMTP failures raise (and a missing gateway raises ``ValueError``)."""
+        if not self.gateway_address:
+            raise ValueError("no email-to-SMS gateway configured")
+        await EmailChannel(address=self.gateway_address, **self.email_channel_kwargs).deliver(notification)
 
     async def send(self, notification: _Notification) -> None:
         if not self.gateway_address:
@@ -112,7 +153,7 @@ class SmsChannel:
                 "SmsChannel: no email-to-SMS gateway configured for %s; message not sent.", self.phone_number,
             )
             return
-        await EmailChannel(address=self.gateway_address).send(notification)
+        await EmailChannel(address=self.gateway_address, **self.email_channel_kwargs).send(notification)
 
 
 class NotificationService:

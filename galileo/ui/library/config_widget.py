@@ -1,6 +1,5 @@
 import os
 import logging
-import configparser
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QGroupBox, QLineEdit, QPushButton, QCheckBox,
                                QComboBox, QSpinBox, QFileDialog, QMessageBox,
@@ -354,7 +353,7 @@ class ConfigWidget(QWidget):
         self.sftp_password = QLineEdit()
         self.sftp_password.setEchoMode(QLineEdit.Password)
         self.sftp_password.setToolTip(
-            "Password for the account. Stored in the operating system's keychain, not in library.ini.\n"
+            "Password for the account. Stored in the operating system's keychain, not in the settings database.\n"
             "Leave empty to use a key file or your SSH agent instead.")
 
         self.sftp_key_path = QLineEdit()
@@ -392,10 +391,8 @@ class ConfigWidget(QWidget):
     def save_settings(self):
         """Save configuration settings to library settings file"""
         try:
-            config = configparser.ConfigParser()
-
-            # Read existing config first to preserve any other settings
-            config.read('library.ini')
+            # Read the saved settings first to preserve any others
+            config = load_library_config()
 
             # Ensure DEFAULT section exists
             if 'DEFAULT' not in config:
@@ -458,7 +455,7 @@ class ConfigWidget(QWidget):
             from galileo.library.core.compress_files import reset_fits_compressor
             reset_fits_compressor()
 
-            logger.info("Settings saved to library.ini!")
+            logger.info("Library settings saved")
             QMessageBox.information(self, "Success", "Settings saved successfully!")
 
         except Exception as e:
@@ -599,7 +596,7 @@ class ConfigWidget(QWidget):
                 min_compression_size = config.getint('DEFAULT', 'min_compression_size', fallback=1024)
                 self.min_compression_size.setValue(min_compression_size)
 
-            logger.debug("Settings loaded from library.ini!")
+            logger.debug("Library settings loaded")
 
         except Exception as e:
             logger.error(f"Error loading settings: {e}")

@@ -173,6 +173,17 @@ def _schedule(painter, r):
         painter.drawLine(QLineF(r.left(), y, r.left() + r.width() * widths[i], y))
 
 
+def _dashboard(painter, r):
+    from PySide6.QtCore import QRectF
+    # A 2x2 grid of status tiles.
+    gap = r.width() * 0.14
+    side = (r.width() - gap) / 2
+    for col in (0, 1):
+        for row in (0, 1):
+            painter.drawRoundedRect(
+                QRectF(r.left() + col * (side + gap), r.top() + row * (side + gap), side, side), 2, 2)
+
+
 def _library(painter, r):
     from PySide6.QtCore import QRectF
     n = 3
@@ -497,6 +508,21 @@ def _plugins(painter, r):
     painter.drawPath(path)
 
 
+def _notifications(painter, r):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainterPath
+    # A bell: a dome that flares to a base line, with a clapper underneath.
+    x, y, w, h = r.left(), r.top(), r.width(), r.height()
+    path = QPainterPath()
+    path.moveTo(x + w * 0.15, y + h * 0.75)
+    path.cubicTo(x + w * 0.3, y + h * 0.65, x + w * 0.25, y + h * 0.5, x + w * 0.3, y + h * 0.4)
+    path.cubicTo(x + w * 0.35, y + h * 0.15, x + w * 0.65, y + h * 0.15, x + w * 0.7, y + h * 0.4)
+    path.cubicTo(x + w * 0.75, y + h * 0.5, x + w * 0.7, y + h * 0.65, x + w * 0.85, y + h * 0.75)
+    path.closeSubpath()
+    painter.drawPath(path)
+    painter.drawArc(QRectF(x + w * 0.4, y + h * 0.78, w * 0.2, h * 0.16), 180 * 16, 180 * 16)
+
+
 ICONS: dict[str, DrawFn] = {
     "equipment": _equipment,
     "star_atlas": _star_atlas,
@@ -508,6 +534,7 @@ ICONS: dict[str, DrawFn] = {
     "imaging": _imaging,
     "solve": _solve,
     "schedule": _schedule,
+    "dashboard": _dashboard,
     "library": _library,
     "variable_stars": _variable_stars,
     "options": _options,
@@ -536,6 +563,7 @@ ICONS: dict[str, DrawFn] = {
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,
+    "notifications": _notifications,
     "plugins": _plugins,
     "plugins": _plugins,
 }

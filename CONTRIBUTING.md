@@ -4,6 +4,7 @@ Thank you for wanting to help. Galileo is licensed under [GPL-3.0-or-later](LICE
 
 ## Before you start
 
+- **Questions?** Ask in the [Galileo Discord](https://discord.gg/cnTuRwejd) before or while you work.
 - **Open an issue first** for anything larger than a small fix, so effort isn't spent on something that won't be merged.
 - **Read the design documents.** [`docs/SRS.md`](docs/SRS.md) lists the numbered requirements, and [`docs/SDD.md`](docs/SDD.md) describes the architecture. Architectural changes should follow them.
 - **Stay behind the port interfaces.** The domain core and the UI must never import `galileo.adapters.indi` or `galileo.adapters.alpaca` directly; they use the port interfaces in `galileo.core.devices`. Modules talk to each other through the event bus (`galileo.bus`), not by direct calls.

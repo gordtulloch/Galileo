@@ -70,7 +70,7 @@ class AppWindowCoreMixin:
         # Populated whenever either the Weather or Safety Monitor page polls
         # the connected weather station while it is the one on screen.
         self._weather_history_by_pier: dict = {}
-        self._current_primary_section = "star_atlas"
+        self._current_primary_section = "dashboard"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
@@ -319,7 +319,8 @@ class AppWindowCoreMixin:
                 PLANNING_ITEMS, {"whats_up": self._build_whats_up_page,
                                   "targets": self._build_sky_atlas_page,
                                   "sessions": self._build_sessions_page,
-                                  "schedule": self._build_schedule_page}, help_prefix="planning"),
+                                  "schedule": self._build_schedule_page,
+                                  "history": self._build_history_page}, help_prefix="planning"),
             "science": lambda: self._build_submenu_page(
                 _effective_science_items + _science_plugin_items, _science_plugin_builders,
                 help_prefix="science",
@@ -329,6 +330,7 @@ class AppWindowCoreMixin:
             "guiding": self._build_guider_page,
             "focus": self._build_focus_page,
             "solve": self._build_solve_page,
+            "dashboard": self._build_dashboard_page,
         }
 
         pages: dict[str, int] = {}
@@ -351,6 +353,10 @@ class AppWindowCoreMixin:
         option_builders["imaging"] = self._build_imaging_settings_page
         option_builders["focus"] = self._build_focus_settings_page
         option_builders["solve"] = self._build_solve_settings_page
+        option_builders["equipment"] = self._build_equipment_settings_page
+        option_builders["guiding"] = self._build_guiding_settings_page
+        option_builders["science"] = self._build_science_settings_page
+        option_builders["notifications"] = self._build_notifications_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders, help_prefix="options")
         tag_help_screen(options_page, "options")
@@ -394,10 +400,10 @@ class AppWindowCoreMixin:
                  self._show_community_menu),
                 ("about", "About Galileo", self._show_about),
             ],
-            initial_selection="star_atlas",
+            initial_selection="dashboard",
         )
         self._nav_columns.append(sidebar)
-        stack.setCurrentIndex(pages["star_atlas"])
+        stack.setCurrentIndex(pages["dashboard"])
         return stack, sidebar
 
     def _request_quit(self: AppWindowState) -> None:

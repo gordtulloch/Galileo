@@ -292,10 +292,8 @@ class AppWindowFramingMixin:
             if service.current_frame is None:
                 rotator_status.setText("Determine Rotation needs a captured frame on the Imaging tab first.")
                 return
-            from galileo.observatory import get_solver_settings
-            from galileo.platesolve import PlateSolver
-            executable, params = get_solver_settings(self._current_pier)
-            solver = PlateSolver(backend="astap", executable=executable, params=params)
+            from galileo.observatory import make_pier_solver
+            solver = make_pier_solver(self._current_pier)
             determine_rotation_btn.setEnabled(False)
             rotator_status.setText("Solving the current frame for its rotation…")
 

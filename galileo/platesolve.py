@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import logging
 import math
 import tempfile
@@ -22,6 +23,16 @@ from galileo.bus import Event, SolveCompleteEvent, SolveStartedEvent, get_bus
 logger = logging.getLogger(__name__)
 
 _OFFLINE_BACKENDS = {"astap", "astrometry_local"}
+
+BACKENDS = {
+    "astap": "ASTAP",
+    "astrometry_local": "astrometry.net (local solve-field)",
+    "astrometry_web": "nova.astrometry.net (web)",
+}
+
+_NOVA_URL = "https://nova.astrometry.net"
+_NOVA_TIMEOUT_S = 300.0
+_NOVA_POLL_S = 3.0
 
 # Where the installers put ASTAP when it isn't on PATH (the Windows installer never adds it).
 _KNOWN_LOCATIONS = {
@@ -68,8 +79,9 @@ class SolverParams:
 class PlateSolver:
     """Drives an external plate-solving engine (PLT-010 … PLT-060).
 
-    Currently supports ASTAP (``backend="astap"``) and a local
-    astrometry.net installation (``backend="astrometry_local"``).
+    Supports ASTAP (``backend="astap"``), a local astrometry.net installation
+    (``backend="astrometry_local"``, its ``solve-field``) and the nova.astrometry.net
+    web service (``backend="astrometry_web"``, which needs an API key and internet access).
 
     Every solve publishes ``SolveStartedEvent`` and ``SolveCompleteEvent`` on the
     event bus, so a screen showing solves (the Solve screen) sees those started by
@@ -83,15 +95,35 @@ class PlateSolver:
         params: SolverParams | None = None,
         event_bus=None,
         pier_key=None,
+        api_key: str = "",
     ) -> None:
         self.backend = backend
         self.executable = executable or self._find_executable(backend)
+        self.api_key = api_key
+        self.web_url = _NOVA_URL
         self.params = params or SolverParams()
         self._bus = event_bus
         # Carried on every published event so a listener subscribed process-wide
         # (the Solve screen) can tell which Pier this solve belongs to — two
         # Piers can each have their own solve running at once.
         self.pier_key = pier_key
+
+    def is_available(self) -> bool:
+        """True when the configured backend has what it needs to run: an executable that exists
+        (ASTAP, ``solve-field``) or, for nova.astrometry.net, an API key."""
+        if self.backend == "astrometry_web":
+            return bool(self.api_key)
+        return bool(self.executable)
+
+    def missing_message(self) -> str:
+        """What to tell the user when :meth:`is_available` is False."""
+        if self.backend == "astrometry_web":
+            return "Solving through nova.astrometry.net needs an API key (Options > Solve)."
+        if self.backend == "astrometry_local":
+            return ("Solving needs astrometry.net's solve-field and its index files. Install them, "
+                    "or set the path in Options > Solve.")
+        return ("Solving needs the ASTAP solver and a star database (both free from hnsky.org/astap.htm). "
+                "Install them, then try again.")
 
     @staticmethod
     def is_offline_capable(backend: str) -> bool:
@@ -157,31 +189,33 @@ class PlateSolver:
         camera,
         tolerance_arcsec: float = 30.0,
         max_iterations: int = 5,
-    ) -> None:
-        """Iteratively slew and re-solve until within *tolerance_arcsec* (PLT-040)."""
-        tol_deg = tolerance_arcsec / 3600.0
+    ) -> bool:
+        """Iteratively solve, sync and slew until within *tolerance_arcsec* of the target (PLT-040).
 
+        *target_ra*/*target_dec* are in degrees, in the frame the solver reports (J2000) -- which is also
+        the frame the mount is synced and slewed in here, so a mount working in JNow should be driven
+        through :class:`SolveWorkflow` instead. Each pass syncs the mount to the solution *before*
+        slewing, so the slew corrects the pointing error rather than repeating it. Returns True once
+        the solution is within tolerance, False if a solve fails or the iterations run out."""
         for _ in range(max_iterations):
-            # Capture a frame
             await camera.start_exposure(duration=5.0, frame_type="Light")
             data = await camera.get_image_array()
 
-            # Write temp FITS
-            tmp = Path(tempfile.gettempdir()) / "galileo_center.fits"
-            _write_temp_fits(data, tmp)
+            with tempfile.TemporaryDirectory(prefix="galileo_center_") as tmpdir:
+                tmp = Path(tmpdir) / "galileo_center.fits"
+                await asyncio.to_thread(_write_temp_fits, data, tmp)
+                result = await self.solve(tmp, hint=(target_ra, target_dec))
+            if not result.success or result.ra_deg is None or result.dec_deg is None:
+                return False
 
-            result = await self.solve(tmp)
-            if not result.success:
-                break
+            d_ra, d_dec = angular_offset_arcsec(result.ra_deg, result.dec_deg, target_ra, target_dec)
+            if math.hypot(d_ra, d_dec) <= tolerance_arcsec:
+                return True
 
-            dist = math.sqrt(
-                (result.ra_deg - target_ra) ** 2 + (result.dec_deg - target_dec) ** 2
-            )
-            if dist <= tol_deg:
-                return
-
+            await mount.sync_to_coordinates(ra=result.ra_deg, dec=result.dec_deg)
             await mount.slew_to_coordinates(ra=target_ra, dec=target_dec)
             await asyncio.sleep(2)
+        return False
 
     # --- Private runner ---------------------------------------------------
 
@@ -190,7 +224,9 @@ class PlateSolver:
         if self.backend == "astap":
             return await self._run_astap(fits_path, hint)
         if self.backend == "astrometry_local":
-            return await self._run_astrometry(fits_path)
+            return await self._run_astrometry(fits_path, hint)
+        if self.backend == "astrometry_web":
+            return await self._run_nova(fits_path, hint)
         return SolveResult(success=False, failure_reason=f"Unknown backend: {self.backend}")
 
     async def _run_astap(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:
@@ -254,10 +290,132 @@ class PlateSolver:
         logger.info("ASTAP failed (%s): %s", reason, " ".join(cmd))
         return SolveResult(success=False, failure_reason=reason)
 
-    async def _run_astrometry(self, fits_path: Path) -> SolveResult:
-        if not self.executable:
+    async def _run_astrometry(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:
+        """Solve with a local astrometry.net ``solve-field``. It writes a WCS file on success; its
+        many other outputs go to a scratch folder that is removed afterwards."""
+        if not self.executable or not await asyncio.to_thread(Path(self.executable).exists):
             return SolveResult(success=False, failure_reason="solve-field not found")
-        return SolveResult(success=False, failure_reason="astrometry.net backend not yet fully implemented")
+        with tempfile.TemporaryDirectory(prefix="galileo_astrometry_") as outdir:
+            cmd = [self.executable, "--overwrite", "--no-plots", "--new-fits", "none",
+                   "--crpix-center", "--cpulimit", "120", "--dir", outdir, "--out", "solved"]
+            fov = self.params.fov_hint_deg
+            if fov > 0:
+                cmd += ["--scale-units", "degwidth", "--scale-low", f"{fov * 0.8:g}", "--scale-high", f"{fov * 1.25:g}"]
+            if self.params.downsample > 1:
+                cmd += ["--downsample", str(self.params.downsample)]
+            if hint is not None:
+                cmd += ["--ra", f"{hint[0]:.6f}", "--dec", f"{hint[1]:.6f}", "--radius", f"{self.params.search_radius_deg:g}"]
+            cmd.append(str(fits_path))
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            except Exception as exc:
+                return SolveResult(success=False, failure_reason=str(exc))
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return SolveResult(success=False, failure_reason="Solver timed out")
+            except asyncio.CancelledError:
+                proc.kill()
+                raise
+            except Exception as exc:
+                return SolveResult(success=False, failure_reason=str(exc))
+            wcs = Path(outdir) / "solved.wcs"
+            if wcs.exists():
+                return await asyncio.to_thread(_result_from_wcs, wcs)
+            reason = (stderr.decode(errors="replace").strip()[-200:]
+                      or ("No solution found" if proc.returncode == 0 else f"solve-field exited with code {proc.returncode}"))
+            logger.info("solve-field failed (%s): %s", reason, " ".join(cmd))
+            return SolveResult(success=False, failure_reason=reason)
+
+    async def _run_nova(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:
+        """Solve through the nova.astrometry.net web API (upload, then poll the job)."""
+        if not self.api_key:
+            return SolveResult(success=False, failure_reason="No nova.astrometry.net API key is configured")
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self._nova_solve, fits_path, hint), timeout=_NOVA_TIMEOUT_S + 30)
+        except TimeoutError:
+            return SolveResult(success=False, failure_reason="nova.astrometry.net timed out")
+        except Exception as exc:
+            return SolveResult(success=False, failure_reason=f"nova.astrometry.net: {exc}")
+
+    def _nova_solve(self, fits_path: Path, hint: tuple[float, float] | None) -> SolveResult:
+        session = self._nova_request("login", {"apikey": self.api_key}).get("session")
+        if not session:
+            return SolveResult(success=False, failure_reason="nova.astrometry.net rejected the API key")
+        options: dict = {"session": session, "publicly_visible": "n", "allow_commercial_use": "n",
+                         "allow_modifications": "n"}
+        fov = self.params.fov_hint_deg
+        if fov > 0:
+            options.update(scale_units="degwidth", scale_type="ul", scale_lower=fov * 0.8, scale_upper=fov * 1.25)
+        if self.params.downsample > 1:
+            options["downsample_factor"] = self.params.downsample
+        if hint is not None:
+            options.update(center_ra=hint[0], center_dec=hint[1], radius=self.params.search_radius_deg)
+        upload = self._nova_request("upload", options, file=fits_path)
+        if upload.get("status") != "success":
+            return SolveResult(success=False, failure_reason=f"Upload failed: {upload.get('errormessage', upload)}")
+        sub_id = upload["subid"]
+        deadline = time.monotonic() + _NOVA_TIMEOUT_S
+        job_id = None
+        while time.monotonic() < deadline:
+            if job_id is None:
+                jobs = [j for j in self._nova_request(f"submissions/{sub_id}").get("jobs", []) if j]
+                job_id = jobs[0] if jobs else None
+            if job_id is not None:
+                status = self._nova_request(f"jobs/{job_id}").get("status")
+                if status == "success":
+                    cal = self._nova_request(f"jobs/{job_id}/calibration")
+                    return SolveResult(success=True, ra_deg=float(cal["ra"]), dec_deg=float(cal["dec"]),
+                                       rotation_deg=float(cal.get("orientation", 0.0)),
+                                       scale_arcsec_px=float(cal["pixscale"]))
+                if status == "failure":
+                    return SolveResult(success=False, failure_reason="No solution found")
+            time.sleep(_NOVA_POLL_S)
+        return SolveResult(success=False, failure_reason="nova.astrometry.net timed out")
+
+    def _nova_request(self, path: str, fields: dict | None = None, file: Path | None = None) -> dict:
+        """One call to the nova.astrometry.net JSON API (blocking; runs on a worker thread)."""
+        import urllib.parse
+        import urllib.request
+        url = f"{self.web_url.rstrip('/')}/api/{path}"
+        if fields is None and file is None:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                return json.loads(response.read())
+        body_json = json.dumps(fields or {})
+        if file is None:
+            data = urllib.parse.urlencode({"request-json": body_json}).encode()
+            request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        else:
+            boundary = "galileo" + str(time.time_ns())
+            head = (f'--{boundary}\r\nContent-Disposition: form-data; name="request-json"\r\n'
+                    f'Content-Type: text/plain\r\n\r\n{body_json}\r\n'
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{file.name}"\r\n'
+                    f'Content-Type: application/octet-stream\r\n\r\n').encode()
+            data = head + file.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+            request = urllib.request.Request(
+                url, data=data, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+
+
+def _result_from_wcs(path: Path) -> SolveResult:
+    """Build a ``SolveResult`` from a WCS FITS file written by astrometry.net (referenced to the image centre)."""
+    try:
+        from astropy.io import fits
+        header = fits.getheader(path)
+        ra, dec = float(header["CRVAL1"]), float(header["CRVAL2"])
+        if "CD1_1" in header:
+            cd11, cd12, cd21, cd22 = (float(header[k]) for k in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"))
+        else:
+            cd11, cd12, cd21, cd22 = float(header["CDELT1"]), 0.0, 0.0, float(header["CDELT2"])
+        return SolveResult(success=True, ra_deg=ra, dec_deg=dec,
+                           rotation_deg=math.degrees(math.atan2(cd12, cd22)),
+                           scale_arcsec_px=math.hypot(cd11, cd21) * 3600.0)
+    except Exception as exc:
+        return SolveResult(success=False, failure_reason=f"Could not read astrometry.net's solution: {exc}")
 
 
 def _read_astap_ini(path: Path) -> dict[str, str]:
@@ -378,6 +536,10 @@ class SolveSettings:
     settle_s: float = 1.5             # pause after a slew before the next frame
     max_iterations: int = 5
     scale_hint_arcsec_px: float | None = None   # from the optical train; narrows the solver's field-of-view search
+    binning: int = 1                  # camera binning for the solve frames
+    gain: int = 0                     # camera gain (a DSLR's ISO); 0 leaves the camera as configured
+    filter_name: str = ""             # filter to solve through; empty leaves the wheel where it is
+    subtract_dark: bool = False       # take a dark of the same exposure and subtract it before solving
 
 
 class SolveWorkflow:
@@ -399,10 +561,12 @@ class SolveWorkflow:
         work_dir: Path | str | None = None,
         log: Callable[[str], None] | None = None,
         frame_metadata: dict | None = None,
+        filter_wheel=None,
     ) -> None:
         self.solver = solver
         self.camera = camera
         self.mount = mount
+        self.filter_wheel = filter_wheel
         # Header values for the frames this workflow captures, so the solver knows the image scale
         # and whether the sensor is one-shot-colour. Keyed as galileo.metadata expects.
         self.frame_metadata: dict = dict(frame_metadata or {})
@@ -608,12 +772,34 @@ class SolveWorkflow:
         if self.camera is None:
             self._log("No camera is connected.")
             return None
+        if settings.filter_name and self.filter_wheel is not None:
+            try:
+                await self.filter_wheel.move_to_filter(settings.filter_name)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._log(f"Could not select the {settings.filter_name} filter: {exc}")
         self._log("Capturing image…")
+        # Only what differs from the camera's own configuration is passed, so a camera port that
+        # takes nothing but a duration and frame type keeps working.
+        options: dict = {}
+        if settings.gain:
+            options["gain"] = settings.gain
+        if settings.binning > 1:
+            options["binning"] = settings.binning
         try:
-            await self.camera.start_exposure(duration=settings.exposure_s, frame_type="Light")
+            await self.camera.start_exposure(
+                duration=settings.exposure_s, frame_type="Light", **options)
             data = await self.camera.get_image_array()
             if data is None:
                 raise RuntimeError("the camera returned no image")
+            if settings.subtract_dark:
+                self._log("Capturing dark…")
+                await self.camera.start_exposure(
+                    duration=settings.exposure_s, frame_type="Dark", **options)
+                dark = await self.camera.get_image_array()
+                if dark is not None:
+                    data = _subtract_dark(data, dark)
             frame = self._work_path(self._frame_stem(str(attempt)))
             await asyncio.to_thread(_write_frame, data, frame, self.frame_metadata)
         except asyncio.CancelledError:
@@ -674,6 +860,15 @@ class SolveWorkflow:
             self._log(f"Could not start tracking after the slew: {exc}")
             return
         self._log(f"Tracking at the {rate} rate.")
+
+
+def _subtract_dark(light, dark):
+    """*light* minus *dark*, floored at zero, as floats; *light* unchanged if the shapes differ."""
+    import numpy as np
+    light, dark = np.asarray(light), np.asarray(dark)
+    if light.shape != dark.shape:
+        return light
+    return np.clip(light.astype(np.float32) - dark.astype(np.float32), 0.0, None)
 
 
 def frame_for_solver(data):

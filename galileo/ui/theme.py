@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import colorsys
-import json
 import logging
 from enum import Enum
 from pathlib import Path
@@ -330,30 +329,32 @@ class ThemeManager:
 
 
 class LayoutManager:
-    """Persists imaging-tab panel layouts across restarts (UI-020)."""
+    """Persists imaging-tab panel layouts across restarts (UI-020), in the shared database.
 
-    def __init__(self, config_path: Path | str | None = None) -> None:
-        if config_path is None:
-            from galileo.platform import get_config_dir
-            config_path = get_config_dir() / "panel_layouts.json"
-        self._path = Path(config_path)
+    Layouts are ``app_settings`` rows (namespace ``panel_layouts``, one key per panel id). With no
+    database available they are still held in memory for the session. *legacy_path* is an old
+    ``panel_layouts.json`` to import once (default: the one in the config folder); it is renamed
+    ``*.migrated`` afterwards.
+    """
+
+    NAMESPACE = "panel_layouts"
+
+    def __init__(self, legacy_path: Path | str | None = None) -> None:
+        self._legacy_path = Path(legacy_path) if legacy_path else None
         self._data: dict = {}
         self._load()
 
     def save_layout(self, panel_id: str, layout: dict) -> None:
+        from galileo.settings_store import set_setting
         self._data[panel_id] = layout
-        self._flush()
+        set_setting(self.NAMESPACE, panel_id, layout)
 
     def load_layout(self, panel_id: str) -> dict:
         return dict(self._data.get(panel_id, {}))
 
-    def _flush(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
-
     def _load(self) -> None:
-        if self._path.exists():
-            try:
-                self._data = json.loads(self._path.read_text("utf-8"))
-            except Exception:
-                logger.debug("Could not load saved layout from %s", self._path, exc_info=True)
+        from galileo.settings_store import import_legacy_json, load_with_legacy
+        if self._legacy_path is not None:
+            self._data = import_legacy_json(self.NAMESPACE, self._legacy_path)
+        else:
+            self._data = load_with_legacy(self.NAMESPACE, "panel_layouts.json")

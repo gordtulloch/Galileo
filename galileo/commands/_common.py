@@ -4,18 +4,17 @@
 """Helpers shared by the library command-line utilities (LIB-130, EXT-140).
 
 AstroFiler's utilities each carried their own ``sys.path`` bootstrap, log-file
-name and ``astrofiler.ini`` lookup. Here they all read the same ``library.ini``
-the GUI edits under Options > Library (or the file named by ``-c/--config``)
+name and ``astrofiler.ini`` lookup. Here they all read the same library settings
+the GUI edits under Options > Library (in the database, or the file named by ``-c/--config``)
 and append to one log file in the Galileo log directory.
 """
 
 from __future__ import annotations
 
 import configparser
-import os
 from pathlib import Path
 
-from galileo.library.config import get_config_path, load_config as _load_library_config, set_config_path
+from galileo.library.config import config_exists, get_config_path, has_config_override, load_config as _load_library_config, set_config_path
 
 LOG_FILENAME = "library.log"
 
@@ -36,10 +35,13 @@ def load_config(config_path: str | None = None) -> configparser.ConfigParser:
     """
     if config_path:
         set_config_path(config_path)
-    target = get_config_path()
-    if not os.path.exists(target):
+    if not has_config_override():
+        # The default settings live in the database; make sure it is initialised first.
+        from galileo.library.database import setup_database
+        setup_database()
+    if not config_exists():
         raise FileNotFoundError(
-            f"Configuration file not found: {target} "
+            f"Configuration not found: {get_config_path()} "
             "(set the repository folders under Options > Library, or pass --config)"
         )
     return _load_library_config()

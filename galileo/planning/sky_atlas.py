@@ -846,7 +846,11 @@ class SkyAtlas:
 
 
 async def geocode_location(place_name: str) -> dict:
-    """Geocode a place name via the Open-Meteo geocoding API (SKY-090)."""
+    """Geocode a place name via the Open-Meteo geocoding API (SKY-090).
+
+    Returns ``latitude``, ``longitude`` and ``timezone`` (an IANA zone name), plus ``elevation``
+    (metres, when the service knows it) and a ``name`` describing what matched ("Toronto, Ontario,
+    Canada"). An unknown place or an unreachable service gives ``{}`` - never a made-up (0, 0)."""
     import urllib.request
     import urllib.parse
 
@@ -858,11 +862,32 @@ async def geocode_location(place_name: str) -> dict:
 
     try:
         data = await asyncio.to_thread(_fetch)
-        result = data.get("results", [{}])[0]
-        return {
-            "latitude": result.get("latitude", 0.0),
-            "longitude": result.get("longitude", 0.0),
-            "timezone": result.get("timezone", "UTC"),
+        results = data.get("results") or []
+        if not results:
+            return {}
+        result = results[0]
+        if result.get("latitude") is None or result.get("longitude") is None:
+            return {}
+        found = {
+            "latitude": float(result["latitude"]),
+            "longitude": float(result["longitude"]),
+            "timezone": result.get("timezone") or "UTC",
+            "name": ", ".join(str(result[k]) for k in ("name", "admin1", "country") if result.get(k)),
         }
+        if result.get("elevation") is not None:
+            found["elevation"] = float(result["elevation"])
+        return found
     except Exception:
         return {}
+
+
+async def geocode_address(address: str) -> dict:
+    """Look an address or place description up (SKY-090) by trying it whole and then with its leading
+    comma-separated parts dropped - Open-Meteo matches place names, not street addresses, so
+    "12 Dark Sky Rd, Beaverton, Ontario" is found as "Beaverton, Ontario" or "Beaverton"."""
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    for start in range(len(parts)):
+        found = await geocode_location(", ".join(parts[start:]))
+        if found:
+            return found
+    return {}
