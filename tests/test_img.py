@@ -1570,13 +1570,14 @@ def test_tc_img_170_imaging_options_default_to_auto_and_round_trip(settings_db):
     from galileo.metadata import BITPIX_AUTO
     from galileo.settings_store import set_setting
 
-    assert load_imaging_settings() == {"bitpix": BITPIX_AUTO}
+    defaults = {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 10.0}
+    assert load_imaging_settings() == defaults
 
-    save_imaging_settings({"bitpix": 16})
-    assert load_imaging_settings() == {"bitpix": 16}
+    save_imaging_settings({"bitpix": 16, "mosaic_overlap_pct": 25.0})
+    assert load_imaging_settings() == {"bitpix": 16, "mosaic_overlap_pct": 25.0}
 
     set_setting("imaging", "bitpix", "not a real choice")
-    assert load_imaging_settings() == {"bitpix": BITPIX_AUTO}, "an unrecognised value is not trusted"
+    assert load_imaging_settings() == {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 25.0}, "an unrecognised value is not trusted"
 
 
 @pytest.mark.requirement("TC-IMG-170")

@@ -435,18 +435,19 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
 def test_options_has_a_settings_placeholder_for_each_primary_section(window):
     """Options opens onto one settings page per primary sidebar section, in the same order,
     each a titled placeholder until its real settings are built (Library's and Plugins' are
-    real: see test_lib.py / test_plug.py). Plugins is an Options-only entry appended after
-    the primary sections — it isn't itself a primary sidebar section."""
+    real: see test_lib.py / test_plug.py). Notifications and Plugins are Options-only entries
+    appended after the primary sections — they aren't primary sidebar sections."""
     from PySide6 import QtWidgets
     from galileo.ui.app_window import OPTIONS_ITEMS, PRIMARY_SECTIONS
     assert [i[:2] for i in OPTIONS_ITEMS[:len(PRIMARY_SECTIONS)]] == [s[:2] for s in PRIMARY_SECTIONS]
-    assert OPTIONS_ITEMS[len(PRIMARY_SECTIONS):] == [("plugins", "Plugins", "plugins")]
+    assert OPTIONS_ITEMS[len(PRIMARY_SECTIONS):] == [
+        ("notifications", "Notifications", "notifications"), ("plugins", "Plugins", "plugins")]
 
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert [s[1] for s in PRIMARY_SECTIONS] + ["Plugins"] in menus
+    assert [s[1] for s in PRIMARY_SECTIONS] + ["Notifications", "Plugins"] in menus
 
     titles = {w.text() for w in window._window.findChildren(QtWidgets.QLabel, "PageTitle")}
     for section_id, label, _icon in PRIMARY_SECTIONS:
@@ -460,7 +461,9 @@ def test_star_atlas_page_shows_the_sky_at_the_observatory_site(window):
     """SKYMAP-010: the Star Atlas page hosts the sky view, using the selected Pier's Observatory as its site."""
     from galileo.observatory import create_observatory, create_pier
     from galileo.ui.star_atlas import StarAtlasView
-    window._current_pier = create_pier(create_observatory("Dark Site", latitude=-33.9, longitude=151.2), "Pier A")
+    observatory = create_observatory("Dark Site", latitude=-33.9, longitude=151.2)
+    window._current_observatory = observatory       # the site comes from the Observatory, which is tracked separately
+    window._current_pier = create_pier(observatory, "Pier A")
     window._on_pier_changed()
     views = window._window.findChildren(StarAtlasView)
     assert len(views) == 1

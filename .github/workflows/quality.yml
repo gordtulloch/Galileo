@@ -9,7 +9,7 @@ name: Code quality and tests
 #   radon       BLOCKING if any function reaches complexity rank F (> 40); the ranking is printed for E and worse
 #   vulture     informational (dead-code candidates at >= 80 % confidence; unused parameters are expected)
 #   mypy        informational until the Qt "Optional" backlog is cleared
-# tests (INFORMATIONAL until the CI hang is fixed)
+# tests (BLOCKING)
 #   the pytest suite that release.yml runs on tags, including the regression tests added for the review
 #   (TC-LIB-010 DatabaseError, TC-LIB-060 session calibration, TC-LIB-090 checkout/context menu, TC-LIB-100 merge)
 on:
@@ -71,9 +71,6 @@ jobs:
         run: mypy galileo
 
   tests:
-    # Informational for now: the suite hangs intermittently on the Linux runner (a Qt test, not yet identified)
-    # although it passes locally. Remove continue-on-error once that is fixed.
-    continue-on-error: true
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:

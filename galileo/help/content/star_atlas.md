@@ -89,6 +89,22 @@ Brightens the sky background when the Sun is up (or twilight), as the real sky w
 
 Draws the horizon line, including the horizon profile configured for the Observatory in Options › Star Atlas.
 
+## Field of view
+
+Draws the field of view of the selected Pier's camera and telescope as a rectangle on the sky, centred on the current object, so you can see how a target would frame.
+
+## Comets
+
+Shows comets on the map. Their orbital elements are downloaded the first time you turn this on and refreshed when stale.
+
+## Asteroids
+
+Shows asteroids on the map, from downloaded orbital elements that are cached and refreshed when stale.
+
+## Satellites
+
+Shows Earth satellites (including the space station) for the Observatory's location and the time on the map.
+
 ## Telescope markers
 
 Draws a marker for where each Pier's telescope is pointing right now, so you can see where your mounts are looking.
