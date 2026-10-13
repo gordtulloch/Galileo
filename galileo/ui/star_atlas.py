@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QWidget
 from galileo.planning import minor_bodies as mb
 from galileo.planning import star_atlas as sa
 from galileo.planning.sky_atlas import DSO_CATALOGS, catalogs_of
+from galileo.ui.gc_guard import gc_paused
 
 if TYPE_CHECKING:
     from galileo.planning.visibility import HorizonProfile
@@ -199,32 +200,38 @@ class StarAtlasView(QWidget):
         """Load the star and deep-sky catalogs off the UI thread (the first run
         fetches the star catalog from VizieR, which can take a few seconds)."""
         def work() -> None:
-            try:
-                stars = sa.load_star_catalog()
-            except Exception:
-                logger.exception("Could not load the star catalog")
-                stars = sa._fallback_catalog()
-            try:
-                from galileo.planning.sky_atlas import SkyAtlas
-                dsos = SkyAtlas().search("")
-            except Exception:
-                logger.exception("Could not load the deep-sky catalog")
-                dsos = []
-            try:
-                bounds = sa.load_constellation_boundaries()
-            except Exception:
-                logger.exception("Could not load the constellation boundaries")
-                bounds = sa.ConstellationBoundaries.empty()
-            try:
-                lines = sa.load_constellation_lines()
-            except Exception:
-                logger.exception("Could not load the constellation lines")
-                lines = sa.ConstellationLines.empty()
-            try:
-                self._catalogsReady.emit(stars, dsos, bounds, lines)
-            except RuntimeError:
-                pass  # widget was destroyed while loading
+            with gc_paused():
+                self._load_catalogs_paused()
+
         threading.Thread(target=work, name="star-atlas-catalogs", daemon=True).start()
+
+    def _load_catalogs_paused(self) -> None:
+        """The body of the catalog-loading thread (runs with the cyclic GC paused; see ``gc_guard``)."""
+        try:
+            stars = sa.load_star_catalog()
+        except Exception:
+            logger.exception("Could not load the star catalog")
+            stars = sa._fallback_catalog()
+        try:
+            from galileo.planning.sky_atlas import SkyAtlas
+            dsos = SkyAtlas().search("")
+        except Exception:
+            logger.exception("Could not load the deep-sky catalog")
+            dsos = []
+        try:
+            bounds = sa.load_constellation_boundaries()
+        except Exception:
+            logger.exception("Could not load the constellation boundaries")
+            bounds = sa.ConstellationBoundaries.empty()
+        try:
+            lines = sa.load_constellation_lines()
+        except Exception:
+            logger.exception("Could not load the constellation lines")
+            lines = sa.ConstellationLines.empty()
+        try:
+            self._catalogsReady.emit(stars, dsos, bounds, lines)
+        except RuntimeError:
+            pass  # widget was destroyed while loading
 
     def set_catalogs(self, stars: sa.StarCatalog, dsos: list,
                      boundaries: sa.ConstellationBoundaries | None = None,
@@ -295,15 +302,16 @@ class StarAtlasView(QWidget):
         self._recompute_minor()
 
     def _load_minor(self, kind: str) -> None:
-        try:
-            data = mb.load_satellites() if kind == mb.SATELLITE else mb.load_orbits(kind)
-        except Exception:
-            logger.exception("Could not load %s elements", kind)
-            data = None
-        try:
-            self._minorReady.emit(kind, data)
-        except RuntimeError:
-            pass  # widget was destroyed while loading
+        with gc_paused():
+            try:
+                data = mb.load_satellites() if kind == mb.SATELLITE else mb.load_orbits(kind)
+            except Exception:
+                logger.exception("Could not load %s elements", kind)
+                data = None
+            try:
+                self._minorReady.emit(kind, data)
+            except RuntimeError:
+                pass  # widget was destroyed while loading
 
     def _on_minor_loaded(self, kind: str, data) -> None:
         self._minor_loading.discard(kind)

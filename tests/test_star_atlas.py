@@ -1302,3 +1302,26 @@ def test_tc_skymap_090_telescope_markers_is_a_remembered_option(settings_db):
         assert load_display_prefs()["show_pier_markers"] is False
     finally:
         v.close()
+
+
+def test_gc_paused_disables_the_collector_until_the_last_worker_finishes():
+    """Worker threads that parse big catalogs pause the cyclic GC, so a PySide QObject is never destroyed by a
+    collection on a non-GUI thread (that deadlocks against the GUI thread's widget construction)."""
+    import gc
+
+    from galileo.ui.gc_guard import gc_paused
+
+    gc.enable()
+    try:
+        with gc_paused():
+            assert not gc.isenabled()
+            with gc_paused():
+                assert not gc.isenabled()
+            assert not gc.isenabled(), "the inner worker finishing must not re-enable it for the outer one"
+        assert gc.isenabled()
+        gc.disable()
+        with gc_paused():
+            pass
+        assert not gc.isenabled(), "a collector that was already off stays off"
+    finally:
+        gc.enable()
