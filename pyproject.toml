@@ -134,6 +134,7 @@ test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
+    "pytest-timeout",   # a hung test fails with a stack dump instead of stalling CI
     "numpy",
     "astropy",
 ]
