@@ -138,7 +138,7 @@ test = [
     "astropy",
 ]
 dev = [
-    "ruff",
+    "ruff>=0.16,<0.17",  # pinned: a new minor adds rules, which would turn CI red without a code change
     "mypy",
     "bandit",       # deeper security scan than ruff's "S" rules
     "pip-audit",    # known-vulnerability scan of the installed dependencies

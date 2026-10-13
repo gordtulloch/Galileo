@@ -3,7 +3,7 @@ name: Code quality and tests
 # Everything the code review ("Code Review.md") ran by hand, on every push to main and every pull request.
 #
 # static-analysis
-#   ruff        BLOCKING, for the Python files the change touches (the existing backlog does not stop unrelated work)
+#   ruff        BLOCKING for every rule the repository is currently clean for; the backlog rules are reported only
 #   bandit      BLOCKING for High severity; Medium/Low are listed but informational
 #   pip-audit   BLOCKING: the dependency set has no known vulnerabilities
 #   radon       BLOCKING if any function reaches complexity rank F (> 40); the ranking is printed for E and worse
@@ -33,16 +33,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test,dev]"
 
-      - name: ruff (changed Python files only)
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="origin/${{ github.base_ref }}"
-          else
-            base="${{ github.event.before }}"
-          fi
-          files=$(git diff --name-only --diff-filter=d "$base"...HEAD -- '*.py' 2>/dev/null || true)
-          if [ -z "$files" ]; then echo "No Python files changed"; exit 0; fi
-          echo "$files" | xargs ruff check
+      # The repository is clean for every rule except the ones ignored below, which still have a backlog
+      # (see "Code Review.md"). Anything new in any other rule fails the build; remove a code from --ignore
+      # once its backlog is cleared.
+      - name: ruff (blocking; backlog rules ignored)
+        run: ruff check . --ignore RUF100,ASYNC110,ASYNC251,E702,E712,F401,G003,RUF007,RUF043,S101,S108,S110,S310,S314,S321,S324,S603,S606,S607,SIM102,SIM103,SIM105,SIM108,SIM113,SIM115,SIM117,TRY401,W291
+
+      - name: ruff (backlog rules, informational)
+        continue-on-error: true
+        run: ruff check . --statistics
 
       - name: bandit (High severity blocks)
         run: bandit -r galileo -lll -q
