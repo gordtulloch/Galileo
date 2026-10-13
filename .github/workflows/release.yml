@@ -28,7 +28,7 @@ jobs:
       - name: Test suite (no soak, hardware, external-service or machine-speed perf tests)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -m "not soak and not hardware and not integration and not perf" -v --timeout=300 --durations=15
+        run: pytest -m "not soak and not hardware and not integration and not perf" -v --timeout=120 --timeout-method=thread --durations=15
 
   build:
     needs: test
