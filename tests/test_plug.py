@@ -41,7 +41,7 @@ def minimal_plugin():
 def test_tc_plug_010_register_new_device_backend(plugin_manager):
     """PLUG-010: Exposed API allows a plugin to register a new device backend implementing ARCH-010 abstraction."""
     devices = pytest.importorskip("galileo.core.devices")
-    plugins = pytest.importorskip("galileo.plugins")
+    pytest.importorskip("galileo.plugins")
 
     class MyAdapter(devices.DeviceBackend):
         backend = "custom_test"
@@ -67,7 +67,7 @@ def test_tc_plug_010_register_new_device_backend(plugin_manager):
 def test_tc_plug_020_register_sequencer_instruction_or_ui_panel(plugin_manager):
     """PLUG-020: Plugin can register new sequencer instruction/condition/trigger or UI panel."""
     seq_mod = pytest.importorskip("galileo.sequencer.advanced")
-    plugins = pytest.importorskip("galileo.plugins")
+    pytest.importorskip("galileo.plugins")
 
     class MyInstruction(seq_mod.BaseInstruction):
         label = "PluginInstruction"

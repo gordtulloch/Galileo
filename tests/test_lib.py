@@ -1764,7 +1764,7 @@ def test_tc_lib_090_checkout_single_session_links_lights_and_calibration(library
 def test_tc_lib_090_checkout_single_session_masters_only_skips_calibration_frames(library, qt_app, monkeypatch, tmp_path):
     """LIB-090: with 'masters only' ticked the lights are checked out but not the raw calibration frames."""
     calibration_ready(library)
-    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
+    cw, dest, _shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
     session = _light_session()
     item = _TreeItem([None, None, str(session.fitsSessionDate)], parent=_TreeItem(["M42"]))
 
@@ -1779,7 +1779,7 @@ def test_tc_lib_090_checkout_single_session_masters_only_skips_calibration_frame
 @pytest.mark.priority("P2")
 def test_tc_lib_090_checkout_single_session_unknown_session_warns(library, qt_app, monkeypatch, tmp_path):
     """LIB-090: a tree item with no matching session is reported, not crashed on."""
-    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app)
+    cw, _dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app)
     cw.checkout_single_session(None, _TreeItem([None, None, "1999-01-01"], parent=_TreeItem(["Nothing"])))
     assert shown and shown[0][0] == "warning" and "not found" in shown[0][2]
 
@@ -1809,7 +1809,7 @@ def test_tc_lib_090_checkout_multiple_sessions_shares_one_folder(library, qt_app
 def test_tc_lib_090_checkout_multiple_sessions_masters_only(library, qt_app, monkeypatch, tmp_path):
     """LIB-090: masters-only multi checkout creates only the lights and masters folders."""
     calibration_ready(library)
-    cw, dest, shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
+    cw, dest, _shown = _checkout_env(monkeypatch, tmp_path, qt_app, masters_only=True)
     session = _light_session()
     good = _TreeItem([None, None, str(session.fitsSessionDate)], user_role=session.fitsSessionId, parent=_TreeItem(["M42"]))
 
@@ -1874,7 +1874,7 @@ def test_tc_lib_100_merge_database_only_leaves_files_alone(library, qt_app, monk
     write_light_frames(library.incoming)
     ingest(library)
     before = sorted(r.fitsFileName for r in fitsFile.select())
-    mw, shown = _merge_env(monkeypatch)
+    mw, _shown = _merge_env(monkeypatch)
     widget = mw.MergeWidget()
     widget.from_field.setText("M42")
     widget.to_field.setText("M31")

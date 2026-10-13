@@ -57,7 +57,7 @@ def main() -> None:
     splash = _show_splash(app)
 
     from galileo.diagnostics import DiagnosticsService
-    diag = DiagnosticsService()
+    DiagnosticsService()
     logger.info("Galileo %s starting", _version())
 
     # Last-chance crash reporting (LOG-070): excepthooks, faulthandler, fatal-error dialog.

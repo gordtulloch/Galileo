@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ._common import QWidget
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +21,12 @@ class AppWindowPluginsPageMixin:
     def _build_plugins_settings_page(self: AppWindowState) -> QWidget:  # type: ignore[return]
         """Options > Plugins: installed list, Install from file, and Marketplace tab."""
         try:
-            from PySide6.QtCore import Qt, QThread, Signal, QObject
+            from PySide6.QtCore import Qt, QThread, Signal
             from PySide6.QtGui import QPixmap
             from PySide6.QtWidgets import (
-                QCheckBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
-                QHeaderView, QLabel, QMessageBox, QPushButton, QScrollArea,
-                QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem,
-                QVBoxLayout, QWidget, QProgressBar, QSizePolicy,
-            )
+                QCheckBox, QFileDialog, QFrame, QHBoxLayout,
+                QLabel, QMessageBox, QPushButton, QScrollArea,
+                QTabWidget, QVBoxLayout, QWidget, QProgressBar, )
         except ImportError:
             from ._common import QWidget as _W
             return _W()  # type: ignore[return-value]
@@ -430,10 +429,8 @@ class AppWindowPluginsPageMixin:
                     market_status.setVisible(True)
                 finally:
                     import os as _os
-                    try:
+                    with contextlib.suppress(OSError):
                         _os.unlink(path)
-                    except OSError:
-                        pass
 
             _dl_thread.done.connect(_on_dl_done)
             _dl_thread.start()

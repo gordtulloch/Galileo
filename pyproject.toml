@@ -55,6 +55,8 @@ ignore = [
 "tests/**/*.py" = [
     "S101",     # `assert` is the normal pytest idiom, not a security smell, in test files
     "S105", "S106", "S107",  # fixture credentials/tokens are fake test doubles, not hardcoded secrets
+    "ASYNC109", "RUF012",  # test doubles mirror the real signatures (timeout parameters) and use plain class attributes
+    "F811",     # tests import pytest fixtures from other test modules and take them as arguments
     "DTZ",      # tests build fixed, zone-free datetimes for astronomy/epoch maths on purpose
     "E402",     # GUI tests call pytest.importorskip("PySide6") / set QT_QPA_PLATFORM before importing the code under test
 ]

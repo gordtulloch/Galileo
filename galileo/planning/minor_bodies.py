@@ -376,6 +376,7 @@ def satellite_positions(sats: Satellites, when: _dt.datetime, latitude: float, l
         try:
             err, pos, _vel = Satrec.twoline2rv(l1, l2).sgp4(jd, fr)
         except Exception:
+            logger.debug("Skipping satellite %s: could not propagate its orbit", name, exc_info=True)
             continue
         if err != 0:
             continue

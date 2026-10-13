@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import json
 import logging
 import shutil
 import sys
@@ -399,14 +398,14 @@ class PluginManager:
                 api_min = int(manifest.api_min)
                 api_max = int(manifest.api_max)
                 current = int(_CURRENT_API_VERSION)
-            except ValueError:
+            except ValueError as exc:
                 # Non-integer versions: fall back to string equality
                 api_min = api_max = current = 0
                 if manifest.api_min != _CURRENT_API_VERSION:
                     raise PluginInstallError(
                         f"Plugin {manifest.name!r} requires API {manifest.api_min}–{manifest.api_max}; "
                         f"running API {_CURRENT_API_VERSION}"
-                    )
+                    ) from exc
             else:
                 if not (api_min <= current <= api_max):
                     raise PluginInstallError(

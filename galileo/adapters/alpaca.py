@@ -16,7 +16,7 @@ import json
 import logging
 import socket
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import AuxElement, AuxProperty, AuxPropertyGroup, DeviceBackend, DeviceCategory
@@ -87,7 +87,6 @@ class AlpacaDiscovery:
         return raw
 
     async def _raw_discover(self) -> list[dict]:
-        results: list[dict] = []
         loop = asyncio.get_event_loop()
 
         def _broadcast() -> list[dict]:
@@ -318,7 +317,7 @@ class AlpacaAdapter(DeviceBackend):
             f"Alpaca server is running."
         )
 
-    async def _get(self, attribute: str, timeout: float = 10.0, **extra: Any) -> Any:
+    async def _get(self, attribute: str, timeout: float = 10.0, **extra: Any) -> Any:  # noqa: ASYNC109 -- per-request HTTP timeout, forwarded to the client
         """HTTP GET an Alpaca device attribute. *extra* adds device-specific
         query parameters (e.g. ISwitchV2's ``Id`` channel index)."""
         await self._ensure_resolved()
@@ -586,9 +585,9 @@ class AlpacaMountAdapter(AlpacaAdapter):
     # ASCOM's SideOfPier/EquatorialSystem/TrackingRate properties are integer
     # enums on the wire — normalized to strings here so the UI (and any other
     # caller) doesn't need to know ASCOM's enum ordinals.
-    _SIDE_OF_PIER = {-1: "Unknown", 0: "East", 1: "West"}
-    _EQUATORIAL_SYSTEM = {0: "Other", 1: "JNOW", 2: "J2000", 3: "J2050", 4: "B1950"}
-    TRACKING_RATE_NAMES = ["Sidereal", "Lunar", "Solar", "King"]
+    _SIDE_OF_PIER: ClassVar = {-1: "Unknown", 0: "East", 1: "West"}
+    _EQUATORIAL_SYSTEM: ClassVar = {0: "Other", 1: "JNOW", 2: "J2000", 3: "J2050", 4: "B1950"}
+    TRACKING_RATE_NAMES: ClassVar = ["Sidereal", "Lunar", "Solar", "King"]
 
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.MOUNT, host, port, **kwargs)
@@ -1074,7 +1073,7 @@ class AlpacaDomeAdapter(AlpacaAdapter):
     async def abort_slew(self) -> None:
         await self._put("abortslew")
 
-    _SHUTTER_STATE = {0: "Open", 1: "Closed", 2: "Opening", 3: "Closing", 4: "Error"}
+    _SHUTTER_STATE: ClassVar = {0: "Open", 1: "Closed", 2: "Opening", 3: "Closing", 4: "Error"}
 
     async def get_status(self) -> dict:
         """Live status: ``ShutterStatus``, ``Azimuth`` and ``AtPark``, each
@@ -1231,8 +1230,8 @@ class AlpacaFlatPanelAdapter(AlpacaAdapter):
     # ASCOM ICoverCalibratorV1's CoverState/CalibratorState are integer enums
     # on the wire — normalized to strings here, same convention as
     # AlpacaMountAdapter's SideOfPier/EquatorialSystem.
-    _COVER_STATE = {0: "NotPresent", 1: "Closed", 2: "Moving", 3: "Open", 4: "Unknown"}
-    _CALIBRATOR_STATE = {0: "NotPresent", 1: "Off", 2: "NotReady", 3: "Ready", 4: "Unknown", 5: "Error"}
+    _COVER_STATE: ClassVar = {0: "NotPresent", 1: "Closed", 2: "Moving", 3: "Open", 4: "Unknown"}
+    _CALIBRATOR_STATE: ClassVar = {0: "NotPresent", 1: "Off", 2: "NotReady", 3: "Ready", 4: "Unknown", 5: "Error"}
 
     def __init__(self, host: str = "localhost", port: int = 11111, **kwargs) -> None:
         super().__init__(DeviceCategory.FLAT_PANEL, host, port, **kwargs)

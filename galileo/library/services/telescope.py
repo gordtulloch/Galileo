@@ -16,7 +16,7 @@ from galileo.library.config import (
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
-import ftplib
+import ftplib  # nosec B402 -- plain FTP is the only protocol some smart telescopes offer
 import ssl
 import numpy as np
 import hashlib

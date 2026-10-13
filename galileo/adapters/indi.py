@@ -18,7 +18,7 @@ import datetime
 import logging
 import math
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from galileo.adapters import indi_client as ic
 from galileo.core.capabilities import DeviceCapabilities
@@ -373,7 +373,7 @@ class IndiAdapter(DeviceBackend):
 
     _ACK_GRACE_S = 2.0   # how long to wait for a driver to acknowledge a command before assuming it finished
 
-    async def _wait_not_busy(self, prop: str, timeout: float, what: str, after_seq: int | None = None) -> None:
+    async def _wait_not_busy(self, prop: str, timeout: float, what: str, after_seq: int | None = None) -> None:  # noqa: ASYNC109 -- deadline for the wait loop below
         """Wait for a commanded operation (property state Busy) to finish.
 
         Pass *after_seq* (``blob_seq`` taken just before the command was sent) so the wait first sees the
@@ -422,7 +422,9 @@ class IndiCameraAdapter(IndiAdapter):
         if self._client is None:
             return DeviceCapabilities()
         binning = self._client.get_property(self.device_name, "CCD_BINNING")
-        max_bin = lambda el: int(binning.elements[el].max or 1) if binning and el in binning.elements else 1
+        def max_bin(el):
+            return int(binning.elements[el].max or 1) if binning and el in binning.elements else 1
+
         return DeviceCapabilities(
             has_cooler=self._has("CCD_TEMPERATURE"),
             can_set_gain=self._has("CCD_GAIN") or self._sw_or_num_gain() is not None,
@@ -592,7 +594,7 @@ class IndiMountAdapter(IndiAdapter):
     what the Alpaca adapter hands to ASCOM."""
 
     # Galileo's names -> INDI TELESCOPE_TRACK_MODE elements.
-    _TRACK_MODES = {"Sidereal": "TRACK_SIDEREAL", "Lunar": "TRACK_LUNAR",
+    _TRACK_MODES: ClassVar = {"Sidereal": "TRACK_SIDEREAL", "Lunar": "TRACK_LUNAR",
                     "Solar": "TRACK_SOLAR", "King": "TRACK_KING"}
     # Speeds for jogging, slowest first: (max deg/s, INDI TELESCOPE_SLEW_RATE element).
     _SLEW_RATES = ((0.02, "SLEW_GUIDE"), (0.2, "SLEW_CENTERING"), (2.0, "SLEW_FIND"), (math.inf, "SLEW_MAX"))

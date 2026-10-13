@@ -404,7 +404,7 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
                 total_created_items += created
             except _SkipSessionError as skip:
                 if skip.log:
-                    logger.error(skip.log)
+                    logger.exception(skip.log)
                 failed_sessions.append(skip.message)
             except Exception as e:
                 error_msg = f"{_describe_session_item(session_item)}: {e!s}"
