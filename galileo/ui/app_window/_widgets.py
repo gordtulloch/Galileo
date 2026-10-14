@@ -162,17 +162,44 @@ class _AltitudeChart(QWidget if _HAS_QT else object):
     there's only one series to show. Shared by the Sky Atlas/Targets page's
     per-result cards and the What's Up Tonight screen's result tiles (`SKY-030`)
     — the same widget, not a second copy of this paint code. Formerly also used
-    by the (removed) Planning > Scheduler screen's Show Trajectory… dialog."""
+    by the (removed) Planning > Scheduler screen's Show Trajectory… dialog.
+
+    When given the Sun's altitude at each sample (``sun_altitudes``) the plot covers just the night —
+    from sunset to sunrise — rather than the whole 24 h, with the background shaded by Sun altitude so
+    dusk and dawn fade in and out, and hour labels on whole local hours."""
+
+    _SUN_HORIZON_DEG = -0.8333
+    _NIGHT_RGB = (18, 20, 26)
+    _TWILIGHT_RGB = (74, 112, 148)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setMinimumSize(420, 220)
         self.times: list = []
         self.altitudes: list = []
+        self.sun_altitudes: list = []
 
-    def set_data(self, times: list, altitudes: list) -> None:
+    def set_data(self, times: list, altitudes: list, sun_altitudes: list | None = None) -> None:
         self.times, self.altitudes = times, altitudes
+        self.sun_altitudes = list(sun_altitudes or [])
         self.update()
+
+    def _night_window(self) -> tuple[int, int]:
+        """Inclusive sample range covering the night (sunset to sunrise, one sample of margin each
+        side); the whole series when the Sun data is missing or the Sun never sets."""
+        n = len(self.altitudes)
+        sun = self.sun_altitudes
+        if len(sun) != n or n < 3:
+            return 0, n - 1
+        darkest = min(range(n), key=lambda i: sun[i])
+        if sun[darkest] >= self._SUN_HORIZON_DEG:
+            return 0, n - 1
+        lo = hi = darkest
+        while lo > 0 and sun[lo - 1] < self._SUN_HORIZON_DEG:
+            lo -= 1
+        while hi < n - 1 and sun[hi + 1] < self._SUN_HORIZON_DEG:
+            hi += 1
+        return max(lo - 1, 0), min(hi + 1, n - 1)
 
     def paintEvent(self, event) -> None:
         import datetime
@@ -185,54 +212,79 @@ class _AltitudeChart(QWidget if _HAS_QT else object):
         painter.fillRect(self.rect(), QColor("#1a1a1a"))
         fg = QColor("#cccccc")
         font = QFont(painter.font())
-        font.setPointSizeF(8.0)
+        font.setPointSizeF(6.5)
         painter.setFont(font)
 
-        plot = QRectF(40, 8, self.width() - 56, self.height() - 32)
+        plot = QRectF(26, 6, self.width() - 34, self.height() - 22)
         if plot.width() < 20 or plot.height() < 20 or not self.altitudes:
             painter.setPen(fg)
             painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter, "No trajectory data")
             painter.end()
             return
 
+        first, last = self._night_window()
+        count = max(last - first, 1)
+        altitudes = self.altitudes[first:last + 1]
+        sun = self.sun_altitudes[first:last + 1] if len(self.sun_altitudes) == len(self.altitudes) else []
+
+        def x_at(index: float) -> float:
+            return plot.left() + index / count * plot.width()
+
+        # Dusk/dawn gradient: background shaded column by column from the Sun's altitude there
+        # (0 deg -> twilight blue, -18 deg and below -> night), interpolated between samples.
+        if sun:
+            lo_rgb, hi_rgb = self._NIGHT_RGB, self._TWILIGHT_RGB
+            width_px = int(plot.width())
+            for px in range(width_px):
+                pos = px / max(width_px - 1, 1) * count
+                i = min(int(pos), len(sun) - 2) if len(sun) > 1 else 0
+                frac = pos - i
+                alt = sun[i] + (sun[min(i + 1, len(sun) - 1)] - sun[i]) * frac
+                t = min(max((alt + 18.0) / 18.0, 0.0), 1.0)
+                colour = QColor(*(round(lo_rgb[k] + (hi_rgb[k] - lo_rgb[k]) * t) for k in range(3)))
+                painter.fillRect(QRectF(plot.left() + px, plot.top(), 1.0, plot.height()), colour)
+
         y_min, y_max = -20.0, 90.0
-        painter.setPen(fg)
+
+        def y_at(alt: float) -> float:
+            return plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height()
+
         for alt in (0, 30, 60, 90):
-            y = plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height()
-            pen = QPen(QColor(90, 90, 90))
+            y = y_at(alt)
+            pen = QPen(QColor(120, 120, 120))
             pen.setStyle(_Qt.PenStyle.DotLine)
             painter.setPen(pen)
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             painter.setPen(fg)
-            painter.drawText(QRectF(0, y - 8, plot.left() - 4, 16), _Qt.AlignmentFlag.AlignRight | _Qt.AlignmentFlag.AlignVCenter, f"{alt}°")
+            painter.drawText(QRectF(0, y - 7, plot.left() - 3, 14),
+                             _Qt.AlignmentFlag.AlignRight | _Qt.AlignmentFlag.AlignVCenter, f"{alt}°")
 
-        n = len(self.altitudes)
-        points = [
-            QPointF(plot.left() + i / max(n - 1, 1) * plot.width(),
-                     plot.bottom() - (alt - y_min) / (y_max - y_min) * plot.height())
-            for i, alt in enumerate(self.altitudes)
-        ]
-        painter.setPen(QPen(QColor("#4da6ff"), 2))
+        points = [QPointF(x_at(i), y_at(alt)) for i, alt in enumerate(altitudes)]
+        painter.setPen(QPen(QColor("#5db8ff"), 2))
         for a, b in zip(points, points[1:], strict=False):
             painter.drawLine(a, b)
 
-        # Time-axis ticks — a handful of "HH:MM" labels, converted from the
-        # underlying naive-UTC chart data (galileo.planning.visibility) to
-        # local time so they match the clock on the wall, evenly spaced
-        # along the bottom, in the margin already reserved below the plot.
-        if self.times and n > 1:
-            num_ticks = min(4, n)
-            tick_indices = sorted({round(i * (n - 1) / (num_ticks - 1)) for i in range(num_ticks)})
+        # Time axis — labels on whole local hours (every 2 h, or every hour on a wide chart), converted
+        # from the naive-UTC chart data (galileo.planning.visibility) to local time.
+        if self.times and len(altitudes) > 1:
+            step_hours = 1 if plot.width() >= 200 else 2
             painter.setPen(fg)
-            for idx in tick_indices:
-                x = plot.left() + idx / (n - 1) * plot.width()
+            last_label_right = -1e9
+            for i in range(first, last + 1):
                 try:
-                    when_utc = datetime.datetime.fromisoformat(self.times[idx]).replace(tzinfo=datetime.UTC)
-                    label = when_utc.astimezone().strftime("%H:%M")
+                    local = datetime.datetime.fromisoformat(self.times[i]).replace(
+                        tzinfo=datetime.UTC).astimezone()
                 except (ValueError, IndexError):
                     continue
+                if local.minute != 0 or local.hour % step_hours:
+                    continue
+                x = x_at(i - first)
+                if x - 10 < last_label_right:
+                    continue
                 painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 3))
-                painter.drawText(QRectF(x - 22, plot.bottom() + 4, 44, 14), _Qt.AlignmentFlag.AlignCenter, label)
+                painter.drawText(QRectF(x - 10, plot.bottom() + 3, 20, 12), _Qt.AlignmentFlag.AlignCenter,
+                                 f"{local.hour:02d}")
+                last_label_right = x + 10
 
         painter.end()
 

@@ -61,12 +61,20 @@ def _preceding_target(region: Any, block: Any) -> Any:
 
 def _edit_target_block(parent, block, region, window) -> bool:
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Target Parameters")
+    dialog.setWindowTitle("Slew To Parameters")
     form = QFormLayout(dialog)
 
     name_edit = QLineEdit(block.name)
     name_edit.setObjectName("name_edit")
+    name_edit.setPlaceholderText("Search objects (e.g. M31, NGC 7000, Veil)…")
+    name_edit.setClearButtonEnabled(True)
     form.addRow("Name", name_edit)
+
+    results_list = QListWidget()
+    results_list.setObjectName("results_list")
+    results_list.setMaximumHeight(110)
+    results_list.hide()
+    form.addRow(results_list)
 
     ra_spin = QDoubleSpinBox()
     ra_spin.setObjectName("ra_spin")
@@ -84,9 +92,63 @@ def _edit_target_block(parent, block, region, window) -> bool:
     dec_spin.setValue(block.dec_deg)
     form.addRow("Dec", dec_spin)
 
+    atlas = None
+
+    def get_atlas():
+        nonlocal atlas
+        if atlas is None:
+            getter = getattr(window, "_shared_sky_atlas", None)
+            if callable(getter):
+                atlas = getter()
+            else:
+                from galileo.planning.sky_atlas import SkyAtlas
+                atlas = SkyAtlas()
+        return atlas
+
+    picking = False  # True while a picked result is being written back into name_edit
+
+    def refresh_results(text: str) -> None:
+        results_list.clear()
+        query = text.strip()
+        if picking or not query:
+            results_list.hide()
+            return
+        try:
+            found_objs = get_atlas().search(query)[:_MAX_SEARCH_RESULTS]
+        except Exception:
+            logger.exception("Target lookup failed for %r", query)
+            found_objs = []
+        for found in found_objs:
+            item = QListWidgetItem(found.primary_name)
+            item.setData(Qt.ItemDataRole.UserRole, found)
+            results_list.addItem(item)
+        results_list.setVisible(results_list.count() > 0)
+
+    def pick(item: QListWidgetItem | None) -> None:
+        nonlocal picking
+        if item is None:
+            return
+        found = item.data(Qt.ItemDataRole.UserRole)
+        picking = True
+        try:
+            name_edit.setText(found.primary_name)
+        finally:
+            picking = False
+        ra_spin.setValue(found.ra_deg)
+        dec_spin.setValue(found.dec_deg)
+        results_list.clear()
+        results_list.hide()
+
+    name_edit.textChanged.connect(refresh_results)
+    name_edit.returnPressed.connect(lambda: pick(results_list.currentItem() or results_list.item(0)))
+    results_list.itemActivated.connect(pick)
+    results_list.itemClicked.connect(pick)
+
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
+    for b in buttons.buttons():
+        b.setAutoDefault(False)  # Enter in the search box picks a result, not closes the dialog
     form.addRow(buttons)
 
     if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -122,9 +184,17 @@ def _edit_image_block(parent, block, region, window) -> bool:
     count_spin.setValue(block.count)
     form.addRow("Count", count_spin)
 
-    filter_edit = QLineEdit(block.filter)
-    filter_edit.setObjectName("filter_edit")
-    form.addRow("Filter", filter_edit)
+    names = _wheel_filter_names(window)
+    filter_combo = QComboBox()
+    filter_combo.setObjectName("filter_combo")
+    filter_combo.setEditable(True)  # still typeable when no wheel is connected / for a template's filter
+    filter_combo.addItem("")        # blank = leave the wheel where it is
+    filter_combo.addItems(names)
+    filter_combo.setCurrentText(block.filter)
+    filter_combo.setToolTip(
+        "Filters on the active imager's filter wheel. Blank keeps the current filter." if names
+        else "No filter wheel connected — type a filter name.")
+    form.addRow("Filter", filter_combo)
 
     binning_combo = QComboBox()
     binning_combo.setObjectName("binning_combo")
@@ -182,7 +252,7 @@ def _edit_image_block(parent, block, region, window) -> bool:
         return False
     block.exposure = exposure_spin.value()
     block.count = count_spin.value()
-    block.filter = filter_edit.text().strip()
+    block.filter = filter_combo.currentText().strip()
     block.binning = binning_combo.currentIndex() + 1
     block.gain = None if gain_spin.value() == _UNSET_INT else gain_spin.value()
     block.offset = None if offset_spin.value() == _UNSET_INT else offset_spin.value()

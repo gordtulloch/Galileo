@@ -150,6 +150,18 @@ def parse_horizon_text(text: str) -> list[tuple[float, float]]:
     return sorted(points)
 
 
+def _sun_altitudes_on_grid(times, loc) -> list[float]:
+    """The Sun's altitude (degrees) at each sample of an altitude chart's time grid, so the chart can
+    show the night window and shade dusk/dawn. Empty on failure — the chart then falls back to a plain
+    full-range plot."""
+    try:
+        from astropy.coordinates import AltAz, get_sun
+        return [float(a) for a in get_sun(times).transform_to(AltAz(obstime=times, location=loc)).alt.deg]
+    except Exception:
+        logger.debug("Could not compute the Sun's altitude for the chart grid", exc_info=True)
+        return []
+
+
 def altitude_chart(
     ra_deg: float,
     dec_deg: float,
@@ -161,7 +173,8 @@ def altitude_chart(
     """Return altitude over one night for a target at (*ra_deg*, *dec_deg*).
 
     Returns a dict with keys ``times`` (list of UTC ISO strings),
-    ``altitudes`` (list of float degrees), and optionally
+    ``altitudes`` (list of float degrees), ``sun_altitudes`` (the Sun's altitude at
+    each sample, for night-window/twilight shading; may be empty), and optionally
     ``above_horizon`` (list of bool when a horizon profile is provided).
     """
     try:
@@ -192,7 +205,8 @@ def altitude_chart(
         az_list = altaz.az.deg.tolist()
         time_list = [t.isot for t in times]
 
-        result: dict = {"times": time_list, "altitudes": alt_list}
+        result: dict = {"times": time_list, "altitudes": alt_list,
+                        "sun_altitudes": _sun_altitudes_on_grid(times, loc)}
 
         eff_horizon = horizon or (location._horizon if hasattr(location, "_horizon") else None)
         if eff_horizon is not None:
@@ -261,7 +275,9 @@ def altitude_charts_batch(
         time_list = [t.isot for t in times]
         alt_array = altaz.alt.deg
 
-        return [{"times": time_list, "altitudes": alt_array[i].tolist()} for i in range(len(targets))]
+        sun_altitudes = _sun_altitudes_on_grid(times, loc)
+        return [{"times": time_list, "altitudes": alt_array[i].tolist(), "sun_altitudes": sun_altitudes}
+                for i in range(len(targets))]
     except Exception:
         logger.debug("Could not compute batched altitude charts", exc_info=True)
         return [{"times": [], "altitudes": []} for _ in targets]

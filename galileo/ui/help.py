@@ -567,10 +567,15 @@ class HelpController(QObject):
         A widget already done is skipped unless its own text has changed since (a button that
         reads "Start" and later "Stop" is matched again). Returns the number of widgets set.
         """
-        roots = [root] if root is not None else [w for w in QApplication.topLevelWidgets() if w.isVisible()]
+        # topLevelWidgets() can hand back a stale wrapper (seen as a QWidgetItem) for a window that
+        # is being torn down — e.g. while connecting a device — so only real QWidgets are scanned.
+        roots = [root] if root is not None else [
+            w for w in QApplication.topLevelWidgets() if isinstance(w, QWidget) and w.isVisible()]
         done = 0
         for top in roots:
             for w in [top, *top.findChildren(QWidget)]:
+                if not isinstance(w, QWidget):
+                    continue
                 if root is None and not w.isVisible():
                     continue
                 text = w.text() if isinstance(w, (QAbstractButton, QLabel)) else ""

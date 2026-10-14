@@ -167,12 +167,17 @@ class AppWindowImagingSupportMixin:
         Camera page's auto-connect and the Focuser page's per-panel Connect
         and status polling."""
         import asyncio
+        from galileo.ui import startup_progress
+        target = f"{device_name or category} at {server}:{port}"
+        startup_progress.begin_detail(f"Connecting to {target}")
         try:
             adapter = self._make_adapter(category, driver, server, port, device_name)
             asyncio.run(adapter.connect())
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)
+            startup_progress.end_detail(f"Failed to connect to {target}", False)
             return None
+        startup_progress.end_detail(f"Connected to {target}", True)
         self._push_context_to_devices([adapter])
         return adapter
 

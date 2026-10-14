@@ -74,10 +74,13 @@ class AppWindowCoreMixin:
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
+        from galileo.ui.startup_progress import report as _progress
+        _progress("Discovering plugins")
         from galileo.plugins import PluginManager
         self._plugin_manager = PluginManager()
         self._plugin_manager.initialize_from_disk()
 
+        _progress("Creating main window")
         from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStatusBar
         from galileo import __version__
         self._window = QMainWindow()
@@ -98,6 +101,7 @@ class AppWindowCoreMixin:
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        _progress("Building top bar and equipment selectors")
         outer.addWidget(cast("AppWindowState", self)._build_top_bar())
 
         body = QWidget()
@@ -114,6 +118,7 @@ class AppWindowCoreMixin:
 
         self._window.setCentralWidget(central)
 
+        _progress("Applying theme")
         self._theme.set_theme(self._theme.current_theme)  # applies the stylesheet
 
     @property
@@ -285,6 +290,7 @@ class AppWindowCoreMixin:
 
     def _build_primary_nav(self: AppWindowState):
         from PySide6.QtWidgets import QStackedWidget
+        from galileo.ui.startup_progress import report
         stack = QStackedWidget()
         stack.setObjectName("PrimaryStack")
 
@@ -336,6 +342,7 @@ class AppWindowCoreMixin:
         pages: dict[str, int] = {}
         self._science_nav = None
         for section_id, label, _icon_name in PRIMARY_SECTIONS:
+            report(f"Building {label} screen")
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             tag_help_screen(page, section_id)
@@ -358,6 +365,7 @@ class AppWindowCoreMixin:
         option_builders["science"] = self._build_science_settings_page
         option_builders["notifications"] = self._build_notifications_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
+        report("Building Options screens")
         options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders, help_prefix="options")
         tag_help_screen(options_page, "options")
         self._options_page = options_page
@@ -463,6 +471,10 @@ class AppWindowCoreMixin:
             f"<p>Cross-platform astrophotography imaging suite, built on INDI and ASCOM Alpaca.</p>"
             f"<p style='font-size:large'>A <a href='https://starseekers.ca' style='color:{accent}'>Starseekers.ca</a> "
             f"project &mdash; software for the amateur astronomer.</p>"
+            f"<p>This application is a labour of love but it costs real money to maintain the "
+            f"web site, developer licenses, and test equipment. We welcome your support at our "
+            f"Patreon site <a href='https://www.patreon.com/starseekersca' style='color:{accent}'>"
+            f"https://www.patreon.com/starseekersca</a></p>"
             f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>"
         )
         logo = Path(__file__).resolve().parents[3] / "assets" / "images" / "starseekers.png"

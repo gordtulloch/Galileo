@@ -836,7 +836,7 @@ class _CalendarCanvas(QWidget):
         self.refresh()
 
     def remove_job(self, job: Any) -> None:
-        self._page.remove_job(job)
+        self._page.unschedule_job(job)
 
     def _on_context_menu(self, pos) -> None:
         if not self._column_dates:
@@ -916,7 +916,7 @@ class _UnscheduledBlockWidget(QFrame):
             edit = menu.addAction("Edit…")
             trajectory = menu.addAction("Show Trajectory…")
         log = menu.addAction("Log")
-        remove = menu.addAction("Remove from Schedule")
+        remove = menu.addAction("Delete")
         action = menu.exec(self.mapToGlobal(pos))
         if action is not None and action is edit:
             self._page.edit_job(self.job)
@@ -983,6 +983,12 @@ class SchedulePageWidget(QWidget):
             get_session_controller(window).changed.connect(self._on_controller_changed)
         except Exception:               # a window without a session controller (tests, stubs)
             logger.debug("No session controller to follow", exc_info=True)
+
+    def showEvent(self, event) -> None:
+        """Re-read the shared scheduler whenever the page is shown: a session scheduled on
+        Planning > Sessions adds a job while this page is hidden, and nothing else tells it."""
+        super().showEvent(event)
+        self.reload()
 
     def _on_controller_changed(self, *_args) -> None:
         """Refresh the status line when the safety block appears or clears (SCHED-060)."""
@@ -1250,9 +1256,22 @@ class SchedulePageWidget(QWidget):
         scheduler.save()
         self.reload()
 
+    def unschedule_job(self, job: Any) -> None:
+        """Take a timeline block off the grid. A session keeps its job and returns to the
+        Unscheduled tray; a pier operation has nothing to return to, so it is deleted."""
+        if job.kind != "session":
+            self.remove_job(job)
+            return
+        job.scheduled_start_utc = None
+        if getattr(job, "scheduled_end_utc", None):
+            job.scheduled_end_utc = None
+        self.save_active_scheduler()
+        self.reload()
+
     def remove_job(self, job: Any) -> None:
+        """Delete a job outright (Unscheduled tray's Delete, or a pier operation)."""
         reply = QMessageBox.question(
-            self, "Remove from Schedule", f"Remove {job.name!r} from the schedule?",
+            self, "Delete", f"Delete {job.name!r} from the schedule?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return

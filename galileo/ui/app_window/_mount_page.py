@@ -530,6 +530,9 @@ class AppWindowMountPageMixin:
             driver = driver_combo.currentText()
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
+            from galileo.ui import startup_progress
+            target = f"Mount {device_name!r} at {server}:{port}"
+            startup_progress.begin_detail(f"Connecting to {target}")
             try:
                 adapter = self._make_adapter(DeviceCategory.MOUNT, driver, server, port, device_name)
                 obs = self._current_observatory
@@ -540,8 +543,10 @@ class AppWindowMountPageMixin:
                 asyncio.run(adapter.connect())
             except Exception:
                 logger.exception("Could not connect to Mount %r at %s:%d", device_name, server, port)
+                startup_progress.end_detail(f"Failed to connect to {target}", False)
                 self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
                 return
+            startup_progress.end_detail(f"Connected to {target}", True)
             # Bind this adapter to its own Pier's slew guard (not whichever
             # Observatory happens to be selected elsewhere), so obstruction
             # checks stay correct even if a different Pier's horizon is

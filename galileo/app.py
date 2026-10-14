@@ -56,27 +56,46 @@ def main() -> None:
     splash_started_at = time.monotonic()
     splash = _show_splash(app)
 
+    # Operations still to come once the main window module is imported are added then (add_steps);
+    # the fixed ones here are: diagnostics, crash handlers, database, window code, window chrome,
+    # plugins, top bar, theme, watchdog.
+    from galileo.ui import startup_progress
+    progress = None
+    if splash is not None:
+        progress = startup_progress.StartupProgress(splash, app, total=9)
+        startup_progress.set_reporter(progress)
+
+    startup_progress.report("Starting diagnostics")
     from galileo.diagnostics import DiagnosticsService
     DiagnosticsService()
     logger.info("Galileo %s starting", _version())
 
     # Last-chance crash reporting (LOG-070): excepthooks, faulthandler, fatal-error dialog.
+    startup_progress.report("Installing crash reporting")
     from galileo.crashreport import install_crash_handlers, show_fatal_dialog
     install_crash_handlers(dialog=show_fatal_dialog)
 
+    startup_progress.report("Opening database and applying migrations")
     from galileo.library.database import init_db
     init_db()
 
-    from galileo.ui.app_window import AppWindow
+    startup_progress.report("Loading user interface code")
+    from galileo.ui.app_window import AppWindow, PRIMARY_SECTIONS
+    startup_progress.add_steps(len(PRIMARY_SECTIONS) + 1)   # one per screen, plus Options
     window = AppWindow()
-    window.show()
 
+    startup_progress.report("Starting watchdog")
     # Crash/hang watchdog (SAFE-060): beaten from the event loop, stopped on aboutToQuit.
     try:
         from galileo.ui.app_window._watchdog import start_watchdog
         start_watchdog(window)
     except Exception:
         logger.exception("Could not start the watchdog")
+
+    startup_progress.set_reporter(None)
+    if progress is not None:
+        progress.finish()
+    window.show()
 
     if splash is not None:
         _schedule_splash_finish(splash, getattr(window, "_window", None), splash_started_at)
@@ -106,7 +125,6 @@ def _show_splash(app):
     It stays up only while startup work (database, main window) runs; ``main``
     closes it as soon as the window is shown, with no fixed minimum display time.
     """
-    from PySide6.QtWidgets import QSplashScreen
     from PySide6.QtGui import QColor, QPixmap
     from PySide6.QtCore import Qt
 
@@ -121,7 +139,21 @@ def _show_splash(app):
         logger.warning("Failed to load splash logo at %s", _LOGO_PATH)
         return None
 
-    splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+    from PySide6.QtGui import QPainter
+
+    from galileo.ui.startup_progress import PROGRESS_AREA_HEIGHT, make_splash_class
+
+    # Extend the logo downwards with a transparent strip so the progress bar sits beneath the licence notice
+    # instead of over the artwork.
+    logo_height = pixmap.height()
+    padded = QPixmap(pixmap.width(), logo_height + PROGRESS_AREA_HEIGHT)
+    padded.fill(Qt.transparent)
+    painter = QPainter(padded)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+
+    splash = make_splash_class()(padded, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+    splash.set_logo_height(logo_height)
     splash.setAttribute(Qt.WA_TranslucentBackground)
     font = splash.font()
     font.setPointSize(16)

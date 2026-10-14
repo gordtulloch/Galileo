@@ -91,7 +91,7 @@ class SessionBlock:
 
 @dataclass
 class TargetBlock(SessionBlock):
-    label: ClassVar[str] = "Target"
+    label: ClassVar[str] = "Slew To"
     name: str = ""
     ra_deg: float = 0.0
     dec_deg: float = 0.0
@@ -655,6 +655,15 @@ class SessionsScreen:
         """An equivalent empty session for manual authoring (SES-160)."""
         return self.add_session(SessionRegion(name="New Session"), pier_name=self._active_pier)
 
+    def add_session_from_template(self, template_name: str) -> SessionRegion:
+        """A new session pre-filled with every block of a saved template (SES-180),
+        including its placeholder Target, for the user to replace with a real one."""
+        template = SessionTemplate.load(template_name)
+        region = SessionRegion(name=f"{template_name} Session")
+        region.blocks = list(template.blocks)
+        region._normalize_indents()
+        return self.add_session(region, pier_name=self._active_pier)
+
 
 
 
@@ -1168,7 +1177,12 @@ class SessionsPageWidget(QWidget):
         add_btn = QPushButton("Add Session")
         add_btn.setObjectName("AccentButton")
         add_btn.clicked.connect(self._add_session_from_menu)
-        add_col.addWidget(add_btn)
+        add_tpl_btn = QPushButton("Add Session from Template")
+        add_tpl_btn.clicked.connect(self._add_session_from_template)
+        buttons = QHBoxLayout()
+        buttons.addWidget(add_btn)
+        buttons.addWidget(add_tpl_btn)
+        add_col.addLayout(buttons)
         body.addLayout(add_col, 1)
 
         self._palette = _build_palette(self._window, self)
@@ -1199,6 +1213,23 @@ class SessionsPageWidget(QWidget):
 
     def _add_session_from_menu(self) -> None:
         region = self.sessions_screen.add_session_from_context_menu()
+        region._scheduler = self._scheduler_for(region._pier_name)
+        self._rebuild_regions()
+
+    def _add_session_from_template(self) -> None:
+        names = SessionTemplate.list_names()
+        if not names:
+            QMessageBox.information(self, "Add Session from Template", "No saved templates yet.")
+            return
+        name, ok = QInputDialog.getItem(
+            self, "Add Session from Template", "Template:", names, editable=False)
+        if not ok or not name:
+            return
+        try:
+            region = self.sessions_screen.add_session_from_template(name)
+        except KeyError as exc:
+            QMessageBox.warning(self, "Add Session from Template", str(exc))
+            return
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 

@@ -54,7 +54,7 @@ class AppWindowPlanningPageMixin:
         from PySide6.QtWidgets import (
             QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QComboBox,
             QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem,
-            QApplication, QCheckBox,
+            QApplication, QCheckBox, QDialog, QProgressBar,
         )
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QPixmap
@@ -70,7 +70,7 @@ class AppWindowPlanningPageMixin:
         # to compute for every card, not just the first few.
         _MAX_AUTO_THUMBNAILS = 12
         _CARD_THUMB_PX = 44
-        _CARD_CHART_SIZE = (130, 74)
+        _CARD_CHART_SIZE = (260, 74)
         # Each result tile is sized to this fraction of the results list's own
         # width, with a floor so thumbnail+text+chart+buttons still fit at a
         # narrow window size — computed per search (`_tile_width()` below),
@@ -154,7 +154,7 @@ class AppWindowPlanningPageMixin:
             chart_widget = _AltitudeChart()
             chart_widget.setFixedSize(*_CARD_CHART_SIZE)
             if chart is not None and chart.get("altitudes"):
-                chart_widget.set_data(chart["times"], chart["altitudes"])
+                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"))
             row.addWidget(chart_widget)
 
             # Rightmost: this result's own action buttons — select it as the
@@ -399,10 +399,44 @@ class AppWindowPlanningPageMixin:
             so the two never drift apart."""
             self._add_to_session(obj.primary_name, obj.ra_deg, obj.dec_deg)
 
+        def _show_progress_dialog():
+            """Small notice with a progress bar for a search (its work runs on the UI thread, so the
+            caller updates it between steps). Returns ``(dialog, update)``; ``update(text, value, maximum)``
+            with ``maximum == 0`` shows a busy bar."""
+            dlg = QDialog(self._window)
+            dlg.setWindowTitle("Targets")
+            dlg.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+            dlg.setWindowModality(Qt.WindowModality.WindowModal)
+            box = QVBoxLayout(dlg)
+            label = QLabel("")
+            label.setContentsMargins(24, 16, 24, 4)
+            bar = QProgressBar()
+            bar.setMinimumWidth(320)
+            box.addWidget(label)
+            box.addWidget(bar)
+
+            def update(text: str, value: int = 0, maximum: int = 0) -> None:
+                label.setText(text)
+                bar.setRange(0, maximum)
+                if maximum:
+                    bar.setValue(value)
+                QApplication.processEvents()
+
+            dlg.show()
+            return dlg, update
+
         def run_search() -> None:
             import asyncio
             results.clear()
             self._window.statusBar().showMessage("Searching…")
+            progress_dlg, progress = _show_progress_dialog()
+            progress("Searching the catalog…")
+            try:
+                _run_search(asyncio, progress)
+            finally:
+                progress_dlg.close()
+
+        def _run_search(asyncio, progress) -> None:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             location = _current_location()
             try:
@@ -458,6 +492,7 @@ class AppWindowPlanningPageMixin:
             rise_set_texts = ["Set an Observatory location (top bar) for rise/transit/set."] * len(shown)
             if location is not None:
                 self._window.statusBar().showMessage(f"Found {len(matches)} object(s) — computing altitude charts…")
+                progress(f"Computing altitude charts for {len(shown)} objects…")
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
                     charts = atlas.altitude_charts_batch(shown, location)
@@ -482,7 +517,8 @@ class AppWindowPlanningPageMixin:
                     QApplication.restoreOverrideCursor()
 
             thumb_labels = []
-            for obj, rise_set_text, chart in zip(shown, rise_set_texts, charts, strict=True):
+            for n, (obj, rise_set_text, chart) in enumerate(zip(shown, rise_set_texts, charts, strict=True)):
+                progress(f"Building result {n + 1} of {len(shown)}…", n, len(shown))
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, obj)
                 card, thumb_label = _build_result_card(obj, rise_set_text, chart)
@@ -499,7 +535,9 @@ class AppWindowPlanningPageMixin:
             if thumb_labels:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
-                    for obj, thumb_label in zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels, strict=False):
+                    thumb_jobs = list(zip(shown[:_MAX_AUTO_THUMBNAILS], thumb_labels, strict=False))
+                    for n, (obj, thumb_label) in enumerate(thumb_jobs):
+                        progress(f"Fetching thumbnail {n + 1} of {len(thumb_jobs)}…", n, len(thumb_jobs))
                         try:
                             data = asyncio.run(atlas._fetch_thumbnail(obj))
                         except Exception:

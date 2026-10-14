@@ -5,7 +5,7 @@ The Schedule is a calendar of your planned sessions and pier operations over sev
 
 A session or pier operation appears as a coloured block, positioned by its start time and sized by its duration. Concurrent blocks sit side by side in the column. A block's border shows how its run went: green when completed, red on error.
 
-**Working with blocks:** drag a block to another day or time to move it. Right-click a session block to *Set Time…*, *Edit…* its scheduling rules, *Show Trajectory…* (altitude over time), view its *Log*, or *Remove from Schedule*. Right-click empty space in the grid to *Add Pier Operation* (open or close the dome, sync the dome, park or unpark the mount) at that time. Sessions with no start time yet sit in the **Unscheduled** tray at the bottom left; drag one onto the grid to give it a start time.
+**Working with blocks:** drag a block to another day or time to move it. Right-click a session block to *Set Time…*, *Edit…* its scheduling rules, *Show Trajectory…* (altitude over time), view its *Log*, or *Remove from Schedule* (a session returns to the **Unscheduled** tray; a pier operation is deleted). Right-click empty space in the grid to *Add Pier Operation* (open or close the dome, sync the dome, park or unpark the mount) at that time. Sessions with no start time yet sit in the **Unscheduled** tray at the bottom left; drag one onto the grid to give it a start time. Right-click an Unscheduled entry and choose *Delete* to remove it from the schedule entirely.
 
 A session runs by itself only once it has a start time, while Galileo is running with the equipment of the Pier shown in the top bar connected.
 

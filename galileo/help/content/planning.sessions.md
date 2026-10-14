@@ -15,6 +15,10 @@ A scheduled session is outlined in red and read-only until it is descheduled.
 
 Adds a new empty session to this Pier's list.
 
+## Add Session from Template
+
+Lists your saved templates and adds a new session containing all of the chosen template's blocks. Its Target is a placeholder: replace it with a real target before scheduling.
+
 ## Palette
 
 The blocks you can add. Drag one into a session. A block that needs a Target before it (Plate Solve) can only be dropped below one.
@@ -59,7 +63,7 @@ Stops the running session and abandons the current exposure or slew.
 
 Removes this session from the list.
 
-## Target
+## Slew To
 
 Slews the mount to a target and starts tracking. The name and coordinates are filled from a catalog search or from the object you added the session from. Plate Solve needs one earlier in the session.
 
@@ -145,7 +149,7 @@ Sends your message to the notification channels you have set up (e.g. email or t
 
 ## Name
 
-The target's name.
+The target's name — also a search box. Type part of a name or designation (M31, NGC 7000, Veil) and matching catalog objects are listed below; click one (or press Enter for the first) to fill in the name, RA and Dec. You can still type a name and enter RA/Dec by hand.
 
 ## RA
 

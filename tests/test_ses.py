@@ -468,6 +468,29 @@ def test_tc_ses_180_save_as_template_generalizes_target(tmp_path):
         db.close()
 
 
+@pytest.mark.requirement("TC-SES-180")
+@pytest.mark.priority("P2")
+def test_tc_ses_180_add_session_from_template(tmp_path):
+    """SES-180: A saved template can seed a brand-new session holding all its blocks."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "ses180b.db")
+    try:
+        src = ui_mod.SessionRegion(name="M42 Session")
+        src.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+        src.insert_block(ui_mod.ImageBlock(exposure=300.0, count=10, filter="Ha"))
+        src.save_as_template("HaSession")
+
+        screen = ui_mod.SessionsScreen()
+        region = screen.add_session_from_template("HaSession")
+        assert region in screen.visible_sessions
+        assert region.name == "HaSession Session"
+        assert len(region.blocks) == 2
+        assert region.blocks[0].is_placeholder_target
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # TC-SES-190
 # ---------------------------------------------------------------------------
@@ -706,7 +729,7 @@ def test_edit_parameters_dialog_updates_image_block_fields(qapp, monkeypatch):
     """Right-click > Edit Parameters… on an Image block exposes exposure, count,
     filter, binning, gain, offset and frame type — accepting the dialog writes
     them back onto the block instance."""
-    from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QLineEdit, QSpinBox
+    from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QSpinBox
     ui_mod = pytest.importorskip("galileo.ui.sessions")
     dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
 
@@ -719,7 +742,7 @@ def test_edit_parameters_dialog_updates_image_block_fields(qapp, monkeypatch):
             return QDialog.DialogCode.Rejected
         self.findChild(QDoubleSpinBox, "exposure_spin").setValue(120.0)
         self.findChild(QSpinBox, "count_spin").setValue(5)
-        self.findChild(QLineEdit, "filter_edit").setText("Ha")
+        self.findChild(QComboBox, "filter_combo").setCurrentText("Ha")
         self.findChild(QComboBox, "binning_combo").setCurrentText("2x2")
         self.findChild(QComboBox, "frame_type_combo").setCurrentText("Dark")
         return QDialog.DialogCode.Accepted
@@ -791,10 +814,10 @@ def test_right_click_opens_parameter_dialog_directly_with_no_menu(qapp, monkeypa
     block_list._on_right_click(block_list.visualItemRect(block_list.item(0)).center())
     assert dialog_opened["count"] == 0   # DitherBlock has no fields — nothing opens
 
-    from PySide6.QtWidgets import QLineEdit
+    from PySide6.QtWidgets import QComboBox
 
     def fake_exec(self):
-        self.findChild(QLineEdit, "filter_edit").setText("L")
+        self.findChild(QComboBox, "filter_combo").setCurrentText("L")
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(QDialog, "exec", fake_exec)

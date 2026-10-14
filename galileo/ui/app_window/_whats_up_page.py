@@ -59,7 +59,7 @@ class AppWindowWhatsUpPageMixin:
         from PySide6.QtCore import Qt, QDate
 
         _CARD_THUMB_PX = 44
-        _CARD_CHART_SIZE = (130, 74)
+        _CARD_CHART_SIZE = (260, 74)
         _TILE_WIDTH_FRACTION = 0.55
         _TILE_MIN_WIDTH_PX = 460
 
@@ -345,7 +345,7 @@ class AppWindowWhatsUpPageMixin:
             chart_widget = _AltitudeChart()
             chart_widget.setFixedSize(*_CARD_CHART_SIZE)
             if chart is not None and chart.get("altitudes"):
-                chart_widget.set_data(chart["times"], chart["altitudes"])
+                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"))
             row.addWidget(chart_widget)
 
             button_col = QVBoxLayout()
@@ -570,7 +570,23 @@ class AppWindowWhatsUpPageMixin:
             row_layout.addStretch(1)
             return row_container, QSize(results.viewport().width(), card.sizeHint().height())
 
+        def _show_searching_dialog(count: int):
+            """Small modal-less notice naming how many objects are being ranked (no progress bar)."""
+            from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
+            dlg = QDialog(self._window)
+            dlg.setWindowTitle("What's Up Tonight")
+            dlg.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+            dlg.setWindowModality(Qt.WindowModality.WindowModal)
+            box = QVBoxLayout(dlg)
+            label = QLabel(f"Analyzing {count} objects that meet criteria…")
+            label.setContentsMargins(24, 16, 24, 16)
+            box.addWidget(label)
+            dlg.show()
+            QApplication.processEvents()     # ranking runs on the UI thread; paint the notice first
+            return dlg
+
         def run_rank() -> None:
+            searching_dlg = None
             results.clear()
             fov_label.setText("")
             advisory_label.setText("")
@@ -597,6 +613,7 @@ class AppWindowWhatsUpPageMixin:
                 from galileo.planning.sky_atlas import ObjectType
                 candidates = [o for o in candidates if o.object_type != ObjectType.STAR]
                 candidates = candidates[:_MAX_CANDIDATES]
+                searching_dlg = _show_searching_dialog(len(candidates))
 
                 forecast, aurora, smoke = _fetch_advisories(night_date)
                 if forecast or aurora is not None or smoke is not None:
@@ -633,6 +650,8 @@ class AppWindowWhatsUpPageMixin:
                 self._window.statusBar().showMessage("What's Up Tonight ranking failed — see log.", 6000)
                 return
             finally:
+                if searching_dlg is not None:
+                    searching_dlg.close()
                 QApplication.restoreOverrideCursor()
 
             if not recommendations:
