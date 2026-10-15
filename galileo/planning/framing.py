@@ -392,18 +392,27 @@ class FramingAssistant:
         cols: int,
         rows: int,
         overlap_pct: float,
+        rotation_deg: float = 0.0,
     ) -> Mosaic:
-        """Build a mosaic grid centred on (*center_ra*, *center_dec*)."""
+        """Build a mosaic grid centred on (*center_ra*, *center_dec*).
+
+        A nonzero *rotation_deg* turns the whole grid about its centre, in the same sense the
+        Framing Assistant preview draws a rotated frame, so each pane keeps its place in the
+        tilted grid (FRAME-030/040)."""
         fov = self.compute_fov()
         step_ra = fov.width_deg * (1.0 - overlap_pct / 100.0)
         step_dec = fov.height_deg * (1.0 - overlap_pct / 100.0)
+        theta = math.radians(rotation_deg)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
 
         panels = []
         idx = 0
         for row in range(rows):
             for col in range(cols):
-                ra = center_ra + (col - (cols - 1) / 2.0) * step_ra
-                dec = center_dec + (row - (rows - 1) / 2.0) * step_dec
+                d_ra = (col - (cols - 1) / 2.0) * step_ra
+                d_dec = (row - (rows - 1) / 2.0) * step_dec
+                ra = center_ra + d_ra * cos_t - d_dec * sin_t
+                dec = center_dec + d_ra * sin_t + d_dec * cos_t
                 panels.append(MosaicPanel(
                     pane_index=idx,
                     ra_deg=ra,
@@ -414,16 +423,24 @@ class FramingAssistant:
 
         return Mosaic(cols=cols, rows=rows, overlap_pct=overlap_pct, panels=panels)
 
-    def mosaic_footprint_deg(self, cols: int, rows: int, overlap_pct: float) -> tuple[float, float]:
+    def mosaic_footprint_deg(self, cols: int, rows: int, overlap_pct: float,
+                             rotation_deg: float = 0.0) -> tuple[float, float]:
         """The overall RA/Dec extent a *cols*×*rows* mosaic grid covers (FRAME-040)
         — the same panel spacing :meth:`create_mosaic` uses, without building the
         panels themselves. Used to size a survey-image fetch/preview around the
-        whole grid rather than just one pane."""
+        whole grid rather than just one pane. With a nonzero *rotation_deg* this is
+        the axis-aligned bounding box of the tilted grid."""
         fov = self.compute_fov()
         step_ra = fov.width_deg * (1.0 - overlap_pct / 100.0)
         step_dec = fov.height_deg * (1.0 - overlap_pct / 100.0)
         width_deg = fov.width_deg + max(cols - 1, 0) * step_ra
         height_deg = fov.height_deg + max(rows - 1, 0) * step_dec
+        if rotation_deg:
+            rad = math.radians(rotation_deg)
+            width_deg, height_deg = (
+                abs(width_deg * math.cos(rad)) + abs(height_deg * math.sin(rad)),
+                abs(width_deg * math.sin(rad)) + abs(height_deg * math.cos(rad)),
+            )
         return width_deg, height_deg
 
     def rotated_frame_bounding_box_deg(self, rotation_deg: float) -> tuple[float, float]:

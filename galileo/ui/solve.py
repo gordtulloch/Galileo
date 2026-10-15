@@ -784,6 +784,17 @@ class SolvePage(QWidget):
     def _on_run_finished(self, key) -> None:
         self._set_running(False, key)
         self._run_target_active[key] = False
+        workflow = self._workflows.get(key)
+        slewed_to = getattr(workflow, "slewed_to", None)
+        if slewed_to is not None and key == self._pier_key():
+            # Load & Slew: the mount now points at the loaded image's field, so it becomes the
+            # Pier's current object — later solves and captures aim at it, not the previous one.
+            ra, dec, name = slewed_to
+            from galileo.ui.app_window import _format_dms, _format_hms
+            self._window._set_current_object({
+                "name": name or f"RA {_format_hms(ra / 15.0)} Dec {_format_dms(dec)}",
+                "ra_deg": ra, "dec_deg": dec, "kind": "Solved image"})
+            workflow.slewed_to = None
 
     # --- Rendering (only while visible) -----------------------------------
 

@@ -249,12 +249,16 @@ class DarkCaptureBlock(SessionBlock):
     label: ClassVar[str] = "Dark Capture"
     filter: str = ""
     exposures: list[float] = field(default_factory=lambda: [10.0, 20.0, 30.0, 60.0])
+    # Close the Pier's dust cover / flip-flat panel (if it has one) for the darks.
+    close_cover: bool = False
 
     @property
     def display_text(self) -> str:
         bits = [", ".join(f"{e:g}" for e in self.exposures) + " s"]
         if self.filter:
             bits.append(self.filter)
+        if self.close_cover:
+            bits.append("cover closed")
         return f"{self.label}: {' '.join(bits)}"
 
 
@@ -541,17 +545,15 @@ class SessionRegion:
         SessionTemplateRecord.create(name=name, blocks_json=blocks_json)
 
     def can_load_from_template(self) -> bool:
-        """Load from Template needs an existing concrete Target block to substitute
-        the template's placeholder for (SES-190)."""
-        return (
-            bool(self.blocks)
-            and isinstance(self.blocks[0], TargetBlock)
-            and not self.blocks[0].is_placeholder_target
+        """Load from Template needs an existing concrete Slew To (Target) block to
+        substitute the template's placeholder for (SES-190)."""
+        return any(
+            isinstance(b, TargetBlock) and not b.is_placeholder_target for b in self.blocks
         )
 
     def load_from_template(self, name: str) -> None:
         if not self.can_load_from_template():
-            raise BlockOrderError("Load from Template requires an existing concrete Target block.")
+            raise BlockOrderError("Load from Template needs a Slew To block with a target chosen. Add one first.")
         template = SessionTemplate.load(name)
         remaining = (
             template.blocks[1:]

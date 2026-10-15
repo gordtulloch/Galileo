@@ -757,9 +757,21 @@ class SessionExecutor:
         self._need("camera")
         await self._select_filter(block.filter)
         svc = self._new_imaging()
-        for exposure in block.exposures:
-            await self._checkpoint()
-            await self._expose(svc, exposure, block.filter or self.current_filter or "", "Dark")
+        panel = self.context.flat_panel if getattr(block, "close_cover", False) else None
+        if getattr(block, "close_cover", False) and panel is None:
+            self._record("Close Cover: no dust cover / flip-flat panel connected; continuing without.")
+        if panel is not None:
+            await panel.close_cover()
+        try:
+            for exposure in block.exposures:
+                await self._checkpoint()
+                await self._expose(svc, exposure, block.filter or self.current_filter or "", "Dark")
+        finally:
+            if panel is not None:
+                try:
+                    await panel.open_cover()
+                except Exception as exc:   # don't mask the run's own outcome
+                    logger.warning("Could not reopen the cover after darks: %s", exc)
 
     async def _do_FlatCaptureBlock(self, block: Any) -> None:
         from galileo.exceptions import FlatCalibrationError

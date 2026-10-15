@@ -1228,7 +1228,7 @@ def test_flat_and_dark_capture_blocks_mirror_imaging_assistants():
     assert ui_mod.DarkCaptureBlock in ui_mod._PALETTE_BLOCK_TYPES
     flat = ui_mod.FlatCaptureBlock(method="Sky Flats", exposure=0.5, count=5, filter="L",
                                    adu_method="Median", exposure_increment=0.2)
-    dark = ui_mod.DarkCaptureBlock(filter="Ha", exposures=[5.0, 30.0])
+    dark = ui_mod.DarkCaptureBlock(filter="Ha", exposures=[5.0, 30.0], close_cover=True)
     for b in (flat, dark):
         assert ui_mod._block_from_dict(ui_mod._block_to_dict(b)) == b
     old = ui_mod._block_from_dict({"_type": "FlatCaptureBlock", "count": 3, "target_adu": 30000.0, "indent": 0})
@@ -1269,3 +1269,24 @@ def test_palette_omits_dither_and_meridian_flip_but_old_sessions_still_load():
     assert ui_mod.MeridianFlipBlock not in ui_mod._PALETTE_BLOCK_TYPES
     for cls in (ui_mod.DitherBlock, ui_mod.MeridianFlipBlock):
         assert isinstance(ui_mod._block_from_dict(ui_mod._block_to_dict(cls())), cls)
+
+
+async def test_dark_capture_close_cover_closes_and_reopens_panel():
+    """SES: Dark Capture's Close Cover closes the flat panel/dust cover for the darks, then reopens it."""
+    from unittest.mock import AsyncMock, MagicMock
+    from galileo.sequencer.session_exec import SessionExecutor
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    panel = MagicMock()
+    panel.close_cover, panel.open_cover = AsyncMock(), AsyncMock()
+    ex = SessionExecutor.__new__(SessionExecutor)
+    ex.context = MagicMock(flat_panel=panel)
+    ex._need = MagicMock()
+    ex._select_filter = AsyncMock()
+    ex._new_imaging = MagicMock()
+    ex._checkpoint = AsyncMock()
+    ex._expose = AsyncMock(return_value=True)
+    ex._record = MagicMock()
+    ex.current_filter = ""
+    await ex._do_DarkCaptureBlock(ui_mod.DarkCaptureBlock(exposures=[5.0], close_cover=True))
+    panel.close_cover.assert_awaited_once()
+    panel.open_cover.assert_awaited_once()

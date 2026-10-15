@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, ClassVar
 
 from ._common import _HAS_QT, QWidget, QLabel, QPlainTextEdit, Signal
@@ -140,10 +141,16 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
             cols, rows, overlap_pct = self._mosaic_grid
             step_ra = fov_w_deg * (1.0 - overlap_pct / 100.0)
             step_dec = fov_h_deg * (1.0 - overlap_pct / 100.0)
+            # Pane centres turn about the grid centre by the same rotation as the panes
+            # themselves (same maths as FramingAssistant.create_mosaic).
+            theta = math.radians(self._rotation_deg)
+            cos_t, sin_t = math.cos(theta), math.sin(theta)
             for row in range(rows):
                 for col in range(cols):
-                    draw_rect((col - (cols - 1) / 2.0) * step_ra, (row - (rows - 1) / 2.0) * step_dec,
-                             self._rotation_deg)
+                    d_ra = (col - (cols - 1) / 2.0) * step_ra
+                    d_dec = (row - (rows - 1) / 2.0) * step_dec
+                    draw_rect(d_ra * cos_t - d_dec * sin_t, d_ra * sin_t + d_dec * cos_t,
+                              self._rotation_deg)
         else:
             draw_rect(0.0, 0.0, self._rotation_deg)
 

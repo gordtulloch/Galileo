@@ -33,7 +33,7 @@ Saves this session's blocks under a name you give it, to reuse in other sessions
 
 ## Load from Template
 
-Fills this session from a saved template. The session must already start with a real Target block: the template's first Target is stored as a generic placeholder, and your target takes its place. Templates are listed by name.
+Fills this session from a saved template. The session must already contain a **Slew To** block with a real target: the template's own Slew To is stored as a generic placeholder, and your target takes its place. Templates are listed by name.
 
 ## Schedule
 
@@ -110,6 +110,10 @@ Captures flat frames the way the Flats Assistant does: flat method, exposure (or
 ## Dark Capture
 
 Captures dark frames the way the Darks Assistant does: one dark at each exposure length, optionally selecting a filter first.
+
+## Close Cover
+
+Closes the dust cover or flip-flat panel (if the Pier has one connected) before the darks and reopens it afterwards. With no cover connected the block carries on and notes it in the run log. Leave it off for cameras that darken the light path with a filter instead, such as a Seestar's dark cover filter: choose that in **Filter**.
 
 ## Park Mount
 

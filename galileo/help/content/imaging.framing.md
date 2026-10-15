@@ -19,7 +19,7 @@ The target's declination in degrees (−90 to +90).
 
 ## Rotation
 
-The camera's rotation on the sky in degrees. It is filled in from a connected rotator, or the last plate solve, when either is known. With a rotator connected, **OK** turns the rotator to this angle. With no rotator, a rotation other than 0 is captured as a mosaic of panes that covers the tilted field.
+The camera's rotation on the sky in degrees. It is filled in from a connected rotator, or the last plate solve, when either is known. With a rotator connected, **OK** turns the rotator to this angle. With no rotator, a rotation other than 0 is captured as a mosaic of panes that covers the tilted field. When you set a mosaic grid yourself, the rotation tilts the whole grid about its centre, so every pane is turned and the pane positions turn with it; with a rotator connected, **OK** also turns the rotator to match.
 
 ## Mosaic cols
 

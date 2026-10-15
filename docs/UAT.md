@@ -10,7 +10,7 @@
 
 1. Work through the sections **in order**. Each section depends on the ones before it (you cannot capture before a camera is saved, or review a session that never ran).
 2. For each step, do the **Action**, compare what happens with **Expected**, and mark the **Result** column `P` (pass), `F` (fail), `B` (blocked by an earlier failure) or `N/A` (not applicable to this rig, with the reason).
-3. For every `F`, record the step ID, what you saw, and attach the log file (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/1.-Getting-Started-Guide#where-galileo-keeps-its-files)) and any crash report from `reports/crash`.
+3. For every `F`, record the step ID, what you saw, and attach the log file (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/01.-Getting-Started-Guide#where-galileo-keeps-its-files)) and any crash report from `reports/crash`.
 4. A **blocker** failure (marked ⛔) stops the run: later sections depend on it. Raise it, fix it, and restart from that section.
 5. Steps marked **(SIM)** need the INDI simulators from the equipment setup below. Steps marked **(opt)** need an optional external tool (ASTAP, PHD2, a notification channel) — mark `N/A` if it is not installed.
 
@@ -46,20 +46,23 @@ Record this before starting.
 
 All devices in this script are the **INDI simulator drivers** served by one `indiserver`, so no real hardware is needed. **(SIM)** in a step means "needs the simulators running".
 
-Start the server on the test machine (or any machine Galileo can reach; see [Installing INDI](https://github.com/gordtulloch/Galileo/wiki/2.-Installing-INDI)):
+Start the server on the test machine (or any machine Galileo can reach; see [Installing INDI](https://github.com/gordtulloch/Galileo/wiki/02.-Installing-INDI)):
 
 ```bash
-indiserver -v indi_simulator_telescope indi_simulator_ccd indi_simulator_ccd            indi_simulator_wheel indi_simulator_focus indi_simulator_rotator            indi_simulator_dome indi_simulator_gps indi_simulator_weather            indi_simulator_dsp
+indiserver -v indi_simulator_telescope indi_simulator_ccd indi_simulator_guide \
+           indi_simulator_wheel indi_simulator_focus indi_simulator_rotator \
+           indi_simulator_dome indi_simulator_gps indi_simulator_weather \
+           indi_simulator_dsp
 ```
 
 Notes:
 
 - Run `ls /usr/bin/indi_simulator_*` (or your platform's equivalent) and load **every** simulator that exists. Drop any name above your install does not have, and record what was loaded in the environment table. Steps for a device with no simulator are `N/A`.
-- The CCD simulator is started **twice**: the first is the imaging camera, the second the guide camera (INDI gives the second instance the same name, so check the **Device** list in step 4.1 to tell them apart).
+- INDI has separate **CCD Simulator** (the imaging camera) and **Guide Simulator** (the guide camera) drivers, so each is started once. Use the CCD Simulator as the camera in step 4.2.
 - Default **Server** is `localhost`, **Port** `7624`. If `indiserver` runs elsewhere, use its host name or IP address.
 - The CCD simulator draws a synthetic star field centred on wherever the simulated telescope points, so **Auto Focus** (Section 10), **Capture & Solve** (Section 9) and **Guiding** (Section 11) have stars to work with. If your INDI install lacks the star catalogue for the simulator, frames are blank: record that and mark the star-dependent steps `N/A`, or `B` (blocked) if you cannot proceed.
 - Solving needs ASTAP plus a star database. The simulator's star field is not a real image of M13, so a *blind* solve may fail; the solver action steps are written to tolerate that (see Section 9).
-- PHD2 (Section 11) can use the same INDI server for its own camera and mount (profile with INDI Camera = the second CCD simulator, Mount = Telescope Simulator).
+- PHD2 (Section 11) can use the same INDI server for its own camera and mount (profile with INDI Camera = Guide Simulator, Mount = Telescope Simulator).
 
 The Star Atlas, Planning, Framing, Schedule, History and Library sections work with no devices connected.
 
@@ -106,7 +109,7 @@ Do these with the Pier from Section 2 selected. Settings are saved per Pier. Use
 | ID | Action | Expected | Result |
 |---|---|---|---|
 | 4.1 ⛔ | **Equipment > Camera.** Set **Driver** = INDI, **Server** = `localhost`, **Port** = `7624`. Click **Scan**. | Status bar reports how many devices were found. The log pane lists them and the **Device** drop-down fills. Switching Driver to Alpaca changes the Port default to 32323 and back to INDI restores 7624; switch back to INDI before continuing. | |
-| 4.2 ⛔ | Pick the first **CCD Simulator** as the camera, click **Download Info**, set **Bayer pattern** if one-shot colour, then **Save**. | Pixel size and sensor size fill in. Save confirms. | |
+| 4.2 ⛔ | Pick **CCD Simulator** as the camera, click **Download Info**, set **Bayer pattern** if one-shot colour, then **Save**. | Pixel size and sensor size fill in. Save confirms. | |
 | 4.3 | Click **Scan** with a wrong server address. | A clear failure message appears in the status bar and log. Galileo does not hang or crash. | |
 | 4.4 ⛔ | Re-select the Pier (switch away and back). | Status bar shows "Connected to primary camera '…'". | |
 | 4.5 | **Equipment > Mount.** Scan, pick **Telescope Simulator**, **Save**, **Connect**. | Status panel shows RA/Dec, Alt/Az, sidereal time, pier side, tracking and parked state. | |

@@ -633,7 +633,12 @@ class _ScheduleBlockWidget(QFrame):
         if self._drag_origin is not None:
             self._drag_origin = None
             self.setCursor(Qt.CursorShape.OpenHandCursor)
-            self._canvas.reposition_from_pixels(self.job, self.x(), self.y())
+            page = self._canvas._page
+            if self.job.kind == "session" and page.is_over_unscheduled(event.globalPosition().toPoint()):
+                # Dropped back on the Unscheduled tray: take it off the grid.
+                page.unschedule_job(self.job)
+            else:
+                self._canvas.reposition_from_pixels(self.job, self.x(), self.y())
         super().mouseReleaseEvent(event)
 
 
@@ -1077,11 +1082,22 @@ class SchedulePageWidget(QWidget):
         left_container.setMaximumWidth(240)
         body.addWidget(left_container)
 
+        right = QVBoxLayout()
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._canvas = _CalendarCanvas(self)
         self._scroll.setWidget(self._canvas)
-        body.addWidget(self._scroll, 1)
+        right.addWidget(self._scroll, 1)
+
+        upcoming_label = QLabel("Upcoming Sessions")
+        upcoming_label.setObjectName("PageSubtitle")
+        right.addWidget(upcoming_label)
+        self._upcoming_list = QPlainTextEdit()
+        self._upcoming_list.setObjectName("upcoming_list")
+        self._upcoming_list.setReadOnly(True)
+        self._upcoming_list.setMaximumHeight(160)
+        right.addWidget(self._upcoming_list)
+        body.addLayout(right, 1)
 
         self._update_zoom_buttons()
         self._update_days_buttons()
@@ -1117,6 +1133,11 @@ class SchedulePageWidget(QWidget):
         ``QDrag.exec()`` and read by ``_CalendarCanvas.dropEvent``, the same
         role the old pier-op palette's ``currentItem()`` played."""
         return self._dragging_job
+
+    def is_over_unscheduled(self, global_pos: QPoint) -> bool:
+        """True if *global_pos* lies over the Unscheduled tray (a grid block
+        dropped there is unscheduled)."""
+        return self._unscheduled_scroll.rect().contains(self._unscheduled_scroll.mapFromGlobal(global_pos))
 
     def begin_job_drag(self, job: Any) -> None:
         self._dragging_job = job
@@ -1281,6 +1302,37 @@ class SchedulePageWidget(QWidget):
             self._scheduler().remove_job(job)
         self.reload()
 
+    # --- Upcoming sessions ---------------------------------------------------
+
+    @staticmethod
+    def job_summary(job: Any) -> str:
+        """One-line text summary of what *job* will do, starting with its target (a session's
+        blocks in order, e.g. ``Slew To: M31 › Image: 10×300s Ha``); a pier operation is its label."""
+        blocks = getattr(job.sequence, "blocks", None) if job.kind == "session" else None
+        if not blocks:
+            return job.name
+        parts = [b.display_text for b in blocks]
+        if not any(type(b).__name__ == "TargetBlock" for b in blocks):
+            parts.insert(0, job.name)
+        return " › ".join(parts)
+
+    def upcoming_entries(self) -> list[tuple[datetime.datetime, Any]]:
+        """Timed jobs that haven't finished yet, soonest first, as (local start, job)."""
+        now = _now_utc()
+        rows = []
+        for job in self.timed_jobs():
+            window = job.effective_window()
+            if window is not None and window[1] >= now:
+                rows.append((window[0], job))
+        rows.sort(key=lambda r: r[0])
+        return [(start.astimezone(), job) for start, job in rows]
+
+    def _refresh_upcoming(self) -> None:
+        entries = self.upcoming_entries()
+        self._upcoming_list.setPlainText(
+            "\n".join(f"{start.strftime('%a %b %d  %H:%M')}  —  {self.job_summary(job)}" for start, job in entries)
+            or "No upcoming sessions scheduled.")
+
     # --- Refresh ---------------------------------------------------------------
 
     def reload(self) -> None:
@@ -1294,6 +1346,7 @@ class SchedulePageWidget(QWidget):
             f"{subject} OPEN to CLOSE, starting the night of: {day_start.strftime('%A, %B %d, %Y')}")
         self._back_btn.setEnabled(self._displayed_day_offset > -_MAX_DAYS_BACK)
         self._canvas.refresh()
+        self._refresh_upcoming()
 
         while self._unscheduled_layout.count() > 1:
             item = self._unscheduled_layout.takeAt(0)

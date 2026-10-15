@@ -40,6 +40,10 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
+# Driver message prefixes that are per-tick tracing (mount alignment maths, scope position),
+# not events worth logging.
+_INDI_TRACE_TAGS = ("[ALIGNMENT]", "[SCOPE]")
+
 DEFAULT_PORT = 7624
 PROTOCOL_VERSION = "1.7"
 
@@ -244,6 +248,10 @@ class IndiClient:
                 # drivers chatter routinely, so only problems reach the log pane.
                 level = (logging.ERROR if "[ERROR]" in text
                          else logging.WARNING if "[WARNING]" in text else logging.DEBUG)
+                # Mount drivers emit alignment/pointing trace lines several times a
+                # second while tracking; they would swamp the log, so leave them out.
+                if level == logging.DEBUG and text.lstrip().startswith(_INDI_TRACE_TAGS):
+                    return
                 logger.log(level, "INDI message %s", line)
             return
         if tag == "delProperty":

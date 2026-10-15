@@ -401,6 +401,31 @@ def test_tc_sched_120_right_click_sets_start_end_duration(window):
     assert job.scheduled_start_utc is None
 
 
+@pytest.mark.requirement("TC-SCHED-120")
+@pytest.mark.priority("MVP")
+def test_tc_sched_120_drag_block_onto_unscheduled_tray_unschedules(window):
+    """SCHED-120: dragging a scheduled session's grid block and releasing it over
+    the Unscheduled tray returns it to the tray."""
+    import datetime
+    from PySide6.QtCore import QPoint
+    sessions = _sessions_page(window)
+    page = _schedule_page(window)
+    region = sessions.sessions_screen.create_session_for_target("M31", 10.68, 41.27)
+    region._scheduler = sessions._scheduler_for(region._pier_name)
+    region.schedule()
+    job = region._job
+    job.scheduled_start_utc = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    page._canvas.refresh()
+
+    tray = page._unscheduled_scroll
+    assert page.is_over_unscheduled(tray.mapToGlobal(tray.rect().center()))
+    assert not page.is_over_unscheduled(tray.mapToGlobal(tray.rect().bottomRight()) + QPoint(50, 50))
+
+    page.unschedule_job(job)
+    assert job.scheduled_start_utc is None
+    assert job in page.untimed_jobs()
+
+
 @pytest.mark.requirement("TC-SCHED-130")
 @pytest.mark.priority("MVP")
 def test_tc_sched_130_day_navigation_clamped_to_seven_days_back(window):
@@ -704,3 +729,23 @@ def test_tc_sched_060_app_window_wires_monitor(window):
     window._device_pages["weather"] = {"evaluate": lambda: (True, True, [])}
     assert scheduler.safety_block_reason() == ""
     window._schedulers.pop("WiredPier", None)
+
+
+def test_schedule_upcoming_panel_lists_timed_jobs_with_target_summary(window):
+    """The Upcoming Sessions panel lists unfinished timed jobs, soonest first, summarised from the target."""
+    import datetime
+    from galileo.ui.sessions import DomeOpenBlock, ImageBlock, SessionRegion, TargetBlock
+    _sessions_page(window)
+    page = _schedule_page(window)
+    start = page.displayed_day_start_local() + datetime.timedelta(days=1, hours=22)
+    page.add_pier_operation(DomeOpenBlock, "Open Dome", start)
+    region = SessionRegion(name="M31 night")
+    region.insert_block(TargetBlock(name="M31"))
+    region.insert_block(ImageBlock(exposure=300.0, count=10, filter="Ha"))
+    job = page._scheduler().jobs[0]
+    assert page.job_summary(job) == "Open Dome"
+    job.sequence, job.kind = region, "session"
+    assert page.job_summary(job).startswith("Slew To: M31 › Image: 10×300s Ha")
+    page.reload()
+    text = page._upcoming_list.toPlainText()
+    assert "Slew To: M31" in text and start.strftime("%H:%M") in text

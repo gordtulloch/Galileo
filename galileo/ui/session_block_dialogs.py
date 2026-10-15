@@ -536,12 +536,20 @@ def _edit_dark_capture_block(parent, block, region, window) -> bool:
     exposures_edit.setObjectName("exposures_edit")
     exposures_edit.setToolTip("Comma-separated exposure lengths in seconds; one dark per value. Example: 10,20,30,60")
     form.addRow("Exposures (s)", exposures_edit)
+    cover_check = QCheckBox("Close Cover")
+    cover_check.setObjectName("close_cover_check")
+    cover_check.setToolTip(
+        "Close the dust cover or flip-flat panel, if the Pier has one, before the darks "
+        "and reopen it afterwards. Leave off for cameras with a dark filter instead (e.g. Seestar).")
+    cover_check.setChecked(bool(block.close_cover))
+    form.addRow("", cover_check)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     form.addRow(buttons)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return False
+    block.close_cover = cover_check.isChecked()
     exposures = _parse_exposures(exposures_edit.text())
     if not exposures:
         return False

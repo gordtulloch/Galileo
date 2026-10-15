@@ -8,7 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Generic User Acceptance Test script, [`docs/UAT-generic.md`](docs/UAT-generic.md).** The same end-to-end night as `UAT.md`, but not tied to M13 or the INDI simulators: a Test profile at the top has the tester choose their own target (with a checklist for picking one that suits their site, date and optics) and record their own equipment, protocol and optics, and steps for devices they don't have are `N/A`. Adds steps for a meridian flip, a mosaic with rotation, and a cooled camera. Documentation only; no code, help or wiki change.
+
+- **Schedule screen: drag a scheduled session back to Unscheduled.** Dropping a session block from the calendar onto the Unscheduled list now unschedules it (same as "Remove from Schedule"), instead of only being able to move it around the grid. Pier operations still just reposition, since they have no Unscheduled state. Updated the Schedule help.
+
+- **Schedule screen: Upcoming Sessions panel.** A read-only list below the calendar shows every scheduled entry that hasn't finished, soonest first, each with its local start time and a text summary of its activities beginning with the target (e.g. `Slew To: M31 › Image: 10×300s Ha`). It refreshes with the page. Added to the Schedule help and the Planning wiki article.
+
+- **Dark Capture block: Close Cover option.** A new checkbox closes the Pier's dust cover or flip-flat panel (when one is connected) before the darks and reopens it afterwards, so darks are taken with the light path covered. The Filter field stays, since some cameras (Seestar) use a dark cover filter instead. With no cover connected the block continues and logs that. Saved/templated sessions without the field load as off. Updated the Sessions help.
+
 ### Fixed
+
+- **`docs/UAT.md` simulator setup corrected.** It started the INDI CCD simulator twice to get a guide camera; INDI has a separate Guide Simulator driver, so the `indiserver` command now loads `indi_simulator_ccd` and `indi_simulator_guide` once each, and the PHD2 note points at the Guide Simulator. The command's line continuations, which had been lost, are restored. Docs only.
+
+- **Sessions › Load from Template error used the old "Target" name and was too strict.** The message said "requires an existing concrete Target block" although the block is now called **Slew To**. It now reads "Load from Template needs a Slew To block with a target chosen. Add one first." The check also only looked at the first block; it now accepts a concrete Slew To block anywhere in the session. Updated the Sessions help and SRS SES-190 wording.
+
+- **Wiki pages renumbered with leading zeros** (`01.-` … `09.-`) so they sort correctly in GitHub's wiki contents list (previously `10.` sorted before `2.`). Wiki-internal links, the Home table, and the wiki URLs in `README.md` and `docs/UAT.md` were updated to match. The Plate Solving and Imaging wiki articles now mention Load & Slew setting the current object and rotation applying to a mosaic. Docs only.
+
+- **Solve › Load & Slew now sets the current object.** After slewing to the loaded image's field the Pier's current object stayed whatever it was before, so a following Capture & Solve (Slew to Target) slewed back to the old object. The destination (named from the file's `OBJECT` card, else its coordinates) is now the current object. Updated the Solve help.
+
+- **Log file no longer flooded by INDI mount trace messages.** The telescope driver's `[ALIGNMENT]` and `[SCOPE]` messages (several per second while tracking) made up about 94% of a typical day's log (14,500 of 15,500 lines). They are no longer written to the log; errors and warnings from drivers, and all other driver messages, are still logged. Internal change; no help/wiki impact.
+
+- **Framing Assistant: rotation now applies to a mosaic.** Setting a rotation together with a mosaic grid used to be ignored (the dialog said so); now the whole grid turns about its centre, so pane positions and each pane's outline are tilted in the preview and in the captured pane coordinates, and the survey image is sized to the tilted grid's bounding box. With a rotator connected, **OK** also turns the rotator to the angle. With no rotator and no explicit grid the existing auto-sized covering mosaic is unchanged. `create_mosaic` and `mosaic_footprint_deg` gained an optional `rotation_deg` (default 0, so existing callers are unaffected). The session Image block's mosaic dialog has no rotation field and is unchanged. Rotation help entry updated; new test `test_tc_frame_040_mosaic_rotation_turns_the_grid`.
 
 - **Removing a session from the Schedule grid now returns it to the Unscheduled tray** (its start time is cleared) instead of deleting the job. Right-clicking an entry in the Unscheduled tray now offers **Delete** (with confirmation) in place of Remove from Schedule, so deleting is the explicit, separate action. Pier operations, which have no tray to return to, are still deleted. Inline help updated.
 

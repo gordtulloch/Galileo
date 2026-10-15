@@ -577,6 +577,7 @@ class SolveWorkflow:
         self.target: tuple[float, float] | None = None
         self.object_name = ""              # what the target is called; goes into the solve frames' file names
         self._target_preset = False        # the caller chose the target, so the mount isn't already "there"
+        self.slewed_to: tuple[float, float, str] | None = None   # (ra, dec, name) a Load & Slew run ended at
         self.results: list[SolveResult] = []
         self.stopped = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -670,6 +671,7 @@ class SolveWorkflow:
 
     async def _run(self, coro) -> list[SolveResult]:
         self.results, self.stopped = [], False
+        self.slewed_to = None
         self._loop, self._task = asyncio.get_running_loop(), asyncio.current_task()
         try:
             await coro
@@ -767,6 +769,9 @@ class SolveWorkflow:
             return
         position = await self._mount_position()
         await self._slew((result.ra_deg, result.dec_deg), position[2] if position else None)
+        # The mount is now at the loaded image's field, so that is what later operations should
+        # treat as the target. Named from the file's OBJECT card when it has one.
+        self.slewed_to = (result.ra_deg, result.dec_deg, await asyncio.to_thread(_object_name, source))
 
     async def _capture(self, settings: SolveSettings, attempt: int) -> Path | None:
         if self.camera is None:
@@ -950,6 +955,17 @@ def _normalise_fits(source: Path, destination: Path) -> None:
     for card in header.cards:
         new_hdu.header.append(card)
     new_hdu.writeto(destination, overwrite=True)
+
+
+def _object_name(path: Path) -> str:
+    """The ``OBJECT`` card of the first image HDU of *path*, or ``""``."""
+    try:
+        from astropy.io import fits
+        with fits.open(path, memmap=False) as hdul:
+            hdu = _image_hdu(hdul)
+            return str(hdu.header.get("OBJECT", "")).strip() if hdu is not None else ""
+    except Exception:
+        return ""
 
 
 def _describe_fits(path: Path) -> str:

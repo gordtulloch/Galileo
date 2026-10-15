@@ -170,6 +170,30 @@ def test_tc_frame_040_mosaic_panel_grid(framing_assistant):
 
 @pytest.mark.requirement("TC-FRAME-040")
 @pytest.mark.priority("P2")
+def test_tc_frame_040_mosaic_rotation_turns_the_grid(framing_assistant):
+    """FRAME-030/FRAME-040: a rotation set with a mosaic grid turns the whole grid about its
+    centre — pane spacing is preserved and pane centres move — instead of being ignored."""
+    flat = framing_assistant.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=3, rows=2, overlap_pct=10.0)
+    turned = framing_assistant.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=3, rows=2,
+                                             overlap_pct=10.0, rotation_deg=90.0)
+    assert turned.total_panels == flat.total_panels
+    assert [(p.ra_deg, p.dec_deg) for p in turned.panels] != [(p.ra_deg, p.dec_deg) for p in flat.panels]
+    # A quarter turn swaps the grid's RA and Dec extents.
+    fov = framing_assistant.compute_fov()
+    ra_span = max(p.ra_deg for p in turned.panels) - min(p.ra_deg for p in turned.panels)
+    dec_span = max(p.dec_deg for p in turned.panels) - min(p.dec_deg for p in turned.panels)
+    step_ra, step_dec = fov.width_deg * 0.9, fov.height_deg * 0.9
+    assert ra_span == pytest.approx(1 * step_dec)
+    assert dec_span == pytest.approx(2 * step_ra)
+    # Zero rotation is unchanged, and the footprint is the tilted grid's bounding box.
+    assert framing_assistant.create_mosaic(83.8, -5.4, 3, 2, 10.0, rotation_deg=0.0).panels[0].ra_deg == flat.panels[0].ra_deg
+    w, h = framing_assistant.mosaic_footprint_deg(3, 2, 10.0, rotation_deg=90.0)
+    w0, h0 = framing_assistant.mosaic_footprint_deg(3, 2, 10.0)
+    assert (w, h) == pytest.approx((h0, w0))
+
+
+@pytest.mark.requirement("TC-FRAME-040")
+@pytest.mark.priority("P2")
 def test_tc_frame_040_mosaic_footprint_matches_panel_spacing(framing_assistant):
     """FRAME-040: the mosaic's overall RA/Dec footprint (used to size a survey-image fetch/preview
     around the whole grid) matches the same panel spacing create_mosaic actually places panels at."""

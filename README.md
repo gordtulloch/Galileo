@@ -24,7 +24,7 @@ A cross-platform Python-based astrophotography imaging application for Windows, 
 
 **Developers**: `pip install -e ".[test,dev]"` (Python 3.11+), then `galileo`. The installers are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) from [`packaging/`](packaging/) when a `v*` tag is pushed.
 
-Step-by-step instructions, first-run security prompts (macOS Gatekeeper, Windows SmartScreen) and uninstalling are in the wiki's [Getting Started Guide](https://github.com/gordtulloch/Galileo/wiki/1.-Getting-Started-Guide#install-galileo).
+Step-by-step instructions, first-run security prompts (macOS Gatekeeper, Windows SmartScreen) and uninstalling are in the wiki's [Getting Started Guide](https://github.com/gordtulloch/Galileo/wiki/01.-Getting-Started-Guide#install-galileo).
 
 ## Why Galileo
 

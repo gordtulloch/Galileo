@@ -249,14 +249,15 @@ class AppWindowFramingMixin:
             grid = effective_grid()
             auto_mosaic = grid is not None and mosaic_grid() is None
             if grid is not None:
-                footprint = assistant.mosaic_footprint_deg(*grid)
+                # An explicit grid is tilted as a whole; an auto-sized covering grid stays
+                # upright (it exists precisely because the tilt can't be achieved).
+                grid_rotation = 0.0 if auto_mosaic else rotation_spin.value()
+                footprint = assistant.mosaic_footprint_deg(*grid, rotation_deg=grid_rotation)
                 if auto_mosaic:
                     extra = (f"  —  no rotator: {grid[0]}×{grid[1]} mosaic covering the "
                              f"{rotation_spin.value():.0f}° tilted field")
                 else:
                     extra = f"  —  mosaic footprint {footprint[0]:.3f}° × {footprint[1]:.3f}° ({grid[0]}×{grid[1]})"
-                    if rotation_spin.value() != 0:
-                        extra += "  (rotation ignored while a mosaic grid is set)"
             else:
                 footprint = (fov.width_deg, fov.height_deg)
                 extra = ""
@@ -264,7 +265,7 @@ class AppWindowFramingMixin:
             if grid is not None and not show_mosaic:
                 extra += "  (mosaic preview hidden — still captured)"
             display_grid = grid if show_mosaic else None
-            pane_rotation = 0.0 if display_grid is not None else rotation_spin.value()
+            pane_rotation = 0.0 if (display_grid is not None and auto_mosaic) else rotation_spin.value()
             reference_rotation = rotation_spin.value() if (auto_mosaic and show_mosaic) else None
             suffix = f" at rotation {rotation_spin.value():.1f}°" if pane_rotation or reference_rotation else ""
             fov_label.setText(f"Field of view: {fov.width_deg:.3f}° × {fov.height_deg:.3f}°{suffix}{extra}")
@@ -273,7 +274,9 @@ class AppWindowFramingMixin:
 
         def load_sky_image() -> None:
             grid = effective_grid()
-            footprint = assistant.mosaic_footprint_deg(*grid) if grid is not None else None
+            footprint = (assistant.mosaic_footprint_deg(
+                *grid, rotation_deg=0.0 if mosaic_grid() is None else rotation_spin.value())
+                if grid is not None else None)
             extent = assistant.survey_cutout_extent_deg(*footprint) if footprint else assistant.survey_cutout_extent_deg()
             width_deg, height_deg = footprint or (None, None)
             try:
@@ -361,9 +364,18 @@ class AppWindowFramingMixin:
             mosaic = assistant.create_mosaic(
                 center_ra=ra_spin.value(), center_dec=dec_spin.value(),
                 cols=cols, rows=rows, overlap_pct=overlap_pct,
+                rotation_deg=0.0 if auto_mosaic else rotation_spin.value(),
             )
             assistant.set_mosaic(mosaic)
             service.run_mosaic_from_framing(assistant)
+            if rotator_connected and not auto_mosaic and rotation_spin.value() != 0:
+                # The panes are tilted, so the camera must be turned to match.
+                try:
+                    asyncio.run(rotator_adapter.move_to_angle(rotation_spin.value()))
+                except Exception:
+                    logger.exception("Framing Assistant could not move the rotator")
+                    self._window.statusBar().showMessage(
+                        "Mosaic defined, but the rotator move failed — see log.", 6000)
             if auto_mosaic:
                 self._window.statusBar().showMessage(
                     f"No rotator: capturing a {cols}×{rows} mosaic to cover the "

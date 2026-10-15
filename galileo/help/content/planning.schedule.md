@@ -47,7 +47,11 @@ Returns the calendar to tonight.
 
 ## Unscheduled
 
-Sessions that are planned but have no start time. Drag one onto the calendar to schedule it.
+Sessions that are planned but have no start time. Drag one onto the calendar to schedule it. To unschedule a session, drag its block off the calendar and drop it back on this list.
+
+## Upcoming Sessions
+
+A list below the calendar of everything still to run, soonest first. Each line gives the start time and a summary of the activities, beginning with the target (for example *Slew To: M31 › Image: 10×300s Ha*). Entries that have finished drop off.
 
 ## Log
 

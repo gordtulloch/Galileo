@@ -616,6 +616,20 @@ async def test_tc_plt_070_load_and_slew_solves_a_copy_and_slews_to_the_solution(
     assert solved_paths[0] != sample_fits_file and solved_paths[0].exists()
     assert [c[0] for c in rig.calls] == ["slew"]
     assert rig.calls[0][1:] == pytest.approx(rig.in_mount_frame(30.0, 40.0))
+    assert rig.workflow.slewed_to[:2] == (30.0, 40.0)    # what the page makes the Pier's current object
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+async def test_tc_plt_070_load_and_slew_names_the_destination_from_the_object_card(tmp_path, sample_fits_file):
+    """PLT-070: Load & Slew reports where it ended up, named from the file's OBJECT card."""
+    from astropy.io import fits
+    with fits.open(sample_fits_file, mode="update") as hdul:
+        hdul[0].header["OBJECT"] = "M13"
+    rig = _Rig(tmp_path)
+    rig.solver._run_solver = AsyncMock(return_value=rig.ok(250.4, 36.46))
+    await rig.workflow.solve_file(sample_fits_file, slew=True)
+    assert rig.workflow.slewed_to == (250.4, 36.46, "M13")
 
 
 @pytest.mark.requirement("TC-PLT-070")

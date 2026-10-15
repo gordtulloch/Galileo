@@ -17,7 +17,7 @@ Takes an exposure with the selected camera, solves it, and then performs the Sol
 
 ## Load & Slew
 
-Solves a FITS file from your disk, then slews the mount to where that image points. Useful for returning to a previous night's framing.
+Solves a FITS file from your disk, then slews the mount to where that image points. Useful for returning to a previous night's framing. Once the slew finishes, that position becomes the Pier's current object (named from the file's `OBJECT` card, or its coordinates if it has none), so later solves and captures aim at it rather than at the previously selected object.
 
 ## Stop
 
