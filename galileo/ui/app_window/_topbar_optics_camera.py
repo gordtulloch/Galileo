@@ -149,18 +149,23 @@ class AppWindowTopbarOpticsCameraMixin:
         self._window.statusBar().showMessage(f"Moving filter wheel to {name}…")
         thread.start()
 
-    def active_optical_tube(self: AppWindowState):
+    def active_optical_tube(self: AppWindowState, pier=None):
         """The optical tube currently chosen in the top-bar Optics selector,
-        or ``None`` if the Pier has none defined."""
-        if self._current_pier is None:
+        or ``None`` if the Pier has none defined. For a *pier* other than the
+        selected one the selector says nothing, so its first tube is used."""
+        from galileo.current_object import pier_key
+        selected = self._current_pier
+        pier = selected if pier is None else pier
+        if pier is None:
             return None
         from galileo.observatory import list_optical_tubes
         try:
-            tubes = list_optical_tubes(self._current_pier)
+            tubes = list_optical_tubes(pier)
         except Exception:
-            logger.exception("Could not load optical tubes for Pier %r", self._current_pier.name)
+            logger.exception("Could not load optical tubes for Pier %r", pier.name)
             return None
-        return tubes[self._active_optics_position] if 0 <= self._active_optics_position < len(tubes) else None
+        position = self._active_optics_position if pier_key(pier) == pier_key(selected) else 0
+        return tubes[position] if 0 <= position < len(tubes) else None
 
     def _refresh_camera_combo(self: AppWindowState) -> None:
         """Fill the top-bar Camera selector and show it on every screen that also chooses the

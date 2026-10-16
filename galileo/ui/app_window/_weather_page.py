@@ -57,6 +57,21 @@ def _default_safety_rules(device_type: str) -> list:
 
 
 class AppWindowWeatherPageMixin:
+    def _safety_observatory(self: AppWindowState):
+        """The Observatory the Safety page belongs to: the selected one, or — when only a Pier
+        has been set — that Pier's own. ``None`` while neither exists."""
+        if self._current_observatory is not None:
+            return self._current_observatory
+        try:
+            return self._current_pier.observatory if self._current_pier is not None else None
+        except Exception:
+            return None
+
+    def _safety_observatory_key(self: AppWindowState):
+        """What identifies the Safety page's Observatory in per-Observatory dictionaries."""
+        observatory = self._safety_observatory()
+        return getattr(observatory, "id", None)
+
     def _build_safety_device_panel(self: AppWindowState, device_type: str = "weather", slot: str = "primary"):
         """One safety device's tab: the usual Driver/Server/Port/Scan +
         Device/Connect connection row, a live readings table, and — per
@@ -64,7 +79,7 @@ class AppWindowWeatherPageMixin:
         it means (EQP-WX-020, e.g. Rain is YES, Wind Speed >= 20 km/h).
         *device_type* picks the device category and which readings exist (a
         weather station has many, a safety monitor just its own SAFE
-        verdict); *slot* is the device-config/rule key within the Pier.
+        verdict); *slot* is the device-config/rule key within the Observatory.
         Returns ``(widget, api)``."""
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout,
@@ -217,8 +232,10 @@ class AppWindowWeatherPageMixin:
                 ))
             return rules
 
-        state: dict = {"adapter": None, "latest_readings": {}}
-        adapters_by_pier: dict = {}
+        state: dict = {"adapter": None, "latest_readings": {}, "read_at": None}
+        # Safety devices belong to the Observatory (OBS-030): one connection, shared by every
+        # Pier under the roof, and kept when another Pier is selected.
+        adapters_by_observatory: dict = {}
 
         def _format_value(value, unit: str) -> str:
             if value is None:
@@ -246,35 +263,55 @@ class AppWindowWeatherPageMixin:
         def _record_reading(readings: dict) -> None:
             if device_type != "weather":
                 return
-            from galileo.current_object import pier_key
-            key = pier_key(self._current_pier)
-            history = self._weather_history_by_pier.setdefault(key, [])
+            history = self._weather_history_by_observatory.setdefault(self._safety_observatory_key(), [])
             history.append((time.time(), dict(readings)))
             if len(history) > _HISTORY_MAX_SAMPLES:
                 del history[: len(history) - _HISTORY_MAX_SAMPLES]
 
+        def _read_adapter(adapter) -> dict:
+            """Poll *adapter* once and return its readings; raises if the device can't be read."""
+            import asyncio
+            from galileo.core.devices import WeatherController
+            if device_type == "safety_monitor":
+                asyncio.run(adapter.poll())
+                return {"is_safe": 1.0 if adapter.is_safe else 0.0}
+            controller = WeatherController(adapter)
+            asyncio.run(controller.poll())
+            return controller.get_readings()
+
         def _poll_once() -> dict | None:
             """Poll the connected adapter, update this tab's display, and
-            record the reading into this Pier's trend history."""
+            record the reading into this Observatory's trend history."""
             adapter = state.get("adapter")
             if adapter is None:
                 return None
-            import asyncio
-            from galileo.core.devices import WeatherController
             try:
-                if device_type == "safety_monitor":
-                    asyncio.run(adapter.poll())
-                    readings = {"is_safe": 1.0 if adapter.is_safe else 0.0}
-                else:
-                    controller = WeatherController(adapter)
-                    asyncio.run(controller.poll())
-                    readings = controller.get_readings()
+                readings = _read_adapter(adapter)
             except Exception:
                 logger.exception("Could not poll %s", kind_label.lower())
                 return None
+            state["read_at"] = time.monotonic()
             _apply_readings(readings)
             _record_reading(readings)
             return readings
+
+        def _evaluate_one() -> tuple[bool, list[str]]:
+            """``(connected, violations)`` for this tab's device, judged on a reading no older
+            than the poll interval. The tab only polls itself while it is on screen, but the
+            scheduler and the dome ask at any time, so a stale reading is refreshed here first.
+            A connected device that can't be read counts as unsafe."""
+            from galileo.safety import evaluate_weather_safety
+            if state.get("adapter") is None:
+                return False, []
+            read_at = state.get("read_at")
+            if read_at is not None and time.monotonic() - read_at < poll_spin.value():
+                readings = state.get("latest_readings", {})
+            else:
+                readings = _poll_once()
+            if readings is None:
+                return True, [f"{kind_label} could not be read"]
+            rules = [r for r in _current_rules() if r.safety_related]
+            return True, evaluate_weather_safety(readings, rules).violations
 
         def _refresh_display() -> None:
             if state.get("adapter") is not None:
@@ -291,14 +328,21 @@ class AppWindowWeatherPageMixin:
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to {kind_label} {device_name!r} — see log.", 6000)
                 return
-            from galileo.current_object import pier_key
             state["adapter"] = adapter
-            adapters_by_pier[pier_key(self._current_pier)] = adapter
+            state["read_at"] = None
+            adapters_by_observatory[self._safety_observatory_key()] = adapter
+            _sync_connect_button()
             self._window.statusBar().showMessage(f"Connected to {kind_label} {device_name!r}.", 4000)
             _device_picked()
             _poll_once()
 
+        def _sync_connect_button() -> None:
+            connect_btn.setText("Disconnect" if state.get("adapter") is not None else "Connect")
+
         def _connect_clicked() -> None:
+            if state.get("adapter") is not None:
+                disconnect_page()
+                return
             device_name = device_combo.currentText().strip()
             if not device_name:
                 QMessageBox.information(self._window, "No device selected", f"Select a {kind_label.lower()} device first.")
@@ -365,7 +409,7 @@ class AppWindowWeatherPageMixin:
         save_row.addStretch(1)
         save_btn = QPushButton("Save")
         save_btn.setObjectName("AccentButton")
-        save_btn.setToolTip("Save this device's settings and safety rules under the selected Observatory and Pier.")
+        save_btn.setToolTip("Save this device's settings and safety rules under the selected Observatory (shared by all its Piers).")
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
 
@@ -377,27 +421,28 @@ class AppWindowWeatherPageMixin:
         layout.addWidget(log_pane)
 
         def save_weather_config() -> None:
-            if self._current_pier is None:
+            observatory = self._safety_observatory()
+            if observatory is None:
                 QMessageBox.warning(
-                    self._window, "No Pier selected",
-                    "Select (or create) an Observatory and Pier before saving equipment settings.",
+                    self._window, "No Observatory selected",
+                    "Select (or create) an Observatory before saving safety device settings.",
                 )
                 return
-            from galileo.observatory import save_device_config, save_weather_safety_rule
-            save_device_config(
-                self._current_pier, device_type, slot=slot,
+            from galileo.observatory import save_safety_device_config, save_weather_safety_rule
+            save_safety_device_config(
+                observatory, device_type, slot=slot,
                 driver=driver_combo.currentText(), server=server_edit.text().strip(),
                 port=port_spin.value(), device_name=device_combo.currentText().strip() or None,
             )
             for rule in _current_rules():
-                save_weather_safety_rule(self._current_pier, rule, slot=slot)
+                save_weather_safety_rule(observatory, rule, slot=slot)
             logger.info(
-                "Saved %s settings for Pier %r: %s %s:%s, device: %s, poll interval: %ds",
-                kind_label.lower(), self._current_pier.name, driver_combo.currentText(), server_edit.text().strip(),
+                "Saved %s settings for Observatory %r: %s %s:%s, device: %s, poll interval: %ds",
+                kind_label.lower(), observatory.name, driver_combo.currentText(), server_edit.text().strip(),
                 port_spin.value(), device_combo.currentText().strip() or "(none)", poll_spin.value(),
             )
             self._window.statusBar().showMessage(
-                f"Saved {kind_label.lower()} settings for Pier {self._current_pier.name!r}.", 4000
+                f"Saved {kind_label.lower()} settings for Observatory {observatory.name!r}.", 4000
             )
 
         save_btn.clicked.connect(save_weather_config)
@@ -405,15 +450,16 @@ class AppWindowWeatherPageMixin:
         def reload_page() -> None:
             cfg = None
             rules = []
-            if self._current_pier is not None:
-                from galileo.observatory import get_device_config, get_weather_safety_rules
+            observatory = self._safety_observatory()
+            if observatory is not None:
+                from galileo.observatory import get_safety_device_config, get_weather_safety_rules
                 try:
-                    cfg = get_device_config(self._current_pier, device_type, slot=slot)
-                    rules = get_weather_safety_rules(self._current_pier, slot=slot)
+                    cfg = get_safety_device_config(observatory, device_type, slot=slot)
+                    rules = get_weather_safety_rules(observatory, slot=slot)
                 except Exception:
                     logger.exception("Could not load saved %s config", kind_label.lower())
 
-            if not rules and self._current_pier is not None:
+            if not rules and observatory is not None:
                 rules = _default_safety_rules(device_type)
             rules_by_parameter = {rule.parameter: rule for rule in rules}
 
@@ -462,21 +508,18 @@ class AppWindowWeatherPageMixin:
 
             apply_driver_info(None)  # refilled on connect / device pick
 
-            from galileo.current_object import pier_key
-            adapter = adapters_by_pier.get(pier_key(self._current_pier))
-            state["adapter"] = adapter
+            state["adapter"] = adapters_by_observatory.get(self._safety_observatory_key())
+            _sync_connect_button()
             _refresh_display()
 
         def autoconnect_page() -> None:
-            from galileo.current_object import pier_key
             device_name = device_combo.currentText().strip()
-            if device_name and adapters_by_pier.get(pier_key(self._current_pier)) is None:
+            if device_name and adapters_by_observatory.get(self._safety_observatory_key()) is None:
                 _do_connect(device_name)
 
         def disconnect_page() -> None:
-            """Pier-level Disconnect button: tear down this Pier's weather connection."""
-            from galileo.current_object import pier_key
-            adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
+            """Tear down this Observatory's connection to the device (shared by all its Piers)."""
+            adapter = adapters_by_observatory.pop(self._safety_observatory_key(), None)
             if adapter is None:
                 return
             import asyncio
@@ -485,7 +528,9 @@ class AppWindowWeatherPageMixin:
             except Exception:
                 logger.exception("Could not disconnect %s", kind_label)
             state["adapter"] = None
+            state["read_at"] = None
             _apply_readings({})
+            _sync_connect_button()
             self._window.statusBar().showMessage(f"{kind_label} disconnected.", 4000)
 
         from PySide6.QtCore import QTimer
@@ -497,6 +542,7 @@ class AppWindowWeatherPageMixin:
             "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
             "connected": lambda: state.get("adapter") is not None,
             "poll_once": _poll_once,
+            "evaluate_one": _evaluate_one,
             "get_rules": _current_rules,
             "get_latest_readings": lambda: state.get("latest_readings", {}),
             "device_type": device_type, "slot": slot,
@@ -509,7 +555,7 @@ class AppWindowWeatherPageMixin:
 
     def _build_weather_page(self: AppWindowState) -> QWidget:
         """Equipment > Safety page: a tab per safety device (the first is the
-        Pier's weather station), and a "+" button that adds another — a
+        Observatory's weather station, shared by all its Piers), and a "+" button that adds another — a
         further weather station or a Safety Monitor — in a new tab. The dome
         is unsafe to open when any connected device breaks a rule marked
         "Blocks Dome Opening" on its tab."""
@@ -547,7 +593,7 @@ class AppWindowWeatherPageMixin:
             api["widget"] = widget
             panels.append(api)
             index = tabs.addTab(widget, _SAFETY_DEVICE_TYPES[device_type][0])
-            if slot == "primary":  # the Pier's own weather station can't be closed
+            if slot == "primary":  # the Observatory's own weather station can't be closed
                 tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
             tabs.setCurrentIndex(index)
 
@@ -578,10 +624,11 @@ class AppWindowWeatherPageMixin:
             ) != QMessageBox.StandardButton.Yes:
                 return
             api["disconnect"]()
-            if self._current_pier is not None:
-                from galileo.observatory import delete_device_config, delete_weather_safety_rules
-                delete_device_config(self._current_pier, api["device_type"], slot=api["slot"])
-                delete_weather_safety_rules(self._current_pier, api["slot"])
+            observatory = self._safety_observatory()
+            if observatory is not None:
+                from galileo.observatory import delete_safety_device_config, delete_weather_safety_rules
+                delete_safety_device_config(observatory, api["device_type"], slot=api["slot"])
+                delete_weather_safety_rules(observatory, api["slot"])
             panels.pop(index)
             tabs.removeTab(index)
             api["widget"].deleteLater()
@@ -589,21 +636,31 @@ class AppWindowWeatherPageMixin:
         tabs.tabCloseRequested.connect(_close_tab)
 
         def _saved_extra_slots() -> list[tuple[str, str]]:
-            if self._current_pier is None:
+            observatory = self._safety_observatory()
+            if observatory is None:
                 return []
-            from galileo.observatory import list_device_config_slots
+            from galileo.observatory import list_safety_device_slots
             extra = []
             for type_id in _SAFETY_DEVICE_TYPES:
                 try:
-                    slots = list_device_config_slots(self._current_pier, type_id)
+                    slots = list_safety_device_slots(observatory, type_id)
                 except Exception:
                     logger.exception("Could not list saved %s devices", type_id)
                     continue
                 extra += [(type_id, s) for s in slots if s != "primary"]
             return extra
 
+        loaded: dict = {"built": False, "key": None}
+
         def reload_page() -> None:
-            # Rebuild the extra tabs from what the selected Pier has saved;
+            # Safety devices belong to the Observatory, so selecting another Pier of the same
+            # Observatory changes nothing here — the tabs, their connections and any unsaved
+            # edits stay as they are. Only another Observatory rebuilds the page.
+            key = self._safety_observatory_key()
+            if loaded["built"] and loaded["key"] == key:
+                return
+            loaded["built"], loaded["key"] = True, key
+            # Rebuild the extra tabs from what the selected Observatory has saved;
             # the primary weather tab is permanent and just reloads.
             for api in panels[1:]:
                 api["widget"].deleteLater()
@@ -624,16 +681,14 @@ class AppWindowWeatherPageMixin:
                 api["disconnect"]()
 
         def evaluate() -> tuple[bool, bool, list[str]]:
-            """``(any device connected, dome safe to open, reasons it is not)`` across every tab."""
-            from galileo.safety import evaluate_weather_safety
+            """``(any device connected, safe, reasons it is not)`` across every tab — one verdict
+            for the whole Observatory, whichever Pier asks. Readings are refreshed when stale."""
             connected = False
             violations: list[str] = []
             for api in panels:
-                if not api["connected"]():
-                    continue
-                connected = True
-                rules = [r for r in api["get_rules"]() if r.safety_related]
-                violations += evaluate_weather_safety(api["get_latest_readings"](), rules).violations
+                is_connected, found = api["evaluate_one"]()
+                connected = connected or is_connected
+                violations += found
             return connected, not violations, violations
 
         _add_panel("weather", "primary")
@@ -643,6 +698,9 @@ class AppWindowWeatherPageMixin:
             "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
             "connected": lambda: any(api["connected"]() for api in panels),
             "evaluate": evaluate,
+            # Not a Pier's devices: the top-bar Pier Connect/Disconnect leave these alone, since
+            # tearing them down would blind every other Pier of the Observatory.
+            "observatory_scoped": True,
             # The first tab's accessors, kept for callers that predate tabs.
             "poll_once": primary["poll_once"],
             "get_rules": primary["get_rules"],

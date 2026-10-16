@@ -216,17 +216,18 @@ def test_tc_eqp_wx_020_unsafe_monitor_blocks_dome_opening_across_tabs(window):
 @pytest.mark.priority("P2")
 def test_tc_eqp_wx_020_extra_devices_and_their_rules_persist_per_slot(window):
     """EQP-WX-020: an added device's config and rules are saved under its own slot, restored on reload, and deleted when its tab is closed."""
-    from galileo.observatory import get_device_config, get_weather_safety_rules
+    from galileo.observatory import get_safety_device_config, get_weather_safety_rules
 
     page = window._build_weather_page()
+    observatory = window._current_pier.observatory
     _add_device(page, window, "Safety Monitor")
     monitor_tab = _tabs(page).widget(1)
     next(c for c in monitor_tab.findChildren(QtWidgets.QComboBox) if c.isEditable()).setEditText("Roof Sensor")
     _button(monitor_tab, "Save").click()
 
-    assert get_device_config(window._current_pier, "safety_monitor", slot="safety_monitor_2").device_name == "Roof Sensor"
-    assert get_weather_safety_rules(window._current_pier, slot="safety_monitor_2")[0].parameter == "is_safe"
-    assert get_weather_safety_rules(window._current_pier, slot="primary") == []  # rules don't leak between devices
+    assert get_safety_device_config(observatory, "safety_monitor", slot="safety_monitor_2").device_name == "Roof Sensor"
+    assert get_weather_safety_rules(observatory, slot="safety_monitor_2")[0].parameter == "is_safe"
+    assert get_weather_safety_rules(observatory, slot="primary") == []  # rules don't leak between devices
 
     window._device_pages["weather"]["reload"]()
     assert _tabs(page).count() == 2
@@ -234,5 +235,85 @@ def test_tc_eqp_wx_020_extra_devices_and_their_rules_persist_per_slot(window):
     QtWidgets.QMessageBox.question = staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes)
     _tabs(page).tabCloseRequested.emit(1)
     assert _tabs(page).count() == 1
-    assert get_device_config(window._current_pier, "safety_monitor", slot="safety_monitor_2") is None
-    assert get_weather_safety_rules(window._current_pier, slot="safety_monitor_2") == []
+    assert get_safety_device_config(observatory, "safety_monitor", slot="safety_monitor_2") is None
+    assert get_weather_safety_rules(observatory, slot="safety_monitor_2") == []
+
+
+@pytest.mark.requirement("TC-OBS-030")
+@pytest.mark.priority("P2")
+def test_tc_obs_030_safety_devices_belong_to_the_observatory_not_a_pier(window):
+    """OBS-030: one weather station serves every Pier of the Observatory - selecting another Pier
+    keeps its connection and verdict, and the Pier Connect/Disconnect buttons leave it alone."""
+    from galileo.observatory import create_pier
+    station = FakeWeatherStation(rain=1.0, wind_speed=5.0)
+    page = _connect_weather(window, station)
+    pier_a = window._current_pier
+    pier_b = create_pier(pier_a.observatory, "Other Pier")
+
+    window._current_pier = pier_b
+    window._on_pier_changed()                          # the real Pier switch: reload + autoconnect
+    connected, safe, reasons = window._device_pages["weather"]["evaluate"]()
+    assert connected and not safe and any("Rain" in r for r in reasons)
+    assert _tabs(page).count() == 1
+
+    window._disconnect_all_pier_devices()              # the top bar's Pier Disconnect
+    assert window._device_pages["weather"]["connected"]()
+    assert not window._pier_is_connected()             # ... and it does not count as this Pier's device
+
+    window._current_pier = pier_a
+    assert window._device_pages["weather"]["evaluate"]()[0] is True
+
+
+@pytest.mark.requirement("TC-OBS-030")
+@pytest.mark.priority("P2")
+def test_tc_obs_030_another_observatory_has_its_own_safety_devices(window):
+    """OBS-030: a different Observatory does not inherit this one's weather station."""
+    from galileo.observatory import create_observatory, create_pier
+    _connect_weather(window, FakeWeatherStation(rain=1.0))
+    other = create_observatory("Remote Site")
+    window._current_observatory = other
+    window._current_pier = create_pier(other, "Remote Pier")
+    window._on_pier_changed()
+    assert window._device_pages["weather"]["evaluate"]() == (False, True, [])
+
+
+@pytest.mark.requirement("TC-OBS-030")
+@pytest.mark.priority("P2")
+def test_tc_obs_030_saved_safety_settings_follow_the_observatory(window):
+    """OBS-030: Save stores the device and rules on the Observatory, so any of its Piers sees them."""
+    from galileo.observatory import create_pier, get_safety_device_config, get_weather_safety_rules
+    page = window._build_weather_page()
+    next(c for c in page.findChildren(QtWidgets.QComboBox) if c.isEditable()).setEditText("Roof Station")
+    _button(page, "Save").click()
+    observatory = window._current_pier.observatory
+    assert get_safety_device_config(observatory, "weather").device_name == "Roof Station"
+    assert any(r.parameter == "rain" and r.safety_related for r in get_weather_safety_rules(observatory))
+    pier_b = create_pier(observatory, "Second Pier")
+    assert get_safety_device_config(pier_b.observatory, "weather").device_name == "Roof Station"
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_stale_readings_are_refreshed_before_judging_safety(window, monkeypatch):
+    """OBS-140: the scheduler asks at any time, not only while the Safety page is on screen, so a
+    reading older than the poll interval is re-read; a connected device that cannot be read is unsafe."""
+    import time
+    station = FakeWeatherStation(rain=0.0, wind_speed=5.0)
+    _connect_weather(window, station)
+    evaluate = window._device_pages["weather"]["evaluate"]
+    assert evaluate() == (True, True, [])
+
+    station.rain = 1.0                                 # it starts raining; nobody is watching the page
+    assert evaluate() == (True, True, [])              # a reading younger than the poll interval is reused
+
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 3600)    # an hour later
+    connected, safe, reasons = evaluate()
+    assert connected and not safe and any("Rain" in r for r in reasons)
+
+    async def unreachable():
+        raise RuntimeError("station unreachable")
+    station.poll = unreachable
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 7200)
+    connected, safe, reasons = evaluate()
+    assert connected and not safe and any("could not be read" in r for r in reasons)

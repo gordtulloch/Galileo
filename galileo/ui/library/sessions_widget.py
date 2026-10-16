@@ -56,12 +56,14 @@ def _read_fits_image(file_path: str):
 def _load_master_arrays(masters: dict, progress) -> dict:
     """Load the master frames as float32 arrays keyed like *masters*; the flat is normalised to a mean of 1.
 
+    When the session has a ``FlatDark`` master it is subtracted from the flat first (it removes the
+    flat's thermal signal and bias pedestal), and is kept in the result only for reference.
     A flat with a non-positive mean maps to ``None`` (flat correction is skipped).
     """
     import numpy as np
 
     arrays: dict = {}
-    for label in ("Bias", "Dark", "Flat"):
+    for label in ("Bias", "Dark", "FlatDark", "Flat"):
         master = masters.get(label)
         if master is None:
             continue
@@ -70,6 +72,16 @@ def _load_master_arrays(masters: dict, progress) -> dict:
         data, _header = _read_fits_image(master.master_path)
         data = data.astype(np.float32, copy=False)
         if label == "Flat":
+            flat_dark = arrays.get("FlatDark")
+            if flat_dark is not None:
+                if flat_dark.shape == data.shape:
+                    data = data - flat_dark
+                else:
+                    logger.warning(
+                        f"Flat-dark master shape {flat_dark.shape} does not match flat shape {data.shape}; "
+                        "skipping flat-dark subtraction"
+                    )
+                    masters.pop("FlatDark", None)
             flat_mean = np.mean(data)
             if flat_mean > 0:
                 data = data / flat_mean
@@ -115,7 +127,10 @@ def _calibrate_light_file(light_file, masters: dict, master_data: dict) -> str:
             calibrated_data[mask] /= master_array[mask]
         else:
             calibrated_data -= master_array
-        light_header['HISTORY'] = f'{label} corrected using {os.path.basename(masters[label].master_path)}'
+        note = f'{label} corrected using {os.path.basename(masters[label].master_path)}'
+        if label == "Flat" and masters.get("FlatDark") is not None:
+            note += f' with flat-dark {os.path.basename(masters["FlatDark"].master_path)}'
+        light_header['HISTORY'] = note
 
     # Update header
     light_header['CALIBRAT'] = True
@@ -269,7 +284,7 @@ class SessionsWidget(QWidget):
                 return
 
             object_name = parent.text(0) or (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 return
 
             out_dir = self._get_session_stack_output_dir(session)
@@ -379,7 +394,7 @@ class SessionsWidget(QWidget):
                 continue
 
             # This is a session item
-            if parent.text(0) in ['Bias', 'Dark', 'Flat']:
+            if parent.text(0) in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 calibration_sessions.append(selected_item)
             else:
                 light_sessions.append(selected_item)
@@ -518,7 +533,7 @@ class SessionsWidget(QWidget):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else "Unknown"
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Thumbnails are only generated for light sessions.")
                 return
 
@@ -665,7 +680,7 @@ class SessionsWidget(QWidget):
             logger.info(f"Starting calibration for session: {object_name} on {session_date}")
 
             # Check if this is a calibration session
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 if show_results:
                     QMessageBox.information(
                         self,
@@ -806,7 +821,8 @@ class SessionsWidget(QWidget):
 
     @staticmethod
     def _find_session_masters(master_manager, session) -> dict:
-        """The bias/dark/flat masters (keyed ``Bias``/``Dark``/``Flat``) that match *session* and exist on disk."""
+        """The bias/dark/flat (and the flat's flat-dark) masters, keyed ``Bias``/``Dark``/``Flat``/``FlatDark``,
+        that match *session* and exist on disk."""
         session_data = {
             'telescope': session.fitsSessionTelescope,
             'instrument': session.fitsSessionImager,
@@ -823,7 +839,31 @@ class SessionsWidget(QWidget):
             master = master_manager.find_matching_master(session_data, cal_type)
             if master is not None and os.path.exists(master.master_path):
                 masters[label] = master
+
+        # The flat-dark belongs to the session's flat: flat session -> its linked flat-dark session
+        flat_dark = SessionsWidget._find_flat_dark_master(master_manager, session)
+        if flat_dark is not None:
+            masters["FlatDark"] = flat_dark
         return masters
+
+    @staticmethod
+    def _find_flat_dark_master(master_manager, session):
+        """The flat-dark master for *session*'s flat, or ``None`` if there is none (or it is missing on disk)."""
+        from galileo.library.core.utils import session_to_calibration_criteria
+
+        try:
+            if not session.fitsFlatSession:
+                return None
+            flat_session = FitsSessionModel.get_by_id(session.fitsFlatSession)
+            if not flat_session.fitsDarkSession:
+                return None
+            flat_dark_session = FitsSessionModel.get_by_id(flat_session.fitsDarkSession)
+            master = master_manager.find_matching_master(session_to_calibration_criteria(flat_dark_session), 'flatdark')
+            if master is not None and os.path.exists(master.master_path):
+                return master
+        except Exception as e:
+            logger.debug(f"Unable to resolve flat-dark master for session {getattr(session, 'fitsSessionId', None)}: {e}")
+        return None
 
         # === SESSION MANAGEMENT METHODS ===
 
@@ -845,7 +885,7 @@ class SessionsWidget(QWidget):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Stack is only available for light sessions.")
                 return
 
@@ -980,7 +1020,7 @@ class SessionsWidget(QWidget):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Photometric stack is only available for light sessions.")
                 return
 
@@ -1428,7 +1468,7 @@ class SessionsWidget(QWidget):
             total_light_sessions = 0
             for session in sorted(object_sessions,
                                   key=lambda x: x.fitsSessionDate or datetime.date.min, reverse=True):
-                is_light = session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']
+                is_light = session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat', 'FlatDark']
                 calibration_info = self._build_resources_status(session)
                 if is_light:
                     total_light_sessions += 1
@@ -1478,7 +1518,7 @@ class SessionsWidget(QWidget):
                     calibration_info = row["calibration"]
                     child_item = QTreeWidgetItem()
                     # Show (master) for calibration sessions that have created masters
-                    if row["has_master"] and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
+                    if row["has_master"] and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                         child_item.setText(0, "(master)")
                     else:
                         child_item.setText(0, "")  # Empty object name for child
@@ -1679,14 +1719,25 @@ class SessionsWidget(QWidget):
                 self._matched_master_types_by_session_id[sid] = set()
                 return set()
 
-        if session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
+        if session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat', 'FlatDark']:
             # Calibration session row: show which masters exist for this session.
             mtypes = _masters_for_source_session(getattr(session, 'fitsSessionId', None))
             if not mtypes:
                 # Fallback for imported masters (no source_session_id): match by session metadata.
                 # For calibration sessions, only show the master type relevant to that session.
                 cal_obj = (session.fitsSessionObjectName or '').strip().lower()
-                if cal_obj in ('bias', 'dark', 'flat'):
+                if cal_obj in ('flatdark', 'darkflat'):
+                    try:
+                        from galileo.library.core.master_manager import get_master_manager
+                        from galileo.library.core.utils import session_to_calibration_criteria
+                        matched_flatdark = get_master_manager().find_matching_master(
+                            session_to_calibration_criteria(session), 'flatdark')
+                        if matched_flatdark and getattr(matched_flatdark, 'master_path', None) \
+                                and os.path.exists(matched_flatdark.master_path):
+                            mtypes = {'flatdark'}
+                    except Exception as e:
+                        logger.warning(f"Failed FlatDark master lookup for session resources: {e}")
+                elif cal_obj in ('bias', 'dark', 'flat'):
                     matched = _matching_masters_for_session(session)
                     if cal_obj in matched:
                         mtypes = {cal_obj}

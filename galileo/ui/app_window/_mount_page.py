@@ -943,6 +943,7 @@ class AppWindowMountPageMixin:
         state["connected"] = lambda: state.get("adapter") is not None
         # The jog pad's axis reversal, so the Imaging page's nudge pad points the same way.
         state["axis_reversed"] = lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked())
+        state["adapter_for"] = adapters_by_pier.get      # any Pier's mount, by pier_key (multi-Pier sessions)
         self._device_pages["mount"] = state
         reload_page()
         if self._startup_autoconnect_allowed():

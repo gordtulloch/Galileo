@@ -41,7 +41,7 @@ def _show_checkout_failed(parent: QWidget, *, message: str) -> None:
     QMessageBox.warning(parent, "Checkout Failed", message)
 
 
-_CALIBRATION_OBJECTS = ('Bias', 'Dark', 'Flat')   # sessions that are themselves calibration frames
+_CALIBRATION_OBJECTS = ('Bias', 'Dark', 'Flat', 'FlatDark')   # sessions that are themselves calibration frames
 
 
 def _find_flat_files(session, light_files, *, log_counts: bool = False) -> list:

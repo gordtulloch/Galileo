@@ -1,11 +1,11 @@
 <!-- order: 41 -->
 # Safety
 
-The Safety page connects Galileo to the devices that tell it whether it is safe to image: a **weather station** (readings such as temperature, wind and rain) and/or a **safety monitor** (a device that simply reports safe or unsafe). You can add several, each in its own tab, with the **+** button.
+The Safety page connects Galileo to the devices that tell it whether it is safe to image: a **weather station** (readings such as temperature, wind and rain) and/or a **safety monitor** (a device that simply reports safe or unsafe). You can add several, each in its own tab, with the **+** button. These devices belong to the **Observatory**, not to a Pier: they are shared by all its Piers, stay connected when you select another Pier, and are not touched by the top-bar Pier **Connect**/**Disconnect** — use the tab's own **Connect**/**Disconnect** button.
 
 For each measure you can decide which readings count as unsafe. When anything is unsafe the banner above the table turns to UNSAFE, sequences stop imaging and close up, and the dome refuses to open.
 
-Set-up per tab: choose the **Driver**, **Server**, press **Scan**, pick the device, **Connect**, tick the measures that matter and set their thresholds, then **Save**.
+Set-up per tab (settings are saved under the selected Observatory): choose the **Driver**, **Server**, press **Scan**, pick the device, **Connect**, tick the measures that matter and set their thresholds, then **Save**.
 
 ## Poll (s)
 
@@ -13,7 +13,7 @@ How often, in seconds (5–600), Galileo re-reads the weather station. A shorter
 
 ## Add safety device
 
-Adds another weather station or safety monitor in a new tab. The Pier's own weather station (the first tab) cannot be closed.
+Adds another weather station or safety monitor in a new tab. The Observatory's own weather station (the first tab) cannot be closed.
 
 ## Status banner
 

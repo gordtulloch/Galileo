@@ -351,6 +351,19 @@ class ConfigWidget(QWidget):
 
         layout.addWidget(itelescope_group)
 
+        # Celestron Origin settings group
+        celestron_group = QGroupBox("Celestron Origin Configuration")
+        celestron_layout = QFormLayout(celestron_group)
+        self.celestron_hostname = QLineEdit()
+        self.celestron_hostname.setPlaceholderText("Telescope IP address (e.g., 192.168.1.208)")
+        self.celestron_hostname.setToolTip(
+            "IP address or hostname of your Celestron Origin.\n\n"
+            "Download uses it to connect over FTP and fetch the raw FITS files from the\n"
+            "telescope's RawData folder. Leave blank to use the Origin's hotspot address (192.168.1.208)."
+        )
+        celestron_layout.addRow("Hostname/IP:", self.celestron_hostname)
+        layout.addWidget(celestron_group)
+
         # SFTP server settings group (EXT-120, LIB-170) - the host is entered in the Download dialog
         sftp_group = QGroupBox("SFTP Server")
         sftp_layout = QFormLayout(sftp_group)
@@ -440,6 +453,9 @@ class ConfigWidget(QWidget):
             if config.has_option('DEFAULT', 'itelescope_password'):
                 config.remove_option('DEFAULT', 'itelescope_password')
             set_itelescope_password(self.itelescope_password.text().strip())
+
+            # Celestron Origin settings
+            config.set('DEFAULT', 'celestron_hostname', self.celestron_hostname.text().strip())
             config.set('DEFAULT', 'itelescope_verify_tls', str(self.itelescope_verify_tls.isChecked()))
 
             # SFTP server settings (EXT-120) - likewise, the password goes to the keychain
@@ -567,6 +583,9 @@ class ConfigWidget(QWidget):
                 self.itelescope_username.setText(itelescope_username)
 
             self.itelescope_password.setText(get_itelescope_password())
+
+            # Load Celestron Origin settings
+            self.celestron_hostname.setText(config.get('DEFAULT', 'celestron_hostname', fallback=''))
             self.itelescope_verify_tls.setChecked(
                 config.get('DEFAULT', 'itelescope_verify_tls', fallback='True').strip().lower() in ('true', '1', 'yes', 'on'))
 
@@ -635,6 +654,7 @@ class ConfigWidget(QWidget):
         # iTelescope defaults
         self.itelescope_username.setText("")
         self.itelescope_password.setText("")
+        self.celestron_hostname.setText("")
         self.itelescope_verify_tls.setChecked(True)
 
         # SFTP defaults

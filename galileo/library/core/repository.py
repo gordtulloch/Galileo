@@ -77,7 +77,12 @@ class RepositoryManager:
             instrument = hdr.get('INSTRUME', 'Unknown')
 
             # Sanitize names for filesystem
-            from .utils import sanitize_filesystem_name
+            from .utils import (
+                is_dark_image_type,
+                is_flat_dark_image_type,
+                is_flat_image_type,
+                sanitize_filesystem_name,
+            )
             object_safe = sanitize_filesystem_name(object_name)
             telescope_safe = sanitize_filesystem_name(telescope)
             instrument_safe = sanitize_filesystem_name(instrument)
@@ -90,10 +95,24 @@ class RepositoryManager:
                     self.repoFolder, 'Light', object_safe,
                     telescope_safe, instrument_safe, date_str
                 )
-            elif imagetyp in ['BIAS', 'DARK', 'FLAT']:
-                # Calibration frames: Calibrate/{TYPE}/{TELESCOPE}/{INSTRUMENT}/
+            elif (
+                is_dark_image_type(imagetyp)
+                or is_flat_dark_image_type(imagetyp)
+                or is_flat_image_type(imagetyp)
+                or 'BIAS' in imagetyp
+            ):
+                # Calibration frames: Calibrate/{TYPE}/{TELESCOPE}/{INSTRUMENT}/ with the type
+                # normalised to its canonical short form
+                if is_flat_dark_image_type(imagetyp):
+                    cal_type = 'FLATDARK'
+                elif is_dark_image_type(imagetyp):
+                    cal_type = 'DARK'
+                elif is_flat_image_type(imagetyp):
+                    cal_type = 'FLAT'
+                else:
+                    cal_type = 'BIAS'
                 dest_dir = os.path.join(
-                    self.repoFolder, 'Calibrate', imagetyp,
+                    self.repoFolder, 'Calibrate', cal_type,
                     telescope_safe, instrument_safe
                 )
             else:

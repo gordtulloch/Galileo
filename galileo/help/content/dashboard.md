@@ -11,7 +11,7 @@ The Pier's name. The Pier currently selected in the top bar is marked *(selected
 
 ## Equipment
 
-Whether the Pier's devices are *connected* or *disconnected*. Galileo keeps only the selected Pier's devices connected at a time, so the other Piers normally read *disconnected*.
+Whether the Pier's devices are *connected* or *disconnected*. Each Pier keeps its own connections, so a Pier you are not looking at still reads *connected* while any of its devices is. A Pier you have not connected since Galileo started reads *disconnected*, and its scheduled sessions wait until its camera or mount is connected.
 
 ## Sequence
 

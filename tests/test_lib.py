@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""LIB — Image Library & Repository Management (TC-LIB-010 … TC-LIB-160).
+"""LIB — Image Library & Repository Management (TC-LIB-010 … TC-LIB-190).
 
 ``galileo.library`` is AstroFiler's library: the catalog lives in the shared
 Galileo database (schema owned by ``galileo/library/migrations``), the
@@ -2030,3 +2030,215 @@ def test_tc_lib_090_sessions_context_menu_offers_and_runs_actions(library, qt_ap
     offered.clear()
     right_click([items["Flat"]], "nothing-matches")
     assert not any("Check out" in t or "Calibrate" in t for t in offered[0]), "calibration sessions are not checked out"
+
+
+# ---------------------------------------------------------------------------
+# TC-LIB-180  (flat-dark calibration frames)
+# ---------------------------------------------------------------------------
+
+def write_flat_dark_frames(folder, count=3, exposure=2):
+    for i in range(count):
+        write_frame(folder, f"flatdark_{i}.fits", "Flat Dark Frame", "FlatDark", exposure, 40 + i,
+                    date=f"2026-09-16T21:3{i}:00", level=100)
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_image_type_helpers_tell_flat_darks_from_darks_and_flats():
+    """LIB-180: a flat-dark is neither a dark nor a flat, however its IMAGETYP is spelled."""
+    from galileo.library.core.utils import is_dark_image_type, is_flat_dark_image_type, is_flat_image_type
+
+    for spelling in ("Flat Dark Frame", "FLATDARK", "dark-flat", "Master Darkflat"):
+        assert is_flat_dark_image_type(spelling) and not is_dark_image_type(spelling) and not is_flat_image_type(spelling)
+    assert is_dark_image_type("Dark Frame") and not is_flat_image_type("Dark Frame")
+    assert is_flat_image_type("Flat Field") and not is_dark_image_type("Flat Field")
+    assert not is_flat_dark_image_type(None) and not is_flat_dark_image_type("Light Frame")
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_flat_darks_get_their_own_sessions_masters_and_link_to_the_flat(library):
+    """LIB-180: flat-darks form FlatDark sessions apart from darks/flats, link to the flat session and get a master."""
+    from galileo.library.core.auto_calibration import create_master_frames
+    from galileo.library.models import Masters, fitsFile, fitsSession
+
+    write_light_frames(library.incoming)
+    write_calibration_frames(library.incoming)
+    write_flat_dark_frames(library.incoming)
+    processor, _ = ingest(library)
+    processor.createLightSessions()
+    processor.createCalibrationSessions()
+    processor.linkSessions()
+
+    by_name = {s.fitsSessionObjectName: s for s in fitsSession.select()}
+    assert {"Bias", "Dark", "Flat", "FlatDark", "M42"} <= set(by_name)
+    members = lambda name: fitsFile.select().where(fitsFile.fitsFileSession == by_name[name].fitsSessionId).count()  # noqa: E731
+    assert (members("FlatDark"), members("Dark"), members("Flat")) == (3, 3, 3), "flat-darks stay out of the dark and flat sessions"
+    assert by_name["Flat"].fitsDarkSession == str(by_name["FlatDark"].fitsSessionId)
+    assert by_name["M42"].fitsDarkSession == str(by_name["Dark"].fitsSessionId), "lights still link to the real dark"
+
+    from galileo.library.core.auto_calibration import load_config
+    assert create_master_frames(load_config()) is True
+    masters = {m.master_type: m for m in Masters.select()}
+    assert set(masters) == {"bias", "dark", "flat", "flatdark"}
+    assert masters["flatdark"].file_count == 3 and Path(masters["flatdark"].master_path).exists()
+    assert masters["flatdark"].exposure_time is not None and float(masters["flatdark"].exposure_time) == 2.0
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_flat_dark_is_filed_under_its_own_calibrate_folder(library):
+    """LIB-180: flat-darks are organised into Calibrate/FLATDARK, not mixed with the darks."""
+    write_flat_dark_frames(library.incoming, count=1)
+    ingest(library)
+
+    assert list((library.repo / "Calibrate" / "FLATDARK").rglob("FlatDark-*.fits"))
+    assert not (library.repo / "Calibrate" / "DARK").exists()
+
+
+def _write_image(path, data, **cards):
+    fits = pytest.importorskip("astropy.io.fits")
+    hdr = fits.Header()
+    for key, value in cards.items():
+        hdr[key] = value
+    fits.PrimaryHDU(data.astype("float32"), header=hdr).writeto(path)
+    return str(path)
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_flat_dark_master_removes_the_flats_pedestal(tmp_path):
+    """LIB-180: subtracting a flat-dark from the flat leaves a flat that corrects a vignetted light to uniform."""
+    np = pytest.importorskip("numpy")
+    fits = pytest.importorskip("astropy.io.fits")
+    from galileo.library.core.light_calibration import calibrate_light_frame
+
+    vignette = np.tile(np.linspace(0.5, 1.5, 64), (64, 1))
+    light = _write_image(tmp_path / "light.fits", 1000.0 * vignette, EXPTIME=60.0)
+    flat = _write_image(tmp_path / "flat.fits", 500.0 * vignette + 200.0, EXPTIME=2.0)      # 200 ADU pedestal
+    flat_dark = _write_image(tmp_path / "flatdark.fits", np.full((64, 64), 200.0), EXPTIME=2.0)
+
+    def spread(result):
+        assert result.get("success"), result
+        with fits.open(result["output_path"]) as hdul:
+            data = hdul[0].data
+        return float(data.std() / data.mean())
+
+    without = spread(calibrate_light_frame(light, flat_master=flat, output_path=str(tmp_path / "a.fits")))
+    with_fd = spread(calibrate_light_frame(light, flat_master=flat, flat_dark_master=flat_dark,
+                                           output_path=str(tmp_path / "b.fits")))
+
+    assert with_fd < 0.01 < without, (with_fd, without)
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_dark_session_must_match_exposure_and_temperature(library):
+    """LIB-180: a dark (or flat-dark) session links only within 5 degrees of the target's CCD temperature."""
+    from galileo.library.core.session_processing import SessionProcessor
+    from galileo.library.models import fitsSession
+
+    def session(name, temp, exposure, day):
+        return fitsSession.create(
+            fitsSessionId=f"{name}-{temp}-{day}", fitsSessionDate=f"2026-09-{day}", fitsSessionObjectName=name,
+            fitsSessionTelescope="T", fitsSessionImager="I", fitsSessionExposure=exposure,
+            fitsSessionBinningX="1", fitsSessionBinningY="1", fitsSessionCCDTemp=str(temp),
+            fitsSessionGain="100", fitsSessionOffset="10", fitsSessionFilter="Ha")
+
+    light = session("M42", -10, "60.0", "16")
+    session("Dark", 20, "60.0", "10")              # right exposure, far too warm
+    near = session("Dark", -8, "60", "11")         # same exposure written differently, 2 degrees off
+    session("Dark", -10, "30.0", "12")             # right temperature, wrong exposure
+
+    found = SessionProcessor()._find_matching_dark_session(light, "Dark")
+
+    assert found is not None and found.fitsSessionId == near.fitsSessionId
+    assert SessionProcessor()._find_matching_dark_session(light, "FlatDark") is None
+
+
+@pytest.mark.requirement("TC-LIB-180")
+@pytest.mark.priority("MVP")
+def test_tc_lib_180_calibration_reads_tile_compressed_frames(tmp_path):
+    """LIB-180: a frame whose image sits in a CompImageHDU (Galileo's compressed files) is read, not treated as empty."""
+    np = pytest.importorskip("numpy")
+    fits = pytest.importorskip("astropy.io.fits")
+    from galileo.library.core.light_calibration import calibrate_light_frame
+    from galileo.library.core.utils import fits_image_data
+
+    data = np.full((32, 32), 500.0, dtype="float32")
+    path = tmp_path / "light_compressed.fits"
+    hdr = fits.Header()
+    hdr["EXPTIME"] = 10.0
+    fits.HDUList([fits.PrimaryHDU(), fits.CompImageHDU(data, header=hdr, compression_type="GZIP_2", quantize_level=0)]).writeto(path)
+    bias = _write_image(tmp_path / "bias.fits", np.full((32, 32), 100.0))
+
+    with fits.open(path) as hdul:
+        found, _ = fits_image_data(hdul)
+    assert found is not None and float(found.mean()) == 500.0
+
+    result = calibrate_light_frame(str(path), dark_master=bias, output_path=str(tmp_path / "cal.fits"))
+    assert result.get("success"), result
+
+
+# ---------------------------------------------------------------------------
+# TC-LIB-190  (Celestron Origin source)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-LIB-190")
+@pytest.mark.priority("P3")
+def test_tc_lib_190_celestron_origin_is_an_anonymous_ftp_source():
+    """LIB-190: the Celestron Origin is a known source: anonymous FTP, RawData folder, recognised by hostname."""
+    from galileo.library.services.telescope import SmartTelescopeManager
+
+    manager = SmartTelescopeManager()
+    config = manager.supported_telescopes["Celestron Origin"]
+
+    assert (config["protocol"], config["fits_path"]) == ("ftp", "RawData")
+    assert config["default_username"] is None and config["default_password"] is None
+    assert manager.is_target_device("origin.local", "Celestron Origin")
+    assert manager.is_target_device("Celestron-Origin", "Celestron Origin")
+    assert not manager.is_target_device("celestronnexstar.local", "Celestron Origin")
+
+
+@pytest.mark.requirement("TC-LIB-190")
+@pytest.mark.priority("P3")
+@pytest.mark.parametrize("hostname", ["origin.local", "192.168.1.208"])
+def test_tc_lib_190_origin_is_found_by_ftp_without_smb(monkeypatch, hostname):
+    """LIB-190: finding an Origin checks its FTP port (never SMB) and accepts an IP address as well as a name."""
+    from galileo.library.services import telescope as module
+
+    manager = module.SmartTelescopeManager()
+    monkeypatch.setattr(module, "SMB_AVAILABLE", False)
+    monkeypatch.setattr(module.socket, "gethostbyname", lambda host: "192.168.1.208")
+    monkeypatch.setattr(manager, "check_ftp_port", lambda ip: True)
+    monkeypatch.setattr(manager, "check_smb_port", lambda ip: pytest.fail("SMB must not be checked for an FTP telescope"))
+
+    assert manager.find_telescope("Celestron Origin", hostname=hostname) == ("192.168.1.208", None)
+
+
+@pytest.mark.requirement("TC-LIB-190")
+@pytest.mark.priority("P3")
+def test_tc_lib_190_origin_listing_walks_rawdata_and_reports_each_fits_file():
+    """LIB-190: the Origin listing recurses through RawData and returns each FITS file with its size and folder."""
+    from galileo.library.services.telescope import SmartTelescopeManager
+
+    tree = {
+        "RawData": ["drwxr-xr-x 1 u g 0 Oct 12 22:00 M42", "-rw-r--r-- 1 u g 99 Oct 12 22:00 notes.txt"],
+        "RawData/M42": ["-rw-r--r-- 1 u g 2048 Oct 12 22:01 M42_001.fits"],
+    }
+
+    class FakeFtp:
+        cwd_path = "/"
+
+        def cwd(self, path):
+            self.cwd_path = path.strip("/")
+
+        def retrlines(self, command, callback):
+            for line in tree.get(self.cwd_path, []):
+                callback(line)
+
+    files = SmartTelescopeManager()._get_fits_files_from_celestron_ftp(FakeFtp(), "RawData")
+
+    assert [(f["name"], f["path"], f["size"], f["folder_name"]) for f in files] == [
+        ("M42_001.fits", "RawData/M42/M42_001.fits", 2048, "M42")]
+    assert files[0]["telescope_type"] == "Celestron Origin"

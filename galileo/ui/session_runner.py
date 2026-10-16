@@ -13,12 +13,14 @@ Two things start a run, and both go through ``ObservatoryScheduler.run_job`` so 
 behaves identically however it was started:
 
 * the session card's **Run** control (``start_region``), and
-* a periodic tick that starts any job on the active Pier's queue whose timeline window has
-  begun (``_tick``).
+* a periodic tick that starts any job, on any Pier of the Observatory, whose timeline window
+  has begun (``_tick``).
 
-Limitation: devices are only live for the *active* Pier (``AppWindow._device_pages`` is
-rebuilt on a Pier switch), so only the active Pier's queue is serviced; a due job on another
-Pier waits until that Pier is selected. One session runs per Pier at a time.
+Every Equipment page keeps each Pier's connections across a Pier switch, so a Pier that is not
+selected still has live devices: the tick builds its context from those (``adapter_for`` on the
+pages) and gates it on that Pier's own safety devices. A Pier none of whose equipment is
+connected is skipped until it is. One session runs per Pier at a time, and Piers run
+concurrently (OBS-020, OBS-140).
 """
 
 from __future__ import annotations
@@ -63,14 +65,25 @@ class _ConfiguredAutofocus:
         self._service.cancel()
 
 
-def _page_adapter(window: Any, page: str) -> Any:
-    return (getattr(window, "_device_pages", {}).get(page) or {}).get("adapter")
+def _page_adapter(window: Any, page: str, key: Any = None, selected: bool = True) -> Any:
+    """The device a page holds for a Pier. For the selected Pier that is whatever the page shows;
+    for any other Pier (*selected* False, *key* its ``pier_key``) it is that Pier's own connection,
+    which the page keeps across Pier switches — or ``None`` if it never connected one."""
+    state = getattr(window, "_device_pages", {}).get(page) or {}
+    if selected:
+        return state.get("adapter")
+    adapter_for = state.get("adapter_for")
+    return adapter_for(key) if adapter_for else None
 
 
-def _dome_service(window: Any) -> Any:
-    """The active Pier's ``DomeService`` (DOME-010), or ``None`` without a connected dome."""
-    getter = (getattr(window, "_device_pages", {}).get("dome") or {}).get("get_service")
-    return getter() if getter else None
+def _dome_service(window: Any, key: Any = None, selected: bool = True) -> Any:
+    """A Pier's ``DomeService`` (DOME-010), or ``None`` without a connected dome."""
+    state = getattr(window, "_device_pages", {}).get("dome") or {}
+    if selected:
+        getter = state.get("get_service")
+        return getter() if getter else None
+    service_for = state.get("service_for")
+    return service_for(key) if service_for else None
 
 
 def _observatory_arbiter(window: Any) -> Any:
@@ -110,50 +123,75 @@ def _build_notify_service(window: Any) -> Any:
     return service
 
 
-def build_session_context(window: Any) -> SessionContext:
-    """Snapshot the active Pier's connected devices and services for one run. Call on the UI
-    thread. Anything not connected is left ``None``; the executor's pre-flight reports it."""
+def build_session_context(window: Any, pier: Any = None) -> SessionContext:
+    """Snapshot a Pier's connected devices and services for one run. Call on the UI thread.
+    Anything not connected is left ``None``; the executor's pre-flight reports it.
+
+    *pier* defaults to the selected Pier, whose devices are what the Equipment pages show and
+    whose camera/optics follow the top-bar selectors. Any other Pier of the Observatory is read
+    from the connections its pages keep for it, with its primary camera and first optical tube
+    (OBS-140), so scheduled sessions can run on Piers that are not on screen."""
     from galileo.current_object import pier_key
     from galileo.ui.app_window._common import _camera_backend_key_for_slot
 
-    pier = getattr(window, "_current_pier", None)
+    selected_pier = getattr(window, "_current_pier", None)
+    pier = selected_pier if pier is None else pier
     key = pier_key(pier)
-    camera = getattr(window, "_camera_backends", {}).get(
-        _camera_backend_key_for_slot(getattr(window, "_active_camera_slot", "primary")))
-    mount = _page_adapter(window, "mount")
-    focuser_getter = (getattr(window, "_device_pages", {}).get("focuser") or {}).get("get_adapter")
-    focuser = focuser_getter() if focuser_getter else None
+    selected = key == pier_key(selected_pier)
+    pages = getattr(window, "_device_pages", {})
+
+    camera_slot = getattr(window, "_active_camera_slot", "primary") if selected else "primary"
+    if selected:
+        cameras = getattr(window, "_camera_backends", {})
+    else:
+        cameras = getattr(window, "_camera_backends_by_pier", {}).get(key, {})
+    camera = cameras.get(_camera_backend_key_for_slot(camera_slot))
+    mount = _page_adapter(window, "mount", key, selected)
+    focuser_state = pages.get("focuser") or {}
+    if selected:
+        focuser_getter = focuser_state.get("get_adapter")
+        focuser = focuser_getter() if focuser_getter else None
+    else:
+        focuser = (focuser_state.get("adapter_for") or (lambda _k: None))(key)
     wheel_getter = getattr(window, "_active_filter_wheel", None)
-    wheel = wheel_getter() if wheel_getter else _page_adapter(window, "filter_wheel")
-    guider_getter = (getattr(window, "_device_pages", {}).get("guider") or {}).get("get_service")
-    guider = guider_getter() if guider_getter else None
+    wheel = wheel_getter() if (selected and wheel_getter) else _page_adapter(window, "filter_wheel", key, selected)
+    guider_state = pages.get("guider") or {}
+    if selected:
+        guider_getter = guider_state.get("get_service")
+        guider = guider_getter() if guider_getter else None
+    else:
+        guider = (guider_state.get("service_for") or (lambda _k: None))(getattr(pier, "id", None))
     if guider is not None and not guider.is_connected:
         guider = None
 
     ctx = SessionContext(
         pier_name=getattr(pier, "name", "") or "",
         camera=camera, mount=mount, filter_wheel=wheel, focuser=focuser,
-        rotator=_page_adapter(window, "rotator"), dome=_page_adapter(window, "dome"),
-        dome_service=_dome_service(window), arbiter=_observatory_arbiter(window),
-        guider=guider, flat_panel=_page_adapter(window, "flat_panel"),
+        rotator=_page_adapter(window, "rotator", key, selected),
+        dome=_page_adapter(window, "dome", key, selected),
+        dome_service=_dome_service(window, key, selected), arbiter=_observatory_arbiter(window),
+        guider=guider, flat_panel=_page_adapter(window, "flat_panel", key, selected),
         observatory=getattr(window, "_current_observatory", None),
         notify_service=_build_notify_service(window),
         history=get_history(),
     )
 
     location_getter = getattr(window, "_flats_observing_location", None)
-    ctx.location = location_getter() if location_getter else None
+    ctx.location = (location_getter() if selected else location_getter(pier)) if location_getter else None
     if pier is not None and camera is not None:
         try:
             from galileo.observatory import get_device_config
-            cfg = get_device_config(pier, "camera", slot=window._active_camera_slot)
+            cfg = get_device_config(pier, "camera", slot=camera_slot)
             ctx.max_well_depth = cfg.max_well_depth if cfg is not None else None
         except Exception:
             logger.exception("Could not read the camera's Max Well Depth")
 
     frame_context_getter = getattr(window, "_imaging_frame_context", None)
     try:
-        frame_context = frame_context_getter() if (frame_context_getter and camera is not None) else {}
+        if not (frame_context_getter and camera is not None):
+            frame_context = {}
+        else:
+            frame_context = frame_context_getter() if selected else frame_context_getter(pier)
     except Exception:
         logger.exception("Could not gather the FITS header context")
         frame_context = {}
@@ -332,8 +370,8 @@ class SessionRunController(QObject):
         return [], conflicts
 
     def _launch(self, region: Any, context: SessionContext, manual: bool,
-                was_scheduled: bool = False, prior_start: str | None = None) -> None:
-        key = self._key()
+                was_scheduled: bool = False, prior_start: str | None = None, key: Any = None) -> None:
+        key = self._key() if key is None else key
         job = region._job
         scheduler = region._scheduler
         executor = SessionExecutor(context, name=region.name)
@@ -439,8 +477,25 @@ class SessionRunController(QObject):
                 run.job.run_log.append("Conditions are safe again — resuming.")
                 run.executor.resume()
 
+    def _observatory_piers(self) -> list[Any]:
+        """The selected Pier first, then every other Pier of the selected Observatory (OBS-140)."""
+        from galileo.current_object import pier_key
+        selected = getattr(self._window, "_current_pier", None)
+        piers = [selected] if selected is not None else []
+        observatory = getattr(self._window, "_current_observatory", None)
+        if observatory is None:
+            return piers
+        try:
+            from galileo.observatory import list_piers
+            others = list_piers(observatory)
+        except Exception:
+            logger.exception("Could not list the Piers to service their scheduled sessions")
+            return piers
+        return piers + [p for p in others if pier_key(p) != pier_key(selected)]
+
     def _tick(self) -> None:
-        """Start the active Pier's next due scheduled job, if the Pier is idle."""
+        """Start each Pier's next due scheduled job, for every Pier of the Observatory that is idle
+        (OBS-020, OBS-140) — the selected Pier and the ones not on screen alike."""
         main = getattr(self._window, "_window", None)
         try:
             if main is None or not main.isVisible():      # closed/hidden window: nothing to service
@@ -448,13 +503,23 @@ class SessionRunController(QObject):
         except RuntimeError:                                # its C++ object is already gone
             self._timer.stop()
             return
-        key = self._key()
-        pier = getattr(self._window, "_current_pier", None)
-        if pier is None or key in self._runs:
+        for pier in self._observatory_piers():
+            try:
+                self._tick_pier(pier)
+            except Exception:
+                # One Pier's trouble (a safety read, a bad job) must not stop the others being serviced.
+                logger.exception("Could not service the scheduled sessions of Pier %r", getattr(pier, "name", pier))
+
+    def _tick_pier(self, pier: Any) -> None:
+        """Start *pier*'s next due scheduled job, if the Pier is idle and conditions are safe."""
+        from galileo.current_object import pier_key
+        key = pier_key(pier)
+        if key in self._runs:
             return
         scheduler_for = getattr(self._window, "_scheduler_for_pier", None)
         if scheduler_for is None:
             return
+        selected = key == self._key()
         scheduler = scheduler_for(pier.name)
         reason = scheduler.safety_block_reason()
         if reason:
@@ -464,7 +529,12 @@ class SessionRunController(QObject):
         self._set_blocked(key, "")
         for job in scheduler.due_jobs():
             region = job.sequence
-            context = build_session_context(self._window)
+            context = build_session_context(self._window) if selected else build_session_context(self._window, pier)
+            if not selected and context.camera is None and context.mount is None:
+                # Nothing of this Pier is connected (it was never selected since start-up, or was
+                # disconnected). Hold the job rather than failing it: it starts once the Pier's
+                # equipment is connected. The selected Pier still reports the problem, below.
+                return
             problems = preflight(region.blocks, context)
             if problems:
                 job.run_state = "error"
@@ -474,7 +544,7 @@ class SessionRunController(QObject):
                 self.changed.emit(key)
                 continue
             region._job = job
-            self._launch(region, context, manual=False)
+            self._launch(region, context, manual=False, key=key)
             return
 
 

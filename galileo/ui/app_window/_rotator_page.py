@@ -785,6 +785,7 @@ class AppWindowRotatorPageMixin:
         state["autoconnect"] = autoconnect_page
         state["disconnect"] = disconnect_page
         state["connected"] = lambda: state.get("adapter") is not None
+        state["adapter_for"] = adapters_by_pier.get      # any Pier's rotator, by pier_key (multi-Pier sessions)
         self._device_pages["rotator"] = state
         reload_page()
         if self._startup_autoconnect_allowed():

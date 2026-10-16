@@ -348,6 +348,7 @@ class SmartTelescopeDownloadDialog(QDialog):
         self.telescope_list.addItem("StellarMate")
         self.telescope_list.addItem("DWARF 3")
         self.telescope_list.addItem("iTelescope")
+        self.telescope_list.addItem("Celestron Origin")
         self.telescope_list.addItem("SFTP")
         self.telescope_list.setCurrentRow(0)
         self.telescope_list.setMaximumHeight(100)
@@ -459,6 +460,9 @@ class SmartTelescopeDownloadDialog(QDialog):
                 self.hostname_edit.setText("dwarf.local")
             elif telescope_type == "iTelescope":
                 self.hostname_edit.setText("data.itelescope.net")
+            elif telescope_type == "Celestron Origin":
+                # Prefer the address saved under Options > Library; the Origin's hotspot default otherwise
+                self.hostname_edit.setText(smart_telescope_manager.get_celestron_hostname() or "192.168.1.208")
             elif telescope_type == "SFTP":
                 self.hostname_edit.setText("")
             self.network_edit.setEnabled(telescope_type != "SFTP")   # an SFTP server is addressed, never scanned for

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from galileo.library.models.device_config import DeviceConfigRecord
     from galileo.library.models.observatory import ObservatoryRecord, PierRecord
     from galileo.library.models.optical_tube import OpticalTubeRecord
+    from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
     from galileo.autofocus import AutofocusParams, FilterOffset
     from galileo.mount_limits import MountLimits
     from galileo.platesolve import SolverParams
@@ -61,15 +62,11 @@ class Pier:
     def __init__(self, name: str) -> None:
         self.name = name
         self.device_pool = None        # galileo.core.devices.DevicePool
-        self.safety_monitor = None
         self.dome = None
         self.guiding_service = None
         self.sequence_runner = None
         self.scheduler = None          # galileo.scheduler.ObservatoryScheduler (the Pier's job queue)
         self._state = "idle"
-
-    def set_safety_monitor(self, monitor) -> None:
-        self.safety_monitor = monitor
 
     def set_dome(self, dome) -> None:
         self.dome = dome
@@ -241,7 +238,7 @@ class Observatory:
     def __init__(self, name: str) -> None:
         self.name = name
         self.piers: list[Pier] = []
-        self.safety_monitor = None
+        self.safety_monitor = None      # Observatory-scoped, shared by every Pier (OBS-030)
         self.dome = None
         self._event_bus = None
         self.state = "idle"
@@ -264,9 +261,10 @@ class Observatory:
             email=email, phone_number=phone_number, channels=channels,
         )
 
-    def set_safety_monitor(self, monitor, scope: str = "observatory") -> None:
-        if scope == "observatory":
-            self.safety_monitor = monitor
+    def set_safety_monitor(self, monitor) -> None:
+        """Safety devices belong to the Observatory, not to a Pier (OBS-030): one monitor is
+        shared by every member Pier."""
+        self.safety_monitor = monitor
 
     def set_dome(self, dome, scope: str = "observatory") -> None:
         self.arbiter.set_scope(RESOURCE_DOME, scope)
@@ -624,13 +622,68 @@ def get_filter_offset_steps(pier: PierRecord | None) -> dict[str, int]:
     }
 
 
-def get_weather_safety_rules(pier: PierRecord | None, slot: str = "primary") -> list[WeatherSafetyRule]:
-    """Return *pier*'s saved per-reading safety rules for the safety device in
-    *slot* (Equipment > Safety screen, EQP-WX-020) — one entry per reading the
-    user has configured. Empty if none have been saved yet or no Pier is
+# Safety devices (weather stations, safety monitors) and their rules belong to the Observatory,
+# not to a Pier: one station watches the sky over every Pier under the roof (OBS-030).
+
+def get_safety_device_config(
+    observatory: ObservatoryRecord | None, category: str, slot: str = "primary"
+) -> SafetyDeviceConfigRecord | None:
+    """The saved safety device for *category*/*slot* on *observatory*, or ``None``."""
+    if observatory is None:
+        return None
+    from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
+    return SafetyDeviceConfigRecord.get_or_none(
+        (SafetyDeviceConfigRecord.observatory == observatory)
+        & (SafetyDeviceConfigRecord.category == category)
+        & (SafetyDeviceConfigRecord.slot == slot)
+    )
+
+
+def save_safety_device_config(
+    observatory: ObservatoryRecord, category: str, driver: str, server: str, port: int,
+    device_name: str | None = None, slot: str = "primary",
+) -> SafetyDeviceConfigRecord:
+    """Create or update the safety device for *category*/*slot* on *observatory* (the Safety
+    page's Save button)."""
+    from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
+    fields = {"driver": driver, "server": server, "port": port, "device_name": device_name}
+    record = get_safety_device_config(observatory, category, slot)
+    if record is None:
+        return SafetyDeviceConfigRecord.create(observatory=observatory, category=category, slot=slot, **fields)
+    for key, value in fields.items():
+        setattr(record, key, value)
+    record.save()
+    return record
+
+
+def delete_safety_device_config(observatory: ObservatoryRecord, category: str, slot: str = "primary") -> None:
+    """Delete the saved safety device for *category*/*slot* on *observatory*, if any."""
+    from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
+    SafetyDeviceConfigRecord.delete().where(
+        (SafetyDeviceConfigRecord.observatory == observatory)
+        & (SafetyDeviceConfigRecord.category == category)
+        & (SafetyDeviceConfigRecord.slot == slot)
+    ).execute()
+
+
+def list_safety_device_slots(observatory: ObservatoryRecord | None, category: str) -> list[str]:
+    """Every slot saved for safety *category* on *observatory*, "primary" first then numbered."""
+    if observatory is None:
+        return []
+    from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
+    rows = SafetyDeviceConfigRecord.select(SafetyDeviceConfigRecord.slot).where(
+        (SafetyDeviceConfigRecord.observatory == observatory) & (SafetyDeviceConfigRecord.category == category)
+    )
+    return sorted((row.slot for row in rows), key=_slot_sort_key)
+
+
+def get_weather_safety_rules(observatory: ObservatoryRecord | None, slot: str = "primary") -> list[WeatherSafetyRule]:
+    """Return *observatory*'s saved per-reading safety rules for the safety device in
+    *slot* (Equipment > Safety screen, EQP-WX-020) -- one entry per reading the
+    user has configured. Empty if none have been saved yet or no Observatory is
     selected."""
     from galileo.safety import WeatherSafetyRule
-    if pier is None:
+    if observatory is None:
         return []
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     return [
@@ -639,46 +692,46 @@ def get_weather_safety_rules(pier: PierRecord | None, slot: str = "primary") -> 
             safety_related=record.safety_related, operator=record.operator, threshold=record.threshold,
         )
         for record in WeatherSafetyRuleRecord.select().where(
-            (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+            (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)
         )
     ]
 
 
-def save_weather_safety_rule(pier: PierRecord, rule: WeatherSafetyRule, slot: str = "primary") -> None:
-    """Create or update *pier*'s saved rule for ``rule.parameter`` (Equipment >
-    Weather screen's Save button, EQP-WX-020)."""
+def save_weather_safety_rule(observatory: ObservatoryRecord, rule: WeatherSafetyRule, slot: str = "primary") -> None:
+    """Create or update *observatory*'s saved rule for ``rule.parameter`` (Equipment >
+    Safety screen's Save button, EQP-WX-020)."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     fields = {
         "label": rule.label, "unit": rule.unit, "safety_related": rule.safety_related,
         "operator": rule.operator, "threshold": rule.threshold,
     }
     record = WeatherSafetyRuleRecord.get_or_none(
-        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)
         & (WeatherSafetyRuleRecord.parameter == rule.parameter)
     )
     if record is None:
-        WeatherSafetyRuleRecord.create(pier=pier, slot=slot, parameter=rule.parameter, **fields)
+        WeatherSafetyRuleRecord.create(observatory=observatory, slot=slot, parameter=rule.parameter, **fields)
         return
     for key, value in fields.items():
         setattr(record, key, value)
     record.save()
 
 
-def delete_weather_safety_rule(pier: PierRecord, parameter: str, slot: str = "primary") -> None:
-    """Delete *pier*'s saved rule for *parameter* on the safety device in
+def delete_weather_safety_rule(observatory: ObservatoryRecord, parameter: str, slot: str = "primary") -> None:
+    """Delete *observatory*'s saved rule for *parameter* on the safety device in
     *slot*, if any."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     WeatherSafetyRuleRecord.delete().where(
-        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)
         & (WeatherSafetyRuleRecord.parameter == parameter)
     ).execute()
 
 
-def delete_weather_safety_rules(pier: PierRecord, slot: str) -> None:
+def delete_weather_safety_rules(observatory: ObservatoryRecord, slot: str) -> None:
     """Delete every saved rule of the safety device in *slot* (its tab was removed)."""
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     WeatherSafetyRuleRecord.delete().where(
-        (WeatherSafetyRuleRecord.pier == pier) & (WeatherSafetyRuleRecord.slot == slot)
+        (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)
     ).execute()
 
 

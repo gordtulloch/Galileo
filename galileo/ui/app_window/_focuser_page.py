@@ -546,8 +546,14 @@ class AppWindowFocuserPageMixin:
                 panel["apply_driver_info"](None)
             self._window.statusBar().showMessage("Focuser(s) disconnected.", 4000)
 
+        def adapter_for(key):
+            # Any Pier's first connected focuser (primary slot first), by pier_key.
+            connected = adapters_by_pier.get(key) or {}
+            return connected.get("primary") or next(iter(connected.values()), None)
+
         state = {
             "reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter,
+            "adapter_for": adapter_for,
             "disconnect": disconnect_page, "connected": lambda: connected_adapter() is not None,
         }
         self._device_pages["focuser"] = state

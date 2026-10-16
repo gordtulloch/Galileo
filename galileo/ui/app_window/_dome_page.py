@@ -301,6 +301,25 @@ class AppWindowDomePageMixin:
             service.set_mount(_mount_adapter())
             return service
 
+        def service_for(key):
+            """Any Pier's DomeService by ``pier_key`` (created if its dome is connected and no
+            service exists yet), pointed at that Pier's own mount — for sessions running on a
+            Pier that is not the selected one."""
+            adapter = adapters_by_pier.get(key)
+            if adapter is None:
+                return None
+            mount_for = (self._device_pages.get("mount") or {}).get("adapter_for")
+            mount = mount_for(key) if mount_for else None
+            service = services_by_pier.get(key)
+            if service is None:
+                from galileo.bus import get_bus
+                from galileo.dome import DomeService
+                service = DomeService(dome=adapter, mount=mount, event_bus=get_bus())
+                services_by_pier[key] = service
+            service.set_dome(adapter)
+            service.set_mount(mount)
+            return service
+
         def _sync_checks() -> None:
             service = get_service()
             for box, value in (
@@ -651,6 +670,8 @@ class AppWindowDomePageMixin:
         state["autoconnect"] = autoconnect_page
         state["disconnect"] = disconnect_page
         state["get_service"] = get_service
+        state["adapter_for"] = adapters_by_pier.get      # any Pier's dome, by pier_key (multi-Pier sessions)
+        state["service_for"] = service_for               # any Pier's DomeService, by pier_key
         state["connected"] = lambda: state.get("adapter") is not None
         self._device_pages["dome"] = state
         reload_page()
