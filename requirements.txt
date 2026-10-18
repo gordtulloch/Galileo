@@ -17,6 +17,7 @@ Pillow>=10.0            # FITS-cutout-to-JPEG thumbnail conversion (SKY-080, por
 # Image registration / photometry
 astroalign>=2.4
 photutils>=1.5
+sgp4>=2.20
 astroquery>=0.4.6
 pandas>=1.5
 

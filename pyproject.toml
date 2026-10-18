@@ -94,6 +94,7 @@ dependencies = [
     "astroalign>=2.4",
     "photutils>=1.5",
     "astroquery>=0.4.6",
+    "sgp4>=2.20",             # satellite (TLE) positions for the Star Atlas minor-bodies overlay
     "pandas>=1.5",
     # Persistence
     "peewee>=3.17",
