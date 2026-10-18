@@ -15,11 +15,13 @@ class FtpMixin:
     """plain FTP (DWARF) listing / download methods of the smart-telescope manager."""
 
     def _get_fits_files_ftp(self, telescope_type, ip, username=None, password=None):
-        """Get FITS files via FTP protocol (DWARF)."""
+        """Get FITS files via FTP protocol (DWARF, Celestron Origin)."""
         logger.info(f"Using FTP connection for {telescope_type}")
 
+        config = self.supported_telescopes.get(telescope_type)
+
         try:
-            # Create FTP connection (no authentication for DWARF)
+            # Create FTP connection (no authentication for DWARF or Origin)
             ftp = ftplib.FTP()  # noqa: S321  # nosec B321 -- plain FTP: the device offers nothing else (LAN-only)
             logger.debug(f"Attempting FTP connection to {ip}:21...")
             ftp.connect(ip, 21, timeout=10)
@@ -29,15 +31,23 @@ class FtpMixin:
             logger.info(f"Successfully connected to FTP service at {ip}")
 
             try:
-                # Check for DWARF folder structure
-                if not self._validate_dwarf_structure(ftp):
-                    ftp.quit()
-                    return [], "DWARF folder structure not recognized"
+                if telescope_type == 'DWARF 3':
+                    # Check for DWARF folder structure
+                    if not self._validate_dwarf_structure(ftp):
+                        ftp.quit()
+                        return [], "DWARF folder structure not recognized"
 
-                # Get FITS files from DWARF structure
-                start_time = time.time()
-                fits_files = self._get_fits_files_from_dwarf_ftp(ftp)
-                scan_time = time.time() - start_time
+                    # Get FITS files from DWARF structure
+                    start_time = time.time()
+                    fits_files = self._get_fits_files_from_dwarf_ftp(ftp)
+                    scan_time = time.time() - start_time
+                elif telescope_type == 'Celestron Origin':
+                    start_time = time.time()
+                    fits_files = self._get_fits_files_from_celestron_ftp(ftp, config.get('fits_path', 'RawData'))
+                    scan_time = time.time() - start_time
+                else:
+                    ftp.quit()
+                    return [], f"Unsupported FTP telescope type: {telescope_type}"
 
                 ftp.quit()
                 logger.info(f"Found {len(fits_files)} FITS files in {scan_time:.2f} seconds")
@@ -72,6 +82,90 @@ class FtpMixin:
         except Exception:
             logger.exception("Error validating DWARF structure")
             return False
+
+    def _get_fits_files_from_celestron_ftp(self, ftp, fits_path='RawData'):
+        """FITS files on a Celestron Origin: everything under *fits_path* (the whole drive if it is missing)."""
+        fits_files = []
+
+        try:
+            logger.debug(f"Scanning Celestron Origin '{fits_path}' folder")
+            try:
+                ftp.cwd('/')
+                if fits_path:
+                    ftp.cwd(fits_path)
+                    logger.debug(f"Successfully accessed /{fits_path} directory")
+                    ftp.cwd('/')
+                    self._scan_celestron_folder(ftp, fits_path, fits_files)
+                else:
+                    self._scan_celestron_folder(ftp, '', fits_files)
+            except ftplib.error_perm as e:
+                logger.warning(f"Directory '{fits_path}' not found ({e}), scanning from root directory")
+                self._scan_celestron_folder(ftp, '', fits_files)
+        except Exception as e:
+            logger.exception("Error scanning Celestron Origin FTP structure")
+
+        return fits_files
+
+    def _scan_celestron_folder(self, ftp, folder_path, fits_files, depth=0, max_depth=5):
+        """Recursively scan Celestron Origin folders for FITS files."""
+        if depth > max_depth:
+            logger.debug(f"Maximum depth reached at '{folder_path}', stopping recursion")
+            return
+
+        try:
+            ftp.cwd('/')
+            if folder_path:
+                ftp.cwd(folder_path)
+
+            items = []
+            try:
+                ftp.retrlines('LIST', items.append)
+            except Exception as e:
+                logger.debug(f"Could not list directory {folder_path}: {e}")
+                return
+
+            for item_line in items:
+                # Parse FTP LIST output
+                parts = item_line.split()
+                if len(parts) < 9:
+                    continue
+
+                permissions = parts[0]
+                filename = ' '.join(parts[8:])  # filenames can contain spaces
+
+                if filename.startswith('.'):
+                    continue
+
+                item_path = f"{folder_path}/{filename}" if folder_path else filename
+
+                if permissions.startswith('d'):
+                    logger.debug(f"Scanning Celestron subdirectory: {item_path}")
+                    self._scan_celestron_folder(ftp, item_path, fits_files, depth + 1, max_depth)
+
+                elif filename.lower().endswith(('.fits', '.fit', '.fts')):
+                    # The size and date come from the LIST line (cheaper than SIZE per file)
+                    try:
+                        size = int(parts[4])
+                    except (ValueError, IndexError):
+                        size = 0
+                    date_str = f"{parts[5]} {parts[6]} {parts[7]}"
+
+                    fits_files.append({
+                        "name": filename,
+                        "path": item_path,
+                        "size": size,
+                        "date": date_str,
+                        "share_name": "ftp_root",
+                        "folder_name": os.path.basename(folder_path) if folder_path else "root",
+                        "telescope_type": "Celestron Origin",
+                        "file_type": "light",
+                        "object": self._extract_object_from_filename(filename),
+                        "instrument": "Celestron Origin"
+                    })
+                    logger.debug(f"Found Celestron Origin FITS file: {item_path}")
+
+        except Exception as e:
+            logger.exception(f"Error scanning Celestron folder {folder_path}")
 
     def _get_fits_files_from_dwarf_ftp(self, ftp):
         """Get FITS files from DWARF telescope via FTP."""

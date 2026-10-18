@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Repaired merge `5d0c7d5`, which broke the library package and the installer build.** The merge combined the refactor that split `file_processing`, `master_manager`, `light_calibration`, `telescope`, `sessions_widget` and `config_widget` into helpers/mixins with the other branch's edits to the *old* monolithic code, and git spliced the two together wrongly: `file_processing.py` no longer parsed (so all of `galileo.library` failed to import and ~65 library tests failed in CI), and `master_manager.py`/`telescope.py` referenced names that no longer existed. The refactored structure is restored and the other branch's changes are re-applied onto it: the master-scan header pre-check, FlatDark masters (flat-dark subtraction when calibrating, `FlatDark` session rows and resource status, the flat-dark lookup through the flat session), tile-compressed/multi-extension image reads in calibration, the Celestron Origin FTP support and hostname setting, DWARF/Origin hostname handling in `find_telescope`, and the per-Observatory weather history attribute. No new behaviour, and no inline-help or wiki change: no control was added or renamed.
+
 ### Changed
 
 - **The Star Atlas is now the screen shown at start-up, and the Dashboard icon is hidden from the sidebar.** The Dashboard page is still built (`OBS-060`, `PRIMARY_SECTIONS` unchanged) but has no entry point for now. No inline-help or wiki change: no control was added or renamed.

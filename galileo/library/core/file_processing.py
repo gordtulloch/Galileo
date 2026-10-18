@@ -164,27 +164,27 @@ class FileProcessor:
             logger.debug("progress_callback raised for %s", file_path, exc_info=True)
             return True
 
-                try:
-                    candidate_path = file_path
-                    cleanup_source_path = None
+    def _register_master_candidate(self, file_path: str, moveFiles: bool, dest_root: str | None) -> str | None:
+        """Register *file_path* if its header says it is a master dark/flat/bias; return its master id, else None."""
+        # Cheap pre-check: astropy reads .fits/.gz/.fz headers directly, so non-masters
+        # are rejected without decompressing or extracting anything.
+        try:
+            pre_imagetyp = str(fits.getheader(file_path, 0).get('IMAGETYP', '')).upper()
+            if 'MASTER' not in pre_imagetyp or not any(
+                token in pre_imagetyp for token in ('DARK', 'FLAT', 'BIAS')
+            ):
+                return None
+        except Exception:
+            pass  # not directly readable (e.g. zip/xisf): fall through to full processing
 
-                    # Cheap pre-check: astropy reads .fits/.gz/.fz headers directly, so non-masters
-                    # are rejected without decompressing or extracting anything.
-                    try:
-                        pre_imagetyp = str(fits.getheader(file_path, 0).get('IMAGETYP', '')).upper()
-                        if 'MASTER' not in pre_imagetyp or not any(
-                            token in pre_imagetyp for token in ('DARK', 'FLAT', 'BIAS')
-                        ):
-                            continue
-                    except Exception:
-                        pass  # not directly readable (e.g. zip/xisf): fall through to full processing
-
-                    if self.format_processor.can_process(candidate_path):
-                        candidate_path = self.format_processor.process_file(candidate_path)
-                        # For externally compressed FITS (e.g. .fits.gz), remove the source
-                        # archive only after successful registration.
-                        if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
-                            cleanup_source_path = file_path
+        candidate_path = file_path
+        cleanup_source_path = None
+        if self.format_processor.can_process(candidate_path):
+            candidate_path = self.format_processor.process_file(candidate_path)
+            # For externally compressed FITS (e.g. .fits.gz), remove the source
+            # archive only after successful registration.
+            if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
+                cleanup_source_path = file_path
 
         # Read only the primary header; master detection should not require data.
         imagetyp = str(fits.getheader(candidate_path, 0).get('IMAGETYP', '')).upper()

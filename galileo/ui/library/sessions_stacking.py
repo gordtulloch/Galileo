@@ -55,12 +55,14 @@ def _read_fits_image(file_path: str):
 def _load_master_arrays(masters: dict, progress) -> dict:
     """Load the master frames as float32 arrays keyed like *masters*; the flat is normalised to a mean of 1.
 
+    When the session has a ``FlatDark`` master it is subtracted from the flat first (it removes the
+    flat's thermal signal and bias pedestal), and is kept in the result only for reference.
     A flat with a non-positive mean maps to ``None`` (flat correction is skipped).
     """
     import numpy as np
 
     arrays: dict = {}
-    for label in ("Bias", "Dark", "Flat"):
+    for label in ("Bias", "Dark", "FlatDark", "Flat"):
         master = masters.get(label)
         if master is None:
             continue
@@ -69,6 +71,16 @@ def _load_master_arrays(masters: dict, progress) -> dict:
         data, _header = _read_fits_image(master.master_path)
         data = data.astype(np.float32, copy=False)
         if label == "Flat":
+            flat_dark = arrays.get("FlatDark")
+            if flat_dark is not None:
+                if flat_dark.shape == data.shape:
+                    data = data - flat_dark
+                else:
+                    logger.warning(
+                        f"Flat-dark master shape {flat_dark.shape} does not match flat shape {data.shape}; "
+                        "skipping flat-dark subtraction"
+                    )
+                    masters.pop("FlatDark", None)
             flat_mean = np.mean(data)
             if flat_mean > 0:
                 data = data / flat_mean
@@ -114,7 +126,10 @@ def _calibrate_light_file(light_file, masters: dict, master_data: dict) -> str:
             calibrated_data[mask] /= master_array[mask]
         else:
             calibrated_data -= master_array
-        light_header['HISTORY'] = f'{label} corrected using {os.path.basename(masters[label].master_path)}'
+        note = f'{label} corrected using {os.path.basename(masters[label].master_path)}'
+        if label == "Flat" and masters.get("FlatDark") is not None:
+            note += f' with flat-dark {os.path.basename(masters["FlatDark"].master_path)}'
+        light_header['HISTORY'] = note
 
     # Update header
     light_header['CALIBRAT'] = True
@@ -216,7 +231,7 @@ class SessionsStackingMixin(_MixinBase):
             logger.info(f"Starting calibration for session: {object_name} on {session_date}")
 
             # Check if this is a calibration session
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 if show_results:
                     QMessageBox.information(
                         self,
@@ -357,7 +372,8 @@ class SessionsStackingMixin(_MixinBase):
 
     @staticmethod
     def _find_session_masters(master_manager, session) -> dict:
-        """The bias/dark/flat masters (keyed ``Bias``/``Dark``/``Flat``) that match *session* and exist on disk."""
+        """The bias/dark/flat (and the flat's flat-dark) masters, keyed ``Bias``/``Dark``/``Flat``/``FlatDark``,
+        that match *session* and exist on disk."""
         session_data = {
             'telescope': session.fitsSessionTelescope,
             'instrument': session.fitsSessionImager,
@@ -374,7 +390,31 @@ class SessionsStackingMixin(_MixinBase):
             master = master_manager.find_matching_master(session_data, cal_type)
             if master is not None and os.path.exists(master.master_path):
                 masters[label] = master
+
+        # The flat-dark belongs to the session's flat: flat session -> its linked flat-dark session
+        flat_dark = SessionsStackingMixin._find_flat_dark_master(master_manager, session)
+        if flat_dark is not None:
+            masters["FlatDark"] = flat_dark
         return masters
+
+    @staticmethod
+    def _find_flat_dark_master(master_manager, session):
+        """The flat-dark master for *session*'s flat, or ``None`` if there is none (or it is missing on disk)."""
+        from galileo.library.core.utils import session_to_calibration_criteria
+
+        try:
+            if not session.fitsFlatSession:
+                return None
+            flat_session = FitsSessionModel.get_by_id(session.fitsFlatSession)
+            if not flat_session.fitsDarkSession:
+                return None
+            flat_dark_session = FitsSessionModel.get_by_id(flat_session.fitsDarkSession)
+            master = master_manager.find_matching_master(session_to_calibration_criteria(flat_dark_session), 'flatdark')
+            if master is not None and os.path.exists(master.master_path):
+                return master
+        except Exception as e:
+            logger.debug(f"Unable to resolve flat-dark master for session {getattr(session, 'fitsSessionId', None)}: {e}")
+        return None
 
     def sample_stack_session(self, item):
         """Create a quick stack of calibrated frames for review and open it in external viewer."""
@@ -394,7 +434,7 @@ class SessionsStackingMixin(_MixinBase):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Stack is only available for light sessions.")
                 return
 
@@ -528,7 +568,7 @@ class SessionsStackingMixin(_MixinBase):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Photometric stack is only available for light sessions.")
                 return
 

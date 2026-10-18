@@ -76,14 +76,29 @@ def _matching_masters_for_session(cache: dict, s) -> set:
         return set()
 
 
+def _flat_dark_master_exists(session) -> bool:
+    """True if a flat-dark master matching *session* exists on disk."""
+    try:
+        from galileo.library.core.master_manager import get_master_manager
+        from galileo.library.core.utils import session_to_calibration_criteria
+        master = get_master_manager().find_matching_master(session_to_calibration_criteria(session), 'flatdark')
+        return bool(master and getattr(master, 'master_path', None) and os.path.exists(master.master_path))
+    except Exception as e:
+        logger.warning(f"Failed FlatDark master lookup for session resources: {e}")
+        return False
+
+
 def _calibration_session_status(session, masters_for, matched_masters) -> dict:
-    """Resources cell of a calibration (Bias/Dark/Flat) session row: which masters exist for it."""
+    """Resources cell of a calibration (Bias/Dark/Flat/FlatDark) session row: which masters exist for it."""
     mtypes = masters_for(getattr(session, 'fitsSessionId', None))
     if not mtypes:
         # Fallback for imported masters (no source_session_id): match by session metadata.
         # For calibration sessions, only show the master type relevant to that session.
         cal_obj = (session.fitsSessionObjectName or '').strip().lower()
-        if cal_obj in ('bias', 'dark', 'flat') and cal_obj in matched_masters(session):
+        if cal_obj in ('flatdark', 'darkflat'):
+            if _flat_dark_master_exists(session):
+                mtypes = {'flatdark'}
+        elif cal_obj in ('bias', 'dark', 'flat') and cal_obj in matched_masters(session):
             mtypes = {cal_obj}
     if not mtypes:
         return {"text": "", "tooltip": "", "percentage": 0}
@@ -350,7 +365,7 @@ class SessionsTreeMixin(_MixinBase):
             total_light_sessions = 0
             for session in sorted(object_sessions,
                                   key=lambda x: x.fitsSessionDate or datetime.date.min, reverse=True):
-                is_light = session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat']
+                is_light = session.fitsSessionObjectName not in ['Bias', 'Dark', 'Flat', 'FlatDark']
                 calibration_info = self._build_resources_status(session)
                 if is_light:
                     total_light_sessions += 1
@@ -400,7 +415,7 @@ class SessionsTreeMixin(_MixinBase):
                     calibration_info = row["calibration"]
                     child_item = QTreeWidgetItem()
                     # Show (master) for calibration sessions that have created masters
-                    if row["has_master"] and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
+                    if row["has_master"] and session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                         child_item.setText(0, "(master)")
                     else:
                         child_item.setText(0, "")  # Empty object name for child
@@ -551,7 +566,7 @@ class SessionsTreeMixin(_MixinBase):
         def matched_masters(s) -> set:
             return _matching_masters_for_session(self._matched_master_types_by_session_id, s)
 
-        if session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat']:
+        if session.fitsSessionObjectName in ['Bias', 'Dark', 'Flat', 'FlatDark']:
             return _calibration_session_status(session, masters_for, matched_masters)
 
         precalibrated = _precalibrated_status(session)

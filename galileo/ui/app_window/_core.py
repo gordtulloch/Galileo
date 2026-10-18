@@ -72,7 +72,7 @@ class AppWindowCoreMixin:
         # Populated whenever either the Weather or Safety Monitor page polls
         # the connected weather station while it is the one on screen.
         self._weather_history_by_observatory: dict = {}
-        self._current_primary_section = "dashboard"
+        self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 

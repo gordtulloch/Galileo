@@ -65,7 +65,7 @@ class SessionsMenuMixin(_MixinBase):
                 return
 
             object_name = parent.text(0) or (session.fitsSessionObjectName or "Unknown")
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 return
 
             out_dir = self._get_session_stack_output_dir(session)
@@ -175,7 +175,7 @@ class SessionsMenuMixin(_MixinBase):
                 continue
 
             # This is a session item
-            if parent.text(0) in ['Bias', 'Dark', 'Flat']:
+            if parent.text(0) in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 calibration_sessions.append(selected_item)
             else:
                 light_sessions.append(selected_item)
@@ -314,7 +314,7 @@ class SessionsMenuMixin(_MixinBase):
 
             parent_item = item.parent()
             object_name = parent_item.text(0) if parent_item else "Unknown"
-            if object_name in ['Bias', 'Dark', 'Flat']:
+            if object_name in ['Bias', 'Dark', 'Flat', 'FlatDark']:
                 QMessageBox.information(self, "Not Applicable", "Thumbnails are only generated for light sessions.")
                 return
 
