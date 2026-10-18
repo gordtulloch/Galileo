@@ -14,6 +14,10 @@ APPDIR="build/Galileo.AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/applications"
 cp -R dist/Galileo "$APPDIR/usr/lib/galileo"
+# The GLib stack must come from the host: the build machine's (older) copy clashes with the host's
+# gio/gvfs/dconf modules ("undefined symbol: g_task_set_static_name") and corrupts Qt's use of them.
+find "$APPDIR/usr/lib/galileo" \( -name 'libglib-2.0.so*' -o -name 'libgio-2.0.so*' -o -name 'libgobject-2.0.so*' \
+    -o -name 'libgmodule-2.0.so*' -o -name 'libgthread-2.0.so*' \) -delete
 cp assets/images/logo.png "$APPDIR/galileo.png"
 cp "$APPDIR/galileo.png" "$APPDIR/.DirIcon"
 

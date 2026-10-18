@@ -130,14 +130,14 @@ class StarAtlasPaintMixin(_MixinBase):
         for xi, yi, vi in zip(x.tolist(), y.tolist(), vis.tolist(), strict=True):
             if vi and (not pen_down or math.hypot(xi - px, yi - py) < limit):
                 if pen_down:
-                    path.lineTo(QPointF(float(xi), float(yi)))
+                    path.lineTo(xi, yi)
                 else:
-                    path.moveTo(QPointF(float(xi), float(yi)))
+                    path.moveTo(xi, yi)
                     pen_down = True
             else:
                 pen_down = bool(vi)
                 if vi:
-                    path.moveTo(QPointF(float(xi), float(yi)))
+                    path.moveTo(xi, yi)
             px, py = xi, yi
         p.drawPath(path)
 
