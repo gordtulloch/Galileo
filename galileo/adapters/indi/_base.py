@@ -72,6 +72,10 @@ class IndiAdapter(DeviceBackend):
         # Whether *we* switched the INDI device on — if another client (Ekos,
         # KStars) already had it connected, disconnect() must leave it alone.
         self._we_connected_device = False
+        # What push_context last sent, so a repeat (connect pushes from both the
+        # adapter and the UI) isn't re-sent to a slow serial mount driver.
+        self._last_time_push = float("-inf")
+        self._last_geo_push: dict[str, float] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -118,15 +122,32 @@ class IndiAdapter(DeviceBackend):
             return
         client = self._client
 
+        def settle(prop: str) -> None:
+            # Slow mount drivers (LX200 OnStep) run each of these as a serial
+            # exchange with the mount and log "Error setting ..." if the next
+            # command arrives while the previous one is still Busy.
+            try:
+                client.wait_for(lambda: client.get_state(self.device_name, prop) != ic.BUSY, 15.0, f"{prop} to finish")
+            except Exception:
+                logger.debug("INDI %r: %s still busy after 15s", self.device_name, prop)
+
         def push() -> None:
-            if self._has("TIME_UTC"):
+            now = time.monotonic()
+            # Connect pushes context from both the adapter and the UI — don't
+            # repeat a time set the driver has only just been given.
+            if self._has("TIME_UTC") and now - self._last_time_push > 60.0:
                 utc = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")
                 client.send_text(self.device_name, "TIME_UTC", {"UTC": utc, "OFFSET": "0"})
+                self._last_time_push = now
+                settle("TIME_UTC")
             if latitude is not None and longitude is not None and self._has("GEOGRAPHIC_COORD"):
                 geo = {"LAT": latitude, "LONG": longitude if longitude >= 0 else longitude + 360.0}
                 if elevation is not None:
                     geo["ELEV"] = elevation
-                client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
+                if geo != self._last_geo_push:
+                    client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
+                    self._last_geo_push = geo
+                    settle("GEOGRAPHIC_COORD")
             for prop in ("SCOPE_INFO", "TELESCOPE_INFO"):
                 if focal_length_mm > 0 and aperture_mm > 0 and self._has(prop):
                     client.send_number(self.device_name, prop, {

@@ -101,7 +101,7 @@ class FtpMixin:
             except ftplib.error_perm as e:
                 logger.warning(f"Directory '{fits_path}' not found ({e}), scanning from root directory")
                 self._scan_celestron_folder(ftp, '', fits_files)
-        except Exception as e:
+        except Exception:
             logger.exception("Error scanning Celestron Origin FTP structure")
 
         return fits_files
@@ -164,7 +164,7 @@ class FtpMixin:
                     })
                     logger.debug(f"Found Celestron Origin FITS file: {item_path}")
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error scanning Celestron folder {folder_path}")
 
     def _get_fits_files_from_dwarf_ftp(self, ftp):

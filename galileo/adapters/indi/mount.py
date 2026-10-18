@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import datetime
+import asyncio
 import logging
 import math
 from typing import Any, ClassVar
@@ -63,21 +63,11 @@ class IndiMountAdapter(IndiAdapter):
         sidereal time are computed from accurate values."""
         if self._client is None:
             return
-        utc_now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S")
-        if self._has("TIME_UTC"):
-            try:
-                self._client.send_text(self.device_name, "TIME_UTC", {"UTC": utc_now, "OFFSET": "0"})
-            except Exception:
-                logger.warning("Could not set TIME_UTC on INDI mount %r", self.device_name, exc_info=True)
-        if self.site_lat is not None and self.site_lon is not None and self._has("GEOGRAPHIC_COORD"):
-            lon_indi = self.site_lon if self.site_lon >= 0 else self.site_lon + 360.0
-            geo: dict[str, float] = {"LAT": self.site_lat, "LONG": lon_indi}
-            if self.site_elevation is not None:
-                geo["ELEV"] = self.site_elevation
-            try:
-                self._client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
-            except Exception:
-                logger.warning("Could not set GEOGRAPHIC_COORD on INDI mount %r", self.device_name, exc_info=True)
+        # Shares push_context's send-and-wait path (and its de-duplication with
+        # the UI's own post-connect push): LX200 OnStep logs "Error setting UTC
+        # Offset" / "site longitude" when the same sets arrive back to back.
+        # Runs on a worker thread (asyncio.to_thread), so it has no loop of its own.
+        asyncio.run(self.push_context(self.site_lat, self.site_lon, self.site_elevation))
 
     def _refuse_if_parked(self, command: str) -> None:
         """Movement commands must not reach a parked mount. Checked against the
