@@ -23,6 +23,10 @@ from .utils import (
     dwarfFixHeader,
     mapFitsHeader,
     get_master_calibration_path,
+    is_dark_image_type,
+    is_flat_dark_image_type,
+    is_flat_image_type,
+    normalize_image_type,
 )
 from ..types import FilePath
 from ..exceptions import (
@@ -160,16 +164,27 @@ class FileProcessor:
             logger.debug("progress_callback raised for %s", file_path, exc_info=True)
             return True
 
-    def _register_master_candidate(self, file_path: str, moveFiles: bool, dest_root: str | None) -> str | None:
-        """Register *file_path* if its header says it is a master dark/flat/bias; return its master id, else None."""
-        candidate_path = file_path
-        cleanup_source_path = None
-        if self.format_processor.can_process(candidate_path):
-            candidate_path = self.format_processor.process_file(candidate_path)
-            # For externally compressed FITS (e.g. .fits.gz), remove the source
-            # archive only after successful registration.
-            if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
-                cleanup_source_path = file_path
+                try:
+                    candidate_path = file_path
+                    cleanup_source_path = None
+
+                    # Cheap pre-check: astropy reads .fits/.gz/.fz headers directly, so non-masters
+                    # are rejected without decompressing or extracting anything.
+                    try:
+                        pre_imagetyp = str(fits.getheader(file_path, 0).get('IMAGETYP', '')).upper()
+                        if 'MASTER' not in pre_imagetyp or not any(
+                            token in pre_imagetyp for token in ('DARK', 'FLAT', 'BIAS')
+                        ):
+                            continue
+                    except Exception:
+                        pass  # not directly readable (e.g. zip/xisf): fall through to full processing
+
+                    if self.format_processor.can_process(candidate_path):
+                        candidate_path = self.format_processor.process_file(candidate_path)
+                        # For externally compressed FITS (e.g. .fits.gz), remove the source
+                        # archive only after successful registration.
+                        if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
+                            cleanup_source_path = file_path
 
         # Read only the primary header; master detection should not require data.
         imagetyp = str(fits.getheader(candidate_path, 0).get('IMAGETYP', '')).upper()
@@ -317,7 +332,7 @@ class FileProcessor:
             }
 
             # Add type-specific data
-            if master_type == 'dark':
+            if master_type in ('dark', 'flatdark'):
                 session_data['exposure_time'] = str(hdr.get('EXPTIME', hdr.get('EXPOSURE', '')))
             elif master_type == 'flat':
                 session_data['filter_name'] = hdr.get('FILTER', '')
@@ -394,34 +409,41 @@ class FileProcessor:
             hdr: FITS header
 
         Returns:
-            str or None: 'bias', 'dark', 'flat', or None if undetermined
+            str or None: 'bias', 'dark', 'flat', 'flatdark', or None if undetermined
         """
-        # Check filename for master type indicators
-        filename = os.path.basename(file_path).lower()
+        # Check filename for master type indicators (punctuation-insensitive, so
+        # "Master_Flat-Dark" and "masterflatdark" match alike)
+        filename = normalize_image_type(os.path.basename(file_path))
 
-        if any(pattern in filename for pattern in ['bias', 'masterbias', 'master_bias', 'bias_master']):
+        if any(pattern in filename for pattern in ['BIAS', 'MASTERBIAS']):
             return 'bias'
-        elif any(pattern in filename for pattern in ['dark', 'masterdark', 'master_dark', 'dark_master']):
+        elif 'FLATDARK' in filename or 'DARKFLAT' in filename:
+            return 'flatdark'
+        elif any(pattern in filename for pattern in ['DARK', 'MASTERDARK']):
             return 'dark'
-        elif any(pattern in filename for pattern in ['flat', 'masterflat', 'master_flat', 'flat_master']):
+        elif any(pattern in filename for pattern in ['FLAT', 'MASTERFLAT']):
             return 'flat'
 
         # Check FITS header
         imagetyp = hdr.get('IMAGETYP', '').upper()
         if 'BIAS' in imagetyp:
             return 'bias'
-        elif 'DARK' in imagetyp:
+        elif is_flat_dark_image_type(imagetyp):
+            return 'flatdark'
+        elif is_dark_image_type(imagetyp):
             return 'dark'
-        elif 'FLAT' in imagetyp:
+        elif is_flat_image_type(imagetyp):
             return 'flat'
 
         # Check OBJECT field for master indicators
-        object_name = hdr.get('OBJECT', '').lower()
-        if 'bias' in object_name or 'master-bias' in object_name:
+        object_name = normalize_image_type(hdr.get('OBJECT', ''))
+        if 'BIAS' in object_name:
             return 'bias'
-        elif 'dark' in object_name or 'master-dark' in object_name:
+        elif 'FLATDARK' in object_name or 'DARKFLAT' in object_name:
+            return 'flatdark'
+        elif 'DARK' in object_name:
             return 'dark'
-        elif 'flat' in object_name or 'master-flat' in object_name:
+        elif 'FLAT' in object_name:
             return 'flat'
 
         return None
@@ -708,7 +730,12 @@ class FileProcessor:
         # Special handling for vendors with incomplete headers
         header_modified = False
         telescop_value = hdr.get("TELESCOP", "")
-        if telescop_value and telescop_value.upper() == "DWARF":
+        # Any DWARF variant (Dwarf Mini, DWARF 3, DWARF II, ...), by TELESCOP prefix or, when the
+        # header names no frame type, by the DWARF_RAW folder structure
+        is_dwarf = (telescop_value and telescop_value.upper().startswith("DWARF")) or (
+            not (hdr.get("IMAGETYP") or hdr.get("FRAME")) and "DWARF_RAW" in root
+        )
+        if is_dwarf:
             modified_hdr = dwarfFixHeader(hdr, root, file)
             if not modified_hdr:
                 raise FitsHeaderError(
@@ -746,12 +773,19 @@ class FileProcessor:
             )
 
         # Fix calibration frames where OBJECT is set to an object rather than the frame type
-        imagetyp = hdr["IMAGETYP"].upper()
-        for frame_type, object_name in (("DARK", "Dark"), ("FLAT", "Flat"), ("BIAS", "Bias")):
-            if frame_type in imagetyp:
-                hdr["OBJECT"] = object_name
-                header_modified = True
-                break
+        image_type = hdr["IMAGETYP"]
+        if is_flat_dark_image_type(image_type):
+            hdr["OBJECT"] = "FlatDark"
+            header_modified = True
+        elif is_dark_image_type(image_type):
+            hdr["OBJECT"] = "Dark"
+            header_modified = True
+        elif is_flat_image_type(image_type):
+            hdr["OBJECT"] = "Flat"
+            header_modified = True
+        elif "BIAS" in image_type.upper():
+            hdr["OBJECT"] = "Bias"
+            header_modified = True
 
         # Validate date field
         date_obs = hdr.get("DATE-OBS")
@@ -814,11 +848,14 @@ class FileProcessor:
             newName = "{}-{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
                 sanitize_filesystem_name(hdr["OBJECT"]), scope, instrument, sanitize_filesystem_name(filter_name),
                 fitsDate, exposure, xbin, ybin, temp)
-        elif "FLAT" in imagetyp:
+        elif is_flat_dark_image_type(imagetyp):
+            newName = "{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
+                "FlatDark", scope, instrument, fitsDate, exposure, xbin, ybin, temp)
+        elif is_flat_image_type(imagetyp):
             filter_name = hdr.get("FILTER", "OSC")
             newName = "{}-{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
                 "Flat", scope, instrument, sanitize_filesystem_name(filter_name), fitsDate, exposure, xbin, ybin, temp)
-        elif "DARK" in imagetyp:
+        elif is_dark_image_type(imagetyp):
             newName = "{}-{}-{}-{}-{}s-{}x{}-t{}.fits".format(
                 "Dark", scope, instrument, fitsDate, exposure, xbin, ybin, temp)
         elif "BIAS" in imagetyp:

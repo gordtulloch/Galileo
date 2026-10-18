@@ -72,8 +72,8 @@ async def test_tc_obs_020_concurrent_sequences_across_piers(two_pier_observatory
 
 @pytest.mark.requirement("TC-OBS-030")
 @pytest.mark.priority("P2")
-def test_tc_obs_030_safety_monitor_scope_observatory_or_pier():
-    """OBS-030: Safety-monitor/weather source scoped at Observatory (shared) or Pier (independent)."""
+def test_tc_obs_030_safety_monitor_is_shared_by_every_pier():
+    """OBS-030: A safety device is scoped at the Observatory and shared by all member Piers - a Pier has none of its own."""
     obs_mod = pytest.importorskip("galileo.observatory")
     obs = obs_mod.Observatory(name="TestObs")
     pier1 = obs_mod.Pier(name="Pier-1")
@@ -82,13 +82,9 @@ def test_tc_obs_030_safety_monitor_scope_observatory_or_pier():
     obs.add_pier(pier2)
 
     shared_sm = MagicMock(name="SharedSafetyMonitor")
-    obs.set_safety_monitor(shared_sm, scope="observatory")
+    obs.set_safety_monitor(shared_sm)
     assert obs.safety_monitor is shared_sm
-    assert pier1.safety_monitor is None  # pier-level not set
-
-    pier_sm = MagicMock(name="Pier1SafetyMonitor")
-    pier1.set_safety_monitor(pier_sm)
-    assert pier1.safety_monitor is pier_sm
+    assert not hasattr(pier1, "safety_monitor") and not hasattr(pier2, "set_safety_monitor")
 
 
 # ---------------------------------------------------------------------------
@@ -536,3 +532,215 @@ def test_tc_obs_100_session_context_shares_one_arbiter_per_observatory():
     assert _observatory_arbiter(win) is not first
     win._current_observatory = _Obs("Backyard")
     assert _observatory_arbiter(win) is first
+
+
+# ---------------------------------------------------------------------------
+# TC-OBS-140 — scheduled sessions run on every Pier, not only the selected one
+# ---------------------------------------------------------------------------
+
+class _Piers:
+    """Three Piers of one Observatory, each with its own devices, behind a fake AppWindow."""
+
+    def __init__(self, monkeypatch):
+        import datetime
+        from types import SimpleNamespace
+        from galileo.current_object import pier_key
+        from galileo.safety import LiveSafetyMonitor
+        from galileo.scheduler import ObservatoryScheduler, SchedulerJob
+        from galileo.ui import session_runner
+
+        self.piers = [SimpleNamespace(id=i, name=f"Pier-{i}") for i in (1, 2, 3)]
+        self.unsafe = False                  # one verdict for the whole Observatory (OBS-030)
+        self.mounts = {p.id: MagicMock(name=f"mount{p.id}") for p in self.piers}
+        self.cameras = {p.id: MagicMock(name=f"camera{p.id}") for p in self.piers}
+        self.connected = {p.id: True for p in self.piers}
+
+        class _Window:
+            @property
+            def _camera_backends(self):
+                return self._camera_backends_by_pier.setdefault(pier_key(self._current_pier), {})
+
+        win = _Window()
+        win._current_pier = self.piers[0]
+        win._current_observatory = SimpleNamespace(name="Backyard")
+        win._active_camera_slot = "primary"
+        win._window = SimpleNamespace(isVisible=lambda: True)
+        win._camera_backends_by_pier = {p.id: {"primary camera": self.cameras[p.id]} for p in self.piers}
+        win._device_pages = {
+            "mount": {"adapter": self.mounts[1],
+                      "adapter_for": lambda k: self.mounts[k] if self.connected[k] else None},
+        }
+        self.window = win
+
+        self.schedulers = {}
+        past = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)).isoformat()
+        for pier in self.piers:
+            scheduler = ObservatoryScheduler()
+            scheduler.set_safety_monitor(LiveSafetyMonitor(
+                lambda: (True, not self.unsafe, ["the weather station reports rain"])))
+            region = SimpleNamespace(blocks=[], name=f"session-{pier.id}", _scheduler=scheduler)
+            job = SchedulerJob(f"job-{pier.id}", sequence=region, pier_name=pier.name)
+            job.scheduled_start_utc = past
+            region._job = job
+            scheduler.add_job(job)
+            self.schedulers[pier.name] = scheduler
+        win._scheduler_for_pier = lambda name: self.schedulers[name]
+
+        monkeypatch.setattr("galileo.observatory.list_piers", lambda _obs: list(self.piers))
+        monkeypatch.setattr(session_runner, "_build_notify_service", lambda _w: None)
+        monkeypatch.setattr(session_runner, "get_history", lambda: None)
+        monkeypatch.setattr(session_runner, "preflight", lambda blocks, ctx: [])
+
+
+@pytest.fixture
+def qt_app():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    widgets = pytest.importorskip("PySide6.QtWidgets")
+    return widgets.QApplication.instance() or widgets.QApplication([])
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_session_context_uses_the_named_piers_own_devices(qt_app, monkeypatch):
+    """OBS-140: a context built for a Pier that is not selected carries that Pier's mount and
+    camera, never the selected Pier's."""
+    from galileo.ui.session_runner import build_session_context
+    rig = _Piers(monkeypatch)
+    for pier in rig.piers:
+        ctx = build_session_context(rig.window, pier)
+        assert ctx.pier_name == pier.name
+        assert ctx.mount is rig.mounts[pier.id] and ctx.camera is rig.cameras[pier.id]
+    assert build_session_context(rig.window).mount is rig.mounts[1]       # the selected Pier, as before
+    rig.connected[3] = False
+    assert build_session_context(rig.window, rig.piers[2]).mount is None
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_one_tick_starts_a_due_job_on_each_of_three_piers(qt_app, monkeypatch):
+    """OBS-020/OBS-140: with Pier-1 selected, a single scheduler tick starts the due job on all
+    three Piers, each against its own devices - the others no longer wait to be selected."""
+    from galileo.ui.session_runner import SessionRunController
+    rig = _Piers(monkeypatch)
+    controller = SessionRunController(rig.window)
+    launched = []
+    monkeypatch.setattr(controller, "_launch", lambda region, ctx, manual, key=None, **kw: launched.append((key, ctx)))
+
+    controller._tick()
+
+    assert [key for key, _ in launched] == [1, 2, 3]
+    assert [ctx.mount for _, ctx in launched] == [rig.mounts[1], rig.mounts[2], rig.mounts[3]]
+    assert [ctx.camera for _, ctx in launched] == [rig.cameras[1], rig.cameras[2], rig.cameras[3]]
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_unsafe_weather_holds_every_pier_of_the_observatory(qt_app, monkeypatch):
+    """OBS-030/OBS-140: one weather station serves the whole Observatory, so when it reports
+    unsafe conditions no Pier starts its job, each showing the reason; when it clears they all start."""
+    from galileo.ui.session_runner import SessionRunController
+    rig = _Piers(monkeypatch)
+    rig.unsafe = True
+    controller = SessionRunController(rig.window)
+    launched = []
+    monkeypatch.setattr(controller, "_launch", lambda region, ctx, manual, key=None, **kw: launched.append(key))
+
+    controller._tick()
+    assert launched == []
+    assert all("rain" in controller.blocked_reason(k) for k in (1, 2, 3))
+
+    rig.unsafe = False
+    controller._tick()
+    assert launched == [1, 2, 3]
+    assert all(controller.blocked_reason(k) == "" for k in (1, 2, 3))
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_pier_with_nothing_connected_waits_without_holding_the_others(qt_app, monkeypatch):
+    """OBS-140: a Pier with no camera and no mount connected is skipped (its job stays pending);
+    the other Piers still start."""
+    from galileo.ui.session_runner import SessionRunController
+    rig = _Piers(monkeypatch)
+    rig.connected[3] = False
+    rig.window._camera_backends_by_pier[3].clear()
+    controller = SessionRunController(rig.window)
+    launched = []
+    monkeypatch.setattr(controller, "_launch", lambda region, ctx, manual, key=None, **kw: launched.append(key))
+
+    controller._tick()
+
+    assert launched == [1, 2]
+    assert rig.schedulers["Pier-3"].jobs[0].run_state == "pending"
+
+
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_a_failing_pier_does_not_stop_the_others(qt_app, monkeypatch):
+    """OBS-140: an exception servicing one Pier (e.g. a safety device that cannot be read) is
+    logged and the remaining Piers are still serviced."""
+    from galileo.ui.session_runner import SessionRunController
+    rig = _Piers(monkeypatch)
+    rig.schedulers["Pier-1"].set_safety_monitor(type("Boom", (), {"is_safe": property(lambda s: 1 / 0)})())
+    controller = SessionRunController(rig.window)
+    launched = []
+    monkeypatch.setattr(controller, "_launch", lambda region, ctx, manual, key=None, **kw: launched.append(key))
+
+    controller._tick()
+
+    assert launched == [2, 3]
+
+
+@pytest.mark.requirement("TC-OBS-030")
+@pytest.mark.priority("P2")
+def test_tc_obs_030_migration_moves_safety_settings_up_to_the_observatory():
+    """OBS-030: migration 029 carries each Observatory's per-Pier safety devices and rules up to the
+    Observatory (the lowest-numbered Pier's winning), removes the per-Pier safety rows, and leaves
+    every other device category on its Pier."""
+    import importlib
+    import sqlite3
+
+    migration = importlib.import_module("galileo.library.migrations.029_scope_safety_devices_to_observatory")
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        "CREATE TABLE observatories (id INTEGER PRIMARY KEY, name TEXT);"
+        "CREATE TABLE piers (id INTEGER PRIMARY KEY, observatory_id INTEGER, name TEXT);"
+        "CREATE TABLE device_configs (id INTEGER PRIMARY KEY, pier_id INTEGER, category TEXT, slot TEXT,"
+        " driver TEXT, server TEXT, port INTEGER, device_name TEXT);"
+        "CREATE TABLE weather_safety_rules (id INTEGER PRIMARY KEY, pier_id INTEGER, slot TEXT, parameter TEXT,"
+        " label TEXT, unit TEXT, safety_related INTEGER, operator TEXT, threshold REAL);"
+        "INSERT INTO observatories VALUES (1, 'Home'), (2, 'Remote');"
+        "INSERT INTO piers VALUES (10, 1, 'North'), (11, 1, 'South'), (20, 2, 'Only');"
+        "INSERT INTO device_configs VALUES"
+        " (1, 11, 'weather', 'primary', 'Alpaca', 'south-wx', 11111, 'South Station'),"
+        " (2, 10, 'weather', 'primary', 'INDI', 'north-wx', 7624, 'North Station'),"
+        " (3, 10, 'safety_monitor', 'safety_monitor_2', 'Alpaca', 'roof', 11111, 'Roof'),"
+        " (4, 20, 'weather', 'primary', 'INDI', 'remote-wx', 7624, 'Remote Station'),"
+        " (5, 10, 'camera', 'primary', 'INDI', 'cam', 7624, 'ZWO');"
+        "INSERT INTO weather_safety_rules VALUES"
+        " (1, 11, 'primary', 'rain', 'Rain', 'bool', 0, '>', 0.0),"
+        " (2, 10, 'primary', 'rain', 'Rain', 'bool', 1, '>', 0.0),"
+        " (3, 20, 'primary', 'wind_speed', 'Wind', 'km/h', 1, '>=', 20.0);"
+    )
+
+    class _SqlMigrator:
+        def sql(self, statement):
+            conn.execute(statement)
+
+    migration.migrate(_SqlMigrator(), None)
+
+    rows = conn.execute(
+        "SELECT observatory_id, category, slot, device_name FROM safety_device_configs ORDER BY 1, 2, 3").fetchall()
+    assert rows == [(1, "safety_monitor", "safety_monitor_2", "Roof"), (1, "weather", "primary", "North Station"),
+                    (2, "weather", "primary", "Remote Station")]
+    rules = conn.execute(
+        "SELECT observatory_id, parameter, safety_related FROM observatory_safety_rules ORDER BY 1, 2").fetchall()
+    assert rules == [(1, "rain", 1), (2, "wind_speed", 1)]                 # North's rule beat South's
+    assert conn.execute("SELECT category FROM device_configs").fetchall() == [("camera",)]
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name = 'weather_safety_rules'").fetchall() == []
+
+    migration.rollback(_SqlMigrator(), None)
+    assert conn.execute("SELECT COUNT(*) FROM weather_safety_rules").fetchone()[0] == 3     # 2 piers + 1 pier
+    assert conn.execute("SELECT COUNT(*) FROM device_configs WHERE category = 'weather'").fetchone()[0] == 3

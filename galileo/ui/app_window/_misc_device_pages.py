@@ -33,7 +33,8 @@ class AppWindowMiscDevicePagesMixin:
             "reload": page.reload, "autoconnect": page.autoconnect,
             "disconnect": page.disconnect_from_phd2,
             "get_service": page._service,     # this Pier's GuidingService, for session execution
-            "connected": lambda: (svc := page._service()) is not None and svc.is_connected,
+            "service_for": page._services.get,    # any Pier's, by its database id
+            "connected": lambda: (page._service() is not None and page._service().is_connected),
         }
         page.reload()
         return page
@@ -62,13 +63,16 @@ class AppWindowMiscDevicePagesMixin:
             # re-reads the Safety page on every check, so connecting/disconnecting a device
             # needs no re-registration.
             from galileo.safety import LiveSafetyMonitor
+            # Safety devices belong to the Observatory (OBS-030), so every Pier's queue is gated
+            # on the same verdict.
             scheduler.set_safety_monitor(LiveSafetyMonitor(self._safety_evaluation))
             self._schedulers[key] = scheduler
         return self._schedulers[key]
 
     def _safety_evaluation(self: AppWindowState) -> tuple[bool, bool, list[str]]:
-        """``(any safety device connected, safe, reasons)`` for the active Pier, from the
-        Equipment > Safety page; ``(False, True, [])`` while that page or its devices don't exist."""
+        """``(any safety device connected, safe, reasons)`` for the current Observatory — shared
+        by all its Piers — from the Equipment > Safety page; ``(False, True, [])`` while that page
+        or its devices don't exist."""
         evaluate = (getattr(self, "_device_pages", {}).get("weather") or {}).get("evaluate")
         if evaluate is None:
             return False, True, []

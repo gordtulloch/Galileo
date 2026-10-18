@@ -130,17 +130,18 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 |---|---|---|---|---|
 | `OBS-010` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-010` |
 | `OBS-020` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-020` |
-| `OBS-030` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-030` |
+| `OBS-030` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` (`_weather_page.py`) | Test | `TC-OBS-030` |
 | `OBS-040` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-040` |
 | `OBS-050` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-050` |
 | `OBS-060` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-060` |
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
 | `OBS-080` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-080` |
 | `OBS-090` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-090` |
-| `OBS-100` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-100` |
-| `OBS-110` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-110` |
-| `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-120` |
-| `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-130` |
+| `OBS-100` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-100` |
+| `OBS-110` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-110` |
+| `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-120` |
+| `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-130` |
+| `OBS-140` | P2 | SDD 4.4b `galileo.ui.app_window`; SDD 4.9b `galileo.scheduler` (`galileo.ui.session_runner`) | Test | `TC-OBS-140` |
 
 ### `IMG` — Imaging Tab
 
@@ -476,6 +477,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-150` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-150` |
 | `LIB-160` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-160` |
 | `LIB-170` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-170` |
+| `LIB-180` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-180` |
+| `LIB-190` | P3 | SDD 4.23 `galileo.library` | Test | `TC-LIB-190` |
 
 ### `VST` / `VST-AN` — Moved
 
@@ -582,7 +585,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `PLUG` | 8 | 7 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
-| `LIB` | 16 | 10 | 5 | 1 |
+| `LIB` | 18 | 11 | 5 | 2 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
@@ -592,4 +595,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **285** | **169** | **101** | **15** |
+| **Total** | **287** | **170** | **101** | **16** |

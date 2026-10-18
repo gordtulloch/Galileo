@@ -31,7 +31,7 @@ Connects to the selected **Device**. The button only affects this device; the **
 
 ## Disconnect
 
-Closes the connection to this device. The top-bar button disconnects every device on the current Pier.
+Closes the connection to this device. The top-bar button disconnects every device on the current Pier (but not the Observatory's safety devices, which have their own Disconnect on the Safety page).
 
 ## Remove
 

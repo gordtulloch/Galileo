@@ -15,6 +15,26 @@ from ..types import FilePath
 logger = logging.getLogger(__name__)
 
 
+def fits_image_data(hdul):
+    """Return ``(data, header)`` for the first HDU with 2-D+ image data.
+
+    Handles plain, multi-extension and tile-compressed FITS. Galileo's own compressed files have an
+    empty primary HDU with the image in a ``CompImageHDU``, so reading ``hdul[0].data`` would find
+    nothing; astropy decompresses a tile-compressed HDU transparently when ``.data`` is read.
+
+    Returns ``(None, hdul[0].header)`` if there is no image HDU.
+    """
+    for hdu in hdul:
+        try:
+            data = hdu.data
+        except Exception:  # an HDU whose data cannot be read is not a candidate
+            logger.debug("HDU has unreadable data", exc_info=True)
+            continue
+        if data is not None and getattr(data, "ndim", 0) >= 2:
+            return data, hdu.header
+    return None, hdul[0].header
+
+
 def normalize_file_path(file_path: FilePath | None) -> str | None:
     """
     Normalize file paths to use forward slashes consistently.
@@ -68,6 +88,60 @@ def sanitize_filesystem_name(name: str | Any | None) -> str:
         sanitized = "Unknown"
 
     return sanitized
+
+
+def normalize_image_type(image_type: str | Any | None) -> str:
+    """Upper-case alphanumerics only, so ``"Flat Dark"``, ``"FLAT-DARK"`` and ``"flatdark"`` compare equal."""
+    if image_type is None:
+        return ""
+    return "".join(ch for ch in str(image_type).upper() if ch.isalnum())
+
+
+def is_flat_dark_image_type(image_type: str | Any | None) -> bool:
+    """True when the image type is a flat-dark (dark-flat) frame."""
+    normalized = normalize_image_type(image_type)
+    return "FLATDARK" in normalized or "DARKFLAT" in normalized
+
+
+def is_dark_image_type(image_type: str | Any | None) -> bool:
+    """True for regular dark frames, excluding flat-darks."""
+    normalized = normalize_image_type(image_type)
+    return "DARK" in normalized and not is_flat_dark_image_type(normalized)
+
+
+def is_flat_image_type(image_type: str | Any | None) -> bool:
+    """True for regular flat frames, excluding flat-darks."""
+    normalized = normalize_image_type(image_type)
+    return "FLAT" in normalized and not is_flat_dark_image_type(normalized)
+
+
+def exposures_match(
+    exposure_a: str | float | int | None,
+    exposure_b: str | float | int | None,
+    tolerance: float = 1e-3,
+) -> bool:
+    """Compare exposure values numerically with a small tolerance."""
+    try:
+        if exposure_a is None or exposure_b is None:
+            return exposure_a == exposure_b
+        return abs(float(exposure_a) - float(exposure_b)) <= tolerance
+    except (TypeError, ValueError):
+        return str(exposure_a) == str(exposure_b)
+
+
+def session_to_calibration_criteria(session: Any) -> dict[str, Any]:
+    """Master-matching criteria from a session-like object."""
+    return {
+        "telescope": getattr(session, "fitsSessionTelescope", None),
+        "instrument": getattr(session, "fitsSessionImager", None),
+        "exposure_time": getattr(session, "fitsSessionExposure", None),
+        "filter_name": getattr(session, "fitsSessionFilter", None),
+        "binning_x": getattr(session, "fitsSessionBinningX", None),
+        "binning_y": getattr(session, "fitsSessionBinningY", None),
+        "ccd_temp": getattr(session, "fitsSessionCCDTemp", None),
+        "gain": getattr(session, "fitsSessionGain", None),
+        "offset": getattr(session, "fitsSessionOffset", None),
+    }
 
 
 def _utc_fits_timestamp() -> str:
@@ -243,10 +317,11 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
         Modified header object or False if error
     """
     try:
-        # Check if this is a DWARF telescope file
+        # Any DWARF variant (DWARF, DWARF3, DWARF MINI, ...). An empty TELESCOP is allowed: the
+        # caller may have recognised the card from its folder structure.
         telescop_value = hdr.get("TELESCOP", "")
-        if not telescop_value or telescop_value.upper() != "DWARF":
-            logger.warning(f"dwarfFixHeader called for non-DWARF file: {file}")
+        if telescop_value and not telescop_value.upper().startswith("DWARF"):
+            logger.warning(f"dwarfFixHeader called for non-DWARF file (TELESCOP={telescop_value!r}): {file}")
             return False
 
         # Skip failed images

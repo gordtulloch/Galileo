@@ -12,6 +12,8 @@ name: Code quality and tests
 # tests (BLOCKING)
 #   the pytest suite that release.yml runs on tags, including the regression tests added for the review
 #   (TC-LIB-010 DatabaseError, TC-LIB-060 session calibration, TC-LIB-090 checkout/context menu, TC-LIB-100 merge)
+# tests-newest-python (informational)
+#   the same suite on the newest Python, to catch deprecations early; requires-python stays >=3.11 (Pi OS Bookworm)
 on:
   push:
     branches: [main]
@@ -88,6 +90,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
       - name: Test suite (no soak, hardware, external-service or machine-speed perf tests)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -m "not soak and not hardware and not integration and not perf" -v --timeout=120 --timeout-method=thread --durations=15
+
+  # Early warning only: never blocks. `sep` has no wheel for 3.14+ yet, so the install may need to build it from
+  # source or fail outright; that is expected until sep publishes wheels. Bump python-version to 3.15 once its
+  # dependencies (sep, lz4) have wheels.
+  tests-newest-python:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Qt runtime libraries
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo -E apt-get -o Acquire::Retries=3 update
+          sudo -E apt-get -o Acquire::Retries=3 install -y --no-install-recommends libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libdbus-1-3
+      - name: Install Galileo with test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Test suite (informational)
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest -m "not soak and not hardware and not integration and not perf" -v --timeout=120 --timeout-method=thread --durations=15

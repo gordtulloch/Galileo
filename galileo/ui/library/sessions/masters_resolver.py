@@ -4,6 +4,8 @@ import os
 from collections.abc import Iterable
 
 from galileo.library.core.master_manager import get_master_manager
+from galileo.library.core.utils import session_to_calibration_criteria
+from galileo.library.models import fitsSession as FitsSessionModel
 
 
 def find_matching_masters_for_light_session(session, light_files: Iterable) -> list[tuple[str, str]]:
@@ -53,6 +55,21 @@ def find_matching_masters_for_light_session(session, light_files: Iterable) -> l
         master_flat = master_manager.find_matching_master(flat_session_data, 'flat')
         if master_flat and os.path.exists(master_flat.master_path):
             master_files.append(('flat', master_flat.master_path))
+
+    # The flat's flat-dark: flat session -> its linked flat-dark session -> that session's master
+    flat_session_id = getattr(session, 'fitsFlatSession', None)
+    if flat_session_id:
+        try:
+            flat_session = FitsSessionModel.get(FitsSessionModel.fitsSessionId == flat_session_id)
+            flat_dark_session_id = getattr(flat_session, 'fitsDarkSession', None)
+            if flat_dark_session_id:
+                flat_dark_session = FitsSessionModel.get(FitsSessionModel.fitsSessionId == flat_dark_session_id)
+                master_flat_dark = master_manager.find_matching_master(
+                    session_to_calibration_criteria(flat_dark_session), 'flatdark')
+                if master_flat_dark and os.path.exists(master_flat_dark.master_path):
+                    master_files.append(('flatdark', master_flat_dark.master_path))
+        except FitsSessionModel.DoesNotExist:
+            pass
 
     # De-dupe by path while preserving order (prevents double-counting the same master).
     seen: set[str] = set()

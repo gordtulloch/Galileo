@@ -356,6 +356,19 @@ class ConfigWidget(QWidget):
 
         layout.addWidget(itelescope_group)
 
+        # Celestron Origin settings group
+        celestron_group = QGroupBox("Celestron Origin Configuration")
+        celestron_layout = QFormLayout(celestron_group)
+        self.celestron_hostname = QLineEdit()
+        self.celestron_hostname.setPlaceholderText("Telescope IP address (e.g., 192.168.1.208)")
+        self.celestron_hostname.setToolTip(
+            "IP address or hostname of your Celestron Origin.\n\n"
+            "Download uses it to connect over FTP and fetch the raw FITS files from the\n"
+            "telescope's RawData folder. Leave blank to use the Origin's hotspot address (192.168.1.208)."
+        )
+        celestron_layout.addRow("Hostname/IP:", self.celestron_hostname)
+        layout.addWidget(celestron_group)
+
         # SFTP server settings group (EXT-120, LIB-170) - the host is entered in the Download dialog
         sftp_group = QGroupBox("SFTP Server")
         sftp_layout = QFormLayout(sftp_group)
@@ -445,6 +458,9 @@ class ConfigWidget(QWidget):
             if config.has_option('DEFAULT', 'itelescope_password'):
                 config.remove_option('DEFAULT', 'itelescope_password')
             set_itelescope_password(self.itelescope_password.text().strip())
+
+            # Celestron Origin settings
+            config.set('DEFAULT', 'celestron_hostname', self.celestron_hostname.text().strip())
             config.set('DEFAULT', 'itelescope_verify_tls', str(self.itelescope_verify_tls.isChecked()))
 
             # SFTP server settings (EXT-120) - likewise, the password goes to the keychain
@@ -497,19 +513,118 @@ class ConfigWidget(QWidget):
         try:
             config = load_library_config()
 
-            for attr, key in self._TEXT_SETTINGS:
-                if config.has_option('DEFAULT', key):
-                    getattr(self, attr).setText(config.get('DEFAULT', key))
-            for attr, key in self._FLAG_SETTINGS:
-                if config.has_option('DEFAULT', key):
-                    getattr(self, attr).setChecked(_is_on(config.get('DEFAULT', key)))
-            for attr, key, default in self._NUMBER_SETTINGS:
-                if config.has_option('DEFAULT', key):
-                    getattr(self, attr).setValue(config.getint('DEFAULT', key, fallback=default))
+            # Load path settings
+            if config.has_option('DEFAULT', 'source'):
+                self.source_path.setText(config.get('DEFAULT', 'source'))
 
-            self._load_suppress_delete_warnings(config)
-            self._load_cloud_settings(config)
-            self._load_itelescope_and_sftp_settings(config)
+            if config.has_option('DEFAULT', 'repo'):
+                self.repo_path.setText(config.get('DEFAULT', 'repo'))
+
+            if config.has_option('DEFAULT', 'temp_folder'):
+                self.temp_path.setText(config.get('DEFAULT', 'temp_folder'))
+
+            # Load additional settings with defaults
+            if config.has_option('DEFAULT', 'refresh_on_startup'):
+                refresh_value = config.getboolean('DEFAULT', 'refresh_on_startup')
+                self.refresh_on_startup.setChecked(refresh_value)
+
+            if config.has_option('DEFAULT', 'save_modified_headers'):
+                save_headers_value = config.getboolean('DEFAULT', 'save_modified_headers')
+                self.save_modified_headers.setChecked(save_headers_value)
+
+            if config.has_option('DEFAULT', 'fits_viewer_path'):
+                fits_viewer_path = config.get('DEFAULT', 'fits_viewer_path')
+                self.fits_viewer_path.setText(fits_viewer_path)
+
+            if config.has_option('DEFAULT', 'suppress_delete_warnings'):
+                suppress_value_str = config.get('DEFAULT', 'suppress_delete_warnings')
+                logger.debug(f"Raw suppress_delete_warnings value from INI: '{suppress_value_str}'")
+
+                # Convert to boolean
+                if isinstance(suppress_value_str, str):
+                    suppress_value = suppress_value_str.lower() in ('true', '1', 'yes', 'on')
+                else:
+                    suppress_value = bool(suppress_value_str)
+
+                logger.debug(f"Converted suppress_delete_warnings value: {suppress_value}")
+
+                if hasattr(self, 'suppress_delete_warnings'):
+                    self.suppress_delete_warnings.setChecked(suppress_value)
+                    logger.debug(f"Checkbox set to: {self.suppress_delete_warnings.isChecked()}")
+            else:
+                logger.debug("suppress_delete_warnings not found in INI file, setting to False")
+                if hasattr(self, 'suppress_delete_warnings'):
+                    self.suppress_delete_warnings.setChecked(False)
+
+            # Load cloud sync settings
+            if config.has_option('DEFAULT', 'cloud_vendor'):
+                cloud_vendor = config.get('DEFAULT', 'cloud_vendor')
+                index = self.cloud_vendor.findText(cloud_vendor)
+                if index >= 0:
+                    self.cloud_vendor.setCurrentIndex(index)
+
+            if config.has_option('DEFAULT', 'bucket_url'):
+                bucket_url = config.get('DEFAULT', 'bucket_url')
+                self.bucket_url.setText(bucket_url)
+
+            if config.has_option('DEFAULT', 'auth_file_path'):
+                auth_file_path = config.get('DEFAULT', 'auth_file_path')
+                self.auth_file_path.setText(auth_file_path)
+
+            if config.has_option('DEFAULT', 'sync_profile'):
+                sync_profile = config.get('DEFAULT', 'sync_profile')
+                # Find the index by data value
+                for i in range(self.sync_profile.count()):
+                    if self.sync_profile.itemData(i) == sync_profile:
+                        self.sync_profile.setCurrentIndex(i)
+                        break
+
+            if config.has_option('DEFAULT', 'auto_cleanup_backed_files'):
+                auto_cleanup_str = config.get('DEFAULT', 'auto_cleanup_backed_files')
+                # Convert to boolean
+                if isinstance(auto_cleanup_str, str):
+                    auto_cleanup_value = auto_cleanup_str.lower() in ('true', '1', 'yes', 'on')
+                else:
+                    auto_cleanup_value = bool(auto_cleanup_str)
+                self.auto_cleanup_backed_files.setChecked(auto_cleanup_value)
+
+            # Load auto-calibration settings
+            if config.has_option('DEFAULT', 'min_files_per_master'):
+                min_files = config.getint('DEFAULT', 'min_files_per_master', fallback=3)
+                self.min_files_per_master.setValue(min_files)
+
+            if config.has_option('DEFAULT', 'auto_calibration_progress'):
+                progress_str = config.get('DEFAULT', 'auto_calibration_progress')
+                progress_value = progress_str.lower() in ('true', '1', 'yes', 'on')
+                self.auto_calibration_progress.setChecked(progress_value)
+
+            # Load iTelescope settings
+            if config.has_option('DEFAULT', 'itelescope_username'):
+                itelescope_username = config.get('DEFAULT', 'itelescope_username')
+                self.itelescope_username.setText(itelescope_username)
+
+            self.itelescope_password.setText(get_itelescope_password())
+
+            # Load Celestron Origin settings
+            self.celestron_hostname.setText(config.get('DEFAULT', 'celestron_hostname', fallback=''))
+            self.itelescope_verify_tls.setChecked(
+                config.get('DEFAULT', 'itelescope_verify_tls', fallback='True').strip().lower() in ('true', '1', 'yes', 'on'))
+
+            # Load SFTP settings
+            self.sftp_username.setText(config.get('DEFAULT', 'sftp_username', fallback=''))
+            self.sftp_key_path.setText(config.get('DEFAULT', 'sftp_key_path', fallback=''))
+            self.sftp_remote_path.setText(config.get('DEFAULT', 'sftp_remote_path', fallback='/'))
+            port_text = config.get('DEFAULT', 'sftp_port', fallback='22').strip()
+            self.sftp_port.setValue(int(port_text) if port_text.isdigit() else 22)
+            self.sftp_strict_host_keys.setChecked(
+                config.get('DEFAULT', 'sftp_strict_host_keys', fallback='False').strip().lower() in ('true', '1', 'yes', 'on'))
+            self.sftp_password.setText(get_sftp_password())
+
+            # Load FITS compression settings
+            if config.has_option('DEFAULT', 'compress_fits'):
+                compress_fits_str = config.get('DEFAULT', 'compress_fits')
+                compress_fits_value = compress_fits_str.lower() in ('true', '1', 'yes', 'on')
+                self.compress_fits.setChecked(compress_fits_value)
 
             if config.has_option('DEFAULT', 'compression_algorithm'):
                 compression_algorithm = config.get('DEFAULT', 'compression_algorithm', fallback='fits_gzip2')
@@ -585,6 +700,7 @@ class ConfigWidget(QWidget):
         # iTelescope defaults
         self.itelescope_username.setText("")
         self.itelescope_password.setText("")
+        self.celestron_hostname.setText("")
         self.itelescope_verify_tls.setChecked(True)
 
         # SFTP defaults

@@ -62,13 +62,16 @@ def collect_dashboard(
     runs: dict | None = None,
     schedulers: dict | None = None,
     queue_loader: Callable[[str], Any] = queue_from_database,
+    is_connected: Callable[[Any], bool] | None = None,
 ) -> list[dict]:
     """Build the dashboard rows for *pier_records* via ``Observatory.get_dashboard`` (OBS-060).
 
     *runs* is ``{pier_key: (state, session name)}`` from the session controller; *schedulers*
     maps a Pier name to its in-memory scheduler (others are read from the database with
-    *queue_loader*). Only the selected Pier's devices are connected at a time, so every
-    other Pier reports its equipment as disconnected. Each row gains ``selected``."""
+    *queue_loader*). A Pier's equipment is *connected* when it is the selected Pier and
+    *selected_connected*, or when *is_connected* says that Pier has a live device (the Equipment
+    pages keep each Pier's connections across a Pier switch, OBS-140); without *is_connected*
+    every other Pier reports disconnected. Each row gains ``selected``."""
     from galileo.current_object import pier_key
     from galileo.observatory import Observatory, Pier
 
@@ -79,7 +82,7 @@ def collect_dashboard(
         pier = Pier(record.name)
         key = pier_key(record)
         keys[record.name] = key
-        if key == selected_key and selected_connected:
+        if (key == selected_key and selected_connected) or (is_connected is not None and is_connected(record)):
             pier.device_pool = SimpleNamespace()          # truthy: live devices
         if key in runs:
             pier.sequence_runner = SimpleNamespace(state=runs[key][0])
@@ -182,6 +185,7 @@ class DashboardPage(QWidget):
             "selected_connected": connected,
             "runs": controller.run_snapshot() if controller is not None else {},
             "schedulers": dict(getattr(app, "_schedulers", {}) or {}),
+            "is_connected": getattr(app, "_pier_has_connected_devices", None),
         }
         self._busy = True
         threading.Thread(target=self._collect, args=(observatory, args), daemon=True,

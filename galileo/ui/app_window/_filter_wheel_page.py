@@ -416,6 +416,7 @@ class AppWindowFilterWheelPageMixin:
         state["autoconnect"] = autoconnect_page
         state["disconnect"] = disconnect_page
         state["connected"] = lambda: state.get("adapter") is not None
+        state["adapter_for"] = adapters_by_pier.get      # any Pier's wheel, by pier_key (multi-Pier sessions)
         self._device_pages["filter_wheel"] = state
         reload_page()
         if self._startup_autoconnect_allowed():

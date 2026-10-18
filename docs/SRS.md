@@ -183,13 +183,13 @@ Refined against the KStars/EKOS "Optical Trains" model (Project Scope Document, 
 
 ### 4.3a `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
-A single Galileo instance manages multiple independent Piers (`PROF`), deliberately going beyond EKOS's own single-mount-per-application-instance model. Unlike `DOME`/`SAFE` (which may be Pier- or Observatory-scoped, `OBS-030`/`OBS-050`), guiding is never Observatory-scoped — see `GUIDE-060`.
+A single Galileo instance manages multiple independent Piers (`PROF`), deliberately going beyond EKOS's own single-mount-per-application-instance model. Unlike `DOME` (which may be Pier- or Observatory-scoped, `OBS-050`) and `SAFE` (always Observatory-scoped, `OBS-030`), guiding is never Observatory-scoped — see `GUIDE-060`.
 
 | ID | Requirement | Priority |
 |---|---|---|
 | OBS-010 | The system shall allow multiple Piers to be grouped into a named Observatory. | P2 |
 | OBS-020 | The system shall allow independent sequences and scheduler jobs to run concurrently across different Piers within an Observatory, each targeting a different object. | P2 |
-| OBS-030 | The system shall allow a safety-monitor/weather source to be scoped at the Observatory level (shared across all member Piers) or at the Pier level (independent), configurable per Observatory. | P2 |
+| OBS-030 | The system shall scope safety devices — weather stations and safety monitors — and their per-reading safety rules at the Observatory level: they are configured, saved and connected once per Observatory and shared by every member Pier, never per Pier (one station watches the sky over the whole enclosure). Selecting another Pier of the Observatory neither reloads nor disconnects them, and a Pier's own Connect/Disconnect leaves them alone. | P2 |
 | OBS-040 | When an Observatory-scoped safety-monitor reports an unsafe condition, the system shall pause or abort active sequences and park equipment across every Pier in that Observatory (traces to `SAFE-010`), not just the Pier that detected it. | P2 |
 | OBS-050 | The system shall allow a dome/roof to be scoped at the Observatory level (one shared roof covering multiple piers) or at the Pier level (independent domes), configurable per Observatory. | P2 |
 | OBS-060 | The system shall present a multi-Pier status dashboard (equipment/sequence/scheduler state for every Pier in an Observatory at a glance), in addition to a focused single-Pier view. | P2 |
@@ -200,6 +200,7 @@ A single Galileo instance manages multiple independent Piers (`PROF`), deliberat
 | OBS-110 | A requester may queue for a contended shared resource for a bounded wait; the request is granted when the blocking Pier releases its work, or denied when the wait expires. A denied session block is skipped and logged, not fatal. | P2 |
 | OBS-120 | Every arbitration outcome (granted, denied with the blocking Pier(s), released) shall be published on the event bus rather than by direct calls between Piers (traces to `ARCH-060`). | P2 |
 | OBS-130 | Priority rules: a safety-driven action (unsafe conditions, `OBS-040`) carries emergency priority and overrides other Piers' imaging; all other requests have equal priority. | P2 |
+| OBS-140 | Scheduled sessions shall start on every Pier of the Observatory whose equipment is connected, not only the Pier selected in the top bar: each Pier's session is run against that Pier's own devices, all gated on the Observatory's safety devices and rules (`OBS-030`, `SCHED-060`) — readings older than the poll interval are re-read first, and a connected device that cannot be read counts as unsafe — while a Pier with nothing connected waits without holding the others, and the Dashboard (`OBS-060`) reports each Pier's own connection state. | P2 |
 
 ### 4.4 `IMG` — Imaging Tab
 
@@ -426,7 +427,7 @@ Multi-night/multi-target job scheduling, distinct from `SES`'s single-session ex
 
 ### 4.13 `GUIDE` — Guiding Integration
 
-Guiding is always Pier-scoped, never Observatory-scoped (contrast `DOME`/`SAFE`, which may be shared per `OBS-030`/`OBS-050`): expecting one guiding application to guide multiple independent mounts is not a reasonable requirement, so a multi-Pier Observatory runs one independent external-guider connection per Pier.
+Guiding is always Pier-scoped, never Observatory-scoped (contrast `SAFE`, always Observatory-scoped per `OBS-030`, and `DOME`, which may be shared per `OBS-050`): expecting one guiding application to guide multiple independent mounts is not a reasonable requirement, so a multi-Pier Observatory runs one independent external-guider connection per Pier.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -452,7 +453,7 @@ Within a multi-Pier Observatory, a dome may be Pier-scoped (independent) or Obse
 
 ### 4.15 `SAFE` — Safety & Weather Monitoring
 
-Within a multi-Pier Observatory, a safety-monitor may be Pier-scoped (independent) or Observatory-scoped (shared, triggering all member Piers per `OBS-040`) per `OBS-030`.
+Within a multi-Pier Observatory, safety devices are Observatory-scoped (shared, triggering all member Piers per `OBS-040`) per `OBS-030`.
 
 **Device tiers (reinforces `ARCH-010`: every safety-monitor input reaches Galileo through the device-abstraction layer, never a bespoke ad-hoc path).** Every safety-monitor input — hardware or software-computed — connects as a standard Safety Monitor device through the ordinary device-abstraction layer (`ARCH-010`): either a real external driver reached via `EXT-020` (INDI or Alpaca), or an in-process device backend a plugin registers through `PLUG-010` — the identical extension point every other device category already uses (traces to `ARCH-070`). There is no third, bespoke path that skips the port interface. Two tiers, distinguished by what's behind the reading, not by how Galileo talks to it:
 - **Tier 1** — a hardware sensor with its own INDI/Alpaca driver (e.g. a rain sensor via an existing driver such as `indi-hydreon`).
@@ -578,18 +579,20 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | LIB-020 | The system shall detect duplicate files within the repository via SHA-256 content hashing and allow the user to review and remove duplicates. | MVP |
 | LIB-030 | The system shall automatically rename and organize ingested files into a configurable folder structure derived from FITS metadata (e.g. object, date, filter, session). | MVP |
 | LIB-040 | The system shall automatically group and link related frames into sessions based on matching camera, binning, and temperature, plus acquisition date. | MVP |
-| LIB-050 | The system shall create master bias, dark, and flat calibration frames from a linked calibration session. | MVP |
+| LIB-050 | The system shall create master bias, dark, flat, and flat-dark calibration frames from a linked calibration session. | MVP |
 | LIB-060 | The system shall apply a matching master calibration frame set (dark subtraction, flat division) to a selected group of light frames in one user action. | MVP |
 | LIB-070 | The system shall compute and store per-frame quality metrics (FWHM, HFR, eccentricity, SNR) for ingested frames, supporting later filtering and sorting by quality. | MVP |
 | LIB-090 | The system shall browse and selectively download files from a SEESTAR or StellarMate smart telescope over SMB/CIFS (traces to `EXT-080`), enhancing headers as needed during ingest. | MVP |
 | LIB-100 | The system shall browse and selectively download files from an iTelescope network share over FTPS (traces to `EXT-080`). | P2 |
-| LIB-110 | The system shall browse and selectively download files from a DWARF smart telescope over FTP (traces to `EXT-080`), as an experimental capability. | P3 |
+| LIB-110 | The system shall browse and selectively download files from a DWARF smart telescope over FTP (traces to `EXT-080`), as an experimental capability; this covers every DWARF variant (DWARF 3, DWARF Mini, ...). | P3 |
 | LIB-120 | The system shall synchronize repository contents bidirectionally with Google Cloud Storage (traces to `EXT-090`), using content-hash comparison to avoid redundant transfer, with at least "complete," "backup only," and "on demand" sync profiles. | P2 |
 | LIB-130 | The system shall expose repository scanning (`LIB-010`), calibration-frame creation/application (`LIB-050`/`LIB-060`), and cloud sync (`LIB-120`) as command-line-invocable operations, independent of the GUI, for scheduled/automated execution — matching AstroFiler's own `LoadRepo`/`Calibrate`/`CloudSync` command-line utilities (Project Scope Document, Section 6.2), which this requirement generalizes (traces to `EXT-140`). | P2 |
 | LIB-140 | The system shall verify file integrity via stored content hashes on demand, flagging any repository file whose content no longer matches its recorded hash. | P2 |
 | LIB-150 | The system shall automatically register each frame into the repository catalog as it is written to disk during a running session (`SES`), rather than requiring a separate manual or scheduled scan (`LIB-010`) to discover it. | MVP |
 | LIB-160 | The system shall automatically create a session container grouping every frame acquired during one session-block execution, distinct from `LIB-040`'s post-hoc heuristic (camera/binning/temperature/date) grouping of files already in the repository — a session-block container is authoritative because it comes directly from `SES` execution, not inferred from file metadata. | MVP |
 | LIB-170 | The system shall browse and selectively download files from an SFTP server (traces to `EXT-120`): every FITS file under a configured remote folder, authenticating with the configured account and a key file or password (kept in the OS keychain, not `library.ini`), with a host-key policy that either logs or refuses unknown servers, from the Download dialog and the `galileo-download` command. This is the Library's only SFTP capability; plugins do not carry their own. | P2 |
+| LIB-180 | The system shall treat flat-darks (dark frames taken at a flat's exposure, whatever the `IMAGETYP` spelling: "Flat Dark", "FLATDARK", "Dark Flat") as a calibration type of their own, distinct from darks and flats: filed under `Calibrate/FLATDARK`, grouped into their own sessions, linked to the flat session they match, stacked into a master flat-dark, and — when a light's flat has one — subtracted (less the bias) from that flat before it is normalised. Dark sessions (and flat-dark sessions) link to a target only when exposure matches numerically and CCD temperature is within 5 degrees. | MVP |
+| LIB-190 | The system shall browse and selectively download raw FITS files from a Celestron Origin smart telescope over anonymous FTP (traces to `EXT-080`), addressed by IP address or an `origin`/`celestron` hostname, scanning its `RawData` folder. | P3 |
 
 ### 4.23 `VST` / `VST-AN` — Moved
 

@@ -42,26 +42,36 @@ class AppWindowImagingSupportMixin:
         return (f"{name} is selected but not connected. Connect it on Equipment > Camera, or pick "
                 "another camera in the Camera selector at the top of the window.")
 
-    def _imaging_frame_context(self: AppWindowState) -> dict:
+    def _imaging_frame_context(self: AppWindowState, pier=None) -> dict:
         """What the Imaging page knows about the rig, as FITS header values for
         ``ImagingService.frame_context`` (IMG-150): telescope and camera, optics, the site, where the
         mount is pointing and what it is aiming at, and the focuser position. Whatever can't be found
-        is left out; nothing here may stop a capture."""
+        is left out; nothing here may stop a capture.
+
+        *pier* defaults to the selected Pier. For any other Pier (a scheduled session running on
+        a Pier that is not on screen, OBS-140) its own devices are used, with its primary camera
+        and first optical tube since the top-bar selectors only describe the selected Pier."""
         import asyncio
+        from galileo.current_object import get_current_objects, pier_key
         from galileo.ui.imaging import format_dec_dms, format_ra_hms
 
+        selected = self._current_pier
+        pier = selected if pier is None else pier
+        key = pier_key(pier)
+        is_selected = key == pier_key(selected)
+        camera_slot = self._active_camera_slot if is_selected else "primary"
+
         context: dict = {}
-        tube = self.active_optical_tube()
+        tube = self.active_optical_tube(pier)
         if tube is not None:
             context.update(telescope=tube.name, focal_length_mm=tube.focal_length_mm or None,
                            aperture_mm=tube.aperture_mm or None)
-        camera_backend = self._camera_backends.get(_camera_backend_key_for_slot(self._active_camera_slot))
-        pier = self._current_pier
+        camera_backend = self._camera_backends_by_pier.get(key, {}).get(_camera_backend_key_for_slot(camera_slot))
         camera_cfg = None
         if pier is not None:
             from galileo.observatory import get_device_config
             try:
-                camera_cfg = get_device_config(pier, "camera", slot=self._active_camera_slot)
+                camera_cfg = get_device_config(pier, "camera", slot=camera_slot)
             except Exception:
                 logger.exception("Could not load the camera's configuration for the FITS header")
         if camera_cfg is not None:
@@ -80,7 +90,8 @@ class AppWindowImagingSupportMixin:
                 logger.exception("Could not read the Observatory for the FITS header")
 
         pointing = None
-        mount = (self._device_pages.get("mount") or {}).get("adapter")
+        mount_page = self._device_pages.get("mount") or {}
+        mount = mount_page.get("adapter") if is_selected else (mount_page.get("adapter_for") or (lambda _k: None))(key)
         if mount is not None:
             try:
                 status = asyncio.run(mount.get_status()) or {}
@@ -95,14 +106,16 @@ class AppWindowImagingSupportMixin:
                 logger.warning("Could not read the mount's position for the FITS header", exc_info=True)
         context.update(site_lat_deg=site_lat, site_long_deg=site_long)
 
-        target = self.current_object()
+        target = get_current_objects().get(pier)
         if target is not None:
             context.update(objctra=format_ra_hms(target.ra_deg), objctdec=format_dec_dms(target.dec_deg))
         aim = pointing or ((target.ra_deg, target.dec_deg) if target is not None else None)
         if aim is not None:
             context.update(ra_deg=aim[0], dec_deg=aim[1])
 
-        focuser = ((self._device_pages.get("focuser") or {}).get("get_adapter") or (lambda: None))()
+        focuser_page = self._device_pages.get("focuser") or {}
+        focuser = (focuser_page.get("get_adapter") or (lambda: None))() if is_selected else (
+            focuser_page.get("adapter_for") or (lambda _k: None))(key)
         position = getattr(focuser, "position", None)
         if isinstance(position, int) and position > 0:
             context["focus_position"] = position

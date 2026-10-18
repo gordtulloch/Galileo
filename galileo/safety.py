@@ -236,7 +236,7 @@ class WeatherSafetyRule:
 
 
 def default_weather_safety_rules() -> list[WeatherSafetyRule]:
-    """Starter rules shown on an unconfigured Pier's Weather screen — one row
+    """Starter rules shown on an unconfigured Observatory's Safety screen — one row
     per :data:`WEATHER_PARAMETER_INFO` entry, with only the two measures
     EQP-WX-020 itself gives as examples (Rain, Wind Speed) pre-enabled, at
     conservative astronomy-friendly thresholds. The user is free to enable,
@@ -267,7 +267,7 @@ class WeatherSafetyStatus:
 
 
 def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> WeatherSafetyStatus:
-    """Evaluate *rules* (a Pier's saved weather safety rules) against
+    """Evaluate *rules* (an Observatory's saved weather safety rules) against
     *readings* (``WeatherController.get_readings()``) and return the overall
     verdict plus which rules tripped. Advisory/display-only (EQP-WX-020) —
     the caller must not treat this as an automated-abort trigger; see this
@@ -291,7 +291,7 @@ def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> W
 
 
 class LiveSafetyMonitor:
-    """A Pier's live safety verdict for the scheduler (SCHED-060), backed by a callable
+    """An Observatory's live safety verdict for the scheduler (SCHED-060), backed by a callable
     returning ``(any device connected, safe, reasons)`` — the Equipment > Safety page's
     ``evaluate``. Re-evaluated on every access, so it follows devices connecting and
     disconnecting without being re-registered. With no safety device connected it reports

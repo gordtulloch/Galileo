@@ -36,13 +36,13 @@ class _FlatsDialog(_QDialogBase):
 
 
 class AppWindowFlatsMixin:
-    def _flats_observing_location(self: AppWindowState):
-        """The current Pier's Observatory as a
+    def _flats_observing_location(self: AppWindowState, pier=None):
+        """The Pier's (default: the selected one's) Observatory as a
         ``galileo.planning.visibility.ObservingLocation`` — needed for Sky
         Flats' twilight check and its East-vantage-point slew (CAL-070).
         ``None`` if no Pier is selected or its Observatory has no
         latitude/longitude set yet (Planning > the Observatory's own fields)."""
-        pier = self._current_pier
+        pier = self._current_pier if pier is None else pier
         if pier is None:
             return None
         try:

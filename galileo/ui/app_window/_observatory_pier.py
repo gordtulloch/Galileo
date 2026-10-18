@@ -488,8 +488,23 @@ class AppWindowObservatoryPierMixin:
         """Whether any device registered for the current Pier is currently
         connected — decides whether the top bar shows Connect or Disconnect."""
         for state in self._device_pages.values():
+            if state.get("observatory_scoped"):
+                continue            # the Observatory's safety devices are not this Pier's
             is_connected = state.get("connected")
             if is_connected is not None and is_connected():
+                return True
+        return False
+
+    def _pier_has_connected_devices(self: AppWindowState, pier) -> bool:
+        """Whether *pier* — selected or not — has any live device connection. The Equipment pages
+        keep each Pier's connections when another Pier is selected, so this reads the page's own
+        record for that Pier (``adapter_for``), not the displayed state. Only reads dictionaries,
+        so the Dashboard may call it from its worker thread."""
+        from galileo.current_object import pier_key
+        key = pier_key(pier)
+        for state in list(self._device_pages.values()):
+            adapter_for = state.get("adapter_for")
+            if adapter_for is not None and adapter_for(key) is not None:
                 return True
         return False
 
@@ -507,6 +522,8 @@ class AppWindowObservatoryPierMixin:
         """Top bar Disconnect button: tear down every registered Equipment
         page's live connection for the current Pier."""
         for state in self._device_pages.values():
+            if state.get("observatory_scoped"):
+                continue            # shared with the Observatory's other Piers; has its own Disconnect
             disconnect = state.get("disconnect")
             if disconnect is not None:
                 disconnect()

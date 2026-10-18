@@ -126,6 +126,14 @@ Your iTelescope password, used to sign in over FTPS to download files.
 ## Verify the server's certificate
 When on (the default), Galileo checks that the iTelescope server presents a valid certificate for its name before it sends your password. Turn it off only if connecting fails with a certificate error; the link is then still encrypted but could be intercepted.
 
+## Celestron Origin Configuration
+
+The address of your Celestron Origin smart telescope, used by **Download** on the Images screen.
+
+## Hostname/IP
+
+The Origin's IP address or hostname, for example 192.168.1.208 (its own hotspot address, used when this is blank). Download connects over FTP and fetches the raw FITS files from the telescope's RawData folder.
+
 ## SFTP Server
 
 An SFTP server you download images from (for example a telescope computer or a network drive), also used by **Download**.

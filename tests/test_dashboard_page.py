@@ -66,6 +66,22 @@ def test_tc_obs_060_unreadable_queue_does_not_break_the_dashboard():
     assert rows[0]["scheduler_state"] == "idle"
 
 
+@pytest.mark.requirement("TC-OBS-140")
+@pytest.mark.priority("P2")
+def test_tc_obs_140_dashboard_shows_every_piers_own_connection_state():
+    """OBS-140: a Pier that is not selected but has live devices reads connected, not disconnected."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from galileo.ui.dashboard import collect_dashboard
+
+    records = [_record(1, "North"), _record(2, "South"), _record(3, "East")]
+    rows = collect_dashboard(
+        "Backyard", records, selected_key=1, selected_connected=True,
+        queue_loader=lambda name: SimpleNamespace(jobs=[], active_job=None),
+        is_connected=lambda record: record.id == 2,
+    )
+    assert [r["equipment_state"] for r in rows] == ["connected", "connected", "disconnected"]
+
+
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 from PySide6 import QtCore
 
