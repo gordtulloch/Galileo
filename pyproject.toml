@@ -113,7 +113,7 @@ dependencies = [
     "pysmb>=1.2",             # SMB/CIFS shares on smart telescopes
     "google-cloud-storage>=2.0",  # Google Cloud Storage sync (Library > Cloud)
     # UI
-    "PySide6>=6.5",
+    "PySide6>=6.5,<6.12",     # 6.12.0 frozen on Linux aborts with "none_dealloc" while painting (6.11.2 is fine)
     # Async
     "qasync>=0.27",
 ]
