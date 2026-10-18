@@ -112,8 +112,8 @@ class MappingsWidget(QWidget):
                 values = set()
 
             return sorted(values)
-        except Exception as e:
-            logger.exception(f"Error getting current values for {card}: {e}")
+        except Exception:
+            logger.exception(f"Error getting current values for {card}")
             return [""]
 
     def add_mapping_row(self, card="TELESCOP", current="", replace="", is_default=False):
@@ -260,8 +260,8 @@ class MappingsWidget(QWidget):
             else:
                 logger.info(f"Loaded {mappings_loaded} existing mappings from database")
 
-        except Exception as e:
-            logger.exception(f"Error loading existing mappings: {e}")
+        except Exception:
+            logger.exception("Error loading existing mappings")
             # Add a default mapping row if there was an error
             if not self.mapping_rows:
                 self.add_mapping_row()
@@ -300,7 +300,7 @@ class MappingsWidget(QWidget):
             self.mappings_applied.emit()
 
         except Exception as e:
-            logger.exception(f"Error saving mappings: {e}")
+            logger.exception("Error saving mappings")
             QMessageBox.critical(self, "Error", f"Error saving mappings: {e}")
 
     def update_current_values(self, row_widget):
@@ -461,7 +461,7 @@ class MappingsWidget(QWidget):
                 raise
 
         except Exception as e:
-            logger.exception(f"Error applying single mapping: {e}")
+            logger.exception("Error applying single mapping")
             QMessageBox.critical(self, "Error", f"Error applying mapping: {e}")
 
     @staticmethod
@@ -561,8 +561,8 @@ class MappingsWidget(QWidget):
                 hdul[0].header.comments[mapping['card']] = 'Updated via Galileo mapping'
                 hdul.flush()
             return 1
-        except Exception as e:
-            logger.exception(f"Error updating FITS header for {file_path}: {e}")
+        except Exception:
+            logger.exception(f"Error updating FITS header for {file_path}")
             return 0
 
     def _move_to_mapped_folder(self, fits_file, old_file_path, mapping) -> int:
@@ -582,8 +582,8 @@ class MappingsWidget(QWidget):
             fits_file.save()
 
             logger.info(f"Moved file: {old_file_path} -> {new_file_path}")
-        except Exception as e:
-            logger.exception(f"Error moving file {old_file_path}: {e}")
+        except Exception:
+            logger.exception(f"Error moving file {old_file_path}")
         return moved
 
     def _calculate_new_file_path(self, old_file_path, mapping):
@@ -679,6 +679,6 @@ class MappingsWidget(QWidget):
 
             return new_path.replace('/', os.sep)  # Convert to OS-appropriate separators
 
-        except Exception as e:
-            logger.exception(f"Error calculating new file path for {old_file_path}: {e}")
+        except Exception:
+            logger.exception(f"Error calculating new file path for {old_file_path}")
             return None

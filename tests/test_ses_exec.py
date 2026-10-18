@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""SES — block-based session execution engine (``galileo.sequencer.session_exec``).
+"""SES — block-based session execution engine (``galileo.session_exec``).
 
 Covers the execution-side requirements of the Sessions screen's blocks — SES-030 (run
 start-to-finish), SES-040 (pause/resume/stop), SES-050 (live progress), SES-080 (recoverable
@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from galileo.sequencer.session_exec import (
+from galileo.session_exec import (
     RunState,
     SessionContext,
     SessionExecutor,
@@ -396,7 +396,7 @@ def test_tc_sched_060_failed_and_stopped_runs_are_not_refired():
         _region, scheduler, job = _scheduled_job()
 
         async def runner(j, outcome=outcome):
-            from galileo.sequencer.session_exec import SessionRunResult
+            from galileo.session_exec import SessionRunResult
             return SessionRunResult(state=outcome, log=["x"])
 
         assert asyncio.run(scheduler.run_job(job, runner)) == expected

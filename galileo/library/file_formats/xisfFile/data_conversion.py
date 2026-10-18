@@ -98,8 +98,8 @@ def prepare_fits_data(data: np.ndarray, sample_format: str | Enum) -> tuple[np.n
 
         return data, bitpix
 
-    except Exception as e:
-        logger.exception(f"Error preparing FITS data: {e}")
+    except Exception:
+        logger.exception("Error preparing FITS data")
         raise
 
 def validate_data_integrity(data: np.ndarray, expected_pixels: int | None = None, sample_format: str | Enum | None = None) -> bool:
@@ -140,8 +140,8 @@ def validate_data_integrity(data: np.ndarray, expected_pixels: int | None = None
 
         return True
 
-    except Exception as e:
-        logger.exception(f"Error validating data integrity: {e}")
+    except Exception:
+        logger.exception("Error validating data integrity")
         return False
 
 def log_data_statistics(data: np.ndarray, sample_format: str | Enum | None = None) -> None:
@@ -190,5 +190,5 @@ def log_data_statistics(data: np.ndarray, sample_format: str | Enum | None = Non
             zero_count = np.sum(data == 0)
             logger.info(f"  Zero values: {zero_count} ({zero_count/data.size*100:.2f}%)")
 
-    except Exception as e:
-        logger.exception(f"Error logging data statistics: {e}")
+    except Exception:
+        logger.exception("Error logging data statistics")

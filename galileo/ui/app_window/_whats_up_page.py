@@ -6,6 +6,7 @@ on top of the Targets page's catalog, not a second catalog or search screen."""
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import take_widget
 from typing import TYPE_CHECKING
 
 import logging
@@ -457,8 +458,7 @@ class AppWindowWhatsUpPageMixin:
             from galileo.planning.visibility import day_night_bands
 
             while legend_grid.count():
-                item = legend_grid.takeAt(0)
-                w = item.widget()
+                w = take_widget(legend_grid)
                 if w is not None:
                     w.deleteLater()
 

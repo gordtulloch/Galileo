@@ -211,7 +211,7 @@ class MergeWidget(QWidget):
             self.results_text.setPlainText(preview_text)
 
         except Exception as e:
-            logger.exception(f"Error during preview: {e}")
+            logger.exception("Error during preview")
             QMessageBox.warning(self, "Preview Error", f"Error during preview: {e}")
 
     def execute_merge(self):
@@ -478,7 +478,7 @@ class MergeWidget(QWidget):
                     except OSError:
                         # Directory not empty or other error, skip it
                         pass
-        except Exception as e:
-            logger.exception(f"Error during directory cleanup: {e}")
+        except Exception:
+            logger.exception("Error during directory cleanup")
 
         return empty_dirs_removed

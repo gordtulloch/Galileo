@@ -139,8 +139,8 @@ def apply_mappings_to_fits(file_path):
 
         return changes_made
 
-    except Exception as e:
-        logger.exception(f"Error applying mappings to {file_path}: {e}")
+    except Exception:
+        logger.exception(f"Error applying mappings to {file_path}")
         return False
 
 def setup_logging(verbose=False):
@@ -279,8 +279,8 @@ Note:
 
                     logger.info(f"Created temporary mapping: {card} '{current or '(default)'}' -> '{replace}'")
 
-                except Exception as e:
-                    logger.exception(f"Failed to create temporary mapping from {mapping_spec}: {e}")
+                except Exception:
+                    logger.exception(f"Failed to create temporary mapping from {mapping_spec}")
                     continue
 
         # Create processor instance
@@ -342,8 +342,8 @@ Note:
             try:
                 deleted_count = MappingModel.delete().where(MappingModel.id.in_(temp_mapping_ids)).execute()
                 logger.info(f"Removed {deleted_count} temporary mapping(s) from database")
-            except Exception as e:
-                logger.exception(f"Error removing temporary mappings: {e}")
+            except Exception:
+                logger.exception("Error removing temporary mappings")
 
         if len(registered_files) == 0:
             if duplicate_count > 0:
@@ -358,8 +358,8 @@ Note:
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1
-    except Exception as e:
-        logger.exception(f"Error during repository load: {e}")
+    except Exception:
+        logger.exception("Error during repository load")
         if args.verbose:
             import traceback
             logger.exception(traceback.format_exc())

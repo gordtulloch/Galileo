@@ -99,8 +99,8 @@ def main() -> int:
             try:
                 row.delete_instance()
                 deleted_db_rows += 1
-            except Exception as e:
-                logger.exception(f"Failed to delete DB row for {path}: {e}")
+            except Exception:
+                logger.exception(f"Failed to delete DB row for {path}")
 
         # 2) Reset soft-delete flags
         updated_softdelete = FitsFileModel.update(fitsFileSoftDelete=False).execute()
@@ -139,7 +139,7 @@ def main() -> int:
         print("\nOperation cancelled by user")
         return 1
     except Exception as e:
-        logger.exception(f"Unexpected error: {e}")
+        logger.exception("Unexpected error")
         print(f"\nError: {e}")
         print("Use -v/--verbose for details")
         return 1

@@ -1,6 +1,7 @@
 import os
 import logging
 import zipfile
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
@@ -111,8 +112,8 @@ class TelescopeDownloadWorker(QThread):
         except zipfile.BadZipFile:
             logger.exception(f"Invalid zip file: {zip_path}")
             return None
-        except Exception as e:
-            logger.exception(f"Error extracting zip file {zip_path}: {e}")
+        except Exception:
+            logger.exception(f"Error extracting zip file {zip_path}")
             return None
 
     def stop(self):
@@ -123,207 +124,225 @@ class TelescopeDownloadWorker(QThread):
     def run(self):
         """Perform the actual download process."""
         try:
-            # Step 1: Find the telescope (10% of progress)
             if self._stop_requested:
                 return
 
-            if self.telescope_type in ["SeeStar", "StellarMate"]:
-                protocol_info = "SMB"
-            elif self.telescope_type == "iTelescope":
-                protocol_info = "FTPS"
-            elif self.telescope_type == "SFTP":
-                protocol_info = "SFTP"
-            else:
-                protocol_info = "FTP"
-            self.progress_updated.emit(f"Scanning network for {self.telescope_type} telescope ({protocol_info})...")
-            logger.info(f"Scanning network for {self.telescope_type} telescope ({protocol_info})...")
-            self.progress_percent_updated.emit(5)
-
-            ip, error = smart_telescope_manager.find_telescope(
-                self.telescope_type,
-                network_range=self.network or None,
-                hostname=self.hostname or None
-            )
-
-            if self._stop_requested:
+            ip = self._find_telescope()
+            if ip is None:
                 return
 
-            if not ip:
-                self.error_occurred.emit(f"Failed to find telescope: {error}")
-                logger.error(f"Failed to find telescope: {error}")
+            fits_files = self._list_fits_files(ip)
+            if fits_files is None:
                 return
 
-            self.progress_updated.emit(f"Connected to {self.telescope_type} at {ip}")
-            logger.info(f"Connected to {self.telescope_type} at {ip}")
-            self.progress_percent_updated.emit(10)
-
-            # Step 2: Get list of FITS files (20% of progress)
-            if self._stop_requested:
-                return
-
-            self.progress_updated.emit("Scanning for FITS files...")
-            logger.info("Scanning for FITS files...")
-            self.progress_percent_updated.emit(20)
-
-            # Get credentials for iTelescope if needed
-            self.username = None
-            self.password = None
-            if self.telescope_type == "iTelescope":
-                self.username, self.password = smart_telescope_manager.get_itelescope_credentials()
-                if not self.username or not self.password:
-                    self.error_occurred.emit("iTelescope credentials not configured. Please configure in Config → Smart Telescopes tab.")
-                    logger.error("iTelescope credentials not configured")
-                    return
-
-            if self.telescope_type == "SFTP" and not get_sftp_settings()["username"]:
-                self.error_occurred.emit("SFTP account not configured. Please set it in Options > Library > Smart Telescopes.")
-                logger.error("SFTP username not configured")
-                return
-
-            fits_files, error = smart_telescope_manager.get_fits_files(self.telescope_type, ip, self.username, self.password)
-
-            if self._stop_requested:
-                return
-
-            if error:
-                self.error_occurred.emit(f"Failed to get file list: {error}")
-                logger.error(f"Failed to get file list: {error}")
-                return
-
-            if not fits_files:
-                self.download_completed.emit("No FITS files found on telescope")
-                logger.info("No FITS files found on telescope")
-                return
-
-            self.progress_updated.emit(f"Found {len(fits_files)} FITS files")
-            logger.info(f"Found {len(fits_files)} FITS files")
-            self.progress_percent_updated.emit(30)
-
-            # Step 3: Download files (30% to 90% of progress)
-            if self._stop_requested:
-                return
-
-            downloaded_files = 0
-            failed_files = []
-            deleted_files = 0
-            registered_files = 0
-
+            tally = _DownloadTally()
             for i, file_info in enumerate(fits_files):
                 if self._stop_requested:
                     break
+                self._download_one(i, len(fits_files), file_info, ip, tally)
 
-                file_name = file_info['name']
-                self.progress_updated.emit(f"Processing {file_name} ({i+1}/{len(fits_files)})...")
-
-                # Calculate progress (30% to 90% for downloads)
-                download_progress = 30 + int((i / len(fits_files)) * 60)
-                self.progress_percent_updated.emit(download_progress)
-
-                # Create local file path
-                folder_name = file_info.get('folder_name', 'unknown')
-
-                # For iTelescope, store files directly in target directory without preserving folder structure
-                if self.telescope_type == 'iTelescope':
-                    local_path = os.path.join(self.target_directory, file_name)
-                else:
-                    # For other telescopes, maintain folder structure
-                    local_dir = os.path.join(self.target_directory, folder_name)
-                    local_path = os.path.join(local_dir, file_name)
-
-                # Download the file
-                success, error = smart_telescope_manager.download_file(
-                    self.telescope_type, ip, file_info, local_path,
-                    self.username, self.password,
-                    progress_callback=lambda progress: not self._stop_requested
-                )
-
-                if self._stop_requested:
-                    break
-
-                if success:
-                    downloaded_files += 1
-                    logger.info(f"Downloaded {file_name}")
-
-                    # Unzip files if they have .zip extension
-                    if file_name.lower().endswith('.zip'):
-                        try:
-                            unzipped_path = self._unzip_file(local_path)
-                            if unzipped_path:
-                                logger.info(f"Unzipped {file_name} to {os.path.basename(unzipped_path)}")
-                                # Update local_path to point to the unzipped file for further processing
-                                local_path = unzipped_path
-                                file_name = os.path.basename(unzipped_path)
-                            else:
-                                logger.warning(f"Failed to unzip {file_name}, continuing with zip file")
-                        except Exception as e:
-                            logger.exception(f"Error unzipping {file_name}: {e}, continuing with zip file")
-
-                    # Modify FITS headers based on folder name
-                    self._modify_fits_headers(local_path, folder_name, self.telescope_type)
-
-                    # Register the downloaded FITS file in the database
-                    try:
-                        processor = fitsProcessing()
-                        root_dir = os.path.dirname(local_path)
-                        file_name_only = os.path.basename(local_path)
-
-                        # Register the file (moveFiles=True to move from download location to repository)
-                        registered_id = processor.registerFitsImage(root_dir, file_name_only, moveFiles=True)
-
-                        if registered_id:
-                            registered_files += 1
-                            logger.info(f"Successfully registered {file_name} in database with ID {registered_id}")
-                        else:
-                            logger.warning(f"Failed to register {file_name} in database")
-
-                    except Exception as e:
-                        logger.exception(f"Error registering {file_name} in database: {e}")
-
-                    # Delete file from telescope if requested
-                    if self.delete_files:
-                        delete_success, delete_error = smart_telescope_manager.delete_file(
-                            self.telescope_type, ip, file_info
-                        )
-                        if delete_success:
-                            deleted_files += 1
-                            logger.info(f"Deleted {file_name} from telescope")
-                        else:
-                            logger.warning(f"Failed to delete {file_name}: {delete_error}")
-                else:
-                    failed_files.append(f"{file_name}: {error}")
-                    logger.error(f"Failed to download {file_name}: {error}")
-
-            # Step 4: Complete (90% to 100%)
             if self._stop_requested:
                 self.progress_updated.emit("Download cancelled")
                 return
 
             self.progress_percent_updated.emit(95)
-
-            # Step 5: Generate completion message
-            completion_message = "Download completed!\n\n"
-            completion_message += f"Downloaded: {downloaded_files} files\n"
-            completion_message += f"Registered in database: {registered_files} files\n"
-
-            if failed_files:
-                completion_message += f"Failed: {len(failed_files)} files\n"
-                completion_message += "Failed files:\n" + "\n".join(failed_files[:5])
-                if len(failed_files) > 5:
-                    completion_message += f"\n... and {len(failed_files) - 5} more"
-
-            if self.delete_files:
-                completion_message += f"\nDeleted from telescope: {deleted_files} files"
-
-            completion_message += "\n\nFiles processed and moved to repository structure"
-
+            completion_message = self._completion_message(tally)
             self.progress_percent_updated.emit(100)
             self.download_completed.emit(completion_message)
-            logger.info(f"Download process completed: {downloaded_files} downloaded, {registered_files} registered, {len(failed_files)} failed")
+            logger.info(f"Download process completed: {tally.downloaded} downloaded, {tally.registered} registered, {len(tally.failed)} failed")
 
         except Exception as e:
             if not self._stop_requested:
                 self.error_occurred.emit(f"Unexpected error during download: {e!s}")
-                logger.exception(f"Unexpected error during download: {e!s}")
+                logger.exception("Unexpected error during download")
+
+    def _fail(self, message: str) -> None:
+        """Report *message* to the dialog and the log."""
+        self.error_occurred.emit(message)
+        logger.error(message)
+
+    def _protocol_label(self) -> str:
+        if self.telescope_type in ["SeeStar", "StellarMate"]:
+            return "SMB"
+        if self.telescope_type == "iTelescope":
+            return "FTPS"
+        if self.telescope_type == "SFTP":
+            return "SFTP"
+        return "FTP"
+
+    def _find_telescope(self) -> str | None:
+        """Step 1 (to 10% of progress): locate the telescope on the network; its address, or None."""
+        message = f"Scanning network for {self.telescope_type} telescope ({self._protocol_label()})..."
+        self.progress_updated.emit(message)
+        logger.info(message)
+        self.progress_percent_updated.emit(5)
+
+        ip, error = smart_telescope_manager.find_telescope(
+            self.telescope_type,
+            network_range=self.network or None,
+            hostname=self.hostname or None
+        )
+
+        if self._stop_requested:
+            return None
+
+        if not ip:
+            self._fail(f"Failed to find telescope: {error}")
+            return None
+
+        self.progress_updated.emit(f"Connected to {self.telescope_type} at {ip}")
+        logger.info(f"Connected to {self.telescope_type} at {ip}")
+        self.progress_percent_updated.emit(10)
+        return ip
+
+    def _list_fits_files(self, ip: str) -> list | None:
+        """Step 2 (to 30%): the FITS files on the telescope; None on stop, error or when there are none."""
+        if self._stop_requested:
+            return None
+
+        self.progress_updated.emit("Scanning for FITS files...")
+        logger.info("Scanning for FITS files...")
+        self.progress_percent_updated.emit(20)
+
+        # Get credentials for iTelescope if needed
+        self.username = None
+        self.password = None
+        if self.telescope_type == "iTelescope":
+            self.username, self.password = smart_telescope_manager.get_itelescope_credentials()
+            if not self.username or not self.password:
+                self._fail("iTelescope credentials not configured. Please configure in Config → Smart Telescopes tab.")
+                return None
+
+        if self.telescope_type == "SFTP" and not get_sftp_settings()["username"]:
+            self._fail("SFTP account not configured. Please set it in Options > Library > Smart Telescopes.")
+            return None
+
+        fits_files, error = smart_telescope_manager.get_fits_files(self.telescope_type, ip, self.username, self.password)
+
+        if self._stop_requested:
+            return None
+
+        if error:
+            self._fail(f"Failed to get file list: {error}")
+            return None
+
+        if not fits_files:
+            self.download_completed.emit("No FITS files found on telescope")
+            logger.info("No FITS files found on telescope")
+            return None
+
+        self.progress_updated.emit(f"Found {len(fits_files)} FITS files")
+        logger.info(f"Found {len(fits_files)} FITS files")
+        self.progress_percent_updated.emit(30)
+
+        if self._stop_requested:
+            return None
+        return fits_files
+
+    def _local_path_for(self, file_info: dict) -> str:
+        """Where a telescope file is saved: iTelescope flat in the target folder, others keep their folder."""
+        file_name = file_info['name']
+        if self.telescope_type == 'iTelescope':
+            return os.path.join(self.target_directory, file_name)
+        return os.path.join(self.target_directory, file_info.get('folder_name', 'unknown'), file_name)
+
+    def _download_one(self, i: int, total: int, file_info: dict, ip: str, tally: "_DownloadTally") -> None:
+        """Step 3 (30% to 90%): download, unzip, fix headers, register and (optionally) delete one file."""
+        file_name = file_info['name']
+        self.progress_updated.emit(f"Processing {file_name} ({i+1}/{total})...")
+        self.progress_percent_updated.emit(30 + int((i / total) * 60))
+
+        folder_name = file_info.get('folder_name', 'unknown')
+        local_path = self._local_path_for(file_info)
+
+        success, error = smart_telescope_manager.download_file(
+            self.telescope_type, ip, file_info, local_path,
+            self.username, self.password,
+            progress_callback=lambda progress: not self._stop_requested
+        )
+
+        if self._stop_requested:
+            return
+
+        if not success:
+            tally.failed.append(f"{file_name}: {error}")
+            logger.error(f"Failed to download {file_name}: {error}")
+            return
+
+        tally.downloaded += 1
+        logger.info(f"Downloaded {file_name}")
+
+        if file_name.lower().endswith('.zip'):
+            local_path = self._try_unzip(local_path, file_name)
+            file_name = os.path.basename(local_path)
+
+        # Modify FITS headers based on folder name
+        self._modify_fits_headers(local_path, folder_name, self.telescope_type)
+
+        if self._register_download(local_path, file_name):
+            tally.registered += 1
+
+        if self.delete_files:
+            delete_success, delete_error = smart_telescope_manager.delete_file(self.telescope_type, ip, file_info)
+            if delete_success:
+                tally.deleted += 1
+                logger.info(f"Deleted {file_name} from telescope")
+            else:
+                logger.warning(f"Failed to delete {file_name}: {delete_error}")
+
+    def _try_unzip(self, local_path: str, file_name: str) -> str:
+        """The extracted file's path if *local_path* unzipped, else *local_path* (the zip is kept)."""
+        try:
+            unzipped_path = self._unzip_file(local_path)
+            if unzipped_path:
+                logger.info(f"Unzipped {file_name} to {os.path.basename(unzipped_path)}")
+                return unzipped_path
+            logger.warning(f"Failed to unzip {file_name}, continuing with zip file")
+        except Exception:
+            logger.exception(f"Error unzipping {file_name}, continuing with zip file")
+        return local_path
+
+    @staticmethod
+    def _register_download(local_path: str, file_name: str) -> bool:
+        """Register the downloaded FITS in the database (moving it into the repository); True if registered."""
+        try:
+            processor = fitsProcessing()
+            registered_id = processor.registerFitsImage(
+                os.path.dirname(local_path), os.path.basename(local_path), moveFiles=True)
+            if registered_id:
+                logger.info(f"Successfully registered {file_name} in database with ID {registered_id}")
+                return True
+            logger.warning(f"Failed to register {file_name} in database")
+        except Exception:
+            logger.exception(f"Error registering {file_name} in database")
+        return False
+
+    def _completion_message(self, tally: "_DownloadTally") -> str:
+        """Step 5: the summary shown when the download finishes."""
+        message = "Download completed!\n\n"
+        message += f"Downloaded: {tally.downloaded} files\n"
+        message += f"Registered in database: {tally.registered} files\n"
+
+        if tally.failed:
+            message += f"Failed: {len(tally.failed)} files\n"
+            message += "Failed files:\n" + "\n".join(tally.failed[:5])
+            if len(tally.failed) > 5:
+                message += f"\n... and {len(tally.failed) - 5} more"
+
+        if self.delete_files:
+            message += f"\nDeleted from telescope: {tally.deleted} files"
+
+        return message + "\n\nFiles processed and moved to repository structure"
+
+
+@dataclass
+class _DownloadTally:
+    """Running totals of a download run."""
+
+    downloaded: int = 0
+    registered: int = 0
+    deleted: int = 0
+    failed: list[str] = field(default_factory=list)
 
 
 class SmartTelescopeDownloadDialog(QDialog):
@@ -535,10 +554,9 @@ class SmartTelescopeDownloadDialog(QDialog):
         QMessageBox.information(self, "Download Complete", message)
 
         # Refresh the Images view in the main window if available
-        if self.parent() and hasattr(self.parent(), 'images_widget'):
-            if hasattr(self.parent().images_widget, 'load_fits_data'):
-                logger.info("Refreshing Images view after download completion")
-                self.parent().images_widget.load_fits_data()
+        if self.parent() and hasattr(self.parent(), 'images_widget') and hasattr(self.parent().images_widget, 'load_fits_data'):
+            logger.info("Refreshing Images view after download completion")
+            self.parent().images_widget.load_fits_data()
 
         # Close the download dialog
         self.accept()

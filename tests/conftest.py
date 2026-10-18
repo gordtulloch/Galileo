@@ -281,32 +281,8 @@ def mock_aux_device():
 
 
 # ---------------------------------------------------------------------------
-# Sequence / scheduler fixtures
+# Equipment profile fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def minimal_sequence():
-    return {
-        "name": "M42 Ha",
-        "version": 1,
-        "targets": [
-            {
-                "name": "M42",
-                "ra_deg": 83.8221,
-                "dec_deg": -5.3911,
-                "steps": [
-                    {
-                        "filter": "Ha",
-                        "exposure": 300.0,
-                        "count": 20,
-                        "binning": 1,
-                        "frame_type": "Light",
-                    }
-                ],
-            }
-        ],
-    }
-
 
 @pytest.fixture
 def minimal_profile():

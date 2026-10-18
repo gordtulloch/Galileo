@@ -13,8 +13,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+from galileo.ui.qt_helpers import need
+
+if TYPE_CHECKING:
+    from galileo.ui.library.cloud_sync_dialog import CloudSyncWidget
+    from galileo.ui.library.duplicates_widget import DuplicatesWidget
+    from galileo.ui.library.images_widget import ImagesWidget
+    from galileo.ui.library.mappings_dialog import MappingsWidget
+    from galileo.ui.library.merge_widget import MergeWidget
+    from galileo.ui.library.sessions_widget import SessionsWidget
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +37,13 @@ class LibraryScreens:
         """*on_configure* opens Options > Library (the Cloud page's "Configure..." button)."""
         self._on_configure = on_configure
         self._pages: dict[str, QWidget] | None = None
-        self.images = None
-        self.sessions = None
-        self.mappings = None
-        self.duplicates = None
-        self.merge = None
-        self.cloud = None
+        # Built together on first use (see _build); typed non-Optional because nothing reads them before then.
+        self.images: ImagesWidget = None  # type: ignore[assignment]
+        self.sessions: SessionsWidget = None  # type: ignore[assignment]
+        self.mappings: MappingsWidget = None  # type: ignore[assignment]
+        self.duplicates: DuplicatesWidget = None  # type: ignore[assignment]
+        self.merge: MergeWidget = None  # type: ignore[assignment]
+        self.cloud: CloudSyncWidget = None  # type: ignore[assignment]
 
     def page(self, item_id: str) -> QWidget:
         """A placeholder for *item_id* that fills in with the real screen when first shown."""
@@ -92,7 +104,7 @@ class _LazyPage(QWidget):
         """Adopt the real screen now (also what the first show does)."""
         if not self._filled:
             self._filled = True
-            self.layout().addWidget(self._screens.widget(self._item_id))
+            need(self.layout()).addWidget(self._screens.widget(self._item_id))
             from galileo.ui.help import add_title_buttons
             add_title_buttons(self)  # the screen did not exist yet when this page was tagged
 

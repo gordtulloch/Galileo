@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,37 @@ _FULL_IMAGE_SIZE_PX = 640
 # the online manual until a dedicated documentation site exists.
 _MANUAL_URL = "https://github.com/gordtulloch/Galileo/tree/main/docs"
 
-try:
+if TYPE_CHECKING:
+    # mypy sees the real Qt types (PySide6 is a declared dependency); the fallback below is runtime-only.
     from PySide6.QtCore import QThread, Signal
     from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QPlainTextEdit, QWidget
     _HAS_QT = True
-except ImportError:
-    _HAS_QT = False
-    QThread = Signal = QDialog = QFormLayout = QLabel = QPlainTextEdit = QWidget = None  # type: ignore[assignment,misc]
+else:
+    try:
+        from PySide6.QtCore import QThread, Signal
+        from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QPlainTextEdit, QWidget
+        _HAS_QT = True
+    except ImportError:
+        _HAS_QT = False
+        QThread = QDialog = QFormLayout = QLabel = QPlainTextEdit = QWidget = None
+
+        def Signal(*_args, **_kwargs):  # headless stand-in: signals are simply absent
+            return None
+
+# Base classes for the Qt widgets/threads defined in this package: the Qt class when PySide6 is present,
+# ``object`` when it is not (so the modules still import headless). mypy only ever sees the Qt class.
+if TYPE_CHECKING:
+    _QThreadBase = QThread
+    _QDialogBase = QDialog
+    _QWidgetBase = QWidget
+    _QLabelBase = QLabel
+    _QPlainTextEditBase = QPlainTextEdit
+else:
+    _QThreadBase = QThread if _HAS_QT else object
+    _QDialogBase = QDialog if _HAS_QT else object
+    _QWidgetBase = QWidget if _HAS_QT else object
+    _QLabelBase = QLabel if _HAS_QT else object
+    _QPlainTextEditBase = QPlainTextEdit if _HAS_QT else object
 
 _NEW_OBSERVATORY_LABEL = "New Observatory…"
 _NEW_PIER_LABEL = "New Pier…"
@@ -81,9 +106,9 @@ PLANNING_ITEMS = [
     ("schedule", "Schedule", "schedule"),
     ("history", "History", "sessions"),
 ]
-SCIENCE_ITEMS = [
-    ("variable_stars", "Variable Stars", "variable_stars"),
-]
+# Science has no built-in items: every entry comes from an installed plugin (VSTarget adds
+# "Variable Stars"), and the whole Science section is hidden while none is installed.
+SCIENCE_ITEMS: list[tuple[str, str, str]] = []
 # The Library is AstroFiler's screens: the image catalog, the imaging sessions
 # built from it, header-value mappings, duplicate/merge clean-up, and cloud
 # backup. Its settings are under Options > Library.

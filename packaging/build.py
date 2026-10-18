@@ -44,6 +44,12 @@ def main() -> None:
         "--collect-data", "astroquery",
         "--collect-data", "photutils",
         "--collect-data", "certifi",
+        # tetra3 (Apache-2.0): its default star database is package data, and its LICENSE rides in the metadata.
+        "--collect-all", "tetra3",
+        "--copy-metadata", "tetra3",
+        # Apache-2.0 requires the licence text to accompany a redistributed binary.
+        "--add-data", f"{ROOT / 'licenses'}{SEP}licenses",
+        "--add-data", f"{ROOT / 'THIRD_PARTY_NOTICES.md'}{SEP}.",
         "--copy-metadata", "keyring",
         "--hidden-import", "keyring.backends",
     ]

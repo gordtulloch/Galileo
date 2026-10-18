@@ -162,8 +162,8 @@ def _create_session_files(progress, all_files, master_files, dirs, masters_dir, 
         try:
             if _materialize_into(file.fitsFileName, dest_folder, copy_files=copy_files, decompress=decompress):
                 created_items += 1
-        except Exception as e:
-            logger.exception(f"Error creating link for {file.fitsFileName}: {e}")
+        except Exception:
+            logger.exception(f"Error creating link for {file.fitsFileName}")
 
     for _master_type, master_path in master_files:
         progress.setValue(int(current_item * 100 / total_items) if total_items > 0 else 0)
@@ -174,8 +174,8 @@ def _create_session_files(progress, all_files, master_files, dirs, masters_dir, 
         try:
             if _materialize_into(master_path, masters_dir, copy_files=copy_files, decompress=decompress):
                 created_items += 1
-        except Exception as e:
-            logger.exception(f"Error creating link for master {master_path}: {e}")
+        except Exception:
+            logger.exception(f"Error creating link for master {master_path}")
 
     return created_items
 
@@ -273,7 +273,7 @@ def checkout_single_session(parent: QWidget, item) -> None:
 
     except Exception as e:
         QMessageBox.critical(parent, "Checkout Failed", f"Failed to create symbolic links: {e!s}")
-        logger.exception(f"Error in checkout_session: {e!s}")
+        logger.exception("Error in checkout_session")
 
 
 def _ensure_dir(checkout_dir: str, current: str | None, name: str) -> str:
@@ -331,8 +331,8 @@ def _checkout_one_of_many(session_item, checkout_dir: str, dirs: dict[str, str |
         try:
             if _materialize_into(file.fitsFileName, dest_folder, copy_files=copy_files, decompress=decompress):
                 created += 1
-        except Exception as e:
-            logger.exception(f"Error creating link for {file.fitsFileName}: {e}")
+        except Exception:
+            logger.exception(f"Error creating link for {file.fitsFileName}")
 
     logger.info(f"Successfully processed session {object_name} - {session_date} with {created} links")
 
@@ -342,8 +342,8 @@ def _checkout_one_of_many(session_item, checkout_dir: str, dirs: dict[str, str |
             for _, master_path in find_matching_masters_for_light_session(session, light_files):
                 if _materialize_into(master_path, dirs["masters"], copy_files=copy_files, decompress=decompress):
                     created += 1
-        except Exception as e:
-            logger.exception(f"Error creating master files for session {session_id}: {e}")
+        except Exception:
+            logger.exception(f"Error creating master files for session {session_id}")
 
     return created, object_name, session_date
 
@@ -438,7 +438,7 @@ def checkout_multiple_sessions(parent: QWidget, session_items) -> None:
 
     except Exception as e:
         QMessageBox.critical(parent, "Checkout Failed", f"Failed to checkout multiple sessions: {e!s}")
-        logger.exception(f"Error in checkout_multiple_sessions: {e!s}")
+        logger.exception("Error in checkout_multiple_sessions")
 
 
 def _describe_session_item(session_item) -> str:

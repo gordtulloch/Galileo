@@ -131,7 +131,7 @@ class AutofocusService:
 
         Publishes a ``FocusStartedEvent``, a ``FocusFrameEvent`` per measured
         exposure and, however the run ends, a ``FocusCompleteEvent``, so screens
-        can follow a run started from anywhere (the Focus screen, a sequencer
+        can follow a run started from anywhere (the Focus screen, a session
         trigger)."""
         self._cancelled = False
         initial_position = self._get_current_position()

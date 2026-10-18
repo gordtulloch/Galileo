@@ -71,8 +71,8 @@ def check_file_exists_in_gcs(client, bucket_name, gcs_object_name):
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_object_name)
         return blob.exists()
-    except Exception as e:
-        logger.exception(f"Failed to check if file exists: gs://{bucket_name}/{gcs_object_name}: {e}")
+    except Exception:
+        logger.exception(f"Failed to check if file exists: gs://{bucket_name}/{gcs_object_name}")
         return False
 
 
@@ -113,7 +113,7 @@ def upload_file_to_backup(bucket_name, auth_info, local_file_path, relative_path
         return True, cloud_url, "File uploaded successfully"
 
     except Exception as e:
-        logger.exception(f"Failed to upload file to backup: {local_file_path}: {e}")
+        logger.exception(f"Failed to upload file to backup: {local_file_path}")
         return False, "", str(e)
 
 
@@ -134,8 +134,8 @@ def _upload_file_to_gcs(client, bucket_name, local_file_path, gcs_object_name):
         blob.upload_from_filename(local_file_path)
         logger.debug(f"Successfully uploaded: {local_file_path} -> gs://{bucket_name}/{gcs_object_name}")
 
-    except Exception as e:
-        logger.exception(f"Failed to upload {local_file_path}: {e}")
+    except Exception:
+        logger.exception(f"Failed to upload {local_file_path}")
         raise
 
 
@@ -195,7 +195,7 @@ def list_gcs_bucket_files(bucket_name, auth_info, prefix=""):
         return files
 
     except Exception as e:
-        logger.exception(f"Error listing bucket files: {e}")
+        logger.exception("Error listing bucket files")
         error_msg = str(e)
 
         # Provide more specific error messages for common issues
@@ -241,7 +241,7 @@ def download_file_from_gcs(bucket_name, auth_info, gcs_object_name, local_file_p
         return True, "File downloaded successfully"
 
     except Exception as e:
-        logger.exception(f"Failed to download gs://{bucket_name}/{gcs_object_name}: {e}")
+        logger.exception(f"Failed to download gs://{bucket_name}/{gcs_object_name}")
         return False, str(e)
 
 
@@ -295,7 +295,7 @@ def find_cloud_duplicates(cloud_files):
         }
 
     except Exception as e:
-        logger.exception(f"Error finding cloud duplicates: {e}")
+        logger.exception("Error finding cloud duplicates")
         return {
             'total_files': len(cloud_files) if cloud_files else 0,
             'files_with_hashes': 0,

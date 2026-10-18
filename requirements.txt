@@ -31,6 +31,7 @@ defusedxml>=0.7        # XISF header parsing (an imported file is untrusted XML)
 
 # Library (AstroFiler): master frames, cloud sync, smart-telescope shares, XISF import, statistics
 scipy>=1.7
+tetra3 @ git+https://github.com/esa/tetra3.git@f9fa2eb9a32a5efc529e2d86f0b59f35b1e9028d  # ESA tetra3 plate solver (Apache-2.0); not on PyPI, pinned to a tested commit
 matplotlib>=3.3
 reproject>=0.12        # WCS-based frame alignment when stacking masters
 lz4>=3.0               # lz4-compressed XISF blocks

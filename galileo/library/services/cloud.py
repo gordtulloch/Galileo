@@ -24,8 +24,8 @@ def _calculate_md5_hash(file_path):
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
-    except Exception as e:
-        logger.exception(f"Error calculating MD5 hash for {file_path}: {e}")
+    except Exception:
+        logger.exception(f"Error calculating MD5 hash for {file_path}")
         return None
 
 def _should_upload_file(client, bucket_name, gcs_object_name, local_file_path):
@@ -114,8 +114,8 @@ def _get_cloud_file_hashes(client, bucket_name, prefix):
         logger.info(f"Retrieved hashes for {len(cloud_hashes)} cloud files")
         return cloud_hashes
 
-    except Exception as e:
-        logger.exception(f"Error retrieving cloud file hashes: {e}")
+    except Exception:
+        logger.exception("Error retrieving cloud file hashes")
         return {}
 
 def _should_upload_file_bulk(cloud_hashes, gcs_object_name, local_file_path):
@@ -233,8 +233,8 @@ def _upload_file_to_gcs(client, bucket_name, local_file_path, gcs_object_name):
         action = "overwrote" if exists_before else "uploaded"
         logger.debug(f"Successfully {action}: {local_file_path} -> gs://{bucket_name}/{gcs_object_name}")
 
-    except Exception as e:
-        logger.exception(f"Failed to upload {local_file_path}: {e}")
+    except Exception:
+        logger.exception(f"Failed to upload {local_file_path}")
         raise
 
 def _download_file_from_gcs(client, bucket_name, gcs_object_name, local_file_path):
@@ -259,8 +259,8 @@ def _download_file_from_gcs(client, bucket_name, gcs_object_name, local_file_pat
         blob.download_to_filename(local_file_path)
         logger.debug(f"Successfully downloaded: gs://{bucket_name}/{gcs_object_name} -> {local_file_path}")
 
-    except Exception as e:
-        logger.exception(f"Failed to download gs://{bucket_name}/{gcs_object_name}: {e}")
+    except Exception:
+        logger.exception(f"Failed to download gs://{bucket_name}/{gcs_object_name}")
         raise
 
 def _should_download_file(blob, local_file_path):
@@ -318,8 +318,8 @@ def _register_fits_file(file_path):
         else:
             logger.debug(f"Skipped non-FITS file: {file_path}")
 
-    except Exception as e:
-        logger.exception(f"Error registering FITS file {file_path}: {e}")
+    except Exception:
+        logger.exception(f"Error registering FITS file {file_path}")
 
 def _download_phase(client, bucket_name, prefix, local_repo_path, debug, progress_callback):
     """PHASE 1: download the GCS files that are missing or stale locally.
@@ -388,8 +388,8 @@ def _download_phase(client, bucket_name, prefix, local_repo_path, debug, progres
                 downloaded_files.add(relative_path.replace(os.path.sep, '/'))
                 download_count += 1
 
-            except Exception as e:
-                logger.exception(f"Failed to download {blob.name}: {e}")
+            except Exception:
+                logger.exception(f"Failed to download {blob.name}")
 
         if debug:
             logger.info(f"DEBUG MODE: Would download {download_count} files from GCS, would skip {skip_count} up-to-date files")
@@ -401,8 +401,8 @@ def _download_phase(client, bucket_name, prefix, local_repo_path, debug, progres
         if debug and len(downloaded_files) > 0:
             logger.debug(f"First few downloaded files: {list(downloaded_files)[:5]}...")
 
-    except Exception as e:
-        logger.exception(f"Failed to list GCS objects: {e}")
+    except Exception:
+        logger.exception("Failed to list GCS objects")
 
     return downloaded_files, False
 
@@ -491,8 +491,8 @@ def _upload_phase(client, bucket_name, prefix, local_repo_path, local_files, dow
                 _upload_file_to_gcs(client, bucket_name, full_local_path, gcs_object_name)
             upload_count += 1
 
-        except Exception as e:
-            logger.exception(f"Failed to process {file_path}: {e}")
+        except Exception:
+            logger.exception(f"Failed to process {file_path}")
 
     return upload_count, skipped_count, excluded_count, replaced_count
 
@@ -591,12 +591,12 @@ def sync_with_google_cloud_repo(gcs_repo_path, auth_info, local_repo_path, sync_
         if progress_callback:
             try:
                 progress_callback(100, 100, "complete", "Synchronization completed successfully")
-            except Exception as e:
-                logger.exception(f"Error in final progress callback: {e}")
+            except Exception:
+                logger.exception("Error in final progress callback")
                 # Don't raise here as the sync was successful
 
     except ImportError as e:
-        logger.exception(f"Google Cloud Storage library not available: {e}")
+        logger.exception("Google Cloud Storage library not available")
         logger.info("To install: pip install google-cloud-storage")
         # Report error in progress callback if available
         if progress_callback:
@@ -604,7 +604,7 @@ def sync_with_google_cloud_repo(gcs_repo_path, auth_info, local_repo_path, sync_
         raise
 
     except Exception as e:
-        logger.exception(f"Synchronization failed: {e}")
+        logger.exception("Synchronization failed")
         # Report error in progress callback if available
         if progress_callback:
             progress_callback(0, 100, "error", f"Sync error: {e}")

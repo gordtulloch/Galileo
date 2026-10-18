@@ -116,8 +116,8 @@ def decompress_to(src_path: str, dest_path: str) -> bool:
         # Unknown compression
         return False
 
-    except Exception as e:
-        logger.exception(f"Failed to decompress {src_path} -> {dest_path}: {e}")
+    except Exception:
+        logger.exception(f"Failed to decompress {src_path} -> {dest_path}")
         return False
 
 
@@ -142,8 +142,8 @@ def create_symlink(src_path: str, dest_path: str) -> bool:
         os.symlink(src_path, dest_path)
         return True
 
-    except Exception as e:
-        logger.exception(f"Failed to create symlink {dest_path} -> {src_path}: {e}")
+    except Exception:
+        logger.exception(f"Failed to create symlink {dest_path} -> {src_path}")
         return False
 
 
@@ -173,6 +173,6 @@ def materialize_file(*, src_path: str, dest_path: str, copy_files: bool, decompr
 
         return create_symlink(src_path, dest_path)
 
-    except Exception as e:
-        logger.exception(f"Failed to materialize {src_path} -> {dest_path}: {e}")
+    except Exception:
+        logger.exception(f"Failed to materialize {src_path} -> {dest_path}")
         return False

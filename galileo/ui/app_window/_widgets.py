@@ -6,15 +6,16 @@
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 from typing import TYPE_CHECKING, ClassVar
 
-from ._common import _HAS_QT, QWidget, QLabel, QPlainTextEdit, Signal
+from ._common import Signal, _QLabelBase, _QPlainTextEditBase, _QWidgetBase
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QButtonGroup
 
 
-class _FramingCanvas(QWidget if _HAS_QT else object):
+class _FramingCanvas(_QWidgetBase):
     """Survey image with the FOV rectangle — and, where a mosaic grid is defined,
     every pane's rectangle — overlaid (FRAME-020/030/040), redrawn live as the
     Framing Assistant dialog's fields change. The image itself only needs
@@ -163,7 +164,7 @@ class _FramingCanvas(QWidget if _HAS_QT else object):
         painter.end()
 
 
-class _AltitudeChart(QWidget if _HAS_QT else object):
+class _AltitudeChart(_QWidgetBase):
     """A small, self-painted altitude-over-time line (SCHED-080) — one line, one
     axis pair; deliberately simpler than the Guiding page's drift graph since
     there's only one series to show. Shared by the Sky Atlas/Targets page's
@@ -268,7 +269,7 @@ class _AltitudeChart(QWidget if _HAS_QT else object):
 
         points = [QPointF(x_at(i), y_at(alt)) for i, alt in enumerate(altitudes)]
         painter.setPen(QPen(QColor("#5db8ff"), 2))
-        for a, b in zip(points, points[1:], strict=False):
+        for a, b in pairwise(points):
             painter.drawLine(a, b)
 
         # Time axis — labels on whole local hours (every 2 h, or every hour on a wide chart), converted
@@ -296,7 +297,7 @@ class _AltitudeChart(QWidget if _HAS_QT else object):
         painter.end()
 
 
-class _DayNightBandChart(QWidget if _HAS_QT else object):
+class _DayNightBandChart(_QWidgetBase):
     """A day/night graphic across one local calendar day (WUT-110): a colored
     band from local midnight to local midnight, split into Night /
     Astronomical / Nautical / Civil Twilight / Daylight segments
@@ -405,13 +406,13 @@ class _DayNightBandChart(QWidget if _HAS_QT else object):
         painter.end()
 
 
-class _ClickableThumbnail(QLabel if _HAS_QT else object):
+class _ClickableThumbnail(_QLabelBase):
     """A ``QLabel`` that emits ``clicked`` on a left-button press — used for
     the Targets page's result-tile thumbnails (SKY-080), so clicking one opens
     a full-size view (`AppWindow._show_full_image`) rather than the small
     result-tile crop being the only size ever shown."""
 
-    clicked = Signal() if _HAS_QT else None
+    clicked = Signal()
 
     def mousePressEvent(self, event) -> None:
         from PySide6.QtCore import Qt as _Qt
@@ -420,7 +421,7 @@ class _ClickableThumbnail(QLabel if _HAS_QT else object):
         super().mousePressEvent(event)
 
 
-class _HistogramWidget(QWidget if _HAS_QT else object):
+class _HistogramWidget(_QWidgetBase):
     """Bar-chart rendering of the current frame's histogram (IMG-030), on a
     log scale so low-population bins stay visible next to a saturated peak."""
 
@@ -456,7 +457,7 @@ class _HistogramWidget(QWidget if _HAS_QT else object):
         painter.end()
 
 
-class _LogPane(QPlainTextEdit if _HAS_QT else object):
+class _LogPane(_QPlainTextEditBase):
     """A read-only QPlainTextEdit that ignores Ctrl+Wheel text-zoom.
 
     A fixed-height log tail has no use for interactive font zoom, and Qt's
@@ -477,7 +478,7 @@ class _LogPane(QPlainTextEdit if _HAS_QT else object):
         super().wheelEvent(event)
 
 
-class _NavColumn(QWidget if _HAS_QT else object):
+class _NavColumn(_QWidgetBase):
     """One vertical icon+label navigation column (used for both the primary
     sidebar and the Equipment section's secondary device-category sidebar).
 

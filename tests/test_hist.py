@@ -122,7 +122,7 @@ def _run_session(history, guider=None, frame_type="Light"):
 
     from galileo.ui import sessions
     from tests.test_ses_exec import FakeImaging, make_context
-    from galileo.sequencer.session_exec import SessionExecutor
+    from galileo.session_exec import SessionExecutor
 
     class _Imaging(FakeImaging):
         current_frame = np.random.default_rng(1).normal(100, 5, (64, 64))

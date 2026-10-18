@@ -356,3 +356,112 @@ def test_tc_guide_050_page_shows_a_lost_connection(window, phd2):
     page._tick()
     assert page.connect_btn.isEnabled() and "Not connected" in page.status_label.text()
     assert "Lost connection to PHD2." in page.event_log.toPlainText()
+
+
+def _snapshot(**kw):
+    from galileo.guiding import GuideSnapshot
+
+    base = {"version": 1, "connected": True, "phd_version": "2.6.13", "app_state": "Stopped", "phase": "", "settling": False,
+                "equipment_connected": True, "exposure_ms": 2000.0, "exposure_options_ms": [1000.0, 2000.0], "dec_mode": "Auto",
+                "pixel_scale": 1.5, "frame_size": (640, 480), "star_pos": None, "star_image": None, "samples": [],
+                "calibration_points": [], "calibration": None, "log": ["first", "second"], "unit": "arcsec",
+                "rms_ra": 0.4, "rms_dec": 0.3, "rms_total": 0.5}
+    base.update(kw)
+    return GuideSnapshot(**base)
+
+
+@pytest.mark.requirement("TC-GUIDE-090")
+@pytest.mark.priority("P2")
+def test_tc_guide_090_refresh_view_enables_controls_per_state_and_connection(window):
+    """GUIDE-090: refresh_view enables each control for the PHD2 state (Loop/Guide/Stop/Find star/Dither/Clear
+    calibration), the connection controls follow connected/connecting, and the status/state/log text follow the snapshot."""
+    page = window._build_guider_page()
+
+    def enabled(snap):
+        page.refresh_view(snap)
+        return {name: getattr(page, name).isEnabled() for name in (
+            "connect_btn", "disconnect_btn", "equip_connect_btn", "equip_disconnect_btn", "loop_btn", "guide_btn",
+            "stop_btn", "find_btn", "dither_btn", "clear_cal_btn", "exposure_combo", "dec_combo", "host_edit", "port_spin")}
+
+    off = enabled(None)
+    assert off == dict.fromkeys(off, False) | {"connect_btn": True, "host_edit": True, "port_spin": True}
+    assert page.status_label.text().startswith("Not connected to PHD2.") and page.state_label.text() == ""
+    assert page.event_log.toPlainText() == ""
+
+    table = {  # state: (loop, guide, stop, find, dither, clear_cal)
+        "Stopped": (True, True, False, False, False, True),
+        "Selected": (True, True, True, True, False, True),
+        "Looping": (False, True, True, True, False, True),
+        "Guiding": (False, False, True, False, True, False),
+        "Calibrating": (False, False, True, False, False, False),
+        "LostLock": (True, True, True, True, False, True),
+        "Paused": (True, True, True, False, False, True),
+    }
+    for state, expected in table.items():
+        got = enabled(_snapshot(app_state=state))
+        assert (got["loop_btn"], got["guide_btn"], got["stop_btn"], got["find_btn"], got["dither_btn"],
+                got["clear_cal_btn"]) == expected, state
+        assert got["equip_disconnect_btn"] and not got["equip_connect_btn"] and got["exposure_combo"] and got["dec_combo"]
+        assert got["disconnect_btn"] and not got["connect_btn"] and not got["host_edit"] and not got["port_spin"]
+
+    no_equipment = enabled(_snapshot(equipment_connected=False))
+    assert no_equipment["equip_connect_btn"] and not any(no_equipment[k] for k in (
+        "equip_disconnect_btn", "loop_btn", "guide_btn", "stop_btn", "find_btn", "dither_btn", "clear_cal_btn"))
+    assert page.status_label.text() == "Connected to PHD2 (PHD2 2.6.13) — equipment not connected — use Connect Equipment."
+
+    page.refresh_view(_snapshot(app_state="Guiding", settling=True, phase="guiding"))
+    assert page.state_label.text() == "State: Guiding (settling)"
+    assert page.status_label.text() == "Connected to PHD2 (PHD2 2.6.13) — equipment connected."
+    assert page.event_log.toPlainText() == "second\nfirst", "newest first"
+    assert [page.exposure_combo.itemText(i) for i in range(page.exposure_combo.count())] == ["1 s", "2 s"]
+    assert page.exposure_combo.currentText() == "2 s"
+
+    page._connecting.add(page._pier_key())
+    assert enabled(None)["connect_btn"] is False and page.connect_btn.text() == "Connecting…"
+    page._connecting.discard(page._pier_key())
+
+
+@pytest.mark.requirement("TC-GUIDE-080")
+@pytest.mark.priority("P2")
+def test_tc_guide_080_drift_graph_draws_only_the_enabled_series():
+    """GUIDE-080: the guide graph paints the RA / Dec / SNR traces and correction bars in their colours only when
+    those series are enabled, and still paints (axes, legend) with no samples or a tiny canvas."""
+    from types import SimpleNamespace
+
+    from PySide6.QtGui import QColor
+
+    from galileo.ui.guider import _DEC, _RA, _SNR, DriftGraph
+
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    samples = [SimpleNamespace(t=float(i), ra=(i % 5 - 2) / 2, dec=(i % 3 - 1) / 2, snr=20 + i % 7,
+                               ra_pulse_ms=(i % 9 - 4) * 20, dec_pulse_ms=(i % 7 - 3) * 20) for i in range(60)]
+
+    def colours(**series):
+        graph = DriftGraph()
+        graph.resize(500, 260)
+        graph.series = {"ra": False, "dec": False, "snr": False, "corr_ra": False, "corr_dec": False, "rms": False, **series}
+        graph.set_data(samples, 1.0, "px", 0.5, 0.5)
+        image = graph.grab().toImage()
+        seen = {image.pixelColor(x, y).rgb() for x in range(image.width()) for y in range(image.height())}
+        return {name: any(abs(QColor(rgb).red() - c.red()) + abs(QColor(rgb).green() - c.green())
+                          + abs(QColor(rgb).blue() - c.blue()) < 40 for rgb in seen)
+                for name, c in (("ra", _RA), ("dec", _DEC), ("snr", _SNR))}
+
+    assert colours() == {"ra": False, "dec": False, "snr": False}
+    assert colours(ra=True) == {"ra": True, "dec": False, "snr": False}
+    assert colours(dec=True, snr=True) == {"ra": False, "dec": True, "snr": True}
+    def render(**series):
+        graph = DriftGraph()
+        graph.resize(500, 260)
+        graph.series = {"ra": False, "dec": False, "snr": False, "corr_ra": False, "corr_dec": False, "rms": False, **series}
+        graph.set_data(samples, 1.0, "px", 0.5, 0.5)
+        return bytes(graph.grab().toImage().constBits())
+
+    assert render(corr_ra=True) != render() and render(corr_dec=True) != render(corr_ra=True)   # translucent bars
+
+    empty = DriftGraph()
+    empty.resize(10, 10)
+    assert not empty.grab().isNull()                      # too small to plot: just the background
+    empty.resize(400, 200)
+    empty.set_data([], None, "px", 0.0, 0.0)
+    assert not empty.grab().isNull()

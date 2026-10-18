@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import need
 from typing import TYPE_CHECKING, Any
 
 import logging
@@ -116,13 +117,13 @@ class AppWindowObservatoryPierMixin:
         for code, cname in sorted(country_names.items(), key=lambda kv: kv[1]):
             country_combo.addItem(cname, code)
         country_combo.setCurrentIndex(-1)
-        country_combo.lineEdit().setPlaceholderText("Type to find a country")
+        need(country_combo.lineEdit()).setPlaceholderText("Type to find a country")
         form.addRow("Country", country_combo)
 
         tz_edit = QComboBox()
         tz_edit.setEditable(True)
         tz_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        tz_edit.lineEdit().setPlaceholderText("e.g. America/Toronto")
+        need(tz_edit.lineEdit()).setPlaceholderText("e.g. America/Toronto")
 
         def _fill_zones() -> None:
             idx = country_combo.findText(country_combo.currentText(), Qt.MatchFlag.MatchFixedString)
@@ -133,7 +134,7 @@ class AppWindowObservatoryPierMixin:
             tz_edit.setCurrentIndex(0 if tz_edit.count() == 1 else -1)
 
         country_combo.activated.connect(lambda _i: _fill_zones())
-        country_combo.lineEdit().editingFinished.connect(_fill_zones)
+        need(country_combo.lineEdit()).editingFinished.connect(_fill_zones)
         form.addRow("Timezone", tz_edit)
 
         address_edit = QLineEdit()
@@ -674,7 +675,7 @@ class AppWindowObservatoryPierMixin:
                                 "label": label, "slewing": bool(pointing.get("slewing")),
                                 "target": target_point})
             elif target_point is not None:
-                markers.append({**target_point, "label": f"{pier.name} → {target.name}", "slewing": False})
+                markers.append({**target_point, "label": f"{pier.name} → {target.name if target is not None else '?'}", "slewing": False})
             else:
                 continue
             if fov is not None and pier.id == current_id:

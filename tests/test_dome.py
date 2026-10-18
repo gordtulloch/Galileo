@@ -119,7 +119,7 @@ async def test_tc_dome_020_session_uses_dome_service_and_session_sync(mock_dome)
     """DOME-020: a session's Dome blocks go through the DomeService, and shutter open/close+park
     follow the session start/end only when the operator enabled it."""
     from galileo.dome import DomeService
-    from galileo.sequencer.session_exec import SessionContext, SessionExecutor
+    from galileo.session_exec import SessionContext, SessionExecutor
     from galileo.ui.sessions import DomeCloseBlock, DomeOpenBlock, DomeSyncBlock
 
     service = DomeService(dome=mock_dome, mount=_tracking_mount(77.0))

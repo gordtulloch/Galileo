@@ -87,6 +87,10 @@ class DeviceBackend(ABC):
         """Return the device's current raw properties as a flat dict."""
         return {}
 
+    async def list_available_devices(self, category: DeviceCategory) -> list[str]:
+        """Names of the *category* devices this backend's server offers (the INDI and Alpaca bases override it)."""
+        return []
+
     async def set_property(self, name: str, value: object) -> None:  # noqa: B027 -- optional hook, no-op by design
         """Set a raw device property by name.
 

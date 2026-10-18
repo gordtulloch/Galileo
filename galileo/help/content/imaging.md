@@ -39,9 +39,13 @@ The filter to use, from the filter wheel associated with the selected optics (co
 
 Starts taking the number of frames in **Quantity**. Each frame appears in the preview with its statistics when it arrives, and — if **Auto-Save to Library** is on — is filed in your Library.
 
+## Loop
+
+Like **Capture**, but repeats: as soon as one run of **Quantity** frames finishes, the next starts, until you press **Stop** (or a capture fails).
+
 ## Stop
 
-Abandons the exposure in progress and takes no more frames.
+Abandons the exposure in progress and takes no more frames. If **Loop** is running, it ends the loop.
 
 ## Clear Mosaic
 
@@ -83,10 +87,6 @@ By default the screen arranges itself to suit the frame: a portrait frame gets t
 
 **Landscape** or **Portrait** arrangement of the screen. Available only when **Choose layout manually** is ticked.
 
-## Panels
-
-Opens a list of the screen's movable panels (View, Mount Nudge, Stretch slider, Histogram, Progress, Log). Untick a panel to hide it; select one and use **Move Up** / **Move Down** to change its order within its column. **Reset Layout** restores the default arrangement. The arrangement is saved for your user account and restored the next time Galileo starts.
-
 ## Tools
 
 A group for extra tools that plugins add. Hidden when none are installed.
@@ -114,6 +114,10 @@ How long the mount moves for each press, in seconds (0.1–10).
 ## Annotate
 
 Labels catalogued stars and deep-sky objects on the preview. It plate-solves the displayed frame and overlays a circle and name at each object found, using Galileo's bundled catalogs. Needs a solver configured in Options › Solve. While on, **Save Frame** and **Save Stack** write the annotated view as a PNG instead of the raw FITS, and annotated frames are never added to the Library. Press again to turn it off.
+
+## Crosshair
+
+Overlays a red diagonal crosshair, with a target circle at the point where the lines cross, on the preview so you can see the exact centre of the frame — handy for centring a target. Display only: saved frames and stacks are not changed. Press again to turn it off.
 
 ## Framing
 

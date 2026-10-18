@@ -56,7 +56,7 @@ class FileHashCalculator:
                 error_code="FILE_READ_ERROR"
             ) from e
         except Exception as e:
-            logger.exception(f"Unexpected error calculating SHA-256 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating SHA-256 for {file_path}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
@@ -90,7 +90,7 @@ class FileHashCalculator:
                 error_code="FILE_READ_ERROR"
             ) from e
         except Exception as e:
-            logger.exception(f"Unexpected error calculating MD5 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating MD5 for {file_path}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
@@ -124,7 +124,7 @@ class FileHashCalculator:
                 error_code="FILE_READ_ERROR"
             ) from e
         except Exception as e:
-            logger.exception(f"Unexpected error calculating SHA-1 for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating SHA-1 for {file_path}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),
@@ -187,7 +187,7 @@ class FileHashCalculator:
                 error_code="FILE_READ_ERROR"
             ) from e
         except Exception as e:
-            logger.exception(f"Unexpected error calculating hashes for {file_path}: {e!s}")
+            logger.exception(f"Unexpected error calculating hashes for {file_path}")
             raise FileProcessingError(
                 f"Hash calculation failed: {e}",
                 file_path=str(file_path),

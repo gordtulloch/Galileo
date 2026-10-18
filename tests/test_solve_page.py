@@ -232,7 +232,7 @@ def test_tc_plt_070_screen_has_the_reference_elements(page):
         assert label in buttons
     assert "Manual" not in buttons and "Mount Model" not in buttons        # not offered
     assert buttons.count("Clear") == 1                                     # the results' Clear only; the log has none
-    assert _texts(page, QW.QRadioButton) == ["Sync", "Slew to Target", "Nothing", "ASTAP", "Astrometry.net", "Nova (web)"]
+    assert _texts(page, QW.QRadioButton) == ["Sync", "Slew to Target", "Nothing", "ASTAP", "Astrometry.net", "Nova (web)", "Tetra3"]
     tabs = page.findChild(QW.QTabWidget)
     assert [tabs.tabText(i) for i in range(tabs.count())] == ["Solution Results", "Polar Alignment"]
     assert [page.table.horizontalHeaderItem(i).text() for i in range(page.table.columnCount())] == \

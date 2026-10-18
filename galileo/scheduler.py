@@ -345,7 +345,7 @@ class ObservatoryScheduler:
         """Execute *job*'s session now and record the outcome (SCHED-060, SES-030).
 
         *runner* is an async callable taking the job and returning a
-        ``galileo.sequencer.session_exec.SessionRunResult`` — injected so this domain
+        ``galileo.session_exec.SessionRunResult`` — injected so this domain
         module does not import the executor's device wiring. Returns the job's new
         ``run_state``: ``"completed"`` (or ``"pending"`` again if its completion
         condition wants more runs), ``"error"``, or ``"pending"`` after a user stop /
@@ -393,10 +393,9 @@ class ObservatoryScheduler:
     async def replan(self) -> None:
         """Replan the queue using priority-based preemption (SCHED-070)."""
         for job in self.get_ordered_jobs():
-            if job.priority < (self.active_job.priority if self.active_job else 999):
-                if await self.can_start_job(job):
-                    self.active_job = job
-                    return
+            if job.priority < (self.active_job.priority if self.active_job else 999) and await self.can_start_job(job):
+                self.active_job = job
+                return
 
     # --- Progress tracking (SCHED-090) -----------------------------------
 

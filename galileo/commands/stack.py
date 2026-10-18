@@ -317,8 +317,8 @@ def main() -> int:
         logger.info('Stack complete')
         return 0
 
-    except Exception as e:
-        logger.exception(f"Fatal error: {e}")
+    except Exception:
+        logger.exception("Fatal error")
         return 1
 
 

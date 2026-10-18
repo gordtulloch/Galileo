@@ -87,8 +87,8 @@ def create_light_sessions(processor, logger):
         logger.info(f"Light sessions created: {len(created_sessions)}")
         # Quality metrics are automatically updated by createLightSessions
         return len(created_sessions)
-    except Exception as e:
-        logger.exception(f"Error creating light sessions: {e}")
+    except Exception:
+        logger.exception("Error creating light sessions")
         raise
 
 def update_session_quality_metrics(processor, logger):
@@ -110,8 +110,8 @@ def update_session_quality_metrics(processor, logger):
         processor.session_processor.updateSessionQualityMetrics(session_ids)
         logger.info(f"Quality metrics updated for {len(session_ids)} sessions")
         return len(session_ids)
-    except Exception as e:
-        logger.exception(f"Error updating session quality metrics: {e}")
+    except Exception:
+        logger.exception("Error updating session quality metrics")
         raise
 
 def create_calibration_sessions(processor, logger):
@@ -121,8 +121,8 @@ def create_calibration_sessions(processor, logger):
         created_sessions = processor.createCalibrationSessions(progress_callback=None)
         logger.info(f"Calibration sessions created: {len(created_sessions)}")
         return len(created_sessions)
-    except Exception as e:
-        logger.exception(f"Error creating calibration sessions: {e}")
+    except Exception:
+        logger.exception("Error creating calibration sessions")
         raise
 
 def clear_existing_sessions(logger):
@@ -138,12 +138,11 @@ def clear_existing_sessions(logger):
         logger.info(f"Deleted {sessions_deleted} existing sessions")
 
         return sessions_deleted
-    except Exception as e:
-        logger.exception(f"Error clearing existing sessions: {e}")
+    except Exception:
+        logger.exception("Error clearing existing sessions")
         raise
 
-def main():
-    """Main function to create sessions from command line."""
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Create sessions for unassigned FITS files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -173,16 +172,116 @@ Examples:
                         help='Only create sessions for files without existing sessions')
     parser.add_argument('-q', '--update-quality', action='store_true',
                         help='Update quality metrics for all existing light sessions')
+    return parser
 
-    args = parser.parse_args()
 
-    # Validate argument combinations
+def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject option combinations that make no sense together (exits via ``parser.error``)."""
     if args.regenerate and (args.lights or args.calibs or args.new_only or args.update_quality):
         parser.error("--regenerate cannot be used with other options (regenerate always creates both types for all files)")
     if args.new_only and (args.lights or args.calibs):
         parser.error("--new-only cannot be used with --lights or --calibs (new-only always processes both types)")
     if args.update_quality and (args.lights or args.calibs or args.new_only or args.regenerate):
         parser.error("--update-quality must be used alone (only updates quality metrics for existing sessions)")
+
+
+def _resolve_modes(args: argparse.Namespace, logger) -> tuple[bool, bool, bool]:
+    """(create_lights, create_calibs, new_only_mode) for the chosen options."""
+    if args.regenerate:  # overrides the other options
+        logger.info("Regenerate mode: Will clear all existing sessions and recreate both light and calibration sessions")
+        return True, True, False
+    if args.new_only:
+        logger.info("New-only mode: Will create sessions only for files without existing sessions")
+        return True, True, True
+    create_lights = not args.calibs  # Create lights unless only calibs requested
+    create_calibs = not args.lights  # Create calibs unless only lights requested
+    logger.info(f"Will create light sessions: {create_lights}")
+    logger.info(f"Will create calibration sessions: {create_calibs}")
+    return create_lights, create_calibs, False
+
+
+def _count_unassigned_files(logger) -> int:
+    """Number of live light + calibration files that have no session yet."""
+    unassigned_light_count = FitsFileModel.select().where(
+        FitsFileModel.fitsFileSession.is_null(),
+        FitsFileModel.fitsFileType == 'LIGHT FRAME',
+        FitsFileModel.fitsFileSoftDelete == False
+    ).count()
+
+    unassigned_cal_count = FitsFileModel.select().where(
+        FitsFileModel.fitsFileSession.is_null(),
+        FitsFileModel.fitsFileType.in_(['BIAS FRAME', 'DARK FRAME', 'FLAT FIELD']),
+        FitsFileModel.fitsFileSoftDelete == False
+    ).count()
+
+    logger.info(f"Found {unassigned_light_count} unassigned light files and {unassigned_cal_count} unassigned calibration files")
+    return unassigned_light_count + unassigned_cal_count
+
+
+def _report_results(args: argparse.Namespace, logger, create_lights: bool, create_calibs: bool,
+                    total_light_sessions: int, total_calib_sessions: int) -> int:
+    """Log the outcome and return the process exit code (1 when nothing was created)."""
+    logger.info("=== Session Creation Complete ===")
+    if create_lights:
+        logger.info(f"Light sessions created: {total_light_sessions}")
+    if create_calibs:
+        logger.info(f"Calibration sessions created: {total_calib_sessions}")
+
+    total_sessions = total_light_sessions + total_calib_sessions
+
+    if args.regenerate:
+        logger.info("=== Session Regeneration Complete ===")
+        logger.info("All existing sessions were cleared and recreated")
+    elif args.new_only:
+        logger.info("=== New-Only Session Creation Complete ===")
+        logger.info("Sessions created only for files without existing sessions")
+
+    if total_sessions == 0:
+        if args.regenerate:
+            logger.warning("No sessions were created after regeneration - no unassigned files found!")
+        elif args.new_only:
+            logger.info("No sessions were created - all files already have sessions assigned!")
+        else:
+            logger.warning("No sessions were created - all files may already be assigned!")
+        return 1
+
+    logger.info(f"Total sessions created: {total_sessions}")
+    if args.regenerate:
+        logger.info("Session regeneration completed successfully!")
+    else:
+        logger.info("Session creation completed successfully!")
+    return 0
+
+
+def _report_failure(e: Exception, verbose: bool, logger) -> int:
+    """Show an unexpected error (database errors get a boxed message, no traceback) and return exit code 1."""
+    from galileo.library.exceptions import DatabaseError
+
+    if isinstance(e, DatabaseError):
+        logger.error("Database error", exc_info=e)
+        print(f"\n{'='*70}")
+        print("DATABASE ERROR")
+        print(f"{'='*70}")
+        print(f"\n{e}\n")
+        print(f"{'='*70}\n")
+        return 1
+
+    # For other exceptions, show traceback if verbose
+    logger.error("Error during session creation", exc_info=e)
+    if verbose:
+        import traceback
+        logger.error("".join(traceback.format_exception(e)), exc_info=e)
+    else:
+        print(f"\nError: {e}")
+        print("Use -v/--verbose for detailed error information")
+    return 1
+
+
+def main():
+    """Main function to create sessions from command line."""
+    parser = _build_parser()
+    args = parser.parse_args()
+    _validate_args(parser, args)
 
     # Setup logging
     logger = setup_logging(args.verbose)
@@ -210,119 +309,28 @@ Examples:
             logger.info(f"Updated quality metrics for {sessions_updated} sessions")
             return 0
 
-        # Handle regenerate flag - this overrides other options
-        if args.regenerate:
-            create_lights = True
-            create_calibs = True
-            new_only_mode = False
-            logger.info("Regenerate mode: Will clear all existing sessions and recreate both light and calibration sessions")
-        elif args.new_only:
-            create_lights = True
-            create_calibs = True
-            new_only_mode = True
-            logger.info("New-only mode: Will create sessions only for files without existing sessions")
-        else:
-            # Determine what to process
-            create_lights = not args.calibs  # Create lights unless only calibs requested
-            create_calibs = not args.lights  # Create calibs unless only lights requested
-            new_only_mode = False
-            logger.info(f"Will create light sessions: {create_lights}")
-            logger.info(f"Will create calibration sessions: {create_calibs}")
+        create_lights, create_calibs, new_only_mode = _resolve_modes(args, logger)
 
         # Check for unassigned files in new-only mode
-        if new_only_mode:
-            unassigned_light_count = FitsFileModel.select().where(
-                FitsFileModel.fitsFileSession.is_null(),
-                FitsFileModel.fitsFileType == 'LIGHT FRAME',
-                FitsFileModel.fitsFileSoftDelete == False
-            ).count()
-
-            unassigned_cal_count = FitsFileModel.select().where(
-                FitsFileModel.fitsFileSession.is_null(),
-                FitsFileModel.fitsFileType.in_(['BIAS FRAME', 'DARK FRAME', 'FLAT FIELD']),
-                FitsFileModel.fitsFileSoftDelete == False
-            ).count()
-
-            total_unassigned = unassigned_light_count + unassigned_cal_count
-            logger.info(f"Found {unassigned_light_count} unassigned light files and {unassigned_cal_count} unassigned calibration files")
-
-            if total_unassigned == 0:
-                logger.info("No unassigned files found - all files already have sessions assigned")
-                return 0
+        if new_only_mode and _count_unassigned_files(logger) == 0:
+            logger.info("No unassigned files found - all files already have sessions assigned")
+            return 0
 
         # Clear existing sessions if regenerate flag is set
         if args.regenerate:
             clear_existing_sessions(logger)
 
-        total_light_sessions = 0
-        total_calib_sessions = 0
+        total_light_sessions = create_light_sessions(processor, logger) if create_lights else 0
+        total_calib_sessions = create_calibration_sessions(processor, logger) if create_calibs else 0
 
-        # Create light sessions
-        if create_lights:
-            total_light_sessions = create_light_sessions(processor, logger)
-
-        # Create calibration sessions
-        if create_calibs:
-            total_calib_sessions = create_calibration_sessions(processor, logger)
-
-        # Report results
-        logger.info("=== Session Creation Complete ===")
-        if create_lights:
-            logger.info(f"Light sessions created: {total_light_sessions}")
-        if create_calibs:
-            logger.info(f"Calibration sessions created: {total_calib_sessions}")
-
-        total_sessions = total_light_sessions + total_calib_sessions
-
-        if args.regenerate:
-            logger.info("=== Session Regeneration Complete ===")
-            logger.info("All existing sessions were cleared and recreated")
-        elif args.new_only:
-            logger.info("=== New-Only Session Creation Complete ===")
-            logger.info("Sessions created only for files without existing sessions")
-
-        if total_sessions == 0:
-            if args.regenerate:
-                logger.warning("No sessions were created after regeneration - no unassigned files found!")
-            elif args.new_only:
-                logger.info("No sessions were created - all files already have sessions assigned!")
-            else:
-                logger.warning("No sessions were created - all files may already be assigned!")
-            return 1
-        else:
-            logger.info(f"Total sessions created: {total_sessions}")
-            if args.regenerate:
-                logger.info("Session regeneration completed successfully!")
-            else:
-                logger.info("Session creation completed successfully!")
-            return 0
+        return _report_results(args, logger, create_lights, create_calibs, total_light_sessions, total_calib_sessions)
 
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1
     except Exception as e:
-        # Import DatabaseError for special handling
-        from galileo.library.exceptions import DatabaseError
+        return _report_failure(e, args.verbose, logger)
 
-        # Handle database errors gracefully without traceback
-        if isinstance(e, DatabaseError):
-            logger.exception(f"Database error: {e}")
-            print(f"\n{'='*70}")
-            print("DATABASE ERROR")
-            print(f"{'='*70}")
-            print(f"\n{e}\n")
-            print(f"{'='*70}\n")
-            return 1
-
-        # For other exceptions, show traceback if verbose
-        logger.exception(f"Error during session creation: {e}")
-        if args.verbose:
-            import traceback
-            logger.exception(traceback.format_exc())
-        else:
-            print(f"\nError: {e}")
-            print("Use -v/--verbose for detailed error information")
-        return 1
 
 if __name__ == "__main__":
     sys.exit(main())

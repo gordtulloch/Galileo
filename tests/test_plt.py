@@ -3,6 +3,8 @@
 
 """PLT — Plate Solving (TC-PLT-010 … TC-PLT-060)."""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -322,9 +324,9 @@ def test_tc_plt_020_finds_astap_where_its_installer_puts_it(monkeypatch):
     import shutil
     plt_mod = pytest.importorskip("galileo.platesolve")
     monkeypatch.setattr(shutil, "which", lambda name: None)
-    monkeypatch.setattr(plt_mod, "_KNOWN_LOCATIONS", {"astap": ["/no/such/astap", __file__]})
+    monkeypatch.setattr("galileo.platesolve_solvers._KNOWN_LOCATIONS", {"astap": ["/no/such/astap", __file__]})
     assert plt_mod.PlateSolver._find_executable("astap") == __file__
-    monkeypatch.setattr(plt_mod, "_KNOWN_LOCATIONS", {"astap": ["/no/such/astap"]})
+    monkeypatch.setattr("galileo.platesolve_solvers._KNOWN_LOCATIONS", {"astap": ["/no/such/astap"]})
     assert plt_mod.PlateSolver._find_executable("astap") == ""
 
 
@@ -642,8 +644,7 @@ async def test_tc_plt_070_only_the_newest_frames_are_kept(tmp_path):
     rig.workflow._KEEP_FILES = 3
     for _ in range(6):
         await rig.workflow.capture_and_solve(plt.SolveSettings())
-        import time
-        time.sleep(0.02)                                           # distinct modification times
+        await asyncio.sleep(0.02)                                         # distinct modification times
     assert len(list((tmp_path / "solve").glob("solve_*.fits"))) == 3
 
 
@@ -1257,13 +1258,118 @@ def test_tc_plt_020_only_the_web_backend_needs_internet():
     assert not plt_mod.PlateSolver.is_offline_capable("astrometry_web")
 
 
+@pytest.fixture
+def fake_tetra3(monkeypatch):
+    """A stand-in ``tetra3`` module: it records what it is asked and answers with a fixed solution."""
+    import sys
+    import types
+    calls: dict = {"loaded": [], "solve": []}
+
+    class _Tetra3:
+        def __init__(self, load_database=None):
+            calls["loaded"].append(load_database)
+
+        def solve_from_centroids(self, centroids, size, **kwargs):
+            calls["solve"].append((size, kwargs))
+            if calls.get("fail"):
+                return {"RA": None, "Dec": None, "Roll": None, "FOV": None}
+            return {"RA": 150.0, "Dec": 30.0, "Roll": 12.5, "FOV": 2.0}
+
+    module = types.ModuleType("tetra3")
+    module.Tetra3 = _Tetra3
+    module.get_centroids_from_image = lambda image: [(1.0, 2.0)] * (calls.get("stars", 10))
+    monkeypatch.setitem(sys.modules, "tetra3", module)
+    monkeypatch.setattr("galileo.platesolve_solvers._tetra3_instances", {})
+    return calls
+
+
+def _write_star_frame(path, width=200, height=100):
+    import numpy as np
+    from astropy.io import fits
+    fits.PrimaryHDU(np.zeros((height, width), dtype=np.float32)).writeto(path, overwrite=True)
+
+
+@pytest.mark.requirement("TC-PLT-010")
+@pytest.mark.priority("P2")
+async def test_tc_plt_010_tetra3_solves_in_process(tmp_path, fake_tetra3):
+    """PLT-010/PLT-060: the tetra3 backend centroids the frame, solves it with the FOV hint and the
+    configured database, and reports the centre, roll and scale (FOV over image width)."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    frame = tmp_path / "frame.fits"
+    _write_star_frame(frame)
+    solver = plt_mod.PlateSolver(backend="tetra3", executable="mine.npz",
+                                 params=plt_mod.SolverParams(fov_hint_deg=2.0))
+    result = await solver.solve(frame, hint=(10.0, 10.0))
+    assert result.success is True
+    assert result.ra_deg == pytest.approx(150.0) and result.dec_deg == pytest.approx(30.0)
+    assert result.rotation_deg == pytest.approx(12.5)
+    assert result.scale_arcsec_px == pytest.approx(2.0 * 3600.0 / 200)
+    size, kwargs = fake_tetra3["solve"][0]
+    assert size == (100, 200) and kwargs["fov_estimate"] == 4.0 and kwargs["fov_max_error"] == pytest.approx(1.2)  # height hint -> width
+    assert fake_tetra3["loaded"] == ["mine.npz"]
+    await solver.solve(frame)
+    assert fake_tetra3["loaded"] == ["mine.npz"]      # the database is loaded once, then reused
+    blank = plt_mod.PlateSolver(backend="tetra3")
+    await blank.solve(frame)
+    assert fake_tetra3["loaded"][-1] == "default_database"
+
+
+@pytest.mark.requirement("TC-PLT-050")
+@pytest.mark.priority("P2")
+async def test_tc_plt_050_tetra3_failures_are_reported(tmp_path, fake_tetra3, monkeypatch):
+    """PLT-050: tetra3 finding no match, too few stars, or not being installed reports a failure reason."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    frame = tmp_path / "frame.fits"
+    _write_star_frame(frame)
+    solver = plt_mod.PlateSolver(backend="tetra3")
+    fake_tetra3["fail"] = True
+    assert (await solver.solve(frame)).failure_reason == "No solution found"
+    fake_tetra3["fail"], fake_tetra3["stars"] = False, 2
+    assert (await solver.solve(frame)).failure_reason == "Not enough stars detected"
+    monkeypatch.setattr("galileo.platesolve_solvers.tetra3_installed", lambda: False)
+    assert not solver.is_available() and "github.com/esa/tetra3" in solver.missing_message()
+    assert "not installed" in (await solver.solve(frame)).failure_reason
+
+
+@pytest.mark.requirement("TC-PLT-020")
+@pytest.mark.priority("P2")
+def test_tc_plt_020_tetra3_is_offline_and_listed():
+    """PLT-020/PLT-060: tetra3 works offline and is one of the choosable solvers."""
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    assert plt_mod.PlateSolver.is_offline_capable("tetra3")
+    assert "tetra3" in plt_mod.BACKENDS
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_tetra3_database_is_saved_per_pier(tmp_path):
+    """PLT-060: the tetra3 database path is saved per Pier and reaches the solver built for it."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import (
+        create_observatory, create_pier, get_tetra3_database, make_pier_solver,
+        save_solver_backend, save_tetra3_database,
+    )
+
+    init_db(tmp_path / "plt060t3.db")
+    try:
+        pier = create_pier(create_observatory("Obs PLT-060 T3"), "Pier PLT-060 T3")
+        assert get_tetra3_database(pier) == ""
+        save_solver_backend(pier, "tetra3")
+        save_tetra3_database(pier, "/data/t3.npz")
+        assert get_tetra3_database(pier) == "/data/t3.npz"
+        solver = make_pier_solver(pier)
+        assert solver.backend == "tetra3" and solver.executable == "/data/t3.npz"
+    finally:
+        db.close()
+
+
 @pytest.mark.requirement("TC-PLT-010")
 @pytest.mark.priority("P2")
 async def test_tc_plt_010_nova_uploads_polls_and_reads_the_calibration(tmp_path, monkeypatch):
     """PLT-010: The web backend logs in with the API key, uploads the frame with the hints, polls
     the submission and job, and returns the job's calibration."""
     plt_mod = pytest.importorskip("galileo.platesolve")
-    monkeypatch.setattr(plt_mod, "_NOVA_POLL_S", 0.0)
+    monkeypatch.setattr("galileo.platesolve_solvers._NOVA_POLL_S", 0.0)
     solver = plt_mod.PlateSolver(backend="astrometry_web", api_key="KEY",
                                  params=plt_mod.SolverParams(fov_hint_deg=2.0, downsample=2))
     calls: list = []
@@ -1300,7 +1406,7 @@ async def test_tc_plt_010_nova_uploads_polls_and_reads_the_calibration(tmp_path,
 async def test_tc_plt_050_nova_reports_missing_key_and_job_failure(tmp_path, monkeypatch):
     """PLT-050: No API key, a failed job and a network error are each reported as a failed solve."""
     plt_mod = pytest.importorskip("galileo.platesolve")
-    monkeypatch.setattr(plt_mod, "_NOVA_POLL_S", 0.0)
+    monkeypatch.setattr("galileo.platesolve_solvers._NOVA_POLL_S", 0.0)
     frame = tmp_path / "frame.fits"
     frame.write_bytes(b"x")
     assert "API key" in (await plt_mod.PlateSolver(backend="astrometry_web").solve(frame)).failure_reason
@@ -1344,3 +1450,126 @@ async def test_tc_plt_040_solve_and_center_syncs_before_slewing_and_uses_cos_dec
     mount.reset_mock()
     assert await solver.solve_and_center(100.0, 60.0, mount, mock_indi_camera) is True
     mount.sync_to_coordinates.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# tetra3 database generation (PLT-090)
+# ---------------------------------------------------------------------------
+
+def _t3_pier(name, tubes, camera=(3.76, 6248)):
+    """A Pier with *tubes* (focal lengths, mm) and a primary camera of ``(pixel um, width px)``."""
+    from galileo.observatory import create_observatory, create_pier, save_device_config, save_optical_tubes
+    pier = create_pier(create_observatory(f"Obs {name}"), f"Pier {name}")
+    save_optical_tubes(pier, [{"name": f"T{i}", "focal_length_mm": f} for i, f in enumerate(tubes)])
+    if camera:
+        save_device_config(pier, "camera", "sim", "localhost", 7624, pixel_size_um=camera[0],
+                           sensor_width_px=camera[1])
+    return pier
+
+
+@pytest.mark.requirement("TC-PLT-090")
+@pytest.mark.priority("P2")
+def test_tc_plt_090_plans_follow_each_piers_field_of_view(tmp_path, monkeypatch):
+    """PLT-090: one database per distinct field-of-view range, sized from focal length, pixel size and
+    sensor width; Pier ranges that match share a database; narrow fields use Tycho; incomplete Piers are skipped."""
+    from galileo.library.database import db, init_db
+    from galileo import tetra3_db
+
+    monkeypatch.setattr(tetra3_db, "tetra3_dir", lambda: tmp_path)
+    init_db(tmp_path / "plt090.db")
+    try:
+        wide = _t3_pier("wide", [200])               # 206.265*3.76/200*6248/3600 = 6.73 deg
+        twin = _t3_pier("twin", [200])
+        narrow = _t3_pier("narrow", [2000, 1000])    # 0.67 and 1.35 deg
+        incomplete = _t3_pier("none", [], camera=None)
+        plans, skipped = tetra3_db.plan_databases([wide, twin, narrow, incomplete])
+        assert len(plans) == 2 and len(skipped) == 1 and "Pier none" in skipped[0]
+        narrow_plan, wide_plan = plans
+        assert (wide_plan.min_fov, wide_plan.max_fov) == (6.73, 6.73) and wide_plan.catalog == "hip_main"
+        assert wide_plan.pier_ids == (wide.id, twin.id)
+        assert (narrow_plan.min_fov, narrow_plan.max_fov) == (0.67, 1.35) and narrow_plan.catalog == "tyc_main"
+        assert narrow_plan.path.parent == tmp_path and narrow_plan.path.suffix == ".npz"
+        assert tetra3_db.download_size_mb(plans) == 51 + 354
+        (tmp_path / "hip_main.dat").write_text("x")
+        assert tetra3_db.download_size_mb(plans) == 354
+        assert len(tetra3_db.all_piers()) == 4
+    finally:
+        db.close()
+
+
+@pytest.mark.requirement("TC-PLT-090")
+@pytest.mark.priority("P2")
+def test_tc_plt_090_build_downloads_generates_and_reuses(tmp_path, monkeypatch):
+    """PLT-090: a build fetches the catalogue once, generates each database under a partial name then renames
+    it, skips one that exists, and reports a failure without leaving a partial file."""
+    import sys
+    import types
+    from pathlib import Path
+    from galileo import tetra3_db
+
+    generated: list[dict] = []
+
+    class _Tetra3:
+        def __init__(self, load_database="default_database"):
+            assert load_database is None
+
+        def generate_database(self, **kwargs):
+            generated.append(kwargs)
+            if kwargs["max_fov"] == 99:
+                raise MemoryError("too big")
+            Path(kwargs["save_as"]).write_bytes(b"db")
+
+    module = types.ModuleType("tetra3")
+    module.Tetra3 = _Tetra3
+    monkeypatch.setitem(sys.modules, "tetra3", module)
+    downloads: list[str] = []
+    monkeypatch.setattr(tetra3_db, "_download_catalog",
+                        lambda catalog, folder, emit: downloads.append(catalog))
+
+    def plan(name, fov, catalog="hip_main"):
+        return tetra3_db.DatabasePlan(fov, fov, catalog, tmp_path / f"{name}.npz", (1,), ("P",))
+
+    existing = plan("have", 5.0)
+    existing.path.write_bytes(b"old")
+    plans = [plan("a", 8.0), existing, plan("b", 6.0), plan("bad", 99.0)]
+    events: list[tuple] = []
+    tetra3_db.build_databases(plans, lambda *a: events.append(a), folder=tmp_path)
+    assert [e for e in events if e[0] == "built"] == [
+        ("built", 0, str(plans[0].path)), ("built", 1, str(existing.path)), ("built", 2, str(plans[2].path))]
+    failed = [e for e in events if e[0] == "failed"]
+    assert len(failed) == 1 and failed[0][1] == 3 and "MemoryError" in failed[0][2]
+    assert plans[0].path.read_bytes() == b"db" and existing.path.read_bytes() == b"old"
+    assert not list(tmp_path.glob("*.partial.npz")) and not plans[3].path.exists()
+    assert [g["max_fov"] for g in generated] == [8.0, 6.0, 99.0] and generated[0]["star_catalog"] == "hip_main"
+    assert downloads == ["hip_main", "hip_main", "hip_main"]
+
+
+@pytest.mark.requirement("TC-PLT-090")
+@pytest.mark.priority("P2")
+def test_tc_plt_090_builder_runs_in_a_cancellable_process(tmp_path):
+    """PLT-090: the builder reports a build process that ends without finishing (here, cancelled) as finished,
+    and cleans up partial files, so the page can never be left waiting."""
+    from galileo import tetra3_db
+
+    plan = tetra3_db.DatabasePlan(5.0, 5.0, "hip_main", tmp_path / "x.npz", (1,), ("P",))
+    tetra3_db.partial_path(plan).write_bytes(b"half")
+    builder = tetra3_db.DatabaseBuilder([plan])
+    builder._process = _DeadProcess()
+    builder.cancel()
+    assert builder.poll()[-1] == ("finished",) and not builder.running
+    assert not tetra3_db.partial_path(plan).exists()
+    crashed = tetra3_db.DatabaseBuilder([plan])
+    crashed._process = _DeadProcess(exitcode=-9)
+    messages = crashed.poll()
+    assert messages[0][0] == "failed" and "-9" in messages[0][2] and messages[-1] == ("finished",)
+
+
+class _DeadProcess:
+    def __init__(self, exitcode=1):
+        self.exitcode = exitcode
+
+    def is_alive(self):
+        return False
+
+    def terminate(self):
+        pass

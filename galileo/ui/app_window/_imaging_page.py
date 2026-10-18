@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from galileo.ui.qt_helpers import layout_widget
+from typing import TYPE_CHECKING, Any
 
 import logging
 
@@ -127,6 +128,10 @@ class AppWindowImagingPageMixin:
         capture_btn = QPushButton("Capture")
         capture_btn.setObjectName("AccentButton")
         capture_row.addWidget(capture_btn, 1)
+        loop_btn = QPushButton("Loop")
+        loop_btn.setToolTip("Capture repeatedly: as soon as one Quantity-frame run finishes, start the next. "
+                            "Stop ends the loop.")
+        capture_row.addWidget(loop_btn, 1)
         stop_capture_btn = QPushButton("Stop")
         stop_capture_btn.setToolTip("Abandon the exposure in progress and take no more frames.")
         stop_capture_btn.setEnabled(False)
@@ -189,11 +194,6 @@ class AppWindowImagingPageMixin:
         orientation_combo.addItem("Portrait", PORTRAIT)
         orientation_combo.setEnabled(False)
         view_form.addRow("Layout", orientation_combo)
-        panels_btn = QPushButton("Panels…")
-        panels_btn.setToolTip(
-            "Choose which of this tab's panels are shown and in what order (UI-020). "
-            "The arrangement is remembered between sessions; Reset Layout restores the default.")
-        view_form.addRow(panels_btn)
 
         settings_layout.addWidget(view_group)
 
@@ -296,6 +296,14 @@ class AppWindowImagingPageMixin:
         annotate_status = QLabel("")
         annotate_status.setObjectName("StatusHint")
         zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
+        crosshair_btn = QPushButton("Crosshair")
+        crosshair_btn.setCheckable(True)
+        crosshair_btn.setToolTip(
+            "Overlay a diagonal crosshair and a target circle on the preview to mark the centre "
+            "of the frame. Display only — saved frames are unaffected."
+        )
+        crosshair_btn.toggled.connect(preview_view.set_crosshair)
+        zoom_toolbar.insertWidget(0, crosshair_btn)
         zoom_toolbar.insertWidget(0, darks_btn)
         zoom_toolbar.insertWidget(0, flats_btn)
         zoom_toolbar.insertWidget(0, framing_btn)
@@ -453,7 +461,7 @@ class AppWindowImagingPageMixin:
             _apply_user_layout()
 
         # --- user panel layout (UI-020) -----------------------------------------
-        from galileo.ui.imaging_layout import ImagingLayoutStore, PANEL_LABELS
+        from galileo.ui.imaging_layout import ImagingLayoutStore
         layout_store = ImagingLayoutStore()
         try:
             user_layout = layout_store.load()
@@ -474,7 +482,7 @@ class AppWindowImagingPageMixin:
             for lay in (settings_layout, content_layout, dock_layout, log_bar_layout):
                 slots, present = [], []
                 for i in range(lay.count()):
-                    w = lay.itemAt(i).widget()
+                    w = layout_widget(lay, i)
                     if w is not None and w in widget_panel:
                         slots.append(i)
                         present.append(w)
@@ -494,73 +502,6 @@ class AppWindowImagingPageMixin:
                 layout_store.save(user_layout)
             except OSError:
                 logger.warning("Could not save the imaging panel layout", exc_info=True)
-
-        def _edit_panels() -> None:
-            from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem, QDialogButtonBox
-            dlg = QDialog(page)
-            dlg.setWindowTitle("Imaging Panels")
-            outer = QVBoxLayout(dlg)
-            outer.addWidget(QLabel("Tick the panels to show; use Move Up / Move Down to reorder."))
-            row = QHBoxLayout()
-            lst = QListWidget()
-            row.addWidget(lst, 1)
-            side = QVBoxLayout()
-            up_btn, down_btn = QPushButton("Move Up"), QPushButton("Move Down")
-            reset_btn = QPushButton("Reset Layout")
-            for b in (up_btn, down_btn, reset_btn):
-                side.addWidget(b)
-            side.addStretch(1)
-            row.addLayout(side)
-            outer.addLayout(row)
-            close_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-            close_box.rejected.connect(dlg.accept)
-            outer.addWidget(close_box)
-
-            def _fill(select: str | None = None) -> None:
-                lst.blockSignals(True)
-                lst.clear()
-                for pid in user_layout.order:
-                    item = QListWidgetItem(PANEL_LABELS[pid])
-                    item.setData(Qt.ItemDataRole.UserRole, pid)
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    item.setCheckState(Qt.CheckState.Checked if user_layout.is_visible(pid)
-                                       else Qt.CheckState.Unchecked)
-                    lst.addItem(item)
-                    if pid == select:
-                        lst.setCurrentItem(item)
-                lst.blockSignals(False)
-
-            def _changed() -> None:
-                _apply_user_layout()
-                _save_user_layout()
-
-            def _checked(item) -> None:
-                user_layout.set_visible(item.data(Qt.ItemDataRole.UserRole),
-                                        item.checkState() == Qt.CheckState.Checked)
-                _changed()
-
-            def _move(offset: int) -> None:
-                item = lst.currentItem()
-                if item is None:
-                    return
-                pid = item.data(Qt.ItemDataRole.UserRole)
-                if user_layout.move(pid, offset):
-                    _fill(pid)
-                    _changed()
-
-            def _reset() -> None:
-                user_layout.reset()
-                _fill()
-                _changed()
-
-            lst.itemChanged.connect(_checked)
-            up_btn.clicked.connect(lambda: _move(-1))
-            down_btn.clicked.connect(lambda: _move(1))
-            reset_btn.clicked.connect(_reset)
-            _fill()
-            dlg.exec()
-
-        panels_btn.clicked.connect(_edit_panels)
 
         class _PageResizeWatcher(QObject):
             def eventFilter(self, obj, event):
@@ -815,7 +756,7 @@ class AppWindowImagingPageMixin:
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
             "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "offset": offset_spin, "auto_save": auto_save_check,
-            "capture_button": capture_btn, "stop_button": stop_capture_btn, "status": status_label,
+            "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
             "nudge_rate": nudge_rate_combo, "nudge_duration": nudge_duration_spin,
@@ -867,6 +808,7 @@ class AppWindowImagingPageMixin:
             annotate_btn.setEnabled(service.current_frame is not None)
             running = self._imaging_capture_threads.get(key) is not None
             capture_btn.setEnabled(not running)
+            loop_btn.setEnabled(not running)
             stop_capture_btn.setEnabled(running)
             if running:
                 total, done = service.series_total, service.series_done
@@ -913,10 +855,13 @@ class AppWindowImagingPageMixin:
         clear_mosaic_btn.clicked.connect(_clear_mosaic)
         _refresh_mosaic_indicator()
 
-        def do_capture() -> None:
+        looping: set = set()        # Pier keys whose capture restarts itself when it finishes
+
+        def do_capture(loop: bool = False) -> None:
             from galileo.current_object import pier_key
             service = _current_service()
             key = pier_key(self._current_pier)
+            looping.discard(key)
             service._camera = _selected_camera_backend()
             if service._camera is None:
                 QMessageBox.information(
@@ -941,6 +886,8 @@ class AppWindowImagingPageMixin:
                     )
                     return
 
+            if loop:
+                looping.add(key)
             current = self.current_object()
             service.object_name = current.name if current is not None else ""
             duration = exposure_spin.value()
@@ -960,7 +907,7 @@ class AppWindowImagingPageMixin:
             # one. Each handler only paints the shared widgets if this Pier is still
             # the one displayed; either way it always updates *service*'s own state,
             # which is what a later switch back to this Pier repaints from.
-            countdown = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
+            countdown: dict[str, Any] = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
 
             def _tick_countdown() -> None:
                 if not _is_displayed(key):
@@ -1003,6 +950,7 @@ class AppWindowImagingPageMixin:
                 if timer is not None:
                     timer.stop()
                 capture_btn.setEnabled(True)
+                loop_btn.setEnabled(True)
                 stop_capture_btn.setEnabled(False)
 
             def on_capture_finished() -> None:
@@ -1017,8 +965,14 @@ class AppWindowImagingPageMixin:
                     status_label.setToolTip(summary)
                     on_frame_done(0, 0)
                 self._window.statusBar().showMessage(summary, 6000)
+                if key in looping:
+                    if service.stop_requested or not _is_displayed(key):
+                        looping.discard(key)
+                    else:
+                        QTimer.singleShot(0, lambda: do_capture(loop=True))
 
             def on_capture_failed(message: str) -> None:
+                looping.discard(key)
                 _end_capture()
                 logger.error("Manual capture failed: %s", message)
                 if service.library_ids:
@@ -1032,6 +986,7 @@ class AppWindowImagingPageMixin:
                 import time
                 countdown.update(start=time.monotonic(), duration=duration, frame=1, total=quantity)
                 capture_btn.setEnabled(False)
+                loop_btn.setEnabled(False)
                 stop_capture_btn.setEnabled(True)
                 progress_bar.setValue(0)
                 status_label.setToolTip("")
@@ -1054,11 +1009,14 @@ class AppWindowImagingPageMixin:
             self._imaging_capture_threads[key] = thread
             thread.start()
 
-        capture_btn.clicked.connect(do_capture)
+        capture_btn.clicked.connect(lambda: do_capture())
+        loop_btn.clicked.connect(lambda: do_capture(loop=True))
 
         def stop_capture() -> None:
             # Stops whichever Pier is currently displayed's own capture — a
             # different Pier's in-flight capture is untouched.
+            from galileo.current_object import pier_key
+            looping.discard(pier_key(self._current_pier))
             service = _current_service()
             service.request_stop()
             status_label.setText("Stopping…")

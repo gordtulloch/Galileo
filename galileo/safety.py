@@ -525,8 +525,8 @@ _HMS_CLEAR_AQI = 25.0
 
 
 def _http_get(url: str) -> bytes:
-    import urllib.request
-    with urllib.request.urlopen(url, timeout=30) as resp:
+    from galileo.net import urlopen_http
+    with urlopen_http(url, timeout=30) as resp:
         return resp.read()
 
 
@@ -600,7 +600,7 @@ class NoaaSmokeClient:
             return None
 
     def _rate(self, kml: bytes) -> float | None:
-        import xml.etree.ElementTree as ET
+        from defusedxml import ElementTree as ET
         KML = "http://www.opengis.net/kml/2.2"
         root = ET.fromstring(kml)
         box = (self.longitude - 0.5, self.latitude - 0.5, self.longitude + 0.5, self.latitude + 0.5)

@@ -5,7 +5,7 @@
 
 ``SessionRunController`` is the Qt-side owner of session execution. It builds a
 ``SessionContext`` from the active Pier's connected devices, runs
-``galileo.sequencer.session_exec.SessionExecutor`` on a worker thread (the same
+``galileo.session_exec.SessionExecutor`` on a worker thread (the same
 QThread-plus-``asyncio.run`` pattern every other long device operation in this app uses, so
 the UI never blocks), and relays progress back to the Sessions page through a queued signal.
 
@@ -31,7 +31,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from galileo.history import get_history
-from galileo.sequencer.session_exec import (
+from galileo.session_exec import (
     SessionContext,
     SessionExecutor,
     SessionProgress,

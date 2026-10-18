@@ -140,9 +140,9 @@ class PluginContext:
         DeviceBackend.registered_backends[category].append(adapter_cls)
 
     def register_instruction_type(self, instruction_cls) -> None:
-        """Register a new sequencer instruction type (PLUG-020, SEQ-ADV-070)."""
-        from galileo.sequencer.advanced import InstructionRegistry
-        InstructionRegistry.instance().register(instruction_cls)
+        """Register a new session block type (PLUG-020, SES-340)."""
+        from galileo.session_exec import BlockRegistry
+        BlockRegistry.instance().register(instruction_cls)
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +168,11 @@ class UiRegistry:
 
     def get_secondary_panels(self) -> list[UiPanel]:
         return [p for p in self._panels if p.level == "secondary"]
+
+    def get_equipment_panels(self, category: str) -> list[UiPanel]:
+        """Panels a plugin contributes to one Equipment page, declared with
+        ``panel_level = "equipment:<category id>"`` (e.g. ``"equipment:switch"``)."""
+        return [p for p in self._panels if p.level == f"equipment:{category}"]
 
 
 # ---------------------------------------------------------------------------

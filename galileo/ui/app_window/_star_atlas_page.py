@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import take_widget
 from typing import TYPE_CHECKING
 
 import logging
@@ -139,9 +140,9 @@ class AppWindowStarAtlasPageMixin:
 
         def refresh_catalog_rows() -> None:
             while catalog_rows.count():
-                item = catalog_rows.takeAt(0)
-                if item.widget() is not None:
-                    item.widget().deleteLater()
+                w = take_widget(catalog_rows)
+                if w is not None:
+                    w.deleteLater()
             counts = view.dso_catalog_counts()
             for cat in DSO_CATALOGS:
                 if cat not in view.dso_catalogs:

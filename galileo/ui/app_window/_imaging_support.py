@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Shared helpers the Imaging page and sequencer/scheduler frame-capture paths both need: device-connection state, FITS header context, and mount slew-to-object handling."""
+"""Shared helpers the Imaging page and session/scheduler frame-capture paths both need: device-connection state, FITS header context, and mount slew-to-object handling."""
 
 from __future__ import annotations
 

@@ -64,20 +64,19 @@ def test_tc_plug_010_register_new_device_backend(plugin_manager):
 
 @pytest.mark.requirement("TC-PLUG-020")
 @pytest.mark.priority("MVP")
-def test_tc_plug_020_register_sequencer_instruction_or_ui_panel(plugin_manager):
-    """PLUG-020: Plugin can register new sequencer instruction/condition/trigger or UI panel."""
-    seq_mod = pytest.importorskip("galileo.sequencer.advanced")
+def test_tc_plug_020_register_session_block_or_ui_panel(plugin_manager):
+    """PLUG-020: Plugin can register new session block types or UI panel."""
+    exec_mod = pytest.importorskip("galileo.session_exec")
     pytest.importorskip("galileo.plugins")
 
-    class MyInstruction(seq_mod.BaseInstruction):
-        label = "PluginInstruction"
+    class MyInstruction:
         async def execute(self, ctx): pass
 
     ctx = plugin_manager.create_context()
     ctx.register_instruction_type(MyInstruction)
 
-    registry = seq_mod.InstructionRegistry.instance()
-    assert MyInstruction in registry.available_instructions()
+    registry = exec_mod.BlockRegistry.instance()
+    assert MyInstruction in registry.available_blocks()
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +325,7 @@ def test_tc_plug_090_install_missing_manifest_raises(tmp_path):
     plugins_dir.mkdir()
     with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
         mgr = plugins.PluginManager()
-        with pytest.raises(plugins.PluginInstallError, match="plugin.toml"):
+        with pytest.raises(plugins.PluginInstallError, match=r"plugin.toml"):
             mgr.install(zip_file)
 
     # Nothing should have been extracted.

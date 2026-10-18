@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Catalog registration for frames written during a running sequence (LIB-150, LIB-160).
+"""Catalog registration for frames written during a running session (LIB-150, LIB-160).
 
-The sequencer hands each frame it has just written to :meth:`LibraryRegistrar.register_frame`
+The session executor hands each frame it has just written to :meth:`LibraryRegistrar.register_frame`
 so it is in the catalog immediately, rather than waiting for a later scan. Frames
-acquired by one sequence step are grouped into a *session container*: a
+acquired by one session step are grouped into a *session container*: a
 ``fitsSession`` row created from the step's own boundaries (authoritative), as
 opposed to the sessions ``galileo.library.core.session_processing`` infers from
 FITS headers afterwards (LIB-040).
@@ -32,7 +32,7 @@ class SessionContainer:
 
 
 class LibraryRegistrar:
-    """Registers sequencer output in the library catalog, in place (files are not moved)."""
+    """Registers session output in the library catalog, in place (files are not moved)."""
 
     def register_frame(self, path: Path | str, session_id: str | None = None) -> str | None:
         """Catalog the FITS file at *path*; returns its catalog id, or ``None`` if it was rejected.
@@ -112,7 +112,7 @@ class LibraryRegistrar:
         ).where(fitsSession.fitsSessionId == session_id).execute()
 
     def get_sequence_sessions(self) -> list[SessionContainer]:
-        """Every sequencer-created session container, with its current frame count."""
+        """Every session-created session container, with its current frame count."""
         containers = []
         for session in fitsSession.select().where(fitsSession.fitsSessionStepName.is_null(False)):
             count = fitsFile.select().where(fitsFile.fitsFileSession == session.fitsSessionId).count()

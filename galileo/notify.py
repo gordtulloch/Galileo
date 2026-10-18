@@ -9,6 +9,7 @@ import asyncio
 import logging
 from enum import StrEnum
 from collections.abc import Callable
+from galileo.net import http_request, urlopen_http
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +52,13 @@ class WebhookChannel:
             "detail": notification.detail,
         }).encode()
         try:
-            req = urllib.request.Request(
+            req = http_request(
                 self.url,
                 data=payload,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            await asyncio.to_thread(urllib.request.urlopen, req, None, 10)
+            await asyncio.to_thread(urlopen_http, req, 10)
         except Exception:
             logger.exception("WebhookChannel: failed to POST to %s", self.url)
 

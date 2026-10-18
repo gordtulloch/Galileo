@@ -202,10 +202,9 @@ class XISFConverter:
         if geometry.width <= 0 or geometry.height <= 0:
             raise ValueError("Invalid image dimensions in XISF file")
 
-        if location_method == "attachment":
-            # Validate attachment location
-            if location_start <= 0 or location_length <= 0:
-                raise ValueError("Invalid attachment location parameters")
+        # Validate attachment location
+        if location_method == "attachment" and (location_start <= 0 or location_length <= 0):
+            raise ValueError("Invalid attachment location parameters")
 
     def _extract_header_cards(self):
         """Extract metadata from XML and convert to FITS-compatible header cards."""

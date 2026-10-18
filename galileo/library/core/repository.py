@@ -49,8 +49,8 @@ class RepositoryManager:
             logger.info(f"Repository structure created at: {self.repoFolder}")
             return True
 
-        except Exception as e:
-            logger.exception(f"Error creating repository structure: {e}")
+        except Exception:
+            logger.exception("Error creating repository structure")
             return False
 
     def organizeFileByType(self, file_path, hdr, new_filename=None):
@@ -116,8 +116,8 @@ class RepositoryManager:
 
             return dest_path
 
-        except Exception as e:
-            logger.exception(f"Error organizing file {file_path}: {e}")
+        except Exception:
+            logger.exception(f"Error organizing file {file_path}")
             return None
 
     def _getDateString(self, hdr):
@@ -143,8 +143,8 @@ class RepositoryManager:
                 # Use current date as fallback
                 return datetime.now().astimezone().strftime('%Y%m%d')
 
-        except Exception as e:
-            logger.exception(f"Error parsing date from header: {e}")
+        except Exception:
+            logger.exception("Error parsing date from header")
             from datetime import datetime
             return datetime.now().astimezone().strftime('%Y%m%d')
 
@@ -224,7 +224,7 @@ class RepositoryManager:
             return results
 
         except Exception as e:
-            logger.exception(f"Error validating repository structure: {e}")
+            logger.exception("Error validating repository structure")
             results['valid'] = False
             results['messages'].append(f"Validation error: {e}")
             return results
@@ -348,15 +348,15 @@ class RepositoryManager:
                                 stats['directory_breakdown'][category] = 0
                             stats['directory_breakdown'][category] += 1
 
-                        except Exception as e:
+                        except Exception:
                             stats['error_count'] += 1
-                            logger.exception(f"Error processing file {file_path}: {e}")
+                            logger.exception(f"Error processing file {file_path}")
 
             logger.info(f"Repository stats: {stats['total_files']} files, {stats['total_size_gb']:.2f} GB")
             return stats
 
-        except Exception as e:
-            logger.exception(f"Error gathering repository statistics: {e}")
+        except Exception:
+            logger.exception("Error gathering repository statistics")
             stats['error_count'] += 1
             return stats
 

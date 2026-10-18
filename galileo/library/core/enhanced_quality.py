@@ -87,7 +87,7 @@ class EnhancedQualityAnalyzer:
         try:
             results = run_cpu_sync(self._analyze_file, fits_file_path)
         except Exception as e:          # the worker process died (the analysis itself catches its own errors)
-            logger.exception(f"Error analyzing {fits_file_path}: {e}")
+            logger.exception(f"Error analyzing {fits_file_path}")
             return {"status": "error", "message": str(e), "file_path": fits_file_path}
         if progress_callback and results.get("status") == "success":
             progress_callback(100, 100, "Quality analysis completed!")
@@ -130,7 +130,7 @@ class EnhancedQualityAnalyzer:
                 return results
 
         except Exception as e:
-            logger.exception(f"Error analyzing {fits_file_path}: {e}")
+            logger.exception(f"Error analyzing {fits_file_path}")
             return {
                 "status": "error",
                 "message": str(e),
@@ -189,8 +189,8 @@ class EnhancedQualityAnalyzer:
                 logger.warning("No quality metrics to update")
                 return False
 
-        except Exception as e:
-            logger.exception(f"Error updating quality metrics for {fits_file_id}: {e}")
+        except Exception:
+            logger.exception(f"Error updating quality metrics for {fits_file_id}")
             return False
 
     def analyze_and_update_file(self, fits_file_path: str, fits_file_id: str,

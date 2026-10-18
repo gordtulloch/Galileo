@@ -149,7 +149,7 @@ class AppWindowFramingMixin:
         # needed when neither is available.
         known_rotation: float | None = None
         known_rotation_source = ""
-        if rotator_connected:
+        if rotator_adapter is not None:
             try:
                 status = asyncio.run(rotator_adapter.get_status())
                 position = status.get("position")
@@ -368,7 +368,7 @@ class AppWindowFramingMixin:
             )
             assistant.set_mosaic(mosaic)
             service.run_mosaic_from_framing(assistant)
-            if rotator_connected and not auto_mosaic and rotation_spin.value() != 0:
+            if rotator_adapter is not None and not auto_mosaic and rotation_spin.value() != 0:
                 # The panes are tilted, so the camera must be turned to match.
                 try:
                     asyncio.run(rotator_adapter.move_to_angle(rotation_spin.value()))
@@ -383,7 +383,7 @@ class AppWindowFramingMixin:
             else:
                 self._window.statusBar().showMessage(
                     f"Mosaic defined: {mosaic.total_panels} panels ({cols}×{rows}).", 5000)
-        elif rotator_connected and rotation_spin.value() != 0:
+        elif rotator_adapter is not None and rotation_spin.value() != 0:
             try:
                 asyncio.run(rotator_adapter.move_to_angle(rotation_spin.value()))
                 self._window.statusBar().showMessage(

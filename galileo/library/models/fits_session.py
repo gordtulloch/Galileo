@@ -10,6 +10,9 @@ from galileo.library.models.base import BaseModel
 class fitsSession(BaseModel):
     """Model representing an imaging session with common characteristics."""
 
+    # Transient (not a column): auto-calibration tags a session with its calibration type while planning.
+    cal_type: str | None = None
+
     fitsSessionId = pw.TextField(primary_key=True)
     fitsSessionObjectName = pw.TextField(null=True)
     fitsSessionDate = pw.DateField(null=True)
@@ -45,7 +48,7 @@ class fitsSession(BaseModel):
     fitsSessionStarCount = pw.IntegerField(null=True)  # Average detected stars
     fitsSessionImageScale = pw.FloatField(null=True)  # Image scale in arcsec/pixel
 
-    # Sequence step that produced this session; set only for sequencer-created containers (LIB-160)
+    # Sequence step that produced this session; set only for session-created containers (LIB-160)
     fitsSessionStepName = pw.TextField(null=True)
 
     class Meta:

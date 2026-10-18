@@ -137,10 +137,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
 | `OBS-080` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-080` |
 | `OBS-090` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-090` |
-| `OBS-100` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-100` |
-| `OBS-110` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-110` |
-| `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-120` |
-| `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-130` |
+| `OBS-100` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-100` |
+| `OBS-110` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-110` |
+| `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-120` |
+| `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.session_exec` | Test | `TC-OBS-130` |
 
 ### `IMG` — Imaging Tab
 
@@ -172,15 +172,15 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `SES-010` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-010` |
-| `SES-020` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-020` |
-| `SES-030` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-030` |
-| `SES-040` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-040` |
-| `SES-050` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-050` |
-| `SES-060` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-060` |
-| `SES-070` | MVP | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-070` |
-| `SES-080` | MVP | SDD 4.6 `galileo.sequencer.basic` / `galileo.sequencer.session_exec` | Test | `TC-SES-080` |
-| `SES-090` | P3 | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-SES-090` |
+| `SES-010` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-010` |
+| `SES-020` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-020` |
+| `SES-030` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-030` |
+| `SES-040` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-040` |
+| `SES-050` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-050` |
+| `SES-060` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-060` |
+| `SES-070` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-070` |
+| `SES-080` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-080` |
+| `SES-090` | P3 | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-090` |
 | `SES-100` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-100` |
 | `SES-110` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-110` |
 | `SES-120` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-120` |
@@ -195,13 +195,13 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SES-210` | MVP | SDD 4.6a `galileo.ui.sessions`; SDD 4.9b `galileo.scheduler` | Test | `TC-SES-210` |
 | `SES-220` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-220` |
 | `SES-230` | P2 | SDD 4.6a `galileo.ui.sessions` / SDD 4.9 `galileo.planning.framing` | Test | `TC-SES-230` |
-| `SES-300` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-300` |
-| `SES-310` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-310` |
-| `SES-320` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-320` |
-| `SES-330` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-330` |
-| `SES-340` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-340` |
-| `SES-350` | P2 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-350` |
-| `SES-360` | P3 | SDD 4.7 `galileo.sequencer.advanced` | Test | `TC-SES-360` |
+| `SES-300` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-300` |
+| `SES-310` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-310` |
+| `SES-320` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-320` |
+| `SES-330` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-330` |
+| `SES-340` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-340` |
+| `SES-350` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-350` |
+| `SES-360` | P3 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-360` |
 
 ### `SKY` — Sky Atlas / Targets
 
@@ -326,6 +326,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
 | `PLT-070` | MVP | SDD 4.12 `galileo.platesolve`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PLT-070` |
+| `PLT-090` | P2 | SDD 4.12 `galileo.tetra3_db`; `galileo.ui.app_window` | Test | `TC-PLT-090` |
 | `PLT-080` | P2 | SDD 4.12 `galileo.polaralign`; `galileo.ui.solve` | Test | `TC-PLT-080` |
 
 ### `MFLIP` — Meridian Flip
@@ -490,7 +491,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 |---|---|---|---|---|
 | `NFR-PERF-010` | MVP | SDD Sec 7: `galileo.ui.imaging` (Section 4.5) rendering pipeline; verified by performance test, not a design-time guarantee any single module line can assert | Test | `TC-NFR-PERF-010` |
 | `NFR-PERF-020` | MVP | SDD Sec 2.3 `Concurrency Model` | Test | `TC-NFR-PERF-020` |
-| `NFR-PERF-030` | MVP | SDD Sec 7: Cross-cutting outcome of the `ProcessPoolExecutor` CPU-work isolation (Section 2.3) and per-sequence progress persistence (`galileo.sequencer.basic`, Section 4.6) not leaking state across long runs; verified by soak test | Test | `TC-NFR-PERF-030` |
+| `NFR-PERF-030` | MVP | SDD Sec 7: Cross-cutting outcome of the `ProcessPoolExecutor` CPU-work isolation (Section 2.3) and per-session progress persistence (`galileo.session_exec`, Section 4.6) not leaking state across long runs; verified by soak test | Test | `TC-NFR-PERF-030` |
 
 ### `NFR-REL` — Reliability
 
@@ -499,7 +500,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-REL-010` | MVP | SDD Sec 2.3 `Concurrency Model` | Test | `TC-NFR-REL-010` |
 | `NFR-REL-020` | MVP | SDD Sec 2.3 `Concurrency Model` | Test | `TC-NFR-REL-020` |
 | `NFR-REL-030` | MVP | SDD Sec 7: Cross-cutting outcome of `NFR-REL-010`/`020`'s device-error/stall handling (Section 2.3) plus the Watchdog (`galileo.safety`, Section 4.16, `SAFE-060`); verified by soak test, not a single module's responsibility | Test | `TC-NFR-REL-030` |
-| `NFR-REL-040` | P2 | SDD 4.6 `galileo.sequencer.basic` | Test | `TC-NFR-REL-040` |
+| `NFR-REL-040` | P2 | SDD 4.6 `galileo.session_exec` | Test | `TC-NFR-REL-040` |
 
 ### `NFR-PORT` — Portability
 

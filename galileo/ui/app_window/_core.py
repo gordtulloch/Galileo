@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import need
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
@@ -70,7 +72,7 @@ class AppWindowCoreMixin:
         # Populated whenever either the Weather or Safety Monitor page polls
         # the connected weather station while it is the one on screen.
         self._weather_history_by_pier: dict = {}
-        self._current_primary_section = "dashboard"
+        self._current_primary_section = "star_atlas"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
@@ -318,6 +320,10 @@ class AppWindowCoreMixin:
             item for item in SCIENCE_ITEMS if item[1] not in _plugin_primary_labels
         ]
 
+        # Science only has content when a plugin (e.g. VSTarget) provides it.
+        _science_items = _effective_science_items + _science_plugin_items
+        _has_science = bool(_science_items)
+
         page_builders = {
             "equipment": self._build_equipment_page,
             "star_atlas": self._build_star_atlas_page,
@@ -327,9 +333,10 @@ class AppWindowCoreMixin:
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page,
                                   "history": self._build_history_page}, help_prefix="planning"),
-            "science": lambda: self._build_submenu_page(
-                _effective_science_items + _science_plugin_items, _science_plugin_builders,
-                help_prefix="science",
+            "science": lambda: (
+                self._build_submenu_page(_science_items, _science_plugin_builders, help_prefix="science")
+                if _has_science else
+                self._build_placeholder_page("Science", "Install a science plugin under Options > Plugins.")
             ),
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,
@@ -350,7 +357,7 @@ class AppWindowCoreMixin:
             if section_id == "science":
                 self._science_nav = getattr(page, "_secondary_nav", None)
 
-        option_builders = {
+        option_builders: dict[str, Callable[[], QWidget]] = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
             for item_id, label, _icon in OPTIONS_ITEMS
         }
@@ -408,15 +415,19 @@ class AppWindowCoreMixin:
                  self._show_community_menu),
                 ("about", "About Galileo", self._show_about),
             ],
-            initial_selection="dashboard",
+            initial_selection="star_atlas",
         )
         self._nav_columns.append(sidebar)
-        stack.setCurrentIndex(pages["dashboard"])
+        sidebar.hide_item("dashboard")   # Star Atlas is the home screen; the Dashboard page is still built
+        if not _has_science:
+            sidebar.hide_item("science")
+            options_page._secondary_nav.hide_item("science")
+        stack.setCurrentIndex(pages["star_atlas"])
         return stack, sidebar
 
     def _request_quit(self: AppWindowState) -> None:
         from PySide6.QtWidgets import QApplication
-        QApplication.instance().quit()
+        need(QApplication.instance()).quit()
 
     def _toggle_theme(self: AppWindowState) -> None:
         from galileo.ui.theme import Theme

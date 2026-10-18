@@ -1,7 +1,7 @@
 <!-- order: 30 -->
 # Camera
 
-The Camera page connects Galileo to the camera (or cameras) that take your images and records what Galileo needs to know about its sensor. Imaging, Focus, Plate Solve and the sequencer all use the cameras connected here.
+The Camera page connects Galileo to the camera (or cameras) that take your images and records what Galileo needs to know about its sensor. Imaging, Focus, Plate Solve and sessions all use the cameras connected here.
 
 The first row (Driver, Server, Port, Scan) is shared by every camera panel. Below it each camera has its own panel with its own Device and Connect button. A one-shot-colour camera, a mono guide camera, or a telescope with two cameras (such as a Seestar's wide and tele cameras) each get a panel.
 

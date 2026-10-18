@@ -2358,8 +2358,8 @@ async def test_tc_img_220_annotated_frames_never_reach_the_library(library_repo,
 @pytest.mark.priority("P2")
 def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_path, monkeypatch):
     """UI-020: the Imaging page hides/reorders panels from the saved layout at start-up,
-    and the Panels dialog's Reset Layout restores the default and persists it."""
-    from PySide6.QtWidgets import QDialog, QListWidget, QPushButton
+    and the View panel no longer offers a Panels button."""
+    from PySide6.QtWidgets import QPushButton
     from galileo.ui.imaging_layout import ImagingLayout, ImagingLayoutStore
 
     saved = ImagingLayout()
@@ -2375,17 +2375,4 @@ def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_pa
     log_idx = next(i for i, w in enumerate(names) if w is not None and w.__class__.__name__ == "QLabel" and w.text() == "Log")
     stretch_idx = next(i for i, w in enumerate(names) if w is not None and w.findChildren(window.QtWidgets.QSlider))
     assert log_idx < stretch_idx
-
-    def fake_exec(self):
-        assert self.findChildren(QListWidget)[0].count() == 6
-        next(b for b in self.findChildren(QPushButton) if b.text() == "Reset Layout").click()
-        return QDialog.Accepted
-
-    orig = QDialog.exec
-    QDialog.exec = fake_exec
-    try:
-        next(b for b in page.findChildren(QPushButton) if b.text() == "Panels…").click()
-    finally:
-        QDialog.exec = orig
-    assert not hist.isHidden()
-    assert ImagingLayoutStore().load().is_default()
+    assert not any(b.text() == "Panels…" for b in page.findChildren(QPushButton))

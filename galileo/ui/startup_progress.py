@@ -14,13 +14,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_reporter: "StartupProgress | None" = None
+_reporter: StartupProgress | None = None
 
 # Height of the strip added beneath the splash logo for the operation list, bar and percentage.
 PROGRESS_AREA_HEIGHT = 150
 
 
-def set_reporter(reporter: "StartupProgress | None") -> None:
+def set_reporter(reporter: StartupProgress | None) -> None:
     global _reporter
     _reporter = reporter
 

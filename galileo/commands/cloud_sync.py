@@ -120,7 +120,8 @@ def validate_bucket_access(cloud_config):
 def perform_analysis(cloud_config):
     """Perform cloud storage analysis"""
     from galileo.library.services.gcs import list_gcs_bucket_files
-    from galileo.library.database import setup_database; from galileo.library.models import fitsFile
+    from galileo.library.database import setup_database
+    from galileo.library.models import fitsFile
 
     logger.info("Starting cloud storage analysis...")
 
@@ -267,8 +268,8 @@ def perform_sync(cloud_config, sync_profile, auto_confirm=False):
 
         logger.info(f"{sync_profile.capitalize()} sync completed successfully")
 
-    except Exception as e:
-        logger.exception(f"Sync operation failed: {e}")
+    except Exception:
+        logger.exception("Sync operation failed")
         raise
 
 def perform_backup_sync_cli(cloud_config, repo_path):
@@ -348,8 +349,8 @@ def perform_backup_sync_cli(cloud_config, repo_path):
                     except OSError as e:
                         logger.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
                         print("    → Uploaded (failed to delete local copy)")
-                    except Exception as e:
-                        logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                    except Exception:
+                        logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy")
                         print("    → Uploaded (cloud verification failed, keeping local copy)")
                 elif "uploaded" in message.lower():
                     print("    → Uploaded")
@@ -359,8 +360,8 @@ def perform_backup_sync_cli(cloud_config, repo_path):
                 logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
-        except Exception as e:
-            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+        except Exception:
+            logger.exception(f"Error processing {fits_file.fitsFileName}")
             error_count += 1
 
     print("\nBackup sync completed:")
@@ -450,15 +451,15 @@ def perform_ondemand_sync_cli(cloud_config, repo_path):
                 except OSError as e:
                     logger.warning(f"Failed to delete soft-deleted file {relative_path}: {e}")
                     print("    → Uploaded (failed to delete local copy)")
-                except Exception as e:
-                    logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy: {e}")
+                except Exception:
+                    logger.exception(f"Cloud verification failed for {relative_path}, keeping local copy")
                     print("    → Uploaded (cloud verification failed, keeping local copy)")
             else:
                 logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
-        except Exception as e:
-            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+        except Exception:
+            logger.exception(f"Error processing {fits_file.fitsFileName}")
             error_count += 1
 
     print("\nOn-demand sync completed:")
@@ -534,8 +535,8 @@ def perform_upload_without_deletion_cli(cloud_config, repo_path):
                 logger.error(f"Failed to upload {relative_path}: {message}")
                 error_count += 1
 
-        except Exception as e:
-            logger.exception(f"Error processing {fits_file.fitsFileName}: {e}")
+        except Exception:
+            logger.exception(f"Error processing {fits_file.fitsFileName}")
             error_count += 1
 
     print("\nUpload phase completed:")
@@ -657,8 +658,8 @@ def perform_complete_sync_cli(cloud_config, repo_path):
                     else:
                         print("    → Downloaded non-FITS file")
 
-            except Exception as e:
-                logger.exception(f"Failed to download {cloud_file['name']}: {e}")
+            except Exception:
+                logger.exception(f"Failed to download {cloud_file['name']}")
 
     print("\nPhase 1 completed:")
     print(f"  Files downloaded: {downloaded_count}")
@@ -715,8 +716,8 @@ def main():
     except KeyboardInterrupt:
         print("\nOperation cancelled by user.")
         sys.exit(1)
-    except Exception as e:
-        logger.exception(f"Error: {e}")
+    except Exception:
+        logger.exception("Error")
         sys.exit(1)
 
 if __name__ == '__main__':

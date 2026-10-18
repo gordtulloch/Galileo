@@ -215,7 +215,6 @@ No hardware needed.
 | 8.7 | With **Auto-Save to Library** on, capture one frame. | It appears in **Library > Images** filed under your target. | |
 | 8.8 | Untick Auto-Save, capture, re-tick. | No new Library entry for that frame. | |
 | 8.9 | Tick **Live Stack**, capture 4 frames. | Stack appears after the third and improves. **Save Stack…** offers Library or File. | |
-| 8.10 | **View > Panels…**: hide the Log, then **Reset Layout**. | Works. | |
 | 8.11 | Disconnect the camera and **Capture**. | "No camera connected"; no crash. Reconnect. | |
 | 8.12 | **Filter wheel only:** change filter in the Filter drop-down and capture. | Wheel moves first; status bar confirms; capture waits. | |
 

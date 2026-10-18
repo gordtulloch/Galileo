@@ -175,7 +175,7 @@ def enable_faulthandler(path: Path | None = None) -> Path | None:
         if path is None:
             from galileo.platform import get_log_dir
             path = get_log_dir() / "faulthandler.log"
-        fh: TextIO = open(path, "a", encoding="utf-8")
+        fh: TextIO = open(path, "a", encoding="utf-8")  # noqa: SIM115 - stays open for faulthandler
         fh.write(f"\n--- Galileo {_version()} started {datetime.datetime.now().astimezone().isoformat(timespec='seconds')} ---\n")
         fh.flush()
         faulthandler.enable(file=fh, all_threads=True)

@@ -78,9 +78,8 @@ def _import_legacy_ini() -> None:
         parser = configparser.ConfigParser()
         parser.read(legacy, encoding="utf-8")
         values = {k: v for k, v in parser.defaults().items() if not _is_secret(k)}
-        if not settings_store.get_namespace(LIBRARY_NAMESPACE) and values:
-            if not settings_store.set_namespace(LIBRARY_NAMESPACE, values):
-                return
+        if not settings_store.get_namespace(LIBRARY_NAMESPACE) and values and not settings_store.set_namespace(LIBRARY_NAMESPACE, values):
+            return
         legacy_password = parser.defaults().get("itelescope_password", "").strip()
         if legacy_password:
             set_itelescope_password(legacy_password)

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import take_widget
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
@@ -308,8 +309,7 @@ class AppWindowAuxPageMixin:
 
         def _build_group_tabs(groups: list) -> None:
             while panel_container.count():
-                item = panel_container.takeAt(0)
-                widget = item.widget()
+                widget = take_widget(panel_container)
                 if widget is not None:
                     widget.setParent(None)
             state["tabs"] = None

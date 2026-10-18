@@ -74,17 +74,16 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
         >>> if result.get('success'):
         ...     print(f"Calibrated frame saved: {result['output_path']}")
     """
+    report = progress_callback or (lambda _message: None)
     try:
-        if progress_callback:
-            progress_callback(f"Starting calibration of {os.path.basename(light_path)}")
+        report(f"Starting calibration of {os.path.basename(light_path)}")
 
         # Validate input file
         if not os.path.exists(light_path):
             return {"error": f"Light frame file not found: {light_path}"}
 
         # Load light frame with proper data type preservation
-        if progress_callback:
-            progress_callback("Loading light frame...")
+        report("Loading light frame...")
 
         with fits.open(light_path) as hdul:
             original_data = hdul[0].data
@@ -100,158 +99,43 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
         light_exptime = float(light_header.get('EXPTIME', light_header.get('EXPOSURE', 1.0)))
 
         calibrated_data = light_data.copy()
-        calibration_steps = []
+        calibration_steps: list[str] = []
 
-        # =================================================================
-        # STEP 1: DARK SUBTRACTION (or BIAS if no dark available)
-        # =================================================================
-        # CRITICAL FIX: Dark masters contain uncorrected bias signal because bias is not
-        # subtracted during dark master creation. We must subtract bias from the dark master
-        # before applying it to the light frame.
-        #
-        # Correct formula: Light - (Dark - Bias) / Flat
-        # Which equals:    (Light - Dark + Bias) / Flat
-
+        # STEP 1: dark subtraction (or bias, if there is no dark). The dark master carries uncorrected bias
+        # signal, so the bias is removed from it first: Light - (Dark - Bias) = Light - Dark + Bias.
         if dark_master and os.path.exists(dark_master):
-            if progress_callback:
-                progress_callback("Applying dark correction...")
+            report("Applying dark correction...")
             try:
-                with fits.open(dark_master) as hdul:
-                    dark_data = hdul[0].data.astype(np.float64)
-                    dark_header = hdul[0].header
-
-                    # Validate dimensions match
-                    if dark_data.shape != calibrated_data.shape:
-                        raise ValueError(f"Dark frame shape {dark_data.shape} doesn't match light frame {calibrated_data.shape}")
-
-                    # Get dark exposure time for scaling
-                    dark_exptime = float(dark_header.get('EXPTIME', dark_header.get('EXPOSURE', light_exptime)))
-
-                    # DISABLED: Dark frame scaling - use closest matching dark instead
-                    # # Scale dark frame if exposure times differ
-                    # if abs(dark_exptime - light_exptime) > 0.01:  # Allow small floating point differences
-                    #     scale_factor = light_exptime / dark_exptime
-                    #     dark_scaled = dark_data * scale_factor
-                    #     logger.info(f"Scaling dark frame: {dark_exptime}s -> {light_exptime}s (factor: {scale_factor:.3f})")
-                    #     calibration_steps.append(f"DARK: {os.path.basename(dark_master)} (scaled {scale_factor:.3f}x)")
-                    # else:
-                    #     dark_scaled = dark_data
-                    #     calibration_steps.append(f"DARK: {os.path.basename(dark_master)}")
-
-                    # Use dark directly without scaling - ensure dark exposure matches light
-                    dark_scaled = dark_data
-
-                    # CRITICAL FIX: Subtract bias from dark master before applying
-                    # Dark masters contain bias signal that must be removed
-                    if bias_master and os.path.exists(bias_master):
-                        try:
-                            with fits.open(bias_master) as bias_hdul:
-                                bias_data = bias_hdul[0].data.astype(np.float64)
-
-                                # Validate bias dimensions match
-                                if bias_data.shape != dark_scaled.shape:
-                                    logger.warning(f"Bias shape {bias_data.shape} doesn't match dark {dark_scaled.shape}, skipping bias correction")
-                                else:
-                                    # Remove bias from dark to get true thermal noise
-                                    dark_scaled = dark_scaled - bias_data
-                                    calibration_steps.append(f"DARK: {os.path.basename(dark_master)} ({dark_exptime}s) - BIAS corrected")
-                                    logger.info(f"Bias-corrected dark frame: bias mean={np.mean(bias_data):.2f} ADU removed")
-                        except Exception as e:
-                            logger.warning(f"Failed to load bias for dark correction: {e}, using uncorrected dark")
-                            calibration_steps.append(f"DARK: {os.path.basename(dark_master)} ({dark_exptime}s) - NO BIAS CORRECTION")
-                    else:
-                        logger.warning("No bias master available - dark correction will leave residual bias signal")
-                        calibration_steps.append(f"DARK: {os.path.basename(dark_master)} ({dark_exptime}s) - NO BIAS CORRECTION")
-
-                    logger.info(f"Using dark frame: {dark_exptime}s (light exposure: {light_exptime}s)")
-
-                    # Apply: Light - (Dark - Bias)
-                    calibrated_data = calibrated_data - dark_scaled
-                    logger.debug(f"Applied dark correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
-
+                calibrated_data = _apply_dark_master(calibrated_data, dark_master, bias_master, light_exptime,
+                                                     calibration_steps)
             except Exception as e:
-                logger.exception(f"Failed to apply dark correction: {e}")
-                if progress_callback:
-                    progress_callback(f"Warning: Failed to apply dark correction: {e}")
+                logger.exception("Failed to apply dark correction")
+                report(f"Warning: Failed to apply dark correction: {e}")
 
         elif bias_master and os.path.exists(bias_master):
             # If we have bias but no dark, subtract bias from light
-            if progress_callback:
-                progress_callback("Applying bias correction...")
+            report("Applying bias correction...")
             try:
-                with fits.open(bias_master) as hdul:
-                    bias_data = hdul[0].data.astype(np.float64)
-
-                    # Validate dimensions match
-                    if bias_data.shape != calibrated_data.shape:
-                        raise ValueError(f"Bias frame shape {bias_data.shape} doesn't match light frame {calibrated_data.shape}")
-
-                    calibrated_data = calibrated_data - bias_data
-                    calibration_steps.append(f"BIAS: {os.path.basename(bias_master)}")
-                    logger.debug(f"Applied bias correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
-
+                calibrated_data = _apply_bias_master(calibrated_data, bias_master, calibration_steps)
             except Exception as e:
-                logger.exception(f"Failed to apply bias correction: {e}")
-                if progress_callback:
-                    progress_callback(f"Warning: Failed to apply bias correction: {e}")
+                logger.exception("Failed to apply bias correction")
+                report(f"Warning: Failed to apply bias correction: {e}")
 
-        # =================================================================
-        # STEP 2: FLAT FIELD CORRECTION
-        # =================================================================
-        # Normalize flat by full-frame median and divide
-
+        # STEP 2: flat-field correction (normalised by the full-frame median)
         if flat_master and os.path.exists(flat_master):
-            if progress_callback:
-                progress_callback("Applying flat correction...")
+            report("Applying flat correction...")
             try:
-                with fits.open(flat_master) as hdul:
-                    flat_data = hdul[0].data.astype(np.float64)
-
-                    # Validate dimensions match
-                    if flat_data.shape != calibrated_data.shape:
-                        raise ValueError(f"Flat frame shape {flat_data.shape} doesn't match light frame {calibrated_data.shape}")
-
-                    # Normalize flat field by its FULL FRAME median (standard approach)
-                    flat_median = np.median(flat_data)
-
-                    if flat_median <= 0:
-                        raise ValueError("Flat frame median is zero or negative")
-
-                    flat_normalized = flat_data / flat_median
-
-                    # Protect against division by very small values
-                    # Use a threshold of 10% of normalized median (0.1)
-                    threshold = 0.1
-                    mask = flat_normalized < threshold
-                    if np.any(mask):
-                        logger.warning(f"Flat frame has {np.sum(mask)} pixels below threshold, clamping to {threshold}")
-                        flat_normalized = np.clip(flat_normalized, threshold, None)
-
-                    # Apply flat correction
-                    calibrated_data = calibrated_data / flat_normalized
-                    calibration_steps.append(f"FLAT: {os.path.basename(flat_master)} (median: {flat_median:.1f})")
-                    logger.debug(f"Applied flat correction, data range: [{np.min(calibrated_data):.2f}, {np.max(calibrated_data):.2f}]")
-
+                calibrated_data = _apply_flat_master(calibrated_data, flat_master, calibration_steps)
             except Exception as e:
-                logger.exception(f"Failed to apply flat correction: {e}")
-                if progress_callback:
-                    progress_callback(f"Warning: Failed to apply flat correction: {e}")
-
-        # =================================================================
-        # GENERATE OUTPUT PATH
-        # =================================================================
+                logger.exception("Failed to apply flat correction")
+                report(f"Warning: Failed to apply flat correction: {e}")
 
         if not output_path:
             base_dir = os.path.dirname(light_path)
             base_name = os.path.basename(light_path)
             output_path = os.path.join(base_dir, f"cal_{base_name}")
 
-        # =================================================================
-        # UPDATE FITS HEADER
-        # =================================================================
-
-        if progress_callback:
-            progress_callback("Updating FITS header...")
+        report("Updating FITS header...")
 
         _update_calibrated_frame_header(
             light_header,
@@ -264,53 +148,11 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
         )
         light_header['CALMETOD'] = 'Numpy'
 
-        # =================================================================
-        # SAVE CALIBRATED FRAME
-        # =================================================================
+        report("Saving calibrated frame...")
 
-        if progress_callback:
-            progress_callback("Saving calibrated frame...")
+        stats = _write_calibrated_frame(calibrated_data, light_header, output_path)
 
-        # Calculate statistics for return
-        data_min = float(np.min(calibrated_data))
-        data_max = float(np.max(calibrated_data))
-        data_range = data_max - data_min
-        data_mean = float(np.mean(calibrated_data))
-        data_std = float(np.std(calibrated_data))
-
-        logger.info(f"Calibrated data statistics: min={data_min:.2f}, max={data_max:.2f}, mean={data_mean:.2f}, range={data_range:.2f}")
-
-        # If data has negative values, shift it positive for proper display in FITS viewers
-        # Many viewers (like ASIFitsView) don't handle negative values well
-        bzero_offset = 0.0
-        if data_min < 0:
-            bzero_offset = abs(data_min) + 100  # Add 100 ADU safety margin
-            calibrated_data = calibrated_data + bzero_offset
-            logger.info(f"Applied BZERO offset of {bzero_offset:.2f} to shift negative values positive")
-
-        # Save as float32 to preserve dynamic range while reducing file size
-        output_data = calibrated_data.astype(np.float32)
-
-        # Update BITPIX to indicate 32-bit float
-        light_header['BITPIX'] = -32
-
-        # Set BZERO and BSCALE for proper FITS scaling
-        # BZERO tells viewers to subtract this value to get true calibrated data
-        light_header['BZERO'] = bzero_offset
-        light_header['BSCALE'] = 1.0
-
-        if bzero_offset > 0:
-            light_header['HISTORY'] = f'Applied BZERO offset of {bzero_offset:.2f} for viewer compatibility'
-
-        # Create output directory if needed
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        # Write calibrated frame
-        hdu = fits.PrimaryHDU(data=output_data, header=light_header)
-        hdu.writeto(output_path, overwrite=True)
-
-        if progress_callback:
-            progress_callback(f"Calibration complete: {os.path.basename(output_path)}")
+        report(f"Calibration complete: {os.path.basename(output_path)}")
 
         return {
             "success": True,
@@ -318,17 +160,133 @@ def calibrate_light_frame(light_path: str, dark_master: str | None = None,
             "input_path": light_path,
             "calibration_steps": calibration_steps,
             "method": "Numpy",
-            "noise_level": data_std,
-            "mean_level": data_mean,
-            "dynamic_range": data_range,
-            "data_min": data_min,
-            "data_max": data_max
+            "noise_level": stats["std"],
+            "mean_level": stats["mean"],
+            "dynamic_range": stats["range"],
+            "data_min": stats["min"],
+            "data_max": stats["max"]
         }
 
     except Exception as e:
-        logger.exception(f"Failed to calibrate light frame: {e}")
+        logger.exception("Failed to calibrate light frame")
         return {"error": f"Failed to calibrate light frame: {e!s}"}
 
+
+def _read_master_array(path: str) -> tuple[np.ndarray, fits.Header]:
+    """Primary-HDU data (as float64) and header of a master calibration frame."""
+    with fits.open(path) as hdul:
+        return hdul[0].data.astype(np.float64), hdul[0].header.copy()
+
+
+def _apply_dark_master(calibrated: np.ndarray, dark_master: str, bias_master: str | None,
+                       light_exptime: float, steps: list[str]) -> np.ndarray:
+    """Subtract the (bias-corrected) dark master from *calibrated*, recording what was done in *steps*."""
+    dark_data, dark_header = _read_master_array(dark_master)
+
+    if dark_data.shape != calibrated.shape:
+        raise ValueError(f"Dark frame shape {dark_data.shape} doesn't match light frame {calibrated.shape}")
+
+    dark_exptime = float(dark_header.get('EXPTIME', dark_header.get('EXPOSURE', light_exptime)))
+
+    # No dark scaling: the closest-matching dark (same exposure) is chosen upstream instead.
+    dark_scaled = dark_data
+
+    # Dark masters contain bias signal that must be removed before applying them.
+    name = os.path.basename(dark_master)
+    if bias_master and os.path.exists(bias_master):
+        try:
+            bias_data, _ = _read_master_array(bias_master)
+            if bias_data.shape != dark_scaled.shape:
+                logger.warning(f"Bias shape {bias_data.shape} doesn't match dark {dark_scaled.shape}, skipping bias correction")
+            else:
+                dark_scaled = dark_scaled - bias_data
+                steps.append(f"DARK: {name} ({dark_exptime}s) - BIAS corrected")
+                logger.info(f"Bias-corrected dark frame: bias mean={np.mean(bias_data):.2f} ADU removed")
+        except Exception as e:
+            logger.warning(f"Failed to load bias for dark correction: {e}, using uncorrected dark")
+            steps.append(f"DARK: {name} ({dark_exptime}s) - NO BIAS CORRECTION")
+    else:
+        logger.warning("No bias master available - dark correction will leave residual bias signal")
+        steps.append(f"DARK: {name} ({dark_exptime}s) - NO BIAS CORRECTION")
+
+    logger.info(f"Using dark frame: {dark_exptime}s (light exposure: {light_exptime}s)")
+
+    calibrated = calibrated - dark_scaled
+    logger.debug(f"Applied dark correction, data range: [{np.min(calibrated):.2f}, {np.max(calibrated):.2f}]")
+    return calibrated
+
+
+def _apply_bias_master(calibrated: np.ndarray, bias_master: str, steps: list[str]) -> np.ndarray:
+    """Subtract the bias master from *calibrated* (used when there is no dark)."""
+    bias_data, _ = _read_master_array(bias_master)
+    if bias_data.shape != calibrated.shape:
+        raise ValueError(f"Bias frame shape {bias_data.shape} doesn't match light frame {calibrated.shape}")
+
+    calibrated = calibrated - bias_data
+    steps.append(f"BIAS: {os.path.basename(bias_master)}")
+    logger.debug(f"Applied bias correction, data range: [{np.min(calibrated):.2f}, {np.max(calibrated):.2f}]")
+    return calibrated
+
+
+# Normalised flat pixels below this are clamped, so a dead/vignetted pixel cannot blow the light up.
+_FLAT_CLAMP_THRESHOLD = 0.1
+
+
+def _apply_flat_master(calibrated: np.ndarray, flat_master: str, steps: list[str]) -> np.ndarray:
+    """Divide *calibrated* by the flat master normalised by its full-frame median."""
+    flat_data, _ = _read_master_array(flat_master)
+    if flat_data.shape != calibrated.shape:
+        raise ValueError(f"Flat frame shape {flat_data.shape} doesn't match light frame {calibrated.shape}")
+
+    flat_median = np.median(flat_data)
+    if flat_median <= 0:
+        raise ValueError("Flat frame median is zero or negative")
+
+    flat_normalized = flat_data / flat_median
+    mask = flat_normalized < _FLAT_CLAMP_THRESHOLD
+    if np.any(mask):
+        logger.warning(f"Flat frame has {np.sum(mask)} pixels below threshold, clamping to {_FLAT_CLAMP_THRESHOLD}")
+        flat_normalized = np.clip(flat_normalized, _FLAT_CLAMP_THRESHOLD, None)
+
+    calibrated = calibrated / flat_normalized
+    steps.append(f"FLAT: {os.path.basename(flat_master)} (median: {flat_median:.1f})")
+    logger.debug(f"Applied flat correction, data range: [{np.min(calibrated):.2f}, {np.max(calibrated):.2f}]")
+    return calibrated
+
+
+def _write_calibrated_frame(calibrated: np.ndarray, header: fits.Header, output_path: str) -> dict[str, float]:
+    """Write *calibrated* as float32 FITS (shifted positive if it has negative values); returns its statistics.
+
+    The statistics are of the data *before* the positive shift, as the caller has always reported them.
+    """
+    data_min = float(np.min(calibrated))
+    data_max = float(np.max(calibrated))
+    data_range = data_max - data_min
+    data_mean = float(np.mean(calibrated))
+    data_std = float(np.std(calibrated))
+
+    logger.info(f"Calibrated data statistics: min={data_min:.2f}, max={data_max:.2f}, mean={data_mean:.2f}, range={data_range:.2f}")
+
+    # Many FITS viewers (like ASIFitsView) don't handle negative values well, so shift them positive.
+    bzero_offset = 0.0
+    if data_min < 0:
+        bzero_offset = abs(data_min) + 100  # Add 100 ADU safety margin
+        calibrated = calibrated + bzero_offset
+        logger.info(f"Applied BZERO offset of {bzero_offset:.2f} to shift negative values positive")
+
+    # float32 preserves the dynamic range while halving the file size
+    output_data = calibrated.astype(np.float32)
+
+    header['BITPIX'] = -32
+    header['BZERO'] = bzero_offset
+    header['BSCALE'] = 1.0
+    if bzero_offset > 0:
+        header['HISTORY'] = f'Applied BZERO offset of {bzero_offset:.2f} for viewer compatibility'
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fits.PrimaryHDU(data=output_data, header=header).writeto(output_path, overwrite=True)
+
+    return {"min": data_min, "max": data_max, "range": data_range, "mean": data_mean, "std": data_std}
 
 
 def calibrate_session_lights(session_id: str, progress_callback: Callable | None = None,
@@ -416,7 +374,7 @@ def calibrate_session_lights(session_id: str, progress_callback: Callable | None
                             time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
                             logger.debug(f"Database locked, retrying ({attempt + 1}/{max_retries})...")
                         else:
-                            logger.exception(f"Failed to update database for calibrated file {light_file.fitsFileName} after {max_retries} retries: {e}")
+                            logger.exception(f"Failed to update database for calibrated file {light_file.fitsFileName} after {max_retries} retries")
                             break
 
                 if not db_updated:
@@ -496,8 +454,8 @@ def get_session_master_frames(session_id: str) -> dict[str, str | None]:
                 if master.master_path and os.path.exists(master.master_path):
                     masters[master_type] = master.master_path
 
-    except Exception as e:
-        logger.exception(f"Error getting session master frames: {e}")
+    except Exception:
+        logger.exception("Error getting session master frames")
 
     return masters
 
@@ -642,8 +600,8 @@ def find_light_sessions_for_calibration() -> list[str]:
 
         return [session.fitsSessionId for session in light_sessions]
 
-    except Exception as e:
-        logger.exception(f"Error finding light sessions: {e}")
+    except Exception:
+        logger.exception("Error finding light sessions")
         return []
 
 
@@ -679,8 +637,8 @@ def get_calibration_statistics() -> dict:
             "calibration_percentage": (calibrated_count / total_lights * 100) if total_lights > 0 else 0
         }
 
-    except Exception as e:
-        logger.exception(f"Error getting calibration statistics: {e}")
+    except Exception:
+        logger.exception("Error getting calibration statistics")
         return {
             "total_light_frames": 0,
             "calibrated_frames": 0,

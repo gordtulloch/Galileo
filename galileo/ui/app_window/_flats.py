@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _new_form_layout, _HAS_QT, QDialog
+from ._common import _camera_backend_key_for_slot, _new_form_layout, _QDialogBase
 from ._threads import _FlatsThread
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ._state import AppWindowState
 
 
-class _FlatsDialog(QDialog if _HAS_QT else object):
+class _FlatsDialog(_QDialogBase):
     """A plain ``QDialog`` except that ESC, the title bar's X, and the button box's
     Close button are all refused while ``running`` is set — a Sky Flats run underway
     on a background ``_FlatsThread`` is still updating this dialog's own widgets
@@ -161,7 +161,7 @@ class AppWindowFlatsMixin:
         button_row.addWidget(buttons)
         outer.addLayout(button_row)
 
-        run_state = {"service": None, "method": "Sky Flats"}
+        run_state: dict[str, Any] = {"service": None, "method": "Sky Flats"}
 
         def _connected_flat_panel():
             return (self._device_pages.get("flat_panel") or {}).get("adapter")

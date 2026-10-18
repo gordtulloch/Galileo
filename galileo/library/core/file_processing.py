@@ -6,6 +6,7 @@ compression, and database operations for importing astronomical images.
 """
 
 import os
+from pathlib import Path
 import logging
 import uuid
 from galileo.library.config import load_config as load_library_config
@@ -96,24 +97,8 @@ class FileProcessor:
 
         logger.info(f"registerMasters: scanning folder: {scan_folder}")
 
-        dest_root = destination_folder
-        if moveFiles and not dest_root:
-            dest_root = get_master_calibration_path()
-        if moveFiles and dest_root:
-            try:
-                os.makedirs(dest_root, exist_ok=True)
-            except Exception as e:
-                logger.warning(f"registerMasters: could not create destination folder {dest_root}: {e}")
-                dest_root = None
-
-        total_files = 0
-        if precount:
-            # Optional pre-count for determinate progress; can be slow on large folders.
-            for root, _dirs, files in os.walk(scan_folder):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if self.compressor.is_fits_file(file_path):
-                        total_files += 1
+        dest_root = self._master_destination_root(moveFiles, destination_folder)
+        total_files = self._count_fits_files(scan_folder) if precount else 0
 
         current_file = 0
         for root, _dirs, files in os.walk(scan_folder):
@@ -127,80 +112,111 @@ class FileProcessor:
                     continue
 
                 current_file += 1
-                if progress_callback:
-                    try:
-                        if not progress_callback(current_file, total_files, file_path):
-                            return master_ids
-                    except Exception:
-                        # Keep going on callback errors
-                        logger.debug("progress_callback raised for %s", file_path, exc_info=True)
+                if not self._master_scan_should_continue(progress_callback, current_file, total_files, file_path):
+                    return master_ids
 
                 try:
-                    candidate_path = file_path
-                    cleanup_source_path = None
-                    if self.format_processor.can_process(candidate_path):
-                        candidate_path = self.format_processor.process_file(candidate_path)
-                        # For externally compressed FITS (e.g. .fits.gz), remove the source
-                        # archive only after successful registration.
-                        if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
-                            cleanup_source_path = file_path
-
-                    # Read only the primary header; master detection should not require data.
-                    hdr = fits.getheader(candidate_path, 0)
-                    imagetyp = str(hdr.get('IMAGETYP', '')).upper()
-
-                    if 'MASTER' not in imagetyp:
-                        continue
-                    if not any(token in imagetyp for token in ('DARK', 'FLAT', 'BIAS')):
-                        continue
-
-                    final_path = candidate_path
-                    if moveFiles and dest_root:
-                        try:
-                            base_name = os.path.basename(file_path)
-                            # Preserve multi-suffix names like .fits.fz
-                            from pathlib import Path
-                            p = Path(base_name)
-                            suffix = ''.join(p.suffixes)
-                            stem = base_name[:-len(suffix)] if suffix else base_name
-
-                            candidate = os.path.join(dest_root, base_name)
-                            if os.path.normcase(os.path.normpath(candidate)) != os.path.normcase(os.path.normpath(file_path)):
-                                if os.path.exists(candidate):
-                                    i = 1
-                                    while True:
-                                        candidate = os.path.join(dest_root, f"{stem}_{i}{suffix}")
-                                        if not os.path.exists(candidate):
-                                            break
-                                        i += 1
-                                shutil.move(final_path, candidate)
-                                final_path = candidate
-                        except Exception as e:
-                            logger.warning(f"registerMasters: failed to move {final_path} into {dest_root}: {e}")
-
-                    # Compress master frames if enabled (same policy as normal imports)
-                    try:
-                        compressed_path = self.compressor.process_file_for_compression(final_path)
-                        if compressed_path:
-                            final_path = compressed_path
-                    except Exception as e:
-                        logger.warning(f"registerMasters: compression processing failed for {final_path}: {e}")
-
-                    master_id = self._register_master_file(final_path)
-                    if master_id:
-                        master_ids.append(master_id)
-
-                        if cleanup_source_path and os.path.exists(cleanup_source_path):
-                            try:
-                                os.remove(cleanup_source_path)
-                                logger.info(f"registerMasters: removed source gzip file after successful import: {cleanup_source_path}")
-                            except Exception as e:
-                                logger.warning(f"registerMasters: failed to remove source gzip file {cleanup_source_path}: {e}")
+                    master_id = self._register_master_candidate(file_path, moveFiles, dest_root)
                 except Exception as e:
                     logger.debug(f"Skipping master registration for {file_path}: {e}")
+                    continue
+                if master_id:
+                    master_ids.append(master_id)
 
         logger.info(f"registerMasters: completed. Registered/updated {len(master_ids)} masters")
         return master_ids
+
+    @staticmethod
+    def _master_destination_root(moveFiles: bool, destination_folder: str | None) -> str | None:
+        """The folder masters are moved into (created if needed), or None when they stay where they are."""
+        dest_root = destination_folder
+        if moveFiles and not dest_root:
+            dest_root = get_master_calibration_path()
+        if moveFiles and dest_root:
+            try:
+                os.makedirs(dest_root, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"registerMasters: could not create destination folder {dest_root}: {e}")
+                return None
+        return dest_root
+
+    def _count_fits_files(self, scan_folder: str) -> int:
+        """Optional pre-count for determinate progress; can be slow on large folders."""
+        return sum(
+            1
+            for root, _dirs, files in os.walk(scan_folder)
+            for file in files
+            if self.compressor.is_fits_file(os.path.join(root, file))
+        )
+
+    @staticmethod
+    def _master_scan_should_continue(progress_callback, current_file: int, total_files: int, file_path: str) -> bool:
+        """Report progress; False when the callback asked to stop (callback errors never stop the scan)."""
+        if not progress_callback:
+            return True
+        try:
+            return bool(progress_callback(current_file, total_files, file_path))
+        except Exception:
+            logger.debug("progress_callback raised for %s", file_path, exc_info=True)
+            return True
+
+    def _register_master_candidate(self, file_path: str, moveFiles: bool, dest_root: str | None) -> str | None:
+        """Register *file_path* if its header says it is a master dark/flat/bias; return its master id, else None."""
+        candidate_path = file_path
+        cleanup_source_path = None
+        if self.format_processor.can_process(candidate_path):
+            candidate_path = self.format_processor.process_file(candidate_path)
+            # For externally compressed FITS (e.g. .fits.gz), remove the source
+            # archive only after successful registration.
+            if str(file_path).lower().endswith('.gz') and candidate_path != file_path:
+                cleanup_source_path = file_path
+
+        # Read only the primary header; master detection should not require data.
+        imagetyp = str(fits.getheader(candidate_path, 0).get('IMAGETYP', '')).upper()
+        if 'MASTER' not in imagetyp or not any(token in imagetyp for token in ('DARK', 'FLAT', 'BIAS')):
+            return None
+
+        final_path = candidate_path
+        if moveFiles and dest_root:
+            final_path = self._move_master_into(final_path, file_path, dest_root)
+
+        # Compress master frames if enabled (same policy as normal imports)
+        try:
+            compressed_path = self.compressor.process_file_for_compression(final_path)
+            if compressed_path:
+                final_path = compressed_path
+        except Exception as e:
+            logger.warning(f"registerMasters: compression processing failed for {final_path}: {e}")
+
+        master_id = self._register_master_file(final_path)
+        if master_id and cleanup_source_path and os.path.exists(cleanup_source_path):
+            try:
+                os.remove(cleanup_source_path)
+                logger.info(f"registerMasters: removed source gzip file after successful import: {cleanup_source_path}")
+            except Exception as e:
+                logger.warning(f"registerMasters: failed to remove source gzip file {cleanup_source_path}: {e}")
+        return master_id
+
+    @staticmethod
+    def _move_master_into(final_path: str, file_path: str, dest_root: str) -> str:
+        """Move *final_path* into *dest_root* (``_1``, ``_2``... on a name clash); returns where it ended up."""
+        try:
+            base_name = os.path.basename(file_path)
+            # Preserve multi-suffix names like .fits.fz
+            suffix = ''.join(Path(base_name).suffixes)
+            stem = base_name[:-len(suffix)] if suffix else base_name
+
+            candidate = os.path.join(dest_root, base_name)
+            if os.path.normcase(os.path.normpath(candidate)) != os.path.normcase(os.path.normpath(file_path)):
+                i = 1
+                while os.path.exists(candidate):
+                    candidate = os.path.join(dest_root, f"{stem}_{i}{suffix}")
+                    i += 1
+                shutil.move(final_path, candidate)
+                return candidate
+        except Exception as e:
+            logger.warning(f"registerMasters: failed to move {final_path} into {dest_root}: {e}")
+        return final_path
 
     def _is_master_file(self, file_path: str) -> bool:
         """
@@ -355,8 +371,8 @@ class FileProcessor:
                 else:
                     logger.warning(f"Master file validation failed: {file_path}")
                     return master.master_id  # Still return ID even if validation failed
-            except Exception as e:
-                logger.exception(f"Master validation error: {e}")
+            except Exception:
+                logger.exception("Master validation error")
                 return master.master_id  # Return ID anyway for partial success
 
         except (FileProcessingError, ValidationError, DatabaseError, FitsHeaderError):
@@ -571,11 +587,11 @@ class FileProcessor:
         """
         try:
             return self._register_fits_image_internal(root, file, moveFiles)
-        except (FileProcessingError, ValidationError, FitsHeaderError, DatabaseError) as e:
-            logger.exception(f"Error processing {os.path.join(root, file)}: {e}")
+        except (FileProcessingError, ValidationError, FitsHeaderError, DatabaseError):
+            logger.exception(f"Error processing {os.path.join(root, file)}")
             return False
         except Exception as e:
-            logger.exception(f"Unexpected error processing {os.path.join(root, file)}: {e}")
+            logger.exception(f"Unexpected error processing {os.path.join(root, file)}")
             raise FileProcessingError(
                 f"Unexpected error during FITS registration: {e}",
                 file_path=os.path.join(root, file),
@@ -832,11 +848,11 @@ class FileProcessor:
                 hdul.flush()
 
             logger.info(f"Saved modified header for {file}")
-        except OSError as e:
-            logger.exception(f"File I/O error saving modified header for {file}: {e}")
+        except OSError:
+            logger.exception(f"File I/O error saving modified header for {file}")
             # Continue processing despite header save failure
-        except Exception as e:
-            logger.exception(f"Unexpected error saving modified header for {file}: {e}")
+        except Exception:
+            logger.exception(f"Unexpected error saving modified header for {file}")
             # Continue processing despite header save failure
 
     def _compress_if_enabled(self, current_file_path: str) -> str:
@@ -911,9 +927,9 @@ class FileProcessor:
             from .file_formats.handlers.zip_handler import ZipFileHandler
             handler = ZipFileHandler()
             return handler.process_file(zip_path)
-        except Exception as e:
+        except Exception:
             # Convert any exception to the expected format for backward compatibility
-            logger.exception(f"Error extracting zip file {zip_path}: {e}")
+            logger.exception(f"Error extracting zip file {zip_path}")
             return None
 
     def convertXisfToFits(self, xisf_file_path):
@@ -943,7 +959,7 @@ class FileProcessor:
             from .file_formats.handlers.xisf_handler import XisfFileHandler
             handler = XisfFileHandler()
             return handler.process_file(xisf_file_path)
-        except Exception as e:
+        except Exception:
             # Convert any exception to the expected format for backward compatibility
-            logger.exception(f"Error converting XISF file {xisf_file_path}: {e}")
+            logger.exception(f"Error converting XISF file {xisf_file_path}")
             return None

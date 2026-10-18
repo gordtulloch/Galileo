@@ -724,9 +724,29 @@ def make_pier_solver(pier: PierRecord | None, pier_key=None, backend: str | None
     executable, params = get_solver_settings(pier)
     saved_backend, astrometry_executable, api_key = get_solver_backend(pier)
     backend = backend or saved_backend
+    executables = {"astrometry_local": astrometry_executable, "tetra3": get_tetra3_database(pier)}
     return PlateSolver(
-        backend=backend, executable=astrometry_executable if backend == "astrometry_local" else executable,
+        backend=backend, executable=executables.get(backend, executable),
         params=params, pier_key=pier_key, api_key=api_key)
+
+
+def get_tetra3_database(pier: PierRecord | None) -> str:
+    """*pier*'s saved tetra3 database path (Options > Solve); ``""`` for tetra3's own database."""
+    if pier is None:
+        return ""
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    return (record.tetra3_database or "") if record is not None else ""
+
+
+def save_tetra3_database(pier: PierRecord, database: str) -> None:
+    """Save *pier*'s tetra3 database path, creating its solver settings row if need be."""
+    from galileo.library.models.solver_settings import SolverSettingsRecord
+    record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
+    if record is None:
+        record = SolverSettingsRecord(pier=pier)
+    record.tetra3_database = database or None
+    record.save()
 
 
 def get_solver_backend(pier: PierRecord | None) -> tuple[str, str, str]:

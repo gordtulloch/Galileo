@@ -21,6 +21,7 @@ has no help entry yet.
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import layout_widget, need
 import logging
 
 from galileo import community
@@ -191,7 +192,8 @@ def _form_role(layout: QLayout, w):
                 if item.widget() is w or (item.layout() is not None and _layout_contains(item.layout(), w)):
                     return "field", label_text
     for i in range(layout.count()):
-        sub = layout.itemAt(i).layout() if layout.itemAt(i) is not None else None
+        item = layout.itemAt(i)
+        sub = item.layout() if item is not None else None
         if sub is not None:
             found = _form_role(sub, w)
             if found:
@@ -251,19 +253,19 @@ def _neighbour_caption(widget) -> str:
                     best, best_col = None, -1
                     for j in range(layout.count()):
                         r, c, _a, _b = layout.getItemPosition(j)
-                        lw = layout.itemAt(j).widget()
+                        lw = layout_widget(layout, j)
                         if r == row and best_col < c < col and _is_caption(lw):
                             best, best_col = lw, c
-                    if best is not None:
+                    if isinstance(best, QLabel):
                         return _clean(best.text())
                     for j in range(layout.count()):  # none beside it: a caption directly above, in the same column
                         r, c, _a, _b = layout.getItemPosition(j)
-                        lw = layout.itemAt(j).widget()
-                        if r == row - 1 and c == col and _is_caption(lw):
+                        lw = layout_widget(layout, j)
+                        if r == row - 1 and c == col and isinstance(lw, QLabel) and _is_caption(lw):
                             return _clean(lw.text())
                 elif not isinstance(layout, QFormLayout):
                     for j in range(idx - 1, -1, -1):
-                        lw = layout.itemAt(j).widget()
+                        lw = layout_widget(layout, j)
                         if lw is not None and _is_caption(lw):
                             return _clean(lw.text())
         w = parent
@@ -385,7 +387,7 @@ def audit(root) -> list[str]:
         is_form_label = isinstance(w, QLabel) and (_enclosing_form_role(w) or ("",))[0] == "label"
         if not (isinstance(w, _DOCUMENTED_TYPES) or is_form_label):
             continue
-        if isinstance(w, QToolButton) and w.parentWidget() is not None and w.parentWidget().objectName().endswith("Sidebar"):
+        if isinstance(w, QToolButton) and (parent_w := w.parentWidget()) is not None and parent_w.objectName().endswith("Sidebar"):
             continue
         if isinstance(w.parentWidget(), QTabBar):
             continue  # a tab's scroll arrows and close button
@@ -630,14 +632,14 @@ class HelpController(QObject):
         if self._picking:
             return
         self._picking = True
-        QApplication.instance().installEventFilter(self)
+        need(QApplication.instance()).installEventFilter(self)
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WhatsThisCursor))
         self._main.statusBar().showMessage("Click any control for help on it (Esc to cancel).")
 
     def _end_pick(self) -> None:
         if self._picking:
             self._picking = False
-            QApplication.instance().removeEventFilter(self)
+            need(QApplication.instance()).removeEventFilter(self)
             QApplication.restoreOverrideCursor()
             self._main.statusBar().clearMessage()
 

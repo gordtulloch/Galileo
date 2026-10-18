@@ -135,8 +135,8 @@ def _fix_dwarf_raw_header(hdr: Any, folder_name: str, file: str) -> bool:
         hdr['IMAGETYP'] = 'LIGHT'
 
         logger.info(f"Fixed DWARF_RAW header for {file}: OBJECT={object_name}, INSTRUME={instrument}")
-    except (ValueError, IndexError) as e:
-        logger.exception(f"Error parsing DWARF_RAW folder name {folder_name}: {e}")
+    except (ValueError, IndexError):
+        logger.exception(f"Error parsing DWARF_RAW folder name {folder_name}")
         return False
     return True
 
@@ -275,9 +275,13 @@ def dwarfFixHeader(hdr: Any, root: str, file: str) -> Any | bool:
 
         return hdr
 
-    except Exception as e:
-        logger.exception(f"Error in dwarfFixHeader for {file}: {e}")
+    except Exception:
+        logger.exception(f"Error in dwarfFixHeader for {file}")
         return False
+
+
+# (old value, header field) -> new value, loaded lazily from the Mapping table; None = not loaded yet.
+_mapping_cache: dict[tuple[str, str], str] | None = None
 
 
 def mapFitsHeader(hdr: Any, file_path: str) -> bool:
@@ -295,30 +299,25 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
     try:
         from ..models import Mapping
 
-        # Static cache for mappings to avoid repeated database queries
-        if not hasattr(mapFitsHeader, '_cached_mappings'):
-            mapFitsHeader._cached_mappings = None
-            mapFitsHeader._cache_loaded = False
+        global _mapping_cache
 
-        # Load mappings from database if not cached
-        if not mapFitsHeader._cache_loaded:
+        # Load mappings from database if not cached (avoids a query per file)
+        if _mapping_cache is None:
             try:
                 mappings = list(Mapping.select())
-                mapFitsHeader._cached_mappings = {}
+                _mapping_cache = {}
                 for mapping in mappings:
-                    key = (mapping.old_value.upper(), mapping.header_field.upper())
-                    mapFitsHeader._cached_mappings[key] = mapping.new_value
+                    if mapping.current and mapping.replace:  # a blank side is "no mapping" (see Mapping.get_mapped_value)
+                        _mapping_cache[(mapping.current.upper(), mapping.card.upper())] = mapping.replace
 
-                mapFitsHeader._cache_loaded = True
                 logger.debug(f"Loaded {len(mappings)} header mappings from database")
 
-            except Exception as e:
-                logger.exception(f"Failed to load header mappings: {e}")
-                mapFitsHeader._cached_mappings = {}
-                mapFitsHeader._cache_loaded = True  # Set to avoid repeated failures
+            except Exception:
+                logger.exception("Failed to load header mappings")
+                _mapping_cache = {}  # cached as empty to avoid repeated failures
                 return False
 
-        if not mapFitsHeader._cached_mappings:
+        if not _mapping_cache:
             return False
 
         changes_made = False
@@ -327,24 +326,63 @@ def mapFitsHeader(hdr: Any, file_path: str) -> bool:
         for header_field, value in list(hdr.items()):
             if isinstance(value, str):
                 key = (value.upper(), header_field.upper())
-                if key in mapFitsHeader._cached_mappings:
-                    new_value = mapFitsHeader._cached_mappings[key]
+                if key in _mapping_cache:
+                    new_value = _mapping_cache[key]
                     hdr[header_field] = new_value
                     logger.debug(f"Mapped {header_field} from '{value}' to '{new_value}' for {file_path}")
                     changes_made = True
 
         return changes_made
 
-    except Exception as e:
-        logger.exception(f"Error in mapFitsHeader for {file_path}: {e}")
+    except Exception:
+        logger.exception(f"Error in mapFitsHeader for {file_path}")
         return False
+
+
+def session_light_frames(session, *, calibrated_only: bool) -> list:
+    """The session's live light frames (only the calibrated ones when *calibrated_only*)."""
+    from galileo.library.models import fitsFile as FitsFileModel
+
+    condition = (
+        (FitsFileModel.fitsFileSession == session.fitsSessionId)
+        & (FitsFileModel.fitsFileSoftDelete == False)
+        & (FitsFileModel.fitsFileType.in_(["LIGHT", "LIGHT FRAME"]))
+    )
+    if calibrated_only:
+        condition = condition & (FitsFileModel.fitsFileCalibrated == 1)
+    return list(FitsFileModel.select().where(condition))
+
+
+def best_hfr_reference_path(frames) -> str | None:
+    """Path of the frame with the smallest average HFR (``fitsFileAvgHFRArcsec``) - the registration reference.
+
+    Frames whose file is missing or that have no usable HFR are ignored; None when none qualifies.
+    """
+    best_path = None
+    best_hfr = None
+    for f in frames:
+        p = getattr(f, 'fitsFileName', None)
+        if not p or not os.path.exists(p):
+            continue
+        hfr = getattr(f, 'fitsFileAvgHFRArcsec', None)
+        if hfr is None:
+            continue
+        try:
+            hfr_val = float(hfr)
+        except Exception:
+            logger.debug("Skipping unusable HFR value %r for %s", hfr, p)
+            continue
+        if best_hfr is None or hfr_val < best_hfr:
+            best_hfr = hfr_val
+            best_path = p
+    return best_path
 
 
 def clearMappingCache() -> None:
     """Clear the mapping cache to force reload from database."""
-    if hasattr(mapFitsHeader, '_cache_loaded'):
-        mapFitsHeader._cache_loaded = False
-        mapFitsHeader._cached_mappings = None
+    global _mapping_cache
+    if _mapping_cache is not None:
+        _mapping_cache = None
         logger.info("Header mapping cache cleared")
 
 
@@ -359,6 +397,6 @@ def get_master_calibration_path() -> str | None:
         config = load_library_config()
         repo_folder = config.get('DEFAULT', 'repo', fallback='.')
         return os.path.join(repo_folder, 'Masters')
-    except Exception as e:
-        logger.exception(f"Error getting master calibration path: {e}")
+    except Exception:
+        logger.exception("Error getting master calibration path")
         return os.path.join('.', 'Masters')

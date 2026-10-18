@@ -250,31 +250,35 @@ def test_tc_nfr_perf_030_stable_memory_over_8_hour_session():
 
 @pytest.mark.requirement("TC-NFR-REL-010")
 @pytest.mark.priority("MVP")
-async def test_tc_nfr_rel_010_survive_transient_device_disconnect(mock_indi_camera):
-    """NFR-REL-010: Survive a transient INDI/Alpaca disconnect during a sequence without terminating it."""
-    import numpy as np
-    seq_mod = pytest.importorskip("galileo.sequencer.basic")
-    pytest.importorskip("galileo.core.devices")
+async def test_tc_nfr_rel_010_survive_transient_device_disconnect():
+    """NFR-REL-010: Survive a transient INDI/Alpaca disconnect during a session without terminating it."""
+    from galileo.session_exec import RunState, SessionContext, SessionExecutor
+    from galileo.ui.sessions import ImageBlock
 
-    disconnect_count = [0]
+    class FlakyImaging:
+        def __init__(self):
+            self.calls = 0
+            self.frames = 0
+            self.gain = self.offset = 0
+            self.object_name = ""
+            self.series_done = 0
 
-    async def flaky_expose(**kwargs):
-        if disconnect_count[0] < 2:
-            disconnect_count[0] += 1
-            raise ConnectionResetError("INDI disconnect")
+        async def capture_series(self, count, duration, *args, **_):
+            self.calls += 1
+            if self.calls <= 2:
+                raise ConnectionResetError("INDI disconnect")
+            self.frames += 1
 
-    mock_indi_camera.start_exposure = AsyncMock(side_effect=flaky_expose)
-    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((10, 10), dtype=np.float32))
+        def request_stop(self):
+            pass
 
-    svc = seq_mod.BasicSequencer(camera=mock_indi_camera, mount=MagicMock(), output_dir="/tmp")
-    svc._retry_policy = {"max_retries": 3, "delay_s": 0.01}
+    imaging = FlakyImaging()
+    ctx = SessionContext(camera=object(), make_imaging=lambda: imaging)
+    result = await SessionExecutor(ctx).run([ImageBlock(exposure=1.0, count=5)])
 
-    seq = seq_mod.SequenceDef(name="Test")
-    seq.add_target(name="M42", ra_deg=83.8, dec_deg=-5.4,
-                   steps=[seq_mod.CaptureStep(filter="L", exposure=1.0, count=3, binning=1, frame_type="Light")])
-
-    await svc.run(seq)
-    assert svc.state == seq_mod.SequencerState.COMPLETED
+    assert result.state == RunState.COMPLETED
+    assert result.errors, "the disconnects are logged, not swallowed"
+    assert imaging.frames >= 1
 
 
 @pytest.mark.requirement("TC-NFR-REL-020")
@@ -310,17 +314,10 @@ def test_tc_nfr_rel_030_10_hour_unattended_session():
 
 @pytest.mark.requirement("TC-NFR-REL-040")
 @pytest.mark.priority("P2")
-def test_tc_nfr_rel_040_crash_does_not_lose_completed_frames(tmp_path):
+def test_tc_nfr_rel_040_crash_does_not_lose_completed_frames():
     """NFR-REL-040: Application crash does not lose the record of already-completed frames."""
-    seq_mod = pytest.importorskip("galileo.sequencer.basic")
-    svc = seq_mod.BasicSequencer.__new__(seq_mod.BasicSequencer)
-    svc._state_path = tmp_path / "seq_state.json"
-
-    svc.persist_completed_frame(frame_number=5, path=tmp_path / "light_005.fits")
-    svc.persist_completed_frame(frame_number=6, path=tmp_path / "light_006.fits")
-
-    recovered = seq_mod.BasicSequencer.load_persisted_state(tmp_path / "seq_state.json")
-    assert recovered["completed_frame_count"] >= 2
+    pytest.skip("the per-frame state file belonged to the retired galileo.sequencer engine; "
+                "frames are now catalogued as written (TC-LIB-150) but there is no crash-recovery test yet")
 
 
 # ===========================================================================

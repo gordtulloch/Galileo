@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _new_form_layout, _HAS_QT, QDialog
+from ._common import _camera_backend_key_for_slot, _new_form_layout, _QDialogBase
 from ._threads import _DarksThread
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ._state import AppWindowState
 
 
-class _DarksDialog(QDialog if _HAS_QT else object):
+class _DarksDialog(_QDialogBase):
     """Refuses close while a darks run is in progress, the same way _FlatsDialog does."""
 
     def __init__(self, parent=None) -> None:

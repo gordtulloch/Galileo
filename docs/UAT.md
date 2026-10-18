@@ -171,7 +171,6 @@ This section works without any hardware.
 | 8.7 | With **Auto-Save to Library** ticked, capture one frame. | Frame appears under **Library > Images** (after a refresh) filed under M13. | |
 | 8.8 | Untick **Auto-Save to Library**, capture, re-tick. | No new Library entry for the untick capture. | |
 | 8.9 | Tick **Live Stack**, capture 4 frames. | After the third frame a stack appears and improves. **Save Stack…** offers *Save to Library* and *Save to File…*. | |
-| 8.10 | Open **View > Panels…** and hide the Log panel; click **Reset Layout**. | Panel hides and returns. | |
 | 8.11 | Capture with no camera connected (disconnect it first). | Message "No camera connected". No crash. | |
 
 ## Section 9 — Plate solve and centre on M13 (opt)

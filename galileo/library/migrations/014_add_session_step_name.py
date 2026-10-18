@@ -1,7 +1,7 @@
 """Peewee migrations -- 014_add_session_step_name.py.
 
 ``fitsSession.fitsSessionStepName``: the sequence step that produced a session.
-Set only for the session containers the sequencer creates itself (LIB-160), so
+Set only for the session containers the session executor creates itself (LIB-160), so
 they can be told apart from sessions inferred from FITS headers (LIB-040).
 """
 

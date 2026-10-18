@@ -156,6 +156,13 @@ class AppWindowDeviceConfigMixin:
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
 
+        # Plugin-contributed controls for this category (e.g. the Kasa plugin's
+        # scan-and-toggle panel on Switches).
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is not None:
+            for panel in pm.get_ui_registry().get_equipment_panels(cat_id):
+                layout.addWidget(self._build_plugin_page(panel.plugin, panel.label), 1)
+
         log_heading = QLabel("Log")
         log_heading.setObjectName("CriteriaHeading")
         layout.addWidget(log_heading)

@@ -411,14 +411,16 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
         ("whats_up", "What's Up Tonight"), ("targets", "Targets"), ("sessions", "Sessions"),
         ("schedule", "Schedule"), ("history", "History"),
     ]
-    assert [i[:2] for i in SCIENCE_ITEMS] == [("variable_stars", "Variable Stars")]
+    # Science has no built-in items; Variable Stars comes only from the VSTarget plugin.
+    assert SCIENCE_ITEMS == []
     assert [i[:2] for i in LIBRARY_ITEMS] == [
         ("images", "Images"), ("sessions", "Sessions"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
     ]
 
     from PySide6 import QtWidgets
-    # Planning, Science, Library and Options each carry a secondary menu.
-    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) == 4
+    # Planning, Library and Options each carry a secondary menu; Science adds a fourth only when an
+    # installed plugin (VSTarget) supplies items, so the count depends on the machine's plugins.
+    assert len(window._window.findChildren(QtWidgets.QWidget, "SubmenuPage")) in (3, 4)
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
@@ -426,7 +428,6 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
     # Science), so check that the core items come first rather than that the menu is exactly them.
     assert ["What's Up Tonight", "Targets", "Sessions", "Schedule", "History"] in menus
-    assert any(menu[:1] == ["Variable Stars"] for menu in menus)
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 

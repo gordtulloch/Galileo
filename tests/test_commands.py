@@ -13,6 +13,7 @@ temporary incoming/repository folders), with the log folder redirected, so nothi
 
 import configparser
 import logging
+import json
 import os
 import sys
 from pathlib import Path
@@ -1093,3 +1094,102 @@ def test_tc_lib_130_cloud_sync_main_options(library, cloud_ini, cli, monkeypatch
     set_ini(library, bucket_url="")
     assert cli.run(cloud_sync, "-y") == 1
     assert cli.run(cloud_sync, "-p", "everything") == 2
+
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+def test_tc_lib_130_variable_star_photometry_writes_json_and_csv_for_a_stack(library, cli, monkeypatch):
+    """LIB-130: from an existing stack the command runs the photometry with the CLI options and writes the summary JSON
+    and a per-star CSV (default names beside the stack, or the paths given); a missing stack is exit code 6."""
+    from galileo.commands import variable_star_photometry as vsp
+    import galileo.library.core.variable_star_photometry as core
+
+    calls = []
+
+    def fake_run(path, *, star_name, options, check_auid):
+        calls.append((path, star_name, options, check_auid))
+        return {"target_magnitude": 12.3, "band": options.band, "chart_id": "X1",
+                "rows": [{"auid": "000-A", "ra": 1.0, "dec": 2.0, "vmag": 11.0, "extra": "dropped"}]}
+
+    monkeypatch.setattr(core, "run_variable_star_photometry", fake_run)
+    stack = calibrated(library.root / "stack.fits")
+
+    assert cli.run(vsp, "--stacked-fits", str(stack), "--star-name", "RW AUR", "--band", "B", "--bright", "10",
+                   "--dim", "14", "--snr", "5", "--match-arcsec", "3", "--aperture", "7", "--check-auid", "000-C") == 0
+    path, name, options, check = calls[0]
+    assert (path, name, check) == (str(stack), "RW AUR", "000-C")
+    assert (options.band, options.brightest_comp_mag, options.dimmest_comp_mag) == ("B", 10.0, 14.0)
+    assert (options.source_snr, options.match_radius_arcsec, options.aperture_radius_pixels) == (5.0, 3.0, 7.0)
+    summary = json.loads((library.root / "varstar_stack.json").read_text())
+    assert summary["chart_id"] == "X1" and summary["band"] == "B"
+    lines = (library.root / "varstar_stack.csv").read_text().splitlines()
+    assert lines[0].split(",")[:4] == ["auid", "ra", "dec", "vmag"] and lines[1].startswith("000-A,1.0,2.0,11.0,")
+    assert "dropped" not in lines[1]
+
+    out_json, out_csv = library.root / "o" / "r.json", library.root / "o" / "r.csv"
+    assert cli.run(vsp, "--stacked-fits", str(stack), "--star-name", "S", "--out-json", str(out_json),
+                   "--out-csv", str(out_csv)) == 0 and out_json.exists() and out_csv.exists()
+
+    assert cli.run(vsp, "--stacked-fits", str(library.root / "missing.fits"), "--star-name", "S") == 6
+
+
+@pytest.mark.requirement("TC-LIB-130")
+@pytest.mark.priority("P2")
+def test_tc_lib_130_variable_star_photometry_builds_a_session_stack(ingested, cli, monkeypatch):
+    """LIB-130: --session calibrates when no frame is calibrated yet, stacks the calibrated lights (best-HFR frame as
+    the registration reference), reuses an existing stack, and reports 3/4/5 for calibration/too-few/stack failures."""
+    from galileo.commands import create_sessions, variable_star_photometry as vsp
+    import galileo.library.core.auto_calibration as auto_cal
+    import galileo.library.core.master_manager as mm_mod
+    import galileo.library.core.variable_star_photometry as core
+    from galileo.library.models import fitsFile, fitsSession
+
+    assert cli.run(create_sessions, "-l") == 0
+    session = fitsSession.get(fitsSession.fitsSessionObjectName == "M42")
+    sid = str(session.fitsSessionId)
+    monkeypatch.setattr(core, "run_variable_star_photometry",
+                        lambda path, **kw: {"rows": [], "band": "V", "target_magnitude": 1, "chart_id": "c"})
+    seen = {}
+
+    def fake_calibrate(config, session_id=None):
+        seen["calibrated"] = session_id
+        fitsFile.update(fitsFileCalibrated=1).where(fitsFile.fitsFileSession == session_id).execute()
+        return True
+
+    stacks = []
+
+    class FakeMasterManager:
+        def _create_light_stack_photometric_mean(self, **kw):
+            stacks.append(kw)
+            Path(kw["output_path"]).write_bytes(b"stack")
+            kw["progress_callback"](1, 2, "stacking")
+            return True
+
+    monkeypatch.setattr(auto_cal, "calibrate_light_frames", fake_calibrate)
+    monkeypatch.setattr(mm_mod, "get_master_manager", lambda: FakeMasterManager())
+    lights = list(fitsFile.select().where(fitsFile.fitsFileSession == sid))
+    for hfr, light in zip((3.0, 1.5, 2.0), lights, strict=True):
+        fitsFile.update(fitsFileAvgHFRArcsec=hfr).where(fitsFile.fitsFileId == light.fitsFileId).execute()
+
+    assert cli.run(vsp, "--session", sid, "--star-name", "S") == 0
+    assert seen["calibrated"] == sid and len(stacks) == 1
+    best = min(lights, key=lambda f: {lights[0].fitsFileId: 3.0, lights[1].fitsFileId: 1.5, lights[2].fitsFileId: 2.0}[f.fitsFileId])
+    assert stacks[0]["reference_path"] == best.fitsFileName
+    assert len(stacks[0]["file_paths"]) == 3 and stacks[0]["thumbnail_session_id"] == sid
+    assert Path(stacks[0]["output_path"]).name.startswith("photometric_stack_M42_")
+
+    seen.clear()
+    assert cli.run(vsp, "--session", sid, "--star-name", "S") == 0
+    assert not seen and len(stacks) == 1, "calibrated frames exist and the stack is reused"
+
+    Path(stacks[0]["output_path"]).unlink()
+    monkeypatch.setattr(FakeMasterManager, "_create_light_stack_photometric_mean", lambda self, **kw: False)
+    assert cli.run(vsp, "--session", sid, "--star-name", "S") == 5
+
+    for light in lights[1:]:
+        fitsFile.update(fitsFileSoftDelete=True).where(fitsFile.fitsFileId == light.fitsFileId).execute()
+    assert cli.run(vsp, "--session", sid, "--star-name", "S") == 4
+
+    fitsFile.update(fitsFileCalibrated=0, fitsFileSoftDelete=False).where(fitsFile.fitsFileSession == sid).execute()
+    monkeypatch.setattr(auto_cal, "calibrate_light_frames", lambda config, session_id=None: False)
+    assert cli.run(vsp, "--session", sid, "--star-name", "S") == 3

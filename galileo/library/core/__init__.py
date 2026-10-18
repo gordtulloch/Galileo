@@ -213,14 +213,13 @@ class fitsProcessing:
                         result = self.registerFitsImage(root, file, moveFiles)
                         if result:  # If registration was successful
                             processed_files.append(file_path)
-                        if progress_callback:
-                            # Call with expected signature: current, total, filename
-                            if not progress_callback(current_file, total_files, file_path):
-                                break  # Stop if callback returns False (user cancelled)
-                    except Exception as e:
+                        # Call with expected signature: current, total, filename
+                        if progress_callback and not progress_callback(current_file, total_files, file_path):
+                            break  # Stop if callback returns False (user cancelled)
+                    except Exception:
                         import logging
                         logger = logging.getLogger(__name__)
-                        logger.exception(f"Error processing {file}: {e}")
+                        logger.exception(f"Error processing {file}")
 
         return processed_files
 

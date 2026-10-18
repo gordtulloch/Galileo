@@ -220,6 +220,8 @@ class IndiClient:
                     break
                 parser.feed(chunk)
                 for event, elem in parser.read_events():
+                    if not isinstance(elem, ET.Element):
+                        continue
                     if event == "start":
                         if root is None:
                             root = elem
@@ -232,7 +234,7 @@ class IndiClient:
                             root.remove(elem)
         except (OSError, ET.ParseError) as exc:
             if self._alive:
-                logger.exception("INDI connection to %s:%d lost: %s", self.host, self.port, exc)
+                logger.exception("INDI connection to %s:%d lost", self.host, self.port)
             self._fail(str(exc))
 
     # -- incoming message handling -----------------------------------------

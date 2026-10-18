@@ -449,7 +449,7 @@ class AppWindowSettingsPagesMixin:
         layout.addWidget(save_btn)
 
         hint = QLabel("Applies to the next autofocus run started from the Focus screen, whether "
-                      "started there or by a sequencer trigger. Saved per Pier.")
+                      "started there or by a session trigger. Saved per Pier.")
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -493,13 +493,16 @@ class AppWindowSettingsPagesMixin:
         nova.astrometry.net). Scoped per Pier, like Options > Focus."""
         from PySide6.QtWidgets import (
             QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-            QPushButton, QSpinBox, QVBoxLayout, QWidget,
+            QMessageBox, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
         )
+        from PySide6.QtCore import QTimer
         from galileo.observatory import (
             get_solver_backend,
             get_solver_settings,
+            get_tetra3_database,
             save_solver_backend,
             save_solver_settings,
+            save_tetra3_database,
         )
         from galileo.platesolve import BACKENDS, SolverParams
 
@@ -524,7 +527,7 @@ class AppWindowSettingsPagesMixin:
         for key, label in BACKENDS.items():
             backend_combo.addItem(label, key)
         backend_combo.setToolTip("Which solver the application uses by default: ASTAP, a local astrometry.net "
-                                 "installation, or the nova.astrometry.net web service.")
+                                 "installation, the nova.astrometry.net web service, or ESA's tetra3.")
         form.addRow("Solver", backend_combo)
 
         exe_row = QHBoxLayout()
@@ -545,6 +548,16 @@ class AppWindowSettingsPagesMixin:
         astrometry_row.addWidget(astrometry_edit, 1)
         astrometry_row.addWidget(astrometry_browse_btn)
         form.addRow("solve-field executable", astrometry_row)
+
+        tetra3_row = QHBoxLayout()
+        tetra3_edit = QLineEdit()
+        tetra3_edit.setPlaceholderText("tetra3's own database if left blank")
+        tetra3_edit.setToolTip("Path to a tetra3 star-pattern database (.npz) built for your field of view. "
+                               "Leave blank to use the database that comes with tetra3.")
+        tetra3_browse_btn = QPushButton("Browse…")
+        tetra3_row.addWidget(tetra3_edit, 1)
+        tetra3_row.addWidget(tetra3_browse_btn)
+        form.addRow("tetra3 database", tetra3_row)
 
         api_key_edit = QLineEdit()
         api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -574,6 +587,34 @@ class AppWindowSettingsPagesMixin:
                                    "but less precise solve (0 solves at full resolution).")
         form.addRow("Downsample", downsample_spin)
 
+        scope_combo = QComboBox()
+        scope_combo.addItem("Current Pier", "current")
+        scope_combo.addItem("All Piers in all Observatories", "all")
+        scope_combo.setToolTip("Which Piers to build tetra3 star databases for: the current Pier, or every Pier of "
+                               "every Observatory. Each Pier's database is sized to the field of view its optical "
+                               "tubes and cameras give.")
+        form.addRow("Generate for", scope_combo)
+
+        build_row = QHBoxLayout()
+        generate_btn = QPushButton("Generate tetra3 databases")
+        generate_btn.setToolTip("Build tetra3 star databases matched to the chosen Piers' fields of view, and "
+                                "select each for its Pier. Downloads a star catalogue the first time; a narrow "
+                                "field can take hours.")
+        cancel_build_btn = QPushButton("Cancel build")
+        cancel_build_btn.setEnabled(False)
+        cancel_build_btn.setToolTip("Stop building databases. Ones already finished are kept.")
+        build_row.addWidget(generate_btn)
+        build_row.addWidget(cancel_build_btn)
+        build_row.addStretch(1)
+        build_busy = QProgressBar()
+        build_busy.setRange(0, 0)
+        build_busy.setTextVisible(False)
+        build_busy.setMaximumHeight(8)
+        build_busy.setVisible(False)
+        build_status = QLabel("")
+        build_status.setObjectName("StatusHint")
+        build_status.setWordWrap(True)
+
         def browse() -> None:
             path, _ = QFileDialog.getOpenFileName(self._window, "ASTAP executable")
             if path:
@@ -588,6 +629,13 @@ class AppWindowSettingsPagesMixin:
 
         astrometry_browse_btn.clicked.connect(browse_astrometry)
 
+        def browse_tetra3() -> None:
+            path, _ = QFileDialog.getOpenFileName(self._window, "tetra3 database", "", "tetra3 database (*.npz)")
+            if path:
+                tetra3_edit.setText(path)
+
+        tetra3_browse_btn.clicked.connect(browse_tetra3)
+
         save_btn = QPushButton("Save")
         save_btn.setObjectName("AccentButton")
         layout.addWidget(save_btn)
@@ -596,7 +644,86 @@ class AppWindowSettingsPagesMixin:
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+        layout.addSpacing(12)
+        layout.addLayout(build_row)
+        layout.addWidget(build_busy)
+        layout.addWidget(build_status)
         layout.addStretch(1)
+
+        build = {"builder": None, "built": 0, "failures": []}
+        poll_timer = QTimer(page)
+        poll_timer.setInterval(500)
+
+        def finish_build() -> None:
+            poll_timer.stop()
+            build["builder"] = None
+            generate_btn.setEnabled(True)
+            cancel_build_btn.setEnabled(False)
+            build_busy.setVisible(False)
+            failures = build["failures"]
+            summary = f"Built {build['built']} database(s) and selected them for their Piers." if build["built"] else "No database was built."
+            build_status.setText(summary + ("\n" + "\n".join(failures) if failures else ""))
+            refresh()
+
+        def poll_build() -> None:
+            from galileo.library.models.observatory import PierRecord
+            builder = build["builder"]
+            if builder is None:
+                return
+            for message in builder.poll():
+                kind = message[0]
+                if kind == "log":
+                    build_status.setText(message[1])
+                elif kind == "built":
+                    plan = builder.plans[message[1]]
+                    for pier_id in plan.pier_ids:
+                        save_tetra3_database(PierRecord.get_by_id(pier_id), message[2])
+                    build["built"] += len(plan.pier_ids)
+                elif kind == "failed":
+                    label = builder.plans[message[1]].fov_text + " database" if message[1] >= 0 else "Build"
+                    build["failures"].append(f"{label}: {message[2]}")
+                elif kind == "finished":
+                    finish_build()
+                    return
+
+        poll_timer.timeout.connect(poll_build)
+
+        def generate() -> None:
+            from galileo.tetra3_db import DatabaseBuilder, all_piers, download_size_mb, plan_databases
+            piers = all_piers() if scope_combo.currentData() == "all" else [self._current_pier]
+            plans, skipped = plan_databases([p for p in piers if p is not None])
+            skipped_text = ("\n\nSkipped:\n" + "\n".join(skipped)) if skipped else ""
+            if not plans:
+                QMessageBox.information(self._window, "tetra3 databases",
+                                        "Nothing to build." + (skipped_text or " Select a Pier first."))
+                return
+            lines = "\n".join(f"• {plan.fov_text} field from {plan.catalog} for {', '.join(plan.pier_labels)}"
+                              for plan in plans)
+            download_mb = download_size_mb(plans)
+            answer = QMessageBox.question(
+                self._window, "Generate tetra3 databases",
+                f"Build {len(plans)} database(s):\n{lines}{skipped_text}\n\n"
+                + (f"This downloads about {download_mb} MB of star catalogue. " if download_mb else "")
+                + "A narrow field can take hours to build; you can keep using Galileo meanwhile, or cancel.\n\nContinue?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            builder = DatabaseBuilder(plans)
+            build.update(builder=builder, built=0, failures=[])
+            generate_btn.setEnabled(False)
+            cancel_build_btn.setEnabled(True)
+            build_busy.setVisible(True)
+            build_status.setText("Starting…")
+            builder.start()
+            poll_timer.start()
+
+        def cancel_build() -> None:
+            if build["builder"] is not None:
+                build["builder"].cancel()
+                build_status.setText("Cancelling…")
+
+        generate_btn.clicked.connect(generate)
+        cancel_build_btn.clicked.connect(cancel_build)
 
         def refresh() -> None:
             pier = self._current_pier
@@ -609,11 +736,12 @@ class AppWindowSettingsPagesMixin:
             backend_combo.setCurrentIndex(max(backend_combo.findData(backend), 0))
             astrometry_edit.setText(astrometry_exe)
             api_key_edit.setText(api_key)
+            tetra3_edit.setText(get_tetra3_database(pier))
             status.setText(f"Editing defaults for Pier {pier.name!r}." if pier is not None
                            else "Select a Pier first — these settings are saved per Pier.")
             save_btn.setEnabled(pier is not None)
             for widget in (backend_combo, exe_edit, browse_btn, astrometry_edit, astrometry_browse_btn,
-                           api_key_edit, fov_spin, radius_spin, downsample_spin):
+                           tetra3_edit, tetra3_browse_btn, api_key_edit, fov_spin, radius_spin, downsample_spin):
                 widget.setEnabled(pier is not None)
 
         def save() -> None:
@@ -626,6 +754,7 @@ class AppWindowSettingsPagesMixin:
             save_solver_settings(self._current_pier, exe_edit.text().strip(), params)
             save_solver_backend(self._current_pier, backend_combo.currentData(),
                                 astrometry_edit.text().strip(), api_key_edit.text().strip())
+            save_tetra3_database(self._current_pier, tetra3_edit.text().strip())
             solve_page = self._device_pages.get("solve")
             if solve_page is not None:
                 solve_page["reload"]()

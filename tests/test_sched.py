@@ -16,8 +16,8 @@ def scheduler():
 @pytest.fixture
 def sample_job():
     sched_mod = pytest.importorskip("galileo.scheduler")
-    seq_mod = pytest.importorskip("galileo.sequencer.basic")
-    seq = seq_mod.SequenceDef(name="M42 Ha")
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    seq = ui_mod.SessionRegion(name="M42 Ha")
     return sched_mod.SchedulerJob(
         name="M42",
         sequence=seq,

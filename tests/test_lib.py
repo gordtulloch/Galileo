@@ -12,6 +12,7 @@ repository folders, so nothing touches the user's real library. The screens are
 built offscreen.
 """
 
+import datetime
 import hashlib
 import importlib
 import os
@@ -343,6 +344,34 @@ def test_tc_lib_050_create_master_calibration_frames(library):
             assert hdul[0].data is not None
 
 
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("P2")
+def test_tc_lib_050_master_validate_link_and_cleanup_use_the_masters_columns(library):
+    """LIB-050: validating, linking and cleaning up masters works on the Masters/fitsSession columns that exist
+    (``master_path``/``hash_value``, ``fits*Master``) - it used to read non-existent ``file_path``/``master_bias``."""
+    from galileo.library.core.auto_calibration import create_master_frames
+    from galileo.library.core.master_manager import MasterFrameManager
+    from galileo.library.models import Masters, fitsSession
+
+    assert create_master_frames(calibration_ready(library)) is True
+    manager = MasterFrameManager()
+
+    results = manager.validate_masters()
+    assert results.get("valid_masters") == 3 and results["invalid_masters"] == 0 and results["missing_files"] == 0
+
+    bias = Masters.get(Masters.master_type == "bias")
+    session = fitsSession.select().first()
+    assert manager.update_session_with_master(session.fitsSessionId, bias.id, "bias") is True
+    assert fitsSession.get_by_id(session.fitsSessionId).fitsBiasMaster == bias.master_id
+
+    stale = datetime.datetime(2000, 1, 1)
+    Masters.update(creation_date=stale).execute()
+    cleaned = manager.cleanup_masters(retention_days=30)
+    assert "error" not in cleaned and cleaned["errors"] == []
+    assert Masters.select().where(Masters.master_id == bias.master_id).count() == 1, "a master in use is kept"
+    assert Masters.select().count() == 1 and cleaned["deleted_masters"] == 2
+
+
 @pytest.mark.requirement("TC-LIB-060")
 @pytest.mark.priority("MVP")
 def test_tc_lib_060_apply_calibration_to_lights(library):
@@ -632,7 +661,7 @@ def test_tc_lib_170_sftp_is_offered_in_download_dialog_and_options(window, sftp_
     config = load_config()
     assert config.get("DEFAULT", "sftp_username") == "newuser"
     assert config.get("DEFAULT", "sftp_strict_host_keys") == "True"
-    assert "changed" not in open(library_ini_path(config)).read()      # never in the ini file
+    assert "changed" not in Path(library_ini_path(config)).read_text()    # never in the ini file
     assert sftp_settings["password"] == "changed"                      # went to the (fake) keychain
 
 
@@ -775,7 +804,7 @@ def test_tc_lib_140_integrity_check_via_stored_hashes(library):
 @pytest.mark.requirement("TC-LIB-150")
 @pytest.mark.priority("MVP")
 def test_tc_lib_150_auto_register_frame_on_sequence_write(library):
-    """LIB-150: Automatically register each frame into the repository catalog as it is written by the sequencer."""
+    """LIB-150: Automatically register each frame into the repository catalog as it is written by a session."""
     from galileo.library.registrar import LibraryRegistrar
 
     frame = write_frame(library.repo, "M42_001.fits", "Light Frame", "M42", 60, 5, filt="Ha")
@@ -790,17 +819,13 @@ def test_tc_lib_150_auto_register_frame_on_sequence_write(library):
 
 @pytest.mark.requirement("TC-LIB-150")
 @pytest.mark.priority("MVP")
-async def test_tc_lib_150_sequencer_registers_each_saved_frame(library):
-    """LIB-150: the sequencer hands every frame it writes to the library, which catalogues it."""
+async def test_tc_lib_150_session_registers_each_saved_frame(library):
+    """LIB-150: the session executor hands every frame it writes to the library, which catalogues it."""
     from galileo.library.models import fitsFile
     from galileo.library.registrar import LibraryRegistrar
-    from galileo.sequencer.basic import BasicSequencer
 
     frame = write_frame(library.repo, "seq_001.fits", "Light Frame", "M42", 60, 6, filt="Ha")
-    sequencer = BasicSequencer.__new__(BasicSequencer)
-    sequencer._repository = LibraryRegistrar()
-
-    sequencer._repository.register_frame(frame)
+    LibraryRegistrar().register_frame(frame)
 
     assert [Path(f.fitsFileName) for f in fitsFile.select()] == [frame]
 
@@ -829,7 +854,7 @@ def test_tc_lib_160_sequence_step_session_container(library):
 @pytest.mark.requirement("TC-LIB-160")
 @pytest.mark.priority("MVP")
 def test_tc_lib_160_inferred_sessions_are_not_sequence_containers(library):
-    """LIB-160: a container comes from the sequencer's step boundaries; sessions inferred from headers (LIB-040) are not listed as such."""
+    """LIB-160: a container comes from the session executor's step boundaries; sessions inferred from headers (LIB-040) are not listed as such."""
     from galileo.library.registrar import LibraryRegistrar
 
     write_light_frames(library.incoming)
@@ -1326,7 +1351,7 @@ def test_tc_lib_040_failed_auto_regeneration_does_not_start_another_regeneration
         raise AssertionError("the failure handler must not run a regeneration itself")
 
     monkeypatch.setattr(widget, "_do_regenerate_sessions_new_only", fail)
-    monkeypatch.setattr(sw, "fitsProcessing", forbidden)
+    monkeypatch.setattr("galileo.ui.library.sessions_regenerate.fitsProcessing", forbidden)
 
     widget.auto_regenerate_sessions()      # must swallow the failure quietly
 
@@ -1938,7 +1963,7 @@ def test_tc_lib_060_sessions_screen_calibrates_lights_with_masters(library, qt_a
     assert result == {"total": 3, "calibrated": 3, "skipped": 0, "errors": 0}
     calibrated = list(fitsFile.select().where(fitsFile.fitsFileCalibrated == 1, fitsFile.fitsFileSession == session.fitsSessionId))
     assert len(calibrated) == 3 and all(Path(f.fitsFileName).name.startswith("cal_") for f in calibrated)
-    sources = list(fitsFile.select().where(fitsFile.fitsFileSoftDelete == True, fitsFile.fitsFileType == "LIGHT FRAME"))  # noqa: E712
+    sources = list(fitsFile.select().where(fitsFile.fitsFileSoftDelete == True, fitsFile.fitsFileType == "LIGHT FRAME"))
     assert len(sources) >= 3
     header = fits.getheader(calibrated[0].fitsFileName)
     assert header["CALIBRAT"] is True and "CALDATE" in header
@@ -2006,7 +2031,7 @@ def test_tc_lib_090_sessions_context_menu_offers_and_runs_actions(library, qt_ap
             offered.append([a.text() for a in self.actions()])
             return next((a for a in self.actions() if chosen["label"] in a.text()), None)
 
-    monkeypatch.setattr(sw, "QMenu", FakeMenu)
+    monkeypatch.setattr("galileo.ui.library.sessions_menu.QMenu", FakeMenu)
 
     def right_click(selection, label):
         tree.clearSelection()
@@ -2030,3 +2055,489 @@ def test_tc_lib_090_sessions_context_menu_offers_and_runs_actions(library, qt_ap
     offered.clear()
     right_click([items["Flat"]], "nothing-matches")
     assert not any("Check out" in t or "Calibrate" in t for t in offered[0]), "calibration sessions are not checked out"
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("P2")
+def test_map_fits_header_applies_stored_mappings(library):
+    """LIB-010: ``mapFitsHeader`` rewrites header values using the Mapping table's ``card``/``current``/``replace``
+    columns (it used to read non-existent ``old_value``/``header_field``/``new_value`` and so never mapped anything)."""
+    from galileo.library.core.utils import clearMappingCache, mapFitsHeader
+    from galileo.library.models import Mapping
+
+    Mapping.create(card="TELESCOP", current="my scope", replace="Askar 103")
+    Mapping.create(card="INSTRUME", current="blank replace", replace=None)
+    clearMappingCache()
+    hdr = {"TELESCOP": "My Scope", "INSTRUME": "blank replace", "OBJECT": "M42"}
+    assert mapFitsHeader(hdr, "x.fits") is True
+    assert hdr == {"TELESCOP": "Askar 103", "INSTRUME": "blank replace", "OBJECT": "M42"}
+    assert mapFitsHeader({"TELESCOP": "other"}, "y.fits") is False
+    clearMappingCache()
+
+
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("P2")
+def test_register_masters_scans_registers_moves_and_stops(library):
+    """LIB-050: ``registerMasters`` registers only ``IMAGETYP`` MASTER dark/flat/bias frames, honours ``recursive``,
+    can move them into a destination folder (renaming on a clash), and stops when the progress callback says so."""
+    from galileo.library.core import fitsProcessing
+    from galileo.library.models import Masters
+
+    scan = library.root / "scan"
+    (scan / "sub").mkdir(parents=True)
+    write_frame(scan, "md.fits", "Master Dark", "Dark", 60, 1)
+    write_frame(scan, "mf.fits", "Master Flat", "Flat", 2, 2, filt="Ha")
+    write_frame(scan, "light.fits", "Light Frame", "M42", 60, 3)        # not a master
+    write_frame(scan, "bias_plain.fits", "Bias Frame", "Bias", 0, 4)    # calibration, but not MASTER
+    write_frame(scan / "sub", "mb.fits", "Master Bias", "Bias", 0, 5)
+    (scan / "notes.txt").write_text("not a fits file")
+    processor = fitsProcessing()
+
+    seen = []
+    flat_ids = processor.registerMasters(source_folder=str(scan), recursive=False,
+                                         progress_callback=lambda cur, total, path: seen.append(Path(path).name) or True)
+    assert len(flat_ids) == 2 and Masters.select().count() == 2
+    assert "mb.fits" not in seen and "notes.txt" not in seen and {"md.fits", "mf.fits", "light.fits"} <= set(seen)
+
+    all_ids = processor.registerMasters(source_folder=str(scan))            # recursive: finds the bias too
+    assert len(all_ids) == 3 and Masters.select().count() == 3
+
+    stopped = processor.registerMasters(source_folder=str(scan), progress_callback=lambda *a: False)
+    assert stopped == []
+
+    dest = library.root / "masters_out"
+    (dest).mkdir()
+    (dest / "md.fits").write_bytes(b"clash")                                 # forces the _1 rename
+    moved = processor.registerMasters(source_folder=str(scan), moveFiles=True, destination_folder=str(dest))
+    assert len(moved) == 3
+    assert not (scan / "md.fits").exists() and (dest / "md.fits").read_bytes() == b"clash"
+    assert (dest / "md_1.fits").exists() and (dest / "mf.fits").exists() and (dest / "mb.fits").exists()
+    assert (scan / "light.fits").exists(), "non-masters are left where they were"
+
+
+def _write_array(path, array, **header):
+    fits = pytest.importorskip("astropy.io.fits")
+    hdr = fits.Header()
+    for key, value in header.items():
+        hdr[key] = value
+    fits.PrimaryHDU(array, header=hdr).writeto(path)
+    return str(path)
+
+
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("P2")
+def test_calibrate_light_frame_applies_bias_corrected_dark_and_normalised_flat(tmp_path):
+    """LIB-050: (Light - (Dark - Bias)) / (Flat / median(Flat)); a negative result is shifted positive (|min| + 100) and noted in HISTORY."""
+    np = pytest.importorskip("numpy")
+    fits = pytest.importorskip("astropy.io.fits")
+    from galileo.library.core.light_calibration import calibrate_light_frame
+
+    light = _write_array(tmp_path / "light.fits", np.full((4, 4), 1000.0, "float32"), EXPTIME=60)
+    dark = _write_array(tmp_path / "dark.fits", np.full((4, 4), 120.0, "float32"), EXPTIME=60)
+    bias = _write_array(tmp_path / "bias.fits", np.full((4, 4), 20.0, "float32"))
+    flat_data = np.full((4, 4), 2.0, "float32")
+    flat_data[0, 0] = 1.0                                         # normalised to 0.5 by the median of 2.0
+    flat = _write_array(tmp_path / "flat.fits", flat_data)
+    messages = []
+
+    result = calibrate_light_frame(light, dark, flat, bias, output_path=str(tmp_path / "out" / "cal.fits"),
+                                   progress_callback=messages.append)
+    assert result["success"] is True and Path(result["output_path"]).exists()
+    assert result["calibration_steps"][0].startswith("DARK: dark.fits (60.0s) - BIAS corrected")
+    assert result["calibration_steps"][1].startswith("FLAT: flat.fits (median: 2.0)")
+    assert result["data_max"] == pytest.approx(1800.0) and result["data_min"] == pytest.approx(900.0)
+    assert messages[0].startswith("Starting calibration") and messages[-1].startswith("Calibration complete")
+    with fits.open(result["output_path"]) as hdul:
+        assert hdul[0].header["CALMETOD"] == "Numpy"
+
+    # Bias only (no dark): the bias is subtracted from the light.
+    only_bias = calibrate_light_frame(light, bias_master=bias, output_path=str(tmp_path / "b.fits"))
+    assert only_bias["calibration_steps"] == ["BIAS: bias.fits"] and only_bias["data_max"] == pytest.approx(980.0)
+
+    # Dark without a bias still applies, flagged as uncorrected.
+    no_bias = calibrate_light_frame(light, dark, output_path=str(tmp_path / "d.fits"))
+    assert no_bias["calibration_steps"] == ["DARK: dark.fits (60.0s) - NO BIAS CORRECTION"]
+    assert no_bias["data_max"] == pytest.approx(880.0)
+
+    # A negative result is shifted positive by |min| + 100 and recorded in BZERO.
+    dark_big = _write_array(tmp_path / "dark_big.fits", np.full((4, 4), 1500.0, "float32"), EXPTIME=60)
+    shifted = calibrate_light_frame(light, dark_big, output_path=str(tmp_path / "s.fits"))
+    assert shifted["data_min"] == pytest.approx(-500.0)
+    with fits.open(shifted["output_path"]) as hdul:
+        assert any("Applied BZERO offset of 600.00" in str(h) for h in hdul[0].header["HISTORY"])
+        assert float(hdul[0].data.min()) == pytest.approx(100.0)
+
+
+@pytest.mark.requirement("TC-LIB-050")
+@pytest.mark.priority("P2")
+def test_calibrate_light_frame_tolerates_bad_masters_and_reports_missing_input(tmp_path):
+    """LIB-050: a master that does not match the light is reported and skipped; a missing light is an error dict;
+    a flat with a tiny pixel is clamped rather than blowing up."""
+    np = pytest.importorskip("numpy")
+    from galileo.library.core.light_calibration import calibrate_light_frame
+
+    assert "not found" in calibrate_light_frame(str(tmp_path / "nope.fits"))["error"]
+
+    light = _write_array(tmp_path / "light.fits", np.full((4, 4), 500.0, "float32"))
+    wrong_dark = _write_array(tmp_path / "dark.fits", np.full((2, 2), 10.0, "float32"))
+    messages = []
+    result = calibrate_light_frame(light, wrong_dark, output_path=str(tmp_path / "o1.fits"), progress_callback=messages.append)
+    assert result["success"] is True and result["calibration_steps"] == []
+    assert any(m.startswith("Warning: Failed to apply dark correction") for m in messages)
+
+    flat_data = np.full((4, 4), 1.0, "float32")
+    flat_data[0, 0] = 0.01                                        # below the 0.1 clamp
+    flat = _write_array(tmp_path / "flat.fits", flat_data)
+    clamped = calibrate_light_frame(light, flat_master=flat, output_path=str(tmp_path / "o2.fits"))
+    assert clamped["data_max"] == pytest.approx(5000.0) and clamped["data_min"] == pytest.approx(500.0)   # 500 / 0.1
+    assert clamped["calibration_steps"][0].startswith("FLAT: flat.fits")
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("P2")
+def test_sessions_resources_status_summarises_masters_and_calibration_frames(monkeypatch):
+    """LIB-010: the Sessions table's Resources column shows masters / calibration-frame counts for a light session,
+    the available master types for a calibration session, and "Precalibrated" for iTelescope/Seestar data."""
+    pytest.importorskip("PySide6")
+    import galileo.library.core.master_manager as mm_mod
+    from galileo.ui.library.sessions_widget import SessionsWidget
+
+    class NoMasters:
+        def find_matching_master(self, session_data, cal_type):
+            return None
+
+    monkeypatch.setattr(mm_mod, "get_master_manager", lambda: NoMasters())
+
+    def make(**kw):
+        base = {"fitsSessionId": "L1", "fitsSessionObjectName": "M42", "fitsSessionTelescope": "Home", "fitsSessionImager": "ASI",
+                    "fitsBiasSession": None, "fitsDarkSession": None, "fitsFlatSession": None,
+                    "fitsBiasMaster": None, "fitsDarkMaster": None, "fitsFlatMaster": None}
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def status(session, counts=None, masters=None):
+        host = SimpleNamespace(_session_file_counts=counts or {}, _master_types_by_source_session_id=masters or {},
+                               _matched_master_types_by_session_id={})
+        return SessionsWidget._build_resources_status(host, session)
+
+    nothing = status(make())
+    assert nothing["text"] == "Dark: None, Flat: None, Bias: None" and nothing["percentage"] == 0
+    assert nothing["has_masters"] is False and nothing["tooltip"].startswith("Calibration Resources (0% ready):\n✗ No dark")
+
+    mixed = status(make(fitsDarkMaster="m.fits", fitsFlatSession="F1", fitsBiasSession="B1"), counts={"F1": 12})
+    assert mixed["text"] == "MasterDark, Flat: 12, Bias: Available"
+    assert mixed["percentage"] == 100 and (mixed["has_dark"], mixed["has_flat"], mixed["has_bias"]) == (True, True, True)
+    assert mixed["has_masters"] is True
+    assert mixed["tooltip"].splitlines()[1:] == ["✓ Dark master frame available", "✓ 12 flat frames available",
+                                                  "✓ Bias frames available"]
+
+    via_source = status(make(fitsDarkSession="D1", fitsBiasSession="B1"), counts={"D1": 5},
+                        masters={"D1": {"dark"}, "B1": {"bias", "flat"}})
+    assert via_source["text"] == "MasterDark, Flat: None, MasterBias" and round(via_source["percentage"]) == 67
+
+    pre = status(make(fitsSessionTelescope="iTelescope T5"))
+    assert pre["text"] == "Precalibrated" and pre["percentage"] == 100 and pre["tooltip"] == "Pre-calibrated images from iTelescope T5"
+    assert status(make(fitsSessionImager="Seestar S30"))["tooltip"] == "Pre-calibrated images from Seestar S30"
+
+    calib = make(fitsSessionId="C1", fitsSessionObjectName="Dark")
+    assert status(calib)["text"] == ""
+    got = status(calib, masters={"C1": {"flat", "dark"}})
+    assert got["text"] == "MasterDark, MasterFlat" and got["tooltip"] == "Masters available: MasterDark, MasterFlat"
+    assert (got["has_dark"], got["has_flat"], got["has_bias"], got["has_masters"]) == (True, True, False, True)
+
+
+@pytest.mark.requirement("TC-LIB-060")
+@pytest.mark.priority("P2")
+def test_tc_lib_060_sessions_screen_photometric_stack(library, qt_app, monkeypatch):
+    """LIB-060: Photometric stack calibrates a session with no calibrated frames first, stacks the calibrated lights
+    (best-HFR frame as the reference), opens the result, and reports calibration-session / too-few / failed cases."""
+    import galileo.library.core.master_manager as mm_mod
+    from galileo.library.models import fitsFile
+
+    widget, item, session, shown = _calibration_widget(library, qt_app, monkeypatch)
+    opened, stacks = [], []
+
+    real_manager = mm_mod.get_master_manager()
+
+    class FakeMasterManager:
+        ok = True
+
+        def __getattr__(self, name):                      # everything but the stacker (e.g. calibration) is real
+            return getattr(real_manager, name)
+
+        def _create_light_stack_photometric_mean(self, **kw):
+            stacks.append(kw)
+            kw["progress_callback"](1, 4, "stacking")
+            if self.ok:
+                Path(kw["output_path"]).write_bytes(b"stack")
+            return self.ok
+
+    fake = FakeMasterManager()
+    monkeypatch.setattr(mm_mod, "get_master_manager", lambda: fake)
+    monkeypatch.setattr(widget, "_open_path_in_external_viewer", opened.append)
+    monkeypatch.setattr(widget, "load_sessions_data", lambda: opened.append("reloaded"))
+
+    # A calibration session is not stackable.
+    flat_item = _TreeItem([None, None, "d"], user_role=session.fitsSessionId, parent=_TreeItem(["Flat"]))
+    widget.photometric_stack_session(flat_item)
+    assert shown[-1][:2] == ("information", "Not Applicable")
+
+    widget.photometric_stack_session(item)               # no calibrated frames yet -> calibrate, then stack
+    calibrated = list(fitsFile.select().where(fitsFile.fitsFileCalibrated == 1, fitsFile.fitsFileSession == session.fitsSessionId))
+    assert len(calibrated) == 3 and len(stacks) == 1
+    assert sorted(stacks[0]["file_paths"]) == sorted(f.fitsFileName for f in calibrated)
+    assert Path(stacks[0]["output_path"]).name.startswith("photometric_stack_M42_")
+    assert stacks[0]["thumbnail_session_id"] == str(session.fitsSessionId) and stacks[0]["reference_path"] is None
+    assert opened[-2:] == [stacks[0]["output_path"], "reloaded"]     # (calibrating reloaded the table once already)
+
+    opened.clear()
+    stacks.clear()
+    for hfr, frame in zip((3.0, 1.2, 2.0), calibrated, strict=True):
+        fitsFile.update(fitsFileAvgHFRArcsec=hfr).where(fitsFile.fitsFileId == frame.fitsFileId).execute()
+    widget.photometric_stack_session(item)
+    assert stacks[0]["reference_path"] == calibrated[1].fitsFileName
+
+    fake.ok = False
+    Path(stacks[0]["output_path"]).unlink()
+    widget.photometric_stack_session(item)
+    assert shown[-1][:2] == ("warning", "Stack Failed")
+
+    for frame in calibrated[1:]:
+        fitsFile.update(fitsFileSoftDelete=True).where(fitsFile.fitsFileId == frame.fitsFileId).execute()
+    widget.photometric_stack_session(item)
+    assert shown[-1][:2] == ("information", "Not Enough Frames")
+
+
+@pytest.mark.requirement("TC-LIB-010")
+@pytest.mark.priority("P2")
+def test_options_library_page_loads_every_setting_from_library_ini(window, library, monkeypatch):
+    """LIB-010: Options > Library shows each library.ini value in its control (booleans in any spelling, a numeric
+    port with a fallback, the old compression names mapped to gzip2, the sync profile by its data value), and falls
+    back to the documented defaults for what is not in the file."""
+    import configparser
+
+    from PySide6 import QtWidgets
+    from galileo.ui.library.config_widget import ConfigWidget
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    window._open_library_settings()
+    widget = window._window.findChildren(ConfigWidget)[0]
+
+    def load(**values):
+        parser = configparser.ConfigParser()
+        parser.read(library.ini)
+        for key, value in values.items():
+            parser["DEFAULT"][key] = value
+        with open(library.ini, "w") as handle:
+            parser.write(handle)
+        widget.load_settings()
+
+    load(source="/in", repo="/repo", temp_folder="/tmp/x", refresh_on_startup="no", save_modified_headers="yes",
+         fits_viewer_path="/bin/viewer", suppress_delete_warnings="On", cloud_vendor="Google Cloud Storage",
+         bucket_url="my-bucket", auth_file_path="/auth.json", sync_profile="ondemand", auto_cleanup_backed_files="1",
+         min_files_per_master="5", auto_calibration_progress="false", itelescope_username="scope",
+         itelescope_verify_tls="False", sftp_username="astro", sftp_key_path="/k", sftp_remote_path="/data",
+         sftp_port="2222", sftp_strict_host_keys="true", compress_fits="TRUE", compression_algorithm="fits_rice",
+         compression_level="8", verify_compression="off", min_compression_size="2048")
+    assert (widget.source_path.text(), widget.repo_path.text(), widget.temp_path.text()) == ("/in", "/repo", "/tmp/x")
+    assert (widget.refresh_on_startup.isChecked(), widget.save_modified_headers.isChecked()) == (False, True)
+    assert widget.fits_viewer_path.text() == "/bin/viewer" and widget.suppress_delete_warnings.isChecked()
+    assert (widget.bucket_url.text(), widget.auth_file_path.text()) == ("my-bucket", "/auth.json")
+    assert widget.cloud_vendor.currentText() == "Google Cloud Storage" and widget.sync_profile.currentData() == "ondemand"
+    assert widget.auto_cleanup_backed_files.isChecked() and widget.min_files_per_master.value() == 5
+    assert not widget.auto_calibration_progress.isChecked() and widget.itelescope_username.text() == "scope"
+    assert not widget.itelescope_verify_tls.isChecked()
+    assert (widget.sftp_username.text(), widget.sftp_key_path.text(), widget.sftp_remote_path.text()) == ("astro", "/k", "/data")
+    assert widget.sftp_port.value() == 2222 and widget.sftp_strict_host_keys.isChecked()
+    assert widget.compress_fits.isChecked() and widget.compression_algorithm.currentText() == "fits_gzip2"
+    assert widget.compression_level.value() == 8 and not widget.verify_compression.isChecked()
+    assert widget.min_compression_size.value() == 2048
+
+    parser = configparser.ConfigParser()
+    parser.read(library.ini)
+    for key in ("suppress_delete_warnings", "sftp_port"):
+        parser.remove_option("DEFAULT", key)
+    with open(library.ini, "w") as handle:
+        parser.write(handle)
+    widget.load_settings()
+    assert not widget.suppress_delete_warnings.isChecked() and widget.sftp_port.value() == 22
+    load(sftp_port="abc")
+    assert widget.sftp_port.value() == 22
+
+
+@pytest.mark.requirement("TC-LIB-100")
+@pytest.mark.priority("P2")
+def test_telescope_download_worker_downloads_registers_deletes_and_reports(library, qt_app, monkeypatch, tmp_path):
+    """LIB-100: the download worker scans for the telescope and its FITS files, downloads each (folder structure kept,
+    flat for iTelescope), sets Seestar OBJECT/MOSAIC headers, registers each file, optionally deletes it from the
+    telescope, and ends with a summary; it reports the failure paths and honours a stop request."""
+    from galileo.ui.library import download_dialog as dd
+
+    class FakeManager:
+        ip, find_error = "10.0.0.5", None
+        files, list_error = [], None
+        failing, deleted = set(), []
+        credentials = ("user", "pw")
+
+        def find_telescope(self, telescope_type, network_range=None, hostname=None):
+            return self.ip, self.find_error
+
+        def get_itelescope_credentials(self):
+            return self.credentials
+
+        def get_fits_files(self, telescope_type, ip, username, password):
+            return self.files, self.list_error
+
+        def download_file(self, telescope_type, ip, info, local_path, username, password, progress_callback=None):
+            assert progress_callback(10) is True
+            if info["name"] in self.failing:
+                return False, "boom"
+            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+            write_frame(Path(local_path).parent, Path(local_path).name, "Light Frame", "M42", 10, 1)
+            return True, None
+
+        def delete_file(self, telescope_type, ip, info):
+            self.deleted.append(info["name"])
+            return True, None
+
+    registered = []
+
+    class FakeProcessor:
+        def registerFitsImage(self, root_dir, file_name, moveFiles=False):
+            registered.append((root_dir, file_name, moveFiles))
+            return f"id-{len(registered)}"
+
+    manager = FakeManager()
+    monkeypatch.setattr(dd, "smart_telescope_manager", manager)
+    monkeypatch.setattr(dd, "fitsProcessing", FakeProcessor)
+
+    def run(telescope="SeeStar", delete=False, stop=False):
+        out = SimpleNamespace(progress=[], percent=[], done=[], errors=[])
+        worker = dd.TelescopeDownloadWorker(telescope, "host", "", str(tmp_path / "dl"), delete_files=delete)
+        worker.progress_updated.connect(out.progress.append)
+        worker.progress_percent_updated.connect(out.percent.append)
+        worker.download_completed.connect(out.done.append)
+        worker.error_occurred.connect(out.errors.append)
+        worker._stop_requested = stop
+        worker.run()
+        return out
+
+    assert run(stop=True).progress == []
+
+    manager.find_error, manager.ip = "no route", None
+    assert run().errors == ["Failed to find telescope: no route"]
+    manager.find_error, manager.ip = None, "10.0.0.5"
+
+    assert run().done == ["No FITS files found on telescope"]
+    manager.list_error = "denied"
+    assert run().errors == ["Failed to get file list: denied"]
+    manager.list_error = None
+
+    manager.files = [{"name": "a.fits", "folder_name": "M31_sub"}, {"name": "b.fits", "folder_name": "M42_mosaic_sub"}]
+    out = run(delete=True)
+    assert out.errors == [] and out.percent[:2] == [5, 10] and out.percent[-2:] == [95, 100]
+    assert out.progress[0].startswith("Scanning network for SeeStar telescope (SMB)")
+    assert "Connected to SeeStar at 10.0.0.5" in out.progress and "Processing b.fits (2/2)..." in out.progress
+    assert out.done[0].startswith("Download completed!\n\nDownloaded: 2 files\nRegistered in database: 2 files\n")
+    assert out.done[0].endswith("\nDeleted from telescope: 2 files\n\nFiles processed and moved to repository structure")
+    assert manager.deleted == ["a.fits", "b.fits"]
+    assert [r[1:] for r in registered] == [("a.fits", True), ("b.fits", True)]
+    assert Path(registered[0][0]) == tmp_path / "dl" / "M31_sub"
+    from astropy.io import fits as pyfits
+    header = pyfits.getheader(tmp_path / "dl" / "M42_mosaic_sub" / "b.fits")
+    assert header["OBJECT"] == "M42" and header["MOSAIC"] is True
+    assert pyfits.getheader(tmp_path / "dl" / "M31_sub" / "a.fits")["MOSAIC"] is False
+
+    manager.files = [{"name": f"f{i}.fits", "folder_name": "x"} for i in range(7)]
+    manager.failing = {f"f{i}.fits" for i in range(7)}
+    summary = run().done[0]
+    assert "Failed: 7 files\nFailed files:\nf0.fits: boom" in summary and summary.endswith(
+        "\n... and 2 more\n\nFiles processed and moved to repository structure")
+
+    manager.files, manager.failing = [{"name": "t.fits", "folder_name": "ignored"}], set()
+    registered.clear()
+    run(telescope="iTelescope")
+    assert (tmp_path / "dl" / "t.fits").exists() and not (tmp_path / "dl" / "ignored").exists()
+    manager.credentials = (None, None)
+    assert run(telescope="iTelescope").errors[0].startswith("iTelescope credentials not configured")
+
+    monkeypatch.setattr(dd, "get_sftp_settings", lambda: {"username": ""})
+    assert run(telescope="SFTP").errors[0].startswith("SFTP account not configured")
+
+
+@pytest.mark.requirement("TC-LIB-110")
+@pytest.mark.priority("P2")
+def test_cloud_complete_sync_downloads_missing_and_uploads_unbacked_files(library, qt_app, monkeypatch):
+    """LIB-110: Complete Sync lists the bucket, downloads files missing locally (not those already catalogued by name,
+    cloud URL or filename timestamp) and registers them, uploads local files without a cloud URL and records the URL,
+    then summarises; it stops quietly on Cancel and refuses an unconfigured repository."""
+    from PySide6 import QtWidgets
+    from galileo.library.models import fitsFile
+    from galileo.ui.library import cloud_sync_complete as cc          # where Complete Sync (and its gcs calls) lives
+    from galileo.ui.library import cloud_sync_dialog as cs
+
+    write_frame(library.incoming, "local_a-20240116031554s.fits", "Light Frame", "M42", 60, 1)
+    write_frame(library.incoming, "local_b.fits", "Light Frame", "M42", 60, 2)
+    write_frame(library.incoming, "local_c.fits", "Light Frame", "M42", 60, 3)
+    ingest(library)
+    rows = sorted(fitsFile.select(), key=lambda f: f.fitsFileName)
+    assert len(rows) == 3
+    fitsFile.update(fitsFileCloudURL="gs://bkt/Light/known.fits").where(fitsFile.fitsFileId == rows[0].fitsFileId).execute()
+    stamped = Path(rows[1].fitsFileName).with_name("stamped-20240116031554s.fits")   # the "same timestamp" file
+    shutil.move(rows[1].fitsFileName, stamped)
+    fitsFile.update(fitsFileName=str(stamped)).where(fitsFile.fitsFileId == rows[1].fitsFileId).execute()
+
+    shown, downloads, uploads = [], [], []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    for kind in ("information", "critical", "warning"):
+        monkeypatch.setattr(QtWidgets.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    monkeypatch.setattr(cc, "list_gcs_bucket_files", lambda bucket, auth: [
+        {"name": "Light/new_one.fits"},                       # missing locally -> downloaded and registered
+        {"name": "Light/other-20240116031554s.fits"},        # same timestamp as local_a -> considered present
+        {"name": "Light/known.fits"},                        # already catalogued by cloud URL
+        {"name": "Light/notes.txt"},                         # downloaded but not a FITS -> not registered
+    ])
+
+    def fake_download(bucket, auth, name, dest):
+        downloads.append(name)
+        if name.endswith(".fits"):
+            write_frame(Path(dest).parent, Path(dest).name, "Light Frame", "M31", 60, 9)
+        else:
+            Path(dest).write_text("x")
+        return True, "ok"
+
+    def fake_upload(bucket, auth, full_path, relative_path):
+        uploads.append(relative_path)
+        return True, f"gs://{bucket}/{relative_path}", "File uploaded"
+
+    monkeypatch.setattr(cc, "download_file_from_gcs", fake_download)
+    monkeypatch.setattr(cc, "upload_file_to_backup", fake_upload)
+
+    widget = cs.CloudSyncWidget()
+    widget.cloud_config = {"bucket_url": "gs://bkt", "auth_file_path": "/auth.json", "vendor": "Google Cloud Storage"}
+    widget.perform_complete_sync()
+
+    assert downloads == ["Light/new_one.fits", "Light/notes.txt"]
+    kind, title, text = shown[-1]
+    assert (kind, title) == ("information", "Complete Sync Finished")
+    assert "Cloud files checked: 4" in text and "Files downloaded: 2" in text and "Files registered: 1" in text
+    assert "Files uploaded: 3" in text and "Database records updated: 3" in text and "Errors: 0" in text
+    assert len(uploads) == 3 and all(not u.startswith("..") for u in uploads)
+    assert all(f.fitsFileCloudURL for f in fitsFile.select())
+    assert fitsFile.select().count() == 4, "the new FITS was registered; the non-FITS download was not"
+
+    shown.clear()
+    monkeypatch.setattr(QtWidgets.QProgressDialog, "wasCanceled", lambda self: True)
+    widget.perform_complete_sync()
+    assert shown == [], "cancelling before the first phase ends quietly"
+    monkeypatch.undo()
+
+    from galileo.library.config import set_config_path
+    bad = library.root / "bad.ini"
+    bad.write_text("[DEFAULT]\nrepo = /does/not/exist\n")
+    set_config_path(bad)
+    shown.clear()
+    for kind in ("information", "critical"):
+        monkeypatch.setattr(QtWidgets.QMessageBox, kind, staticmethod(lambda parent, title, text, _k=kind: shown.append((_k, title, text))))
+    widget.perform_complete_sync()
+    assert shown[0][:2] == ("critical", "Configuration Error")

@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -178,7 +179,7 @@ def mosaic_capture_order(mosaic: Mosaic, exposures_per_pane: int) -> list[Mosaic
     Module-level (not a ``FramingAssistant`` method) because executing a
     mosaic needs only the already-built ``Mosaic`` and no optical-train
     state — the shared helper ``galileo.ui.imaging.ImagingService`` and
-    ``galileo.sequencer.basic`` both call to actually run one."""
+    ``galileo.session_exec`` both call to actually run one."""
     return [
         MosaicCaptureStep(pane_index=panel.pane_index, pass_index=pass_index)
         for pass_index in range(exposures_per_pane)
@@ -250,7 +251,7 @@ def fov_outline_radec(ra_deg: float, dec_deg: float, width_deg: float, height_de
     corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh), (-hw, -hh)]
     u: list[float] = []
     v: list[float] = []
-    for (u0, v0), (u1, v1) in zip(corners[:-1], corners[1:], strict=False):
+    for (u0, v0), (u1, v1) in pairwise(corners):
         for k in range(n):
             f = k / n
             u.append(u0 + (u1 - u0) * f)
@@ -470,7 +471,7 @@ class FramingAssistant:
     def mosaic_capture_order(self, mosaic: Mosaic, exposures_per_pane: int) -> list[MosaicCaptureStep]:
         """Pane-major capture order (FRAME-090). Delegates to the module-level
         :func:`mosaic_capture_order`, the shared helper both ``galileo.ui.imaging``
-        and ``galileo.sequencer.basic`` call to actually execute a mosaic — it
+        and ``galileo.session_exec`` call to actually execute a mosaic — it
         needs no optical-train state, so it doesn't need a FramingAssistant."""
         return mosaic_capture_order(mosaic, exposures_per_pane)
 

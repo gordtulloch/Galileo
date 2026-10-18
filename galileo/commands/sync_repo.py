@@ -145,8 +145,8 @@ Examples:
 
                 logger.info("Database tables cleared successfully for sync.")
 
-            except Exception as e:
-                logger.exception(f"Error clearing database tables: {e}")
+            except Exception:
+                logger.exception("Error clearing database tables")
                 raise
 
         # Create processor instance
@@ -192,8 +192,8 @@ Examples:
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user (Ctrl+C)")
         return 1
-    except Exception as e:
-        logger.exception(f"Error during repository sync: {e}")
+    except Exception:
+        logger.exception("Error during repository sync")
         if args.verbose:
             import traceback
             logger.exception(traceback.format_exc())

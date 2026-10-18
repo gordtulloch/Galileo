@@ -1,7 +1,7 @@
 <!-- order: 32 -->
 # Filter Wheel
 
-The Filter Wheel page connects Galileo to the motorised filter wheel and shows its current filter. The filter names read from the wheel appear on the right; the Imaging screen, the Flats Assistant and the sequencer use them when they change filter.
+The Filter Wheel page connects Galileo to the motorised filter wheel and shows its current filter. The filter names read from the wheel appear on the right; the Imaging screen, the Flats Assistant and sessions use them when they change filter.
 
 Set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick the wheel in **Device**, press **Connect**, then **Save**.
 

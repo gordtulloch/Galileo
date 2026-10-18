@@ -4,7 +4,7 @@
 """Lightweight in-process publish/subscribe event bus.
 
 The bus is the sole cross-module communication mechanism between the
-sequencer, device layer, and safety/notification modules (SDD §2.3).
+session executor, device layer, and safety/notification modules (SDD §2.3).
 Qt-based code should bridge onto this bus using ``Qt.QueuedConnection``
 rather than calling it directly from non-Qt threads.
 """

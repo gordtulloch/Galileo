@@ -138,8 +138,8 @@ def apply_mappings_to_fits(file_path):
 
         return changes_made
 
-    except Exception as e:
-        logger.exception(f"Error applying mappings to {file_path}: {e}")
+    except Exception:
+        logger.exception(f"Error applying mappings to {file_path}")
         return False
 
 def setup_logging(verbose=False):
@@ -201,16 +201,15 @@ def download_files(telescope_type, hostname, network, destination, username=None
     logger.info(f"Found {telescope_type} telescope at {ip}")
 
     # Get credentials for iTelescope if not provided
-    if telescope_type == "iTelescope":
-        if not username or not password:
-            logger.info("Getting iTelescope credentials from configuration...")
-            cred_username, cred_password = manager.get_itelescope_credentials()
-            username = username or cred_username
-            password = password or cred_password
+    if telescope_type == "iTelescope" and (not username or not password):
+        logger.info("Getting iTelescope credentials from configuration...")
+        cred_username, cred_password = manager.get_itelescope_credentials()
+        username = username or cred_username
+        password = password or cred_password
 
-            if not username or not password:
-                logger.error("iTelescope credentials required. Use -u and -p options or configure in the library settings (Options > Library)")
-                return False
+        if not username or not password:
+            logger.error("iTelescope credentials required. Use -u and -p options or configure in the library settings (Options > Library)")
+            return False
 
     # Get file list
     logger.info("Scanning for FITS files...")
@@ -371,19 +370,18 @@ def main():
         logger.info(f"Destination folder: {destination}")
 
         # Validate iTelescope requirements
-        if args.telescope == 'iTelescope' and not args.dry_run:
-            if not args.username and not args.password:
-                # Check if credentials are in config
-                try:
-                    from galileo.library.config import get_itelescope_password
-                    config_username = config.get('DEFAULT', 'itelescope_username', fallback='')
-                    config_password = get_itelescope_password()
-                    if not config_username or not config_password:
-                        logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
-                        return 1
-                except Exception:
-                    logger.exception("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
+        if args.telescope == 'iTelescope' and not args.dry_run and not args.username and not args.password:
+            # Check if credentials are in config
+            try:
+                from galileo.library.config import get_itelescope_password
+                config_username = config.get('DEFAULT', 'itelescope_username', fallback='')
+                config_password = get_itelescope_password()
+                if not config_username or not config_password:
+                    logger.error("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
                     return 1
+            except Exception:
+                logger.exception("iTelescope requires credentials. Use -u/-p options or configure in the library settings (Options > Library)")
+                return 1
 
         # Download files
         success = download_files(
@@ -404,8 +402,8 @@ def main():
             logger.error("Download operation failed")
             return 1
 
-    except Exception as e:
-        logger.exception(f"Error: {e}")
+    except Exception:
+        logger.exception("Error")
         if args.verbose:
             import traceback
             traceback.print_exc()

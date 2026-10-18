@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import logging
 
@@ -220,15 +220,28 @@ class AppWindowMountPageMixin:
         controls_col.addWidget(coords_heading)
 
         def _hms_spins() -> tuple:
-            h = QSpinBox(); h.setRange(0, 23); h.setSuffix(" h")
-            m = QSpinBox(); m.setRange(0, 59); m.setSuffix(" m")
-            s = QDoubleSpinBox(); s.setRange(0.0, 59.999); s.setDecimals(1); s.setSuffix(" s")
+            h = QSpinBox()
+            h.setRange(0, 23)
+            h.setSuffix(" h")
+            m = QSpinBox()
+            m.setRange(0, 59)
+            m.setSuffix(" m")
+            s = QDoubleSpinBox()
+            s.setRange(0.0, 59.999)
+            s.setDecimals(1)
+            s.setSuffix(" s")
             return h, m, s
 
         def _dms_spins() -> tuple:
-            d = QSpinBox(); d.setRange(-359, 359); d.setSuffix(" d")
-            m = QSpinBox(); m.setRange(0, 59); m.setSuffix(" m")
-            s = QSpinBox(); s.setRange(0, 59); s.setSuffix(" s")
+            d = QSpinBox()
+            d.setRange(-359, 359)
+            d.setSuffix(" d")
+            m = QSpinBox()
+            m.setRange(0, 59)
+            m.setSuffix(" m")
+            s = QSpinBox()
+            s.setRange(0, 59)
+            s.setSuffix(" s")
             return d, m, s
 
         ra_h, ra_m, ra_s = _hms_spins()
@@ -386,10 +399,11 @@ class AppWindowMountPageMixin:
                 (alt_tracking_only_check, limits.alt_tracking_only), (ha_limits_check, limits.ha_limits_enabled),
             ):
                 widget.setChecked(bool(value))
-            for widget, value in (
+            spins: list[tuple[Any, float]] = [
                 (flip_ha_spin, limits.flip_ha_deg), (min_alt_spin, limits.min_alt),
                 (max_alt_spin, limits.max_alt), (max_ha_spin, limits.max_ha_hours),
-            ):
+            ]
+            for widget, value in spins:
                 widget.setValue(float(value))
 
         def _update_flip_label(tracking: bool | None = None) -> None:

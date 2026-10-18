@@ -178,7 +178,7 @@ async def test_tc_safe_060_watchdog_fires_when_event_loop_is_blocked(mock_indi_m
     safe_mod = pytest.importorskip("galileo.safety")
     watchdog = safe_mod.WatchdogService(mount=mock_indi_mount, timeout_s=0.2)
     watchdog.start()
-    time.sleep(0.6)  # block this (the event-loop) thread, as a hang would
+    time.sleep(0.6)  # noqa: ASYNC251 - deliberately block this (the event-loop) thread, as a hang would
     watchdog.stop_sync()
     mock_indi_mount.park.assert_called_once()
 
@@ -397,3 +397,14 @@ async def test_tc_safe_100_noaa_smoke_client_rates_location(monkeypatch):
         raise OSError("offline")
     monkeypatch.setattr(safe_mod, "_http_get", boom)
     assert await safe_mod.NoaaSmokeClient(51.0, -114.0).get_smoke_aqi() is None
+
+
+@pytest.mark.requirement("TC-SAFE-100")
+@pytest.mark.priority("P2")
+def test_tc_safe_100_kml_with_entity_declaration_is_rejected():
+    """SAFE-100: the NOAA KML is parsed with defusedxml, so a DTD/entity-expansion payload is refused, not expanded."""
+    from defusedxml import DefusedXmlException
+    safe_mod = pytest.importorskip("galileo.safety")
+    bomb = b'<?xml version="1.0"?><!DOCTYPE kml [<!ENTITY a "aaaa">]><kml xmlns="http://www.opengis.net/kml/2.2">&a;</kml>'
+    with pytest.raises(DefusedXmlException):
+        safe_mod.NoaaSmokeClient(-33.0, 151.0)._rate(bomb)

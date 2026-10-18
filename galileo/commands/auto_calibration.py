@@ -359,7 +359,7 @@ def analyze_calibration_opportunities(config, session_id=None, min_files=None):
         }
 
     except Exception as e:
-        logger.exception(f"Error analyzing calibration opportunities: {e}")
+        logger.exception("Error analyzing calibration opportunities")
         return {'error': str(e)}
 
 def create_master_frames(config, session_id=None, force=False, dry_run=False, verbose=False):
@@ -382,8 +382,8 @@ def create_master_frames(config, session_id=None, force=False, dry_run=False, ve
 
         return success
 
-    except Exception as e:
-        logger.exception(f"Error in master frame creation: {e}")
+    except Exception:
+        logger.exception("Error in master frame creation")
         return False
 
 def clear_all_masters(config, dry_run=False):
@@ -525,8 +525,8 @@ def clear_all_masters(config, dry_run=False):
             logger.warning("Some master frames could not be cleared. Check logs for details.")
             return False
 
-    except Exception as e:
-        logger.exception(f"Error clearing master frames: {e}")
+    except Exception:
+        logger.exception("Error clearing master frames")
         return False
 
 def perform_quality_assessment(config, session_id=None, generate_report=False):
@@ -591,9 +591,9 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
                     failed += 1
                     logger.warning(f"  [FAIL] Failed: {results.get('message', 'Unknown error')}")
 
-            except Exception as e:
+            except Exception:
                 failed += 1
-                logger.exception(f"  [ERROR] Error: {e}")
+                logger.exception("  [ERROR] Error")
                 continue
 
         # Summary statistics
@@ -614,8 +614,8 @@ def perform_quality_assessment(config, session_id=None, generate_report=False):
 
         return True
 
-    except Exception as e:
-        logger.exception(f"Error in quality assessment: {e}")
+    except Exception:
+        logger.exception("Error in quality assessment")
         return False
 
 def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
@@ -647,8 +647,8 @@ def calibrate_light_frames(config, session_id=None, force=False, dry_run=False):
         )
 
         return success
-    except Exception as e:
-        logger.exception(f"Error in light frame calibration: {e}")
+    except Exception:
+        logger.exception("Error in light frame calibration")
         return False
 
 def run_complete_workflow(config, session_id=None, force=False, dry_run=False):
@@ -686,8 +686,8 @@ def run_complete_workflow(config, session_id=None, force=False, dry_run=False):
             logger.error(f"Auto-calibration workflow failed: {'; '.join(errors)}")
             return False
 
-    except Exception as e:
-        logger.exception(f"Error in complete workflow: {e}")
+    except Exception:
+        logger.exception("Error in complete workflow")
         return False
 
 def create_cli_progress_callback(operation_name):
@@ -771,8 +771,8 @@ def generate_quality_report(quality_results, config):
 
         logger.info(f"Quality report saved to: {report_filename}")
 
-    except Exception as e:
-        logger.exception(f"Error generating quality report: {e}")
+    except Exception:
+        logger.exception("Error generating quality report")
 
 def main():
     """Main CLI entry point"""
@@ -865,7 +865,7 @@ def main():
 
         # Handle database errors gracefully without traceback
         if isinstance(e, DatabaseError):
-            logger.exception(f"Database error: {e}")
+            logger.exception("Database error")
             print(f"\n{'='*70}")
             print("DATABASE ERROR")
             print(f"{'='*70}")
@@ -874,7 +874,7 @@ def main():
             return 1
 
         # For other exceptions, show traceback if verbose
-        logger.exception(f"Fatal error: {e}")
+        logger.exception("Fatal error")
         if args.verbose:
             import traceback
             traceback.print_exc()

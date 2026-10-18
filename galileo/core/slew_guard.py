@@ -4,7 +4,7 @@
 """Refuse slews into the observatory's horizon obstructions.
 
 The mount adapters call :func:`get_slew_guard` before they move, so every route to a
-slew — the Mount page, the Star Atlas Goto, the sequencer, plate-solve centring, the
+slew — the Mount page, the Star Atlas Goto, a session, plate-solve centring, the
 meridian flip — is covered by the one check. The guard is off until the application
 switches it on (Options > Planning, "Do not slew where obstructed") and hands it the
 current Observatory's horizon and site; while it is off, or has no horizon, it never

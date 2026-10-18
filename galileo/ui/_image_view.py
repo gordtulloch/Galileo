@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -38,6 +38,8 @@ class ImagePreviewView(QGraphicsView):
         self.setMinimumHeight(200)
         self.fit = True
         self.has_image = False
+        self._crosshair_on = False
+        self._crosshair_items: list = []
 
     def show_array(self, array: np.ndarray) -> None:
         arr = np.ascontiguousarray(array)
@@ -49,12 +51,42 @@ class ImagePreviewView(QGraphicsView):
         self._item.setPixmap(QPixmap.fromImage(image))
         self._scene.setSceneRect(0, 0, w, h)
         self.has_image = True
+        self._update_crosshair()
         if self.fit:
             self.fit_to_window()
+
+    def set_crosshair(self, on: bool) -> None:
+        """Show or hide a diagonal crosshair with a target circle marking the frame centre."""
+        self._crosshair_on = on
+        self._update_crosshair()
+
+    def _update_crosshair(self) -> None:
+        for item in self._crosshair_items:
+            self._scene.removeItem(item)
+        self._crosshair_items = []
+        if not self._crosshair_on or not self.has_image:
+            return
+        rect = self._scene.sceneRect()
+        w, h = rect.width(), rect.height()
+        cx, cy = w / 2, h / 2
+        pen = QPen(QColor(255, 60, 60, 200))
+        pen.setCosmetic(True)       # constant on-screen width at any zoom
+        pen.setWidth(1)
+        radius = min(w, h) * 0.05
+        items = [
+            self._scene.addLine(0, 0, w, h, pen),
+            self._scene.addLine(w, 0, 0, h, pen),
+            self._scene.addEllipse(cx - radius, cy - radius, 2 * radius, 2 * radius, pen),
+        ]
+        for item in items:
+            item.setZValue(10)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)   # don't block drag-to-pan
+        self._crosshair_items = items
 
     def clear_image(self) -> None:
         self._item.setPixmap(QPixmap())
         self.has_image = False
+        self._update_crosshair()
 
     def fit_to_window(self) -> None:
         self.fit = True

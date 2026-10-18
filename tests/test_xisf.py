@@ -314,7 +314,7 @@ def test_tc_lib_010_xisf_unshuffle_restores_byte_planes():
 def test_tc_lib_010_corrupt_compressed_data_does_not_pass_for_pixels(tmp_path, frame):
     """LIB-010: a zlib attachment that will not decompress yields an error, not garbage pixels."""
     path = build_xisf(tmp_path / "bad.xisf", frame, codec="zlib", payload=b"this is not zlib data at all, sorry")
-    with pytest.raises(ValueError, match="Insufficient data|Error reading image data"):
+    with pytest.raises(ValueError, match=r"Insufficient data|Error reading image data"):
         XISFConverter(path).convert_to_fits()
 
 

@@ -102,7 +102,7 @@ class Masters(BaseModel):
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.exception(f"Database operation failed after {attempt + 1} attempts: {e}")
+                    logger.exception(f"Database operation failed after {attempt + 1} attempts")
                     raise
 
     @classmethod

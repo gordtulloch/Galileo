@@ -11,7 +11,7 @@ or an ``"error"`` object.
 
 The transport is a plain socket plus one reader thread — the same shape as
 ``galileo.adapters.indi_client`` — so it works from the Qt UI thread, from the
-sequencer's asyncio loop (via the ``async`` methods, which hop to a worker
+session executor's asyncio loop (via the ``async`` methods, which hop to a worker
 thread) and from tests, without a Qt or event-loop dependency. Incoming events
 go to a single ``on_event`` callback that runs on the reader thread.
 """
@@ -133,7 +133,7 @@ class Phd2Adapter:
         except TimeoutError as exc:
             raise Phd2Error(f"PHD2 did not answer {method!r} within {timeout:g}s") from exc
 
-    # --- GuiderAdapter port (async; what GuidingService/the sequencer call) --
+    # --- GuiderAdapter port (async; what GuidingService/a session call) --
 
     async def start_guiding(self, settle_pixels: float = 0.5, settle_time_s: float = 10,
                             settle_timeout_s: float = 60, recalibrate: bool = False) -> None:

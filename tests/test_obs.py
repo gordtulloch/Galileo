@@ -472,7 +472,7 @@ async def test_tc_obs_110_request_queues_until_released_or_times_out():
     asyncio.get_running_loop().call_later(0.05, arb.end_activity, "Pier-1", "dome")
     assert (await arb.request("Pier-2", "dome", "close", wait_s=1.0)).granted
 
-    from galileo.sequencer.session_exec import SessionContext, SessionExecutor
+    from galileo.session_exec import SessionContext, SessionExecutor
     arb.begin_activity("Pier-1", "dome")
     block = type("DomeCloseBlock", (_DomeCloseBlock,), {})()
     ex = SessionExecutor(SessionContext(pier_name="Pier-2", dome=AsyncMock(), arbiter=arb))
@@ -506,7 +506,7 @@ async def test_tc_obs_130_emergency_overrides_imaging():
     arb.begin_activity("Pier-1", "dome")
     assert (await arb.request("Pier-2", "dome", "close", priority=m.PRIORITY_EMERGENCY)).granted
 
-    from galileo.sequencer.session_exec import SessionContext, SessionExecutor
+    from galileo.session_exec import SessionContext, SessionExecutor
     ctx = SessionContext(pier_name="Pier-2", dome=AsyncMock(), arbiter=arb, is_safe=lambda: False)
     block = type("DomeCloseBlock", (_DomeCloseBlock,), {})()
     await SessionExecutor(ctx).run([block])

@@ -114,8 +114,8 @@ def validate_database_access():
         logger.info(f"Database connection validated: {file_count} files, {session_count} sessions")
         return True
 
-    except Exception as e:
-        logger.exception(f"Database validation failed: {e}")
+    except Exception:
+        logger.exception("Database validation failed")
         return False
 
 def create_cli_progress_callback(description="Processing"):
@@ -194,8 +194,8 @@ def register_existing_files(config, scan_subdirectories=True, verify_headers=Tru
 
         return len(errors) == 0
 
-    except Exception as e:
-        logger.exception(f"Error in existing file registration: {e}")
+    except Exception:
+        logger.exception("Error in existing file registration")
         return False
 
 def main():
@@ -286,8 +286,8 @@ def main():
         logger.info("Registration cancelled by user")
         return 130
 
-    except Exception as e:
-        logger.exception(f"Unexpected error: {e}")
+    except Exception:
+        logger.exception("Unexpected error")
         return 1
 
 if __name__ == "__main__":

@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import logging
 
-from ._common import _HAS_QT, QThread, Signal
+from ._common import Signal, _QThreadBase
 
 logger = logging.getLogger(__name__)
 
 
-class _CaptureThread(QThread if _HAS_QT else object):
+class _CaptureThread(_QThreadBase):
     """Runs one manual capture (IMG-070) off the Qt UI thread, so the
     Imaging page's countdown/status display (IMG-090) keeps updating while
     the async expose/download call is in flight — the rest of this window
@@ -20,10 +20,10 @@ class _CaptureThread(QThread if _HAS_QT else object):
     thread since those calls are quick (scan/connect/status), but a manual
     exposure can run for minutes and would otherwise freeze the whole app."""
 
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
-    frame_started = Signal(int, int) if _HAS_QT else None     # (frame number, frames in the series)
-    frame_done = Signal(int, int) if _HAS_QT else None
+    finished_ok = Signal()
+    failed = Signal(str)
+    frame_started = Signal(int, int)     # (frame number, frames in the series)
+    frame_done = Signal(int, int)
 
     def __init__(self, service, quantity: int, duration: float, filter_name: str, frame_type: str,
                  parent=None) -> None:
@@ -48,17 +48,17 @@ class _CaptureThread(QThread if _HAS_QT else object):
         self.finished_ok.emit()
 
 
-class _MosaicCaptureThread(QThread if _HAS_QT else object):
+class _MosaicCaptureThread(_QThreadBase):
     """Runs one mosaic capture (IMG-180, FRAME-090) off the Qt UI thread — mirrors
     ``_CaptureThread``, but drives ``ImagingService.capture_mosaic`` instead of
     ``capture_series``, since a mosaic's per-pane re-slews can each take as long as
     the exposures themselves and must not freeze the window either."""
 
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
-    slew_started = Signal(int, int) if _HAS_QT else None      # (step number, steps in the mosaic)
-    frame_started = Signal(int, int) if _HAS_QT else None
-    frame_done = Signal(int, int) if _HAS_QT else None
+    finished_ok = Signal()
+    failed = Signal(str)
+    slew_started = Signal(int, int)      # (step number, steps in the mosaic)
+    frame_started = Signal(int, int)
+    frame_done = Signal(int, int)
 
     def __init__(self, service, exposures_per_pane: int, duration: float, filter_name: str, frame_type: str,
                  parent=None) -> None:
@@ -84,12 +84,12 @@ class _MosaicCaptureThread(QThread if _HAS_QT else object):
         self.finished_ok.emit()
 
 
-class _PreviewRenderThread(QThread if _HAS_QT else object):
+class _PreviewRenderThread(_QThreadBase):
     """Re-renders the Imaging page's preview (debayer + stretch) off the Qt UI thread — seconds
     of work on a large frame (NFR-PERF-020). ``rendered`` carries the result for
     ``ImagingService.apply_preview``, or ``None`` if rendering failed."""
 
-    rendered = Signal(object) if _HAS_QT else None
+    rendered = Signal(object)
 
     def __init__(self, service, parent=None) -> None:
         super().__init__(parent)
@@ -104,12 +104,12 @@ class _PreviewRenderThread(QThread if _HAS_QT else object):
         self.rendered.emit(result)
 
 
-class _AnnotateThread(QThread if _HAS_QT else object):
+class _AnnotateThread(_QThreadBase):
     """Runs one Annotate solve+render (IMG-200) off the Qt UI thread: plate-solving is an
     external process that can take tens of seconds, and the Imaging page must stay responsive
     while it runs, same as every other blocking device/solver call in this window."""
 
-    done = Signal() if _HAS_QT else None
+    done = Signal()
 
     def __init__(self, service, solver, parent=None) -> None:
         super().__init__(parent)
@@ -126,14 +126,14 @@ class _AnnotateThread(QThread if _HAS_QT else object):
         self.done.emit()
 
 
-class _DetermineRotationThread(QThread if _HAS_QT else object):
+class _DetermineRotationThread(_QThreadBase):
     """Runs one Determine Rotation solve (FRAME-100) off the Qt UI thread for the Framing
     Assistant dialog: plate-solves the Imaging tab's current frame via
     ``ImagingService.solve_current_frame`` (the same solve plumbing Annotate uses) and reports
     success/failure, mirroring ``_AnnotateThread`` but without building the annotate overlay."""
 
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
+    finished_ok = Signal()
+    failed = Signal(str)
 
     def __init__(self, service, solver, parent=None) -> None:
         super().__init__(parent)
@@ -154,17 +154,17 @@ class _DetermineRotationThread(QThread if _HAS_QT else object):
             self.failed.emit(result.failure_reason or "The solver found no solution.")
 
 
-class _FlatsThread(QThread if _HAS_QT else object):
+class _FlatsThread(_QThreadBase):
     """Runs one Sky Flats run (CAL-070) off the Qt UI thread: the twilight-window check,
     the mount slew/tracking-off bracket, and the per-frame adaptive-exposure convergence
     loop can together take many minutes (longer still across every filter), so this keeps
     the Flats Assistant dialog responsive the same way every other multi-minute device
     sequence in this window already runs off-thread (mirrors ``_CaptureThread``)."""
 
-    filter_started = Signal(object, int, int) if _HAS_QT else None    # (filter_name, index, total)
-    frame_done = Signal(object, int, int) if _HAS_QT else None        # (filter_name, frame index, frame total)
-    finished_ok = Signal(list) if _HAS_QT else None                   # list[CalibrationResult]
-    failed = Signal(str) if _HAS_QT else None
+    filter_started = Signal(object, int, int)    # (filter_name, index, total)
+    frame_done = Signal(object, int, int)        # (filter_name, frame index, frame total)
+    finished_ok = Signal(list)                   # list[CalibrationResult]
+    failed = Signal(str)
 
     def __init__(self, service, filters, count: int, max_well_depth: int, location, measure: str,
                  exposure_s, exposure_increment_s: float, parent=None, method: str = "Sky Flats") -> None:
@@ -203,15 +203,15 @@ class _FlatsThread(QThread if _HAS_QT else object):
         self.finished_ok.emit(results)
 
 
-class _DarksThread(QThread if _HAS_QT else object):
+class _DarksThread(_QThreadBase):
     """Captures one dark frame at each requested exposure length in order, off the Qt UI thread.
     Calls ImagingService.capture_series(1, exposure_s, filter_name, "Dark") for each entry so
     each frame is auto-saved to the Library the same way a manual capture is."""
 
-    exposure_started = Signal(int, int, float) if _HAS_QT else None   # (index, total, exposure_s)
-    exposure_done = Signal(int, int, float) if _HAS_QT else None       # (index, total, exposure_s)
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
+    exposure_started = Signal(int, int, float)   # (index, total, exposure_s)
+    exposure_done = Signal(int, int, float)       # (index, total, exposure_s)
+    finished_ok = Signal()
+    failed = Signal(str)
 
     def __init__(self, service, exposures: list, filter_name: str, parent=None) -> None:
         super().__init__(parent)
@@ -238,13 +238,13 @@ class _DarksThread(QThread if _HAS_QT else object):
         self.finished_ok.emit()
 
 
-class _FilterMoveThread(QThread if _HAS_QT else object):
+class _FilterMoveThread(_QThreadBase):
     """Moves the filter wheel to a slot off the Qt UI thread — a wheel can take
     several seconds to settle (INDI waits up to a minute), which would otherwise
     freeze the window the way a blocking ``asyncio.run`` on the UI thread does."""
 
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
+    finished_ok = Signal()
+    failed = Signal(str)
 
     def __init__(self, wheel, index: int, parent=None) -> None:
         super().__init__(parent)
@@ -261,14 +261,14 @@ class _FilterMoveThread(QThread if _HAS_QT else object):
         self.finished_ok.emit()
 
 
-class _ResumeTrackingThread(QThread if _HAS_QT else object):
+class _ResumeTrackingThread(_QThreadBase):
     """Waits for a slew to finish and then starts tracking at the target's rate (EQP-MNT-050).
 
     Off the Qt UI thread because the wait lasts as long as the slew does — minutes, for a mount
     crossing the sky — and the window must stay responsive throughout."""
 
-    done = Signal(str) if _HAS_QT else None          # the rate set, or "" if the mount never settled
-    failed = Signal(str) if _HAS_QT else None
+    done = Signal(str)          # the rate set, or "" if the mount never settled
+    failed = Signal(str)
 
     def __init__(self, mount, target=None, parent=None) -> None:
         super().__init__(parent)
@@ -286,12 +286,12 @@ class _ResumeTrackingThread(QThread if _HAS_QT else object):
         self.done.emit(rate or "")
 
 
-class _MountPositionThread(QThread if _HAS_QT else object):
+class _MountPositionThread(_QThreadBase):
     """Reads one mount's position off the Qt UI thread, for the Star Atlas telescope reticles
     (SKYMAP-090). A mount that can't be read reports nothing rather than failing: the reticle is
     a convenience, and a slow or absent mount must not stall the sky view."""
 
-    position = Signal(object) if _HAS_QT else None      # the mount's status dict, or None
+    position = Signal(object)      # the mount's status dict, or None
 
     def __init__(self, mount, parent=None) -> None:
         super().__init__(parent)
@@ -307,12 +307,12 @@ class _MountPositionThread(QThread if _HAS_QT else object):
         self.position.emit(status)
 
 
-class _GeocodeThread(QThread if _HAS_QT else object):
+class _GeocodeThread(_QThreadBase):
     """Looks a place name up through Open-Meteo's geocoding service (SKY-090) off the Qt UI thread, for
     the Observatory dialog's Look Up button. Reports ``{}`` when nothing was found or the service
     could not be reached."""
 
-    found = Signal(dict) if _HAS_QT else None
+    found = Signal(dict)
 
     def __init__(self, query: str, parent=None) -> None:
         super().__init__(parent)
@@ -329,12 +329,12 @@ class _GeocodeThread(QThread if _HAS_QT else object):
         self.found.emit(result)
 
 
-class _MountGuardThread(QThread if _HAS_QT else object):
+class _MountGuardThread(_QThreadBase):
     """One pass of the Mount page's limit/flip monitor (EQP-MNT-060/070), off the Qt UI thread:
     read the mount, and if it has broken a limit stop it, or if a requested flip is due perform it
     (a flip slews, so it can run for minutes)."""
 
-    finished_with = Signal(object) if _HAS_QT else None      # {"status", "kind", "reasons", "error"}
+    finished_with = Signal(object)      # {"status", "kind", "reasons", "error"}
 
     def __init__(self, mount, limits, parent=None) -> None:
         super().__init__(parent)
@@ -385,13 +385,13 @@ class _MountGuardThread(QThread if _HAS_QT else object):
             result["status"] = await self._mount.get_status() or status
 
 
-class _NudgeThread(QThread if _HAS_QT else object):
+class _NudgeThread(_QThreadBase):
     """Runs one mount nudge (IMG-130) off the Qt UI thread: the mount moves for
     the nudge's duration, and blocking the UI for that long would freeze the
     Imaging page's exposure countdown while the user is watching it."""
 
-    finished_ok = Signal() if _HAS_QT else None
-    failed = Signal(str) if _HAS_QT else None
+    finished_ok = Signal()
+    failed = Signal(str)
 
     def __init__(self, mount, direction: str, rate: float, duration: float,
                  reversed_axes: tuple, parent=None) -> None:
@@ -409,7 +409,7 @@ class _NudgeThread(QThread if _HAS_QT else object):
         self.finished_ok.emit()
 
 
-class _ThumbnailCacheThread(QThread if _HAS_QT else object):
+class _ThumbnailCacheThread(_QThreadBase):
     """Bulk-caches every catalog object's survey-image thumbnail off the Qt UI
     thread (Options > Planning's "Cache all thumbnails" button, SKY-080), so a
     later search's result-tile thumbnails load from disk instead of each
@@ -425,9 +425,9 @@ class _ThumbnailCacheThread(QThread if _HAS_QT else object):
     can genuinely take hours, which is why it's cancellable and why the
     confirmation dialog before starting says so."""
 
-    progress = Signal(int, int) if _HAS_QT else None        # (done, total)
-    finished_ok = Signal(int, int) if _HAS_QT else None      # (cached, failed)
-    failed = Signal(str) if _HAS_QT else None
+    progress = Signal(int, int)        # (done, total)
+    finished_ok = Signal(int, int)      # (cached, failed)
+    failed = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

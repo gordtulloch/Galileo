@@ -147,6 +147,10 @@ A local astrometry.net installation (`solve-field` with its index files); works 
 
 The nova.astrometry.net web service. Needs an internet connection and an API key set in Options › Solve; the frame is uploaded to the service.
 
+## Tetra3
+
+ESA's tetra3 solver, run inside Galileo; works with no internet connection. It comes with Galileo; its bundled star database is for 10–30° fields, so set a database for a narrower field in Options › Solve. It solves without knowing where the mount points, so the field-of-view hint matters more than the position.
+
 ## Frame
 
 The frame most recently captured or loaded for solving, with a caption above it describing it. Use the zoom buttons to look closer.

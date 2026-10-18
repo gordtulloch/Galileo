@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Re-exported so callers can do ``from galileo.planning.sky_atlas import ObservingLocation``
+from galileo.net import urlopen_http
 from galileo.planning.visibility import HorizonProfile, ObservingLocation  # noqa: F401
 import contextlib
 
@@ -203,10 +204,9 @@ def _parse_openngc(*tables: str) -> list[DeepSkyObject]:
 def _fetch_catalog_online() -> list[DeepSkyObject]:
     """Fetch OpenNGC (~14 K NGC/IC objects with Messier and Caldwell cross-references)."""
     try:
-        import urllib.request
         tables = []
         for filename in ("NGC.csv", "addendum.csv"):
-            with urllib.request.urlopen(_OPENNGC_URL + filename, timeout=30) as resp:
+            with urlopen_http(_OPENNGC_URL + filename, timeout=30) as resp:
                 tables.append(resp.read().decode("utf-8"))
         return _parse_openngc(*tables)
     except Exception:
@@ -751,9 +751,8 @@ class SkyAtlas:
                 o.ra_deg, o.dec_deg, location, date_str, min_altitude_deg, min_duration_hours,
             ):
                 continue
-            if moon_pos is not None:
-                if moon_separation_deg(o.ra_deg, o.dec_deg, *moon_pos) < min_moon_separation_deg:
-                    continue
+            if moon_pos is not None and moon_separation_deg(o.ra_deg, o.dec_deg, *moon_pos) < min_moon_separation_deg:
+                continue
             if constellation and constellation_for(o.ra_deg, o.dec_deg).lower() != constellation.lower():
                 continue
             results.append(o)

@@ -27,7 +27,7 @@ _REQUIRED_MODULES = (
     "keyring", "requests", "paramiko", "zeroconf", "PIL", "matplotlib", "reproject",
     "PySide6.QtWidgets", "PySide6.QtSvg",
     "galileo.adapters.indi", "galileo.adapters.indi_client", "galileo.adapters.alpaca",
-    "galileo.sequencer.advanced", "galileo.scheduler", "galileo.planning.sky_atlas",
+    "galileo.session_exec", "galileo.scheduler", "galileo.planning.sky_atlas",
     "galileo.library.database", "galileo.plugins", "galileo.ui.app_window",
 )
 

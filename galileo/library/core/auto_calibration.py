@@ -53,8 +53,8 @@ def validate_database_access() -> bool:
 
         return True
 
-    except Exception as e:
-        logger.exception(f"Database validation failed: {e}")
+    except Exception:
+        logger.exception("Database validation failed")
         return False
 
 
@@ -74,8 +74,8 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
             auto_cal_config = get_auto_calibration_config(config)
             min_files_per_master = min_files or auto_cal_config['min_files_per_master']
             logger.info(f"Config loaded: min_files_per_master = {min_files_per_master}")
-        except Exception as e:
-            logger.exception(f"Error getting auto-calibration config: {e}")
+        except Exception:
+            logger.exception("Error getting auto-calibration config")
             raise
 
         logger.info("Starting calibration opportunity analysis...")
@@ -95,8 +95,8 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
                 'flat': masters.where(Masters.master_type == 'flat').count(),
             }
             logger.info(f"Master stats retrieved: {master_stats}")
-        except Exception as e:
-            logger.exception(f"Error querying Masters table: {e}")
+        except Exception:
+            logger.exception("Error querying Masters table")
             # Continue without masters info
             master_stats = {'total': 0, 'bias': 0, 'dark': 0, 'flat': 0}
 
@@ -197,8 +197,8 @@ def analyze_calibration_opportunities(config: configparser.ConfigParser, session
             'min_files_used': min_files_per_master
         }
 
-    except Exception as e:
-        logger.exception(f"Error analyzing calibration opportunities: {e}")
+    except Exception:
+        logger.exception("Error analyzing calibration opportunities")
         return None
 
 
@@ -334,8 +334,8 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
                 else:
                     logger.warning(f"Failed to create {session.cal_type} master for session {session.fitsSessionId}")
 
-            except Exception as e:
-                logger.exception(f"Error creating master for session {session.fitsSessionId}: {e}")
+            except Exception:
+                logger.exception(f"Error creating master for session {session.fitsSessionId}")
                 continue
 
         if progress_callback:
@@ -348,8 +348,8 @@ def create_master_frames(config: configparser.ConfigParser, session_id: str | No
 
         return True
 
-    except Exception as e:
-        logger.exception(f"Error creating master frames: {e}")
+    except Exception:
+        logger.exception("Error creating master frames")
         return False
 
 
@@ -440,9 +440,9 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
                     error_msg = result.get('error', 'Unknown error')
                     logger.warning(f"Session {light_session_id} calibration failed: {error_msg}")
 
-            except Exception as e:
+            except Exception:
                 error_count += 1
-                logger.exception(f"Error calibrating session {light_session_id}: {e}")
+                logger.exception(f"Error calibrating session {light_session_id}")
                 continue
 
         # Get final calibration statistics
@@ -460,8 +460,8 @@ def calibrate_light_frames(config: configparser.ConfigParser, session_id: str | 
 
         return True
 
-    except Exception as e:
-        logger.exception(f"Error calibrating light frames: {e}")
+    except Exception:
+        logger.exception("Error calibrating light frames")
         return False
 
 
@@ -583,7 +583,7 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
             except Exception as e:
                 failed_analyses += 1
                 results_by_file.append((fits_file, {"status": "error", "message": str(e)}))
-                logger.exception(f"Error analyzing {fits_file.fitsFileName}: {e}")
+                logger.exception(f"Error analyzing {fits_file.fitsFileName}")
                 continue
 
         # Update progress
@@ -597,8 +597,8 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
             try:
                 report_path = generate_quality_report(results_by_file, session_id=session_id)
                 logger.info(f"Quality report written to {report_path}")
-            except Exception as e:
-                logger.exception(f"Error generating quality report: {e}")
+            except Exception:
+                logger.exception("Error generating quality report")
 
         if progress_callback:
             progress_callback(100, "Quality assessment complete")
@@ -606,8 +606,8 @@ def perform_quality_assessment(config: configparser.ConfigParser, session_id: st
         # Consider it successful if we analyzed at least some files
         return successful_analyses > 0
 
-    except Exception as e:
-        logger.exception(f"Error performing quality assessment: {e}")
+    except Exception:
+        logger.exception("Error performing quality assessment")
         return False
 
 
@@ -667,6 +667,6 @@ def run_complete_workflow(config: configparser.ConfigParser, session_id: str | N
         logger.info("Complete auto-calibration workflow finished successfully")
         return True
 
-    except Exception as e:
-        logger.exception(f"Error in complete workflow: {e}")
+    except Exception:
+        logger.exception("Error in complete workflow")
         return False

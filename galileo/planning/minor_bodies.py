@@ -31,6 +31,7 @@ from typing import Any
 
 import numpy as np
 
+from galileo.net import urlopen_http
 from galileo.planning import star_atlas as sa
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ def _write_cache(kind: str, payload: Any) -> None:
 
 
 def _http_get(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as resp:
+    with urlopen_http(url, timeout=_TIMEOUT_S) as resp:
         return resp.read()
 
 

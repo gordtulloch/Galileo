@@ -50,7 +50,7 @@ class SessionProcessor:
         )
 
         # How many unassigned_files are there?
-        logger.info("createSessions found "+str(len(unassigned_files))+" unassigned files to session")
+        logger.info(f"createSessions found {len(unassigned_files)} unassigned files to session")
 
         # Loop through each unassigned file and create a session each time the object, date, or filter changes
         currentObject = ""
@@ -100,17 +100,17 @@ class SessionProcessor:
                         fitsFlatSession=None
                     )
                     sessionsCreated.append(currentSessionId)
-                    logger.debug("New session created for "+str(newFitsSession.fitsSessionId))
-                except IntegrityError as e:
+                    logger.debug(f"New session created for {newFitsSession.fitsSessionId}")
+                except IntegrityError:
                     # Handle the integrity error
-                    logger.exception("IntegrityError: "+str(e))
+                    logger.exception("IntegrityError")
                     continue
                 currentObject = str(currentFitsFile.fitsFileObject)
 
             # Assign the current session to the fits file
             currentFitsFile.fitsFileSession = currentSessionId
             currentFitsFile.save()
-            logger.debug("Assigned "+str(currentFitsFile.fitsFileName)+" to session "+str(currentSessionId))
+            logger.debug(f"Assigned {currentFitsFile.fitsFileName} to session {currentSessionId}")
 
         # Get unique sessions count
         unique_sessions = len(set(sessionsCreated))
@@ -183,8 +183,8 @@ class SessionProcessor:
                     query.execute()
                     logger.debug(f"Updated quality metrics for session {session_id}")
 
-            except Exception as e:
-                logger.exception(f"Error updating quality metrics for session {session_id}: {e}")
+            except Exception:
+                logger.exception(f"Error updating quality metrics for session {session_id}")
                 continue
 
     def shouldCreateNewCalibrationSession(self, currentFile, currentSession, calType):
@@ -380,9 +380,9 @@ class SessionProcessor:
         current_count = 0
 
         # How many unassigned_files are there?
-        logger.info("createCalibrationSessions found "+str(total_biases)+" unassigned Bias calibration files to Session")
-        logger.info("createCalibrationSessions found "+str(total_darks)+" unassigned Dark calibration files to Session")
-        logger.info("createCalibrationSessions found "+str(total_flats)+" unassigned Flat calibration files to Session")
+        logger.info(f"createCalibrationSessions found {total_biases} unassigned Bias calibration files to Session")
+        logger.info(f"createCalibrationSessions found {total_darks} unassigned Dark calibration files to Session")
+        logger.info(f"createCalibrationSessions found {total_flats} unassigned Flat calibration files to Session")
 
         # Bias calibration files - group by date, telescope, imager, binning
         currentDate = None
@@ -410,7 +410,7 @@ class SessionProcessor:
                 biasFitsFile.fitsFileXBinning != currentBinningX or
                 biasFitsFile.fitsFileYBinning != currentBinningY):
 
-                logger.debug("Creating new bias session for date " + str(biasFitsFile.fitsFileDate))
+                logger.debug(f"Creating new bias session for date {biasFitsFile.fitsFileDate}")
                 uuidStr = uuid.uuid4()  # New Session
                 fitsSessionModel.create(
                     fitsSessionId=uuidStr,
@@ -444,7 +444,7 @@ class SessionProcessor:
 
             biasFitsFile.fitsFileSession = uuidStr
             biasFitsFile.save()
-            logger.debug("Set Session for bias "+biasFitsFile.fitsFileName+" to "+str(uuidStr))
+            logger.debug(f"Set Session for bias {biasFitsFile.fitsFileName} to {uuidStr}")
 
         # Dark calibration files - group by date, telescope, imager, exposure, binning
         currentDate = None
@@ -474,7 +474,7 @@ class SessionProcessor:
                 darkFitsFile.fitsFileXBinning != currentBinningX or
                 darkFitsFile.fitsFileYBinning != currentBinningY):
 
-                logger.debug("Creating new dark session for date " + str(darkFitsFile.fitsFileDate))
+                logger.debug(f"Creating new dark session for date {darkFitsFile.fitsFileDate}")
                 uuidStr = uuid.uuid4()  # New Session
                 fitsSessionModel.create(
                     fitsSessionId=uuidStr,
@@ -509,7 +509,7 @@ class SessionProcessor:
 
             darkFitsFile.fitsFileSession = uuidStr
             darkFitsFile.save()
-            logger.debug("Set Session for dark "+darkFitsFile.fitsFileName+" to "+str(uuidStr))
+            logger.debug(f"Set Session for dark {darkFitsFile.fitsFileName} to {uuidStr}")
 
         # Flat calibration files - group by date, telescope, imager, filter, binning
         currentDate = None
@@ -539,7 +539,7 @@ class SessionProcessor:
                 flatFitsFile.fitsFileXBinning != currentBinningX or
                 flatFitsFile.fitsFileYBinning != currentBinningY):
 
-                logger.debug("Creating new flat session for date " + str(flatFitsFile.fitsFileDate))
+                logger.debug(f"Creating new flat session for date {flatFitsFile.fitsFileDate}")
                 uuidStr = uuid.uuid4()  # New Session
                 fitsSessionModel.create(
                     fitsSessionId=uuidStr,
@@ -574,7 +574,7 @@ class SessionProcessor:
 
             flatFitsFile.fitsFileSession = uuidStr
             flatFitsFile.save()
-            logger.debug("Set Session for flat "+flatFitsFile.fitsFileName+" to "+str(uuidStr))
+            logger.debug(f"Set Session for flat {flatFitsFile.fitsFileName} to {uuidStr}")
 
         # Calculate session counts by type
         bias_sessions_created = len(createdBiasSessions)
@@ -726,8 +726,8 @@ class SessionProcessor:
 
             logger.info(f"Session linking complete. Updated {len(updated_sessions)} light sessions with calibration links")
 
-        except Exception as e:
-            logger.exception(f"Error in linkSessions: {e!s}")
+        except Exception:
+            logger.exception("Error in linkSessions")
             raise
 
         return updated_sessions

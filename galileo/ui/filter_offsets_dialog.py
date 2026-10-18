@@ -17,6 +17,7 @@ later filter change to maintain focus without a full autofocus run.
 
 from __future__ import annotations
 
+from galileo.ui.qt_helpers import need
 import logging
 import threading
 from typing import cast
@@ -185,7 +186,7 @@ class FilterOffsetsDialog(QDialog):
         pier = self._focus_page._window._current_pier
         if pier is None:
             return
-        filter_name = self.table.item(row, _COL_FILTER).text()
+        filter_name = need(self.table.item(row, _COL_FILTER)).text()
         from galileo.autofocus import FilterOffset
         from galileo.observatory import get_filter_offsets, save_filter_offset
         existing = next((o for o in get_filter_offsets(pier) if o.filter_name == filter_name), None)
@@ -247,7 +248,7 @@ class FilterOffsetsDialog(QDialog):
 
         params = get_autofocus_params(pier)
         names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])]
-        selection = [(row, self.table.item(row, _COL_FILTER).text(), self._primary_box(row).isChecked())
+        selection = [(row, need(self.table.item(row, _COL_FILTER)).text(), self._primary_box(row).isChecked())
                      for row in rows]
 
         # The Primary filter's average, used as every other filter's baseline: measured this

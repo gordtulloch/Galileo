@@ -34,10 +34,11 @@ class SolverSettingsRecord(BaseModel):
     # kept distinct from SolverParams' own general-purpose dataclass default
     # of 2 so that an unconfigured Pier's behaviour doesn't silently change.
     downsample = pw.IntegerField(default=0)
-    # Which solver: "astap", "astrometry_local" (solve-field) or "astrometry_web" (nova.astrometry.net).
+    # Which solver: "astap", "astrometry_local" (solve-field) or "astrometry_web" (nova.astrometry.net) or "tetra3".
     backend = pw.TextField(default="astap")
     astrometry_executable = pw.TextField(null=True)
     nova_api_key = pw.TextField(null=True)
+    tetra3_database = pw.TextField(null=True)   # blank = the database tetra3 ships with
 
     class Meta:
         table_name = "solver_settings"

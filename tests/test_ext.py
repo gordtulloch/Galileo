@@ -86,12 +86,14 @@ async def test_tc_ext_030_unreachable_alpaca_device_raises_device_connection_err
     refused connection) surfaces as a DeviceConnectionError, not a raw
     RuntimeError/httpx/socket error."""
     from galileo.adapters import alpaca
+    from galileo.adapters.alpaca import _base as alpaca_base          # where resolve_mdns_host_sync lives
     from galileo.exceptions import DeviceConnectionError
 
     adapter = alpaca.AlpacaAdapter(host="seestar.local", port=32323)
-    with patch.object(alpaca, "resolve_mdns_host_sync", side_effect=DeviceConnectionError("no mDNS")):
-        with pytest.raises(DeviceConnectionError, match="no mDNS"):
-            await adapter.connect()
+    with patch.object(alpaca_base, "resolve_mdns_host_sync", side_effect=DeviceConnectionError("no mDNS")), pytest.raises(
+        DeviceConnectionError, match="no mDNS"
+    ):
+        await adapter.connect()
 
     # Port 1 on loopback refuses immediately.
     adapter = alpaca.AlpacaAdapter(host="127.0.0.1", port=1)
@@ -439,3 +441,20 @@ async def test_tc_ext_070_webhook_refuses_non_http_urls(caplog):
         await channel.send(note)
     opened.assert_not_called()
     assert any("non-HTTP" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.requirement("TC-EXT-070")
+@pytest.mark.priority("P3")
+def test_tc_ext_070_shared_http_helper_refuses_non_http_urls():
+    """EXT-070: every urllib fallback goes through galileo.net, which refuses file:// and other non-HTTP(S) URLs."""
+    from galileo import net
+    for bad in ("file:///etc/passwd", "ftp://host/x", "gopher://host/"):
+        with patch("urllib.request.urlopen") as opened:
+            with pytest.raises(ValueError, match="non-HTTP"):
+                net.urlopen_http(bad, timeout=1)
+            with pytest.raises(ValueError, match="non-HTTP"):
+                net.http_request(bad)
+        opened.assert_not_called()
+    with patch("urllib.request.urlopen") as opened:
+        net.urlopen_http("https://example.org/x", timeout=5)
+    opened.assert_called_once()

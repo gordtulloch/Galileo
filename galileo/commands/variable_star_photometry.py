@@ -51,7 +51,7 @@ def _default_outputs(stacked_fits_path: str) -> tuple[str, str]:
     )
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Variable star photometry from a calibrated photometric stack")
     g = parser.add_mutually_exclusive_group(required=True)
     g.add_argument("--session", help="Session ID to process", default=None)
@@ -68,7 +68,86 @@ def main() -> int:
     parser.add_argument("--out-json", default=None, help="Write summary JSON to this path")
     parser.add_argument("--out-csv", default=None, help="Write per-star CSV to this path")
     parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def _build_session_stack(session_id: str, logger) -> tuple[str | None, int]:
+    """Calibrate (if needed) and stack a session's lights; returns (stack path, 0) or (None, exit code)."""
+    from galileo.library.models import fitsSession as FitsSessionModel
+    from galileo.library.core.master_manager import get_master_manager
+    from galileo.library.core.utils import best_hfr_reference_path, sanitize_filesystem_name, session_light_frames
+    from galileo.library.core.auto_calibration import calibrate_light_frames
+
+    session = FitsSessionModel.get_by_id(session_id)
+    if not session:
+        logger.error(f"Session not found: {session_id}")
+        return None, 2
+
+    precalibrated = _is_precalibrated_session(session.fitsSessionTelescope, session.fitsSessionImager)
+    # If there are no calibrated frames, calibrate first.
+    if not precalibrated and not session_light_frames(session, calibrated_only=True):
+        logger.info(f"Calibrating session {session_id} before photometric stack...")
+        config = load_config()
+        if not calibrate_light_frames(config, session_id=session_id):
+            logger.error("Calibration failed")
+            return None, 3
+
+    candidates = session_light_frames(session, calibrated_only=not precalibrated)
+    file_paths = [f.fitsFileName for f in candidates if f.fitsFileName and os.path.exists(f.fitsFileName)]
+    if len(file_paths) < 2:
+        logger.error("Not enough light frames to stack (need >= 2)")
+        return None, 4
+
+    out_dir = os.path.dirname(file_paths[0])
+    date_str = str(session.fitsSessionDate) if session.fitsSessionDate else "unknown_date"
+    obj = sanitize_filesystem_name(session.fitsSessionObjectName or "Unknown")
+    stacked_path = os.path.join(out_dir, f"photometric_stack_{obj}_{date_str}_{session_id}.fits")
+
+    if os.path.exists(stacked_path):
+        logger.info(f"Using existing photometric stack: {stacked_path}")
+        return stacked_path, 0
+
+    logger.info(f"Creating photometric stack: {stacked_path}")
+
+    def _progress(current, total, message):
+        if message:
+            logger.info(str(message))
+
+    ok = get_master_manager()._create_light_stack_photometric_mean(
+        file_paths=file_paths,
+        output_path=stacked_path,
+        reference_path=best_hfr_reference_path(candidates),  # prefer the best-HFR frame as the reference
+        progress_callback=_progress,
+        thumbnail_session_id=str(session.fitsSessionId),
+    )
+    if not ok or not os.path.exists(stacked_path):
+        logger.error("Photometric stacking failed")
+        return None, 5
+    return stacked_path, 0
+
+
+_CSV_FIELDS = ["auid", "ra", "dec", "vmag", "error", "x", "y", "peak", "aperture_sum", "instrumental_mag"]
+
+
+def _write_results(result: dict, out_json: str, out_csv: str) -> None:
+    """Write the summary JSON and the flat per-star CSV (creating their folders)."""
+    import csv
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_json)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
+
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
+        w.writeheader()
+        for r in result.get("rows") or []:
+            w.writerow({k: r.get(k) for k in _CSV_FIELDS})
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
 
     logger = setup_logging(args.verbose)
 
@@ -78,107 +157,10 @@ def main() -> int:
     )
 
     stacked_path = args.stacked_fits
-
     if args.session:
-        from galileo.library.models import fitsSession as FitsSessionModel, fitsFile as FitsFileModel
-        from galileo.library.core.master_manager import get_master_manager
-        from galileo.library.core.utils import sanitize_filesystem_name
-        from galileo.library.core.auto_calibration import calibrate_light_frames
-
-        session_id = str(args.session)
-        session = FitsSessionModel.get_by_id(session_id)
-        if not session:
-            logger.error(f"Session not found: {session_id}")
-            return 2
-
-        if _is_precalibrated_session(session.fitsSessionTelescope, session.fitsSessionImager):
-            need_calibration = False
-        else:
-            # If there are no calibrated frames, calibrate first.
-            q = FitsFileModel.select().where(
-                (FitsFileModel.fitsFileSession == session.fitsSessionId)
-                & (FitsFileModel.fitsFileSoftDelete == False)
-                & (FitsFileModel.fitsFileCalibrated == 1)
-                & (FitsFileModel.fitsFileType.in_(["LIGHT", "LIGHT FRAME"]))
-            )
-            need_calibration = q.count() == 0
-
-        if need_calibration:
-            logger.info(f"Calibrating session {session_id} before photometric stack...")
-            config = load_config()
-            ok = calibrate_light_frames(config, session_id=session_id)
-            if not ok:
-                logger.error("Calibration failed")
-                return 3
-
-        # Stack candidates
-        if _is_precalibrated_session(session.fitsSessionTelescope, session.fitsSessionImager):
-            candidates = list(
-                FitsFileModel.select().where(
-                    (FitsFileModel.fitsFileSession == session.fitsSessionId)
-                    & (FitsFileModel.fitsFileSoftDelete == False)
-                    & (FitsFileModel.fitsFileType.in_(["LIGHT", "LIGHT FRAME"]))
-                )
-            )
-        else:
-            candidates = list(
-                FitsFileModel.select().where(
-                    (FitsFileModel.fitsFileSession == session.fitsSessionId)
-                    & (FitsFileModel.fitsFileSoftDelete == False)
-                    & (FitsFileModel.fitsFileCalibrated == 1)
-                    & (FitsFileModel.fitsFileType.in_(["LIGHT", "LIGHT FRAME"]))
-                )
-            )
-
-        file_paths = [f.fitsFileName for f in candidates if f.fitsFileName and os.path.exists(f.fitsFileName)]
-        if len(file_paths) < 2:
-            logger.error("Not enough light frames to stack (need >= 2)")
-            return 4
-
-        # Prefer best-HFR frame as registration reference
-        best_ref_path = None
-        best_hfr = None
-        for f in candidates:
-            p = getattr(f, "fitsFileName", None)
-            if not p or not os.path.exists(p):
-                continue
-            hfr = getattr(f, "fitsFileAvgHFRArcsec", None)
-            if hfr is None:
-                continue
-            try:
-                hfr_val = float(hfr)
-            except Exception:
-                logger.debug("Skipping unusable HFR value %r for %s", hfr, p)
-                continue
-            if best_hfr is None or hfr_val < best_hfr:
-                best_hfr = hfr_val
-                best_ref_path = p
-
-        out_dir = os.path.dirname(file_paths[0])
-        date_str = str(session.fitsSessionDate) if session.fitsSessionDate else "unknown_date"
-        obj = sanitize_filesystem_name(session.fitsSessionObjectName or "Unknown")
-        stacked_path = os.path.join(out_dir, f"photometric_stack_{obj}_{date_str}_{session_id}.fits")
-
-        if not os.path.exists(stacked_path):
-            logger.info(f"Creating photometric stack: {stacked_path}")
-            mm = get_master_manager()
-
-            def _progress(current, total, message):
-                if message:
-                    logger.info(str(message))
-
-            ok = mm._create_light_stack_photometric_mean(
-                file_paths=file_paths,
-                output_path=stacked_path,
-                reference_path=best_ref_path,
-                progress_callback=_progress,
-                thumbnail_session_id=str(session.fitsSessionId),
-            )
-            if not ok or not os.path.exists(stacked_path):
-                logger.error("Photometric stacking failed")
-                return 5
-        else:
-            logger.info(f"Using existing photometric stack: {stacked_path}")
+        stacked_path, error_code = _build_session_stack(str(args.session), logger)
+        if error_code:
+            return error_code
 
     if not stacked_path or not os.path.exists(stacked_path):
         logger.error("Stacked FITS not found")
@@ -207,33 +189,7 @@ def main() -> int:
         out_json = out_json or djson
         out_csv = out_csv or dcsv
 
-    os.makedirs(os.path.dirname(os.path.abspath(out_json)), exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
-
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2)
-
-    # Flat CSV rows
-    import csv
-
-    rows = result.get("rows") or []
-    fieldnames = [
-        "auid",
-        "ra",
-        "dec",
-        "vmag",
-        "error",
-        "x",
-        "y",
-        "peak",
-        "aperture_sum",
-        "instrumental_mag",
-    ]
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k) for k in fieldnames})
+    _write_results(result, out_json, out_csv)
 
     logger.info(f"Target magnitude: {result.get('target_magnitude')} (band {result.get('band')})")
     logger.info(f"Chart ID: {result.get('chart_id')}")

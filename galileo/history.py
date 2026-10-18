@@ -45,7 +45,7 @@ class SessionHistory:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, SessionRecord] = {}
         self._current_session: SessionRecord | None = None
-        # The sequencer records from its worker thread while the History screen reads on the UI thread.
+        # The session executor records from its worker thread while the History screen reads on the UI thread.
         self._lock = threading.RLock()
         self._load_from_disk()
 

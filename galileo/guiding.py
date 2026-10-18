@@ -11,7 +11,7 @@ Two halves, both free of Qt and of any socket code (that lives in
   guide-star image and a human-readable event log. The adapter's reader thread
   feeds it events; the UI (or anything else) reads consistent snapshots.
 * ``GuidingService`` — owns one adapter and one model for one Pier
-  (``GUIDE-060``), issues the commands (start/stop/dither for the sequencer,
+  (``GUIDE-060``), issues the commands (start/stop/dither for a session,
   loop/find-star/exposure/… for the Guider screen) and republishes connection
   loss on the event bus (``GUIDE-050``).
 """
@@ -392,8 +392,8 @@ class GuidingService:
         client = self._ensure_client()
         try:
             await client.connect()
-        except Exception as exc:
-            logger.exception("Failed to connect to guider at %s:%d: %s", self.host, self.port, exc)
+        except Exception:
+            logger.exception("Failed to connect to guider at %s:%d", self.host, self.port)
             raise
         self.model.update(connected=True)
         self.model.log(f"Connected to PHD2 at {self.host}:{self.port}.")
@@ -449,7 +449,7 @@ class GuidingService:
         if want_star_image and self.model.app_state in ("Looping", "Guiding", "Selected", "LostLock"):
             self._ask("get_star_image", [100], self.model.set_star_image)
 
-    # --- Commands (sequencer-facing, async) -------------------------------
+    # --- Commands (session-facing, async) -------------------------------
 
     async def start_guiding(self) -> None:
         """Issue guide and wait for PHD2 to confirm it has settled (GUIDE-020)."""

@@ -9,7 +9,7 @@ statistics and the HFR V-curve on the right; the log along the bottom.
 
 The screen shows a run, it does not own one. It follows the ``Focus*Event`` s
 that ``galileo.autofocus.AutofocusService`` publishes on the event bus, so a
-run started here, or by a sequencer trigger, is displayed the same way. Between
+run started here, or by a session trigger, is displayed the same way. Between
 runs nothing is redrawn: the last run's frame, statistics and curve stay on
 screen until the next run starts or Clear is pressed. The events arrive on
 whatever thread the run is on, so the handlers only prepare data and hand it

@@ -87,8 +87,8 @@ Examples:
 
         try:
             load_config(args.config)
-        except FileNotFoundError as e:
-            logger.exception(str(e))
+        except FileNotFoundError:
+            logger.exception("Error linking sessions")
             sys.exit(1)
 
         # Initialize database
@@ -132,7 +132,7 @@ Examples:
         print("Session linking cancelled by user")
         sys.exit(1)
     except Exception as e:
-        logger.exception(f"Error during session linking: {e}")
+        logger.exception("Error during session linking")
         print(f"Error: {e}")
         sys.exit(1)
 
