@@ -59,19 +59,35 @@ class IndiFocuserAdapter(IndiAdapter):
         self._log_interaction("move_to", position=position, from_position=self.position)
         if self._has("ABS_FOCUS_POSITION"):
             self._set_num("ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": position})
+            self.position = position
+        elif self._has("REL_FOCUS_POSITION"):
+            self._move_relative(position - self.position)
         else:
-            await self.move_by(position - self.position)
-            return
-        self.position = position
+            self._raise_no_motion_property()
 
     async def move_by(self, steps: int) -> None:
         self._log_interaction("move_by", steps=steps)
         if self._has("REL_FOCUS_POSITION"):
-            self._select("FOCUS_MOTION", "FOCUS_OUTWARD" if steps >= 0 else "FOCUS_INWARD")
-            self._set_num("REL_FOCUS_POSITION", {"FOCUS_RELATIVE_POSITION": abs(steps)})
-            self.position += steps
+            self._move_relative(steps)
+        elif self._has("ABS_FOCUS_POSITION"):
+            target = self.position + steps
+            self._set_num("ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": target})
+            self.position = target
         else:
-            await self.move_to(self.position + steps)
+            self._raise_no_motion_property()
+
+    def _move_relative(self, steps: int) -> None:
+        self._select("FOCUS_MOTION", "FOCUS_OUTWARD" if steps >= 0 else "FOCUS_INWARD")
+        self._set_num("REL_FOCUS_POSITION", {"FOCUS_RELATIVE_POSITION": abs(steps)})
+        self.position += steps
+
+    def _raise_no_motion_property(self) -> None:
+        # move_to and move_by used to call each other when neither property existed (e.g. the
+        # driver's properties had not arrived yet), recursing until RecursionError.
+        raise DevicePropertyError(
+            f"INDI focuser {self.device_name!r} exposes neither ABS_FOCUS_POSITION nor "
+            "REL_FOCUS_POSITION, so it cannot be moved."
+        )
 
     async def set_temp_comp(self, enabled: bool) -> None:
         self._log_interaction("set_temp_comp", enabled=enabled)

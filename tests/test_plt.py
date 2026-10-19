@@ -1096,7 +1096,7 @@ def _sky_solutions(vectors):
     return results
 
 
-def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0):
+def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0, dec=70.0):
     """A PolarAlignWorkflow on a fake camera and mount (pointing at *hour_angle_deg*, dec 70), with a solver
     that returns *results* in turn."""
     import numpy as np
@@ -1109,7 +1109,7 @@ def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0):
     camera.abort_exposure = AsyncMock()
     mount = MagicMock()
     start_ra = (_lst_now() - hour_angle_deg) % 360.0
-    mount.get_status = AsyncMock(return_value={"right_ascension": start_ra / 15.0, "declination": 70.0,
+    mount.get_status = AsyncMock(return_value={"right_ascension": start_ra / 15.0, "declination": dec,
                                                "equatorial_system": "JNOW", "slewing": False})
     slews: list = []
     mount.slew_to_coordinates = AsyncMock(side_effect=lambda ra, dec: slews.append((ra, dec)))
@@ -1147,6 +1147,33 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
     assert measured[0].altitude_arcsec == pytest.approx(0.2 * 3600, abs=60)
     assert measured[1].total_arcsec == pytest.approx(measured[0].total_arcsec, abs=15)
     assert [p.step for p in seen if p.phase == "measuring" and p.message.startswith("Solving")] == [1, 2, 3]
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_workflow_moves_away_from_the_pole_before_measuring(tmp_path):
+    """PLT-080: Started at the pole, the mount first slews to about Dec 70° (a solve at the pole is unreliable), then measures there."""
+    from galileo.polaralign import PolarAlignSettings
+    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
+    results = _sky_solutions(vectors) + _sky_solutions(vectors[2:])
+    seen: list = []
+
+    def on_progress(progress):
+        seen.append(progress)
+        if sum(p.error is not None for p in seen) >= 2:
+            workflow.stop()
+
+    workflow, slews, _ = _polar_rig(tmp_path, results, on_progress, dec=89.9)
+    workflow.mount.get_status = AsyncMock(side_effect=lambda: {      # the fake mount now ends up where it was sent
+        "right_ascension": slews[-1][0] / 15.0, "declination": slews[-1][1], "equatorial_system": "JNOW",
+        "slewing": False} if slews else {"right_ascension": 0.0, "declination": 89.9,
+                                         "equatorial_system": "JNOW", "slewing": False})
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
+                                            refraction=False))
+    assert len(slews) == 3 and all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews)
+    assert [round((slews[0][0] - ra) % 360.0) for ra, _ in slews] == [0, 30, 60]     # then the usual two RA turns
+    assert any("away from the pole" in p.message for p in seen)
+    assert workflow.error is not None
 
 
 @pytest.mark.requirement("TC-PLT-080")
@@ -1573,3 +1600,31 @@ class _DeadProcess:
 
     def terminate(self):
         pass
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_target_offset_is_nil_on_the_pole_and_points_toward_it_otherwise():
+    """PLT-080: The aiming view puts the pole (X) on the axis point (circle) when the error is nil, and offset by about the error otherwise."""
+    import datetime as dt
+
+    import numpy as np
+
+    from galileo.platesolve import SolveResult
+    from galileo.polaralign import altaz_vector, pole_vector, target_offset_arcmin, vector_altaz
+    when = dt.datetime.now(dt.UTC)
+    lst = _lst_now()
+    # A frame centred 20° from the pole, 3″ per pixel, north up/east left.
+    from galileo.planning.star_atlas import horizontal_to_equatorial
+    from galileo.platesolve import mount_frame_to_j2000
+    alt, az = vector_altaz(pole_vector(LATITUDE))
+    ra, dec = horizontal_to_equatorial(alt - 20.0, az, lst, LATITUDE)
+    ra, dec = mount_frame_to_j2000(ra, dec, None)
+    scale = 3.0 / 3600.0
+    result = SolveResult(success=True, ra_deg=ra, dec_deg=dec, scale_arcsec_px=3.0, cd=(-scale, 0.0, 0.0, scale))
+    on_pole = target_offset_arcmin(result, pole_vector(LATITUDE), when, LATITUDE, LONGITUDE)
+    assert on_pole is not None and abs(on_pole[0]) < 1e-6 and abs(on_pole[1]) < 1e-6
+    off = altaz_vector(alt + 0.5, az)                    # axis half a degree too high
+    dx, dy = target_offset_arcmin(result, off, when, LATITUDE, LONGITUDE)
+    assert np.hypot(dx, dy) == pytest.approx(30.0, rel=0.15)
+    assert target_offset_arcmin(SolveResult(success=True, ra_deg=ra, dec_deg=dec), off, when, LATITUDE, LONGITUDE) is None

@@ -444,6 +444,19 @@ async def test_tc_eqp_foc_010_absolute_relative_moves_and_limits(server):
         await focuser.disconnect()
 
 
+@pytest.mark.requirement("TC-EQP-FOC-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_foc_010_move_without_motion_properties_raises_not_recurses():
+    """EQP-FOC-010: a focuser exposing neither absolute nor relative position raises, instead of move_to/move_by recursing forever."""
+    from galileo.exceptions import DevicePropertyError
+    focuser = indi.IndiFocuserAdapter()
+    focuser._has = lambda name: False
+    with pytest.raises(DevicePropertyError):
+        await focuser.move_to(100)
+    with pytest.raises(DevicePropertyError):
+        await focuser.move_by(10)
+
+
 # --- rotator -----------------------------------------------------------------
 
 @pytest.mark.requirement("TC-EQP-ROT-010")

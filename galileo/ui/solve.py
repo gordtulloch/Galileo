@@ -74,16 +74,21 @@ _POLAR_GOOD_ARCSEC = 60.0        # polar error readout: green below this,
 _POLAR_FAIR_ARCSEC = 300.0       # amber below this, red above
 
 
-def load_preview(path: str) -> np.ndarray | None:
+def load_preview(path: str, bayer_pattern: str | None = None) -> np.ndarray | None:
     """The frame at *path* as an auto-stretched 8-bit array ``(h, w)`` or ``(h, w, 3)``, sub-sampled
-    if very large. ``None`` if it can't be read (the frame may be gone or half written)."""
+    if very large. With *bayer_pattern* a mono mosaic is debayered first (before sub-sampling, which
+    would otherwise destroy the mosaic). ``None`` if it can't be read (the frame may be gone or half
+    written)."""
     try:
         from astropy.io import fits
 
+        from galileo.debayer import debayer
         from galileo.ui.imaging import _auto_stretch
         data = np.asarray(fits.getdata(path))
         if data.ndim == 3:                           # FITS stores colour plane-first
             data = np.moveaxis(data[:3], 0, -1) if data.shape[0] >= 3 else data[0]
+        if bayer_pattern and data.ndim == 2:
+            data = debayer(data, bayer_pattern)
         step = max(1, max(data.shape[:2]) // _MAX_PREVIEW_PX)
         return _auto_stretch(data[::step, ::step])
     except Exception:
@@ -275,9 +280,12 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if path == self._loading_path:
             return
         self._loading_path = path
+        # Follow the Imaging tab's Debayer box (IMG-110): the preview is debayered when it is ticked.
+        service = self._window._imaging_service
+        pattern = service.bayer_pattern if service.debayer_enabled else None
 
         def work() -> None:
-            self._emit("preview_ready", {"path": path, "array": load_preview(path)})
+            self._emit("preview_ready", {"path": path, "array": load_preview(path, pattern)})
         threading.Thread(target=work, name="solve-preview", daemon=True).start()
 
     # --- UI-thread slots --------------------------------------------------
@@ -567,6 +575,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.polar_total.setStyleSheet("")
         self.polar_altitude.clear()
         self.polar_azimuth.clear()
+        self.polar_target_hint.clear()
+        self.polar_target.set_offset(None)
         self._begin(lambda workflow: workflow.align(settings), make_workflow=make)
 
     def _on_polar_progress(self, key, progress: PolarAlignProgress) -> None:
@@ -585,6 +595,11 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.polar_total.setStyleSheet(f"color: {color};")
         self.polar_altitude.setText(error.altitude_advice())
         self.polar_azimuth.setText(error.azimuth_advice())
+        self.polar_target.set_offset(progress.target_offset)
+        self.polar_target_hint.setText(
+            "Turn the altitude and azimuth adjusters to bring the X (the pole) into the circle (where the axis points)."
+            if progress.target_offset is not None else
+            "This solver gives no field geometry, so the X and circle can't be drawn; follow the adjustments above.")
 
     def stop(self) -> None:
         # Stops whichever Pier is currently displayed's own run — a different

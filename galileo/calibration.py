@@ -83,9 +83,10 @@ class CalibrationService:
         max_exposure_s: float = 60.0,
     ) -> CalibrationResult:
         """Adaptively find the right exposure then capture *count* flat frames."""
-        # Prepare flat panel if available
+        # Prepare flat panel if available: park it (cover closed over the scope) and light it
         if self._flat_panel is not None:
-            await self._flat_panel.open_cover()
+            await self._flat_panel.close_cover()
+            await self._flat_panel.light_on()
             await self._flat_panel.set_brightness(128)
 
         try:
@@ -103,7 +104,8 @@ class CalibrationService:
                 self._save_frame(data, "flat", filter_name, i + 1, exposure_s)
         finally:
             if self._flat_panel is not None:
-                await self._flat_panel.close_cover()
+                await self._flat_panel.light_off()
+                await self._flat_panel.open_cover()
 
         return CalibrationResult(
             frames_captured=count,
@@ -286,7 +288,8 @@ class CalibrationService:
         """Capture *count* flats per filter of an artificial light source (CAL-090).
 
         *method* ``"Flat Panel"`` drives the connected flat-panel device through its port
-        (open the cover, light on, brightness — CAL-040) and closes it again afterwards;
+        (park it — cover closed over the scope — light on, brightness — CAL-040) and switches
+        the light off and reopens the cover afterwards;
         ``"Observatory Panel"`` (a fixed panel, dome screen or other light the observer has
         already pointed the scope at) has no device to drive, so only the exposure is tuned.
         Each frame's exposure is converged toward *target_fraction* of *max_well_depth*
@@ -313,7 +316,7 @@ class CalibrationService:
 
         results: list[CalibrationResult] = []
         if panel is not None:
-            await panel.open_cover()
+            await panel.close_cover()   # park: cover over the scope so the panel is what it sees
             await panel.light_on()
             await panel.set_brightness(self._panel_brightness)
         try:
@@ -344,7 +347,7 @@ class CalibrationService:
             if panel is not None:
                 try:
                     await panel.light_off()
-                    await panel.close_cover()
+                    await panel.open_cover()
                 except Exception:
                     logger.exception("Could not switch the flat panel off after the flats run")
         return results

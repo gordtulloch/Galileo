@@ -73,7 +73,7 @@ Which confirmation messages to skip.
 
 ## Suppress Delete Warnings
 
-When ticked, deleting a file no longer asks you to confirm.
+When ticked, deleting a file no longer asks you to confirm, and the "File Soft-Deleted" notice that follows a delete is not shown either.
 
 ## Cloud Sync
 

@@ -486,10 +486,12 @@ class ImagesWidget(QWidget):
                     # Refresh the display
                     self.load_fits_data()
 
-                    QMessageBox.information(self, "File Soft-Deleted",
-                                          f"File marked as deleted:\n{os.path.basename(filename)}\n\n"
-                                          f"The file remains on disk but is hidden from view.\n"
-                                          f"Check 'Show Deleted' to see it again.")
+                    # The "File Soft-Deleted" notice is a delete warning too, so honour the setting.
+                    if not config.getboolean('DEFAULT', 'suppress_delete_warnings', fallback=False):
+                        QMessageBox.information(self, "File Soft-Deleted",
+                                              f"File marked as deleted:\n{os.path.basename(filename)}\n\n"
+                                              f"The file remains on disk but is hidden from view.\n"
+                                              f"Check 'Show Deleted' to see it again.")
                     logger.info(f"Successfully soft-deleted file: {filename}")
                 else:
                     logger.warning(f"File not found in database: {filename}")

@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget, QTabWidget, QVBoxLayout, QWidget
 from galileo.platesolve import SolveAction
 from galileo.ui._image_view import build_zoom_toolbar
-from galileo.ui.solve_widgets import SolveErrorPlot, SolveImageView
+from galileo.ui.solve_widgets import PolarTargetPlot, SolveErrorPlot, SolveImageView
 
 
 def _heading_box(title: str) -> tuple[QGroupBox, QVBoxLayout]:
@@ -289,10 +289,11 @@ class SolveBuildMixin(_MixinBase):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 6, 6, 6)
         intro = QLabel(
-            "Point the mount's polar axis roughly at the pole first, then start. Galileo solves three frames while "
-            "turning the mount in RA to find where the axis really points, then keeps solving so the error updates "
-            "as you turn the altitude and azimuth adjusters. The mount must be level, and should not be near the "
-            "meridian, where it would flip.")
+            "Point the scope at the pole to begin (roughly polar-aligned, Polaris in the field), then start. Galileo "
+            "moves away from the pole to about Dec 70° (solves are unreliable at the pole), solves three frames while "
+            "turning the mount in RA to find where the axis really points, then keeps solving. Turn the altitude and "
+            "azimuth adjusters to bring the X (the celestial pole) into the circle (where the axis points now). The "
+            "mount must be level, and should not be near the meridian, where it would flip.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -341,7 +342,16 @@ class SolveBuildMixin(_MixinBase):
         self.polar_azimuth.setProperty("helpKey", "azimuth correction")
         layout.addWidget(self.polar_altitude)
         layout.addWidget(self.polar_azimuth)
-        layout.addStretch(1)
+        self.polar_target_hint = QLabel("")
+        self.polar_target_hint.setWordWrap(True)
+        self.polar_target_hint.setProperty("helpKey", "polar target")
+        layout.addWidget(self.polar_target_hint)
+        self.polar_target = PolarTargetPlot()
+        self.polar_target.setProperty("helpKey", "polar target")
+        self.polar_target.setToolTip(
+            "The circle is where the mount's polar axis points now; the X is the celestial pole. Turn the altitude "
+            "and azimuth adjusters to bring the X into the circle.")
+        layout.addWidget(self.polar_target, 1)
         return tab
 
     def _build_log_pane(self) -> QWidget:

@@ -105,9 +105,11 @@ async def test_tc_cal_040_flat_panel_integration(mock_flat_panel, cal_service):
 
     await cal_service.run_flat_wizard(filter_name="L", count=5, target_adu=30000)
 
-    mock_flat_panel.open_cover.assert_called()
+    mock_flat_panel.close_cover.assert_called()      # parked over the scope for the flats
+    mock_flat_panel.light_on.assert_called()
     mock_flat_panel.set_brightness.assert_called()
-    mock_flat_panel.close_cover.assert_called()
+    mock_flat_panel.light_off.assert_called()
+    mock_flat_panel.open_cover.assert_called()       # and released afterwards
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +174,10 @@ async def test_tc_cal_090_panel_flats_converge_exposure_and_drive_panel(mock_ind
     results = await svc.run_panel_flats_all_filters("Flat Panel", ["L"], 2, max_well_depth=60000)
     assert results[0].frames_captured == 2
     assert abs(20000 * results[0].final_exposure_s - 30000) <= 3000
-    mock_flat_panel.open_cover.assert_called()
+    mock_flat_panel.close_cover.assert_called()      # parked
+    mock_flat_panel.light_on.assert_called()
     mock_flat_panel.set_brightness.assert_called()
-    mock_flat_panel.close_cover.assert_called()
+    mock_flat_panel.open_cover.assert_called()       # released after the run
 
     mock_flat_panel.open_cover.reset_mock()
     svc2 = cal_mod.CalibrationService(camera=mock_indi_camera, flat_panel=mock_flat_panel, output_dir=tmp_path)

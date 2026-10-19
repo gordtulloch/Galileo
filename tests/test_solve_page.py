@@ -757,3 +757,17 @@ def test_tc_plt_070_capture_options_reach_the_camera_and_filter_wheel(window, pa
     exposures = devices.camera.start_exposure.await_args_list
     assert [c.kwargs["frame_type"] for c in exposures] == ["Light", "Dark"]
     assert all(c.kwargs["binning"] == 2 and c.kwargs["gain"] == 120 for c in exposures)
+
+
+@pytest.mark.requirement("TC-IMG-110")
+@pytest.mark.priority("P2")
+def test_tc_img_110_solve_preview_is_debayered_when_pattern_given(tmp_path):
+    """IMG-110: the Solve screen's preview is debayered (colour) when the Imaging tab's Debayer box is on, mono otherwise."""
+    import numpy as np
+    from astropy.io import fits
+    from galileo.ui.solve import load_preview
+    path = tmp_path / "frame.fits"
+    fits.writeto(path, (np.random.default_rng(0).random((64, 64)) * 60000).astype(np.uint16))
+    assert load_preview(str(path)).ndim == 2
+    colour = load_preview(str(path), "RGGB")
+    assert colour.ndim == 3 and colour.shape[2] == 3

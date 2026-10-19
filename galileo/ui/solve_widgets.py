@@ -120,3 +120,49 @@ class SolveImageView(ImagePreviewView):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("SolveImage")
+
+
+class PolarTargetPlot(_PlotBase):
+    """Polar alignment's aiming view: a circle fixed at the centre for where the mount's axis points now, and an X
+    for where the celestial pole is, in the orientation of the camera frame. Turning the altitude and azimuth
+    adjusters moves the X; the job is to bring it into the circle. The circle's radius is the accuracy asked for."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(220, 220)
+        self.offset: tuple[float, float] | None = None      # arcmin, x right, y down
+        self.ring = 1.0                                     # arcmin; the circle's radius
+
+    def set_offset(self, offset: tuple[float, float] | None) -> None:
+        self.offset = offset
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = self._begin()
+        side = min(self.width(), self.height()) - 16
+        if side < 40:
+            painter.end()
+            return
+        c = QPointF(self.width() / 2, self.height() / 2)
+        reach = max(self.ring * 4.0, math.hypot(*self.offset) * 1.2) if self.offset else self.ring * 4.0
+        k = side / 2 / reach
+        painter.setPen(QPen(QColor("#555555"), 1))
+        painter.drawLine(QPointF(c.x() - side / 2, c.y()), QPointF(c.x() + side / 2, c.y()))
+        painter.drawLine(QPointF(c.x(), c.y() - side / 2), QPointF(c.x(), c.y() + side / 2))
+        close = self.offset is not None and math.hypot(*self.offset) <= self.ring
+        colour = QColor("#31c24a" if close else "#e0c030")
+        painter.setPen(QPen(colour, 2.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        radius = max(self.ring * k, 7.0)
+        painter.drawEllipse(c, radius, radius)               # where the axis points
+        if self.offset is None:
+            painter.setPen(QColor("#c8c8c8"))
+            painter.drawText(QRectF(0, c.y() + radius + 8, self.width(), 18), Qt.AlignmentFlag.AlignCenter, "Waiting for a measurement…")
+            painter.end()
+            return
+        x = QPointF(c.x() + self.offset[0] * k, c.y() + self.offset[1] * k)
+        painter.setPen(QPen(QColor("#d63a3a" if not close else "#31c24a"), 2.6))
+        arm = 8.0
+        painter.drawLine(QPointF(x.x() - arm, x.y() - arm), QPointF(x.x() + arm, x.y() + arm))
+        painter.drawLine(QPointF(x.x() - arm, x.y() + arm), QPointF(x.x() + arm, x.y() - arm))   # where the pole is
+        painter.end()

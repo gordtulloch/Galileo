@@ -1302,11 +1302,11 @@ def test_tc_eqp_mnt_020_park_and_tracking_controls_and_status_text(window):
 @pytest.mark.priority("MVP")
 def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window):
     """EQP-MNT-010: the N/S/E/W pad has a Fine/Medium/Coarse rate drop-down, and a jog moves the
-    mount at the selected rate (0.2 / 2 / 10 deg/s)."""
+    mount at the selected rate (1 / 10 / 50 deg/s)."""
     from PySide6 import QtWidgets
     page = window._build_mount_page()
     rate = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.findData(10.0) >= 0)
-    assert [rate.itemData(i) for i in range(rate.count())] == [0.2, 2.0, 10.0]
+    assert [rate.itemData(i) for i in range(rate.count())] == [1.0, 10.0, 50.0]
     mount = MagicMock()
     mount.get_status = AsyncMock(return_value={})
     mount.move_axis = AsyncMock()

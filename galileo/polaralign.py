@@ -60,6 +60,7 @@ SIDEREAL_DEG_PER_S = 360.98564736629 / 86400.0
 _MAX_FAILED_ADJUST_SOLVES = 3         # consecutive failures that end the adjust phase
 _TRAVEL_WARN_FRACTION = 0.9           # warn if the mount turned less than this share of what was asked
 _POLE_NEIGHBOURHOOD_DEG = 2.0         # within this of a pole a meridian flip is no concern
+_WORK_DEC_BAND = (60.0, 75.0)         # |Dec| range the measuring solves are taken in, away from the pole
 
 
 class PolarAlignError(Exception):
@@ -180,6 +181,43 @@ def polar_error(axis: np.ndarray, latitude_deg: float) -> PolarError:
         azimuth_rotation_arcsec=east * 3600.0)
 
 
+def target_offset_arcmin(result, axis: np.ndarray, when: dt.datetime, latitude: float, longitude: float,
+                         ) -> tuple[float, float] | None:
+    """Where the celestial pole lies relative to where the mount's axis points, as seen in the frame *result* solved:
+    ``(dx, dy)`` in arcminutes, x to the right and y downwards (the way the frame is shown).
+
+    The axis is a fixed point in the camera's view (the camera turns about it), and the pole moves towards it as
+    the altitude and azimuth adjusters are turned, so the user is asked to bring the pole (drawn as an X) into the
+    axis point (drawn as a circle). Both are put through the same horizon frame, so they coincide exactly when the
+    reported error is nil. ``None`` if the solver gave no CD matrix, or either point is too far from the frame
+    centre for a flat projection."""
+    cd = getattr(result, "cd", None)
+    if cd is None or result.ra_deg is None or result.dec_deg is None:
+        return None
+    from galileo.planning.star_atlas import horizontal_to_equatorial, julian_date, local_sidereal_deg
+    lst = local_sidereal_deg(julian_date(when), longitude)
+    ra0, dec0 = math.radians(result.ra_deg), math.radians(result.dec_deg)
+
+    def pixels(vector: np.ndarray) -> np.ndarray | None:
+        alt, az = vector_altaz(vector)
+        ra, dec = horizontal_to_equatorial(alt, az, lst, latitude)
+        ra, dec = mount_frame_to_j2000(ra, dec, None)
+        ra, dec = math.radians(ra), math.radians(dec)
+        d = math.sin(dec) * math.sin(dec0) + math.cos(dec) * math.cos(dec0) * math.cos(ra - ra0)
+        if d <= 0.05:
+            return None
+        xi = math.degrees(math.cos(dec) * math.sin(ra - ra0) / d)           # standard coordinates, east
+        eta = math.degrees((math.sin(dec) * math.cos(dec0) - math.cos(dec) * math.sin(dec0) * math.cos(ra - ra0)) / d)
+        return np.linalg.solve(np.array([[cd[0], cd[1]], [cd[2], cd[3]]]), np.array([xi, eta]))
+
+    circle, cross = pixels(axis), pixels(pole_vector(latitude))
+    if circle is None or cross is None:
+        return None
+    scale_arcmin = math.hypot(cd[0], cd[2]) * 60.0
+    dx, dy = (cross - circle) * scale_arcmin
+    return float(dx), float(dy)
+
+
 def _rotate_about(vector: np.ndarray, axis: np.ndarray, degrees: float) -> np.ndarray:
     a = math.radians(degrees)
     return (vector * math.cos(a) + np.cross(axis, vector) * math.sin(a)
@@ -240,6 +278,8 @@ def axis_after_adjustment(axis: np.ndarray, anchor: np.ndarray, new: np.ndarray,
 class PolarAlignSettings(SolveSettings):
     """One polar-alignment run's settings. ``exposure_s``, ``settle_s`` and ``scale_hint_arcsec_px``
     are those of :class:`~galileo.platesolve.SolveSettings`."""
+    work_dec_deg: float = 70.0        # declination (magnitude) to measure at, when the scope doesn't already
+                                      # sit in the 60-75° band: solves right at the pole are unreliable
     step_deg: float = 30.0            # how far the mount turns in RA between the measuring solves
     direction: str = "east"           # "east" or "west": which way the RA axis turns
     refraction: bool = True           # raise solved altitudes by atmospheric refraction
@@ -253,6 +293,9 @@ class PolarAlignProgress:
     step: int = 0                     # measuring: the solve being taken, 1-based
     steps: int = MEASURE_POINTS
     error: PolarError | None = None   # known once measuring is done, refreshed on every adjusting solve
+    # Adjusting: where the pole (X) lies relative to the axis point (circle) in the latest frame, in
+    # arcminutes (x right, y down); ``None`` when the solver gave no WCS to place them with.
+    target_offset: tuple[float, float] | None = None
 
 
 class PolarAlignWorkflow(SolveWorkflow):
@@ -278,9 +321,10 @@ class PolarAlignWorkflow(SolveWorkflow):
         """Measure, then adjust until :meth:`stop` is called (or solving keeps failing)."""
         await self._run(self._align(settings))
 
-    def _report(self, phase: str, message: str, step: int = 0, error: PolarError | None = None) -> None:
+    def _report(self, phase: str, message: str, step: int = 0, error: PolarError | None = None,
+                target_offset: tuple[float, float] | None = None) -> None:
         self._log(message)
-        self._on_progress(PolarAlignProgress(phase, message, step=step, error=error))
+        self._on_progress(PolarAlignProgress(phase, message, step=step, error=error, target_offset=target_offset))
 
     def _crosses_meridian(self, start_ra: float, dec: float, offsets: list[float]) -> bool:
         """Whether turning to *offsets* degrees from *start_ra* takes a GEM across the meridian (where it
@@ -303,8 +347,27 @@ class PolarAlignWorkflow(SolveWorkflow):
         start_ra, dec, system = position
         direction = 1.0 if settings.direction == "east" else -1.0
         offsets = [direction * settings.step_deg * i for i in range(MEASURE_POINTS)]
+
+        # The user starts with the scope at the pole. Solves there are unreliable (the field's RA
+        # converges) and an RA turn about the axis barely moves the camera, so the three measuring
+        # positions are taken well away from the pole, at a declination of the working band.
+        if not _WORK_DEC_BAND[0] <= abs(dec) <= _WORK_DEC_BAND[1]:
+            target_dec = math.copysign(settings.work_dec_deg, self.latitude if self.latitude else 1.0)
+            if abs(dec) > 90.0 - _POLE_NEIGHBOURHOOD_DEG:
+                # At the pole RA means nothing, so choose one that leaves the whole swing on one side of the
+                # meridian: east of it (negative hour angle) when turning west, and the reverse turning east.
+                from galileo.planning.star_atlas import julian_date, local_sidereal_deg
+                lst = local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), self.longitude)
+                reach = max(90.0, (MEASURE_POINTS - 1) * settings.step_deg + 15.0)
+                start_ra = (lst - direction * reach) % 360.0
+            self._report("measuring", f"Moving away from the pole to Dec {target_dec:+.0f}° before measuring…")
+            await self._slew(mount_frame_to_j2000(start_ra, target_dec, system), system)
+            await asyncio.sleep(settings.settle_s)
+            moved = await self._mount_position()
+            start_ra, dec, system = moved if moved is not None else (start_ra, target_dec, system)
+
         if self._crosses_meridian(*j2000_to_mount_frame(*mount_frame_to_j2000(start_ra, dec, system), None), offsets):
-            self._report("measuring", f"Turning {settings.step_deg:g}° twice {settings.direction} would take the mount "
+            self._report("measuring", f"Turning {abs(offsets[-1]):g}° {settings.direction} would take the mount "
                                       "across the meridian, where it would flip. Turn the other way, or start further "
                                       "from the meridian.")
             return
@@ -340,7 +403,9 @@ class PolarAlignWorkflow(SolveWorkflow):
             return
         self.error = polar_error(axis, self.latitude)
         self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole. "
-                                  "Adjust the mount; this updates as you do.", MEASURE_POINTS, self.error)
+                                  "Turn the altitude and azimuth adjusters to bring the X into the circle.",
+                     MEASURE_POINTS, self.error,
+                     target_offset_arcmin(solved[2], axis, stamps[-1], self.latitude, self.longitude))
 
         anchor, anchor_time = vectors[-1], stamps[-1]
         failures = 0
@@ -361,11 +426,12 @@ class PolarAlignWorkflow(SolveWorkflow):
                 continue
             self.error = polar_error(adjusted, self.latitude)
             self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole.",
-                         MEASURE_POINTS, self.error)
+                         MEASURE_POINTS, self.error,
+                         target_offset_arcmin(fresh[2], adjusted, fresh[1], self.latitude, self.longitude))
 
-    async def _capture_solve(self, settings: PolarAlignSettings, hint, attempt: int) -> tuple[np.ndarray, dt.datetime] | None:
-        """One frame, solved: where it points in the horizon frame and when (mid-exposure), or ``None``
-        if either step failed."""
+    async def _capture_solve(self, settings: PolarAlignSettings, hint, attempt: int) -> tuple[np.ndarray, dt.datetime, object] | None:
+        """One frame, solved: where it points in the horizon frame, when (mid-exposure) and the solver's result,
+        or ``None`` if either step failed."""
         frame = await self._capture(settings, attempt)
         if frame is None:
             return None
@@ -374,4 +440,4 @@ class PolarAlignWorkflow(SolveWorkflow):
         if not result.success or result.ra_deg is None or result.dec_deg is None:
             return None
         ra, dec = j2000_to_mount_frame(result.ra_deg, result.dec_deg, None)       # coordinates of date
-        return horizon_vector(ra, dec, stamp, self.latitude, self.longitude, settings.refraction), stamp
+        return horizon_vector(ra, dec, stamp, self.latitude, self.longitude, settings.refraction), stamp, result

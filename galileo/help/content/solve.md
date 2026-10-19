@@ -177,7 +177,7 @@ Saves the results to a CSV file.
 
 ## Polar Alignment
 
-Helps you point the mount's polar axis exactly at the celestial pole. Point it roughly first, then start. Galileo solves three frames, turning the mount in RA between them, to find where the axis really points, then keeps solving so the error updates live as you turn the altitude and azimuth adjusters. The mount must be level and not near the meridian, where it would flip. It needs a camera, a mount, and the Observatory's latitude and longitude.
+Helps you point the mount's polar axis exactly at the celestial pole. Point the scope at the pole to begin (roughly aligned, Polaris in the field), then start. Galileo first moves away from the pole to about Dec 70° (a solve right at the pole is unreliable), then solves three frames, turning the mount in RA between them, to find where the axis really points, then keeps solving so the error updates live as you turn the altitude and azimuth adjusters. The mount must be level and not near the meridian, where it would flip. It needs a camera, a mount, and the Observatory's latitude and longitude.
 
 ## Start Polar Alignment
 
@@ -210,3 +210,7 @@ Which way and how much to move the mount's altitude adjuster, in words (for exam
 ## Azimuth correction
 
 Which way and how much to move the mount's azimuth adjuster, in words.
+
+## Polar target
+
+The aiming view that appears once the axis has been measured. The **circle** is where the mount's polar axis points now; the **X** is the celestial pole, drawn in the orientation of the camera frame. Turn the altitude and azimuth adjusters to bring the X into the circle: the circle turns green when the error is within a minute of arc. It updates with every solve. Some solvers don't report the field geometry it needs, in which case it isn't drawn and the written corrections above are all you get.

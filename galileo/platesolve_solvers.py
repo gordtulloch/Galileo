@@ -73,6 +73,9 @@ class SolveResult:
     rotation_deg: float | None = None
     scale_arcsec_px: float | None = None
     failure_reason: str = ""
+    # The solution's CD matrix (CD1_1, CD1_2, CD2_1, CD2_2; degrees per pixel, referenced to the image
+    # centre) when the solver gives one, so a sky position can be placed on the frame (polar alignment).
+    cd: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -499,7 +502,8 @@ def _result_from_wcs(path: Path) -> SolveResult:
             cd11, cd12, cd21, cd22 = float(header["CDELT1"]), 0.0, 0.0, float(header["CDELT2"])
         return SolveResult(success=True, ra_deg=ra, dec_deg=dec,
                            rotation_deg=math.degrees(math.atan2(cd12, cd22)),
-                           scale_arcsec_px=math.hypot(cd11, cd21) * 3600.0)
+                           scale_arcsec_px=math.hypot(cd11, cd21) * 3600.0,
+                           cd=(cd11, cd12, cd21, cd22) if "CD1_1" in header else None)
     except Exception as exc:
         return SolveResult(success=False, failure_reason=f"Could not read astrometry.net's solution: {exc}")
 
@@ -522,14 +526,16 @@ def _result_from_astap_ini(ini: dict[str, str]) -> SolveResult:
     which ASTAP references to the image centre (CRVAL1/2, J2000)."""
     try:
         ra, dec = float(ini["CRVAL1"]), float(ini["CRVAL2"])
+        cd = None
         if all(k in ini for k in ("CD1_1", "CD1_2", "CD2_1", "CD2_2")):
             cd11, cd12, cd21, cd22 = (float(ini[k]) for k in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"))
+            cd = (cd11, cd12, cd21, cd22)
             scale = math.hypot(cd11, cd21) * 3600.0         # the x-axis pixel size, whatever the rotation
             rotation = math.degrees(math.atan2(cd12, cd22))  # 0 = north up (east left); flips keep this convention
         else:
             scale = abs(float(ini["CDELT1"])) * 3600.0
             rotation = float(ini.get("CROTA2", 0.0))
-        return SolveResult(success=True, ra_deg=ra, dec_deg=dec, rotation_deg=rotation, scale_arcsec_px=scale)
+        return SolveResult(success=True, ra_deg=ra, dec_deg=dec, rotation_deg=rotation, scale_arcsec_px=scale, cd=cd)
     except (KeyError, ValueError) as exc:
         return SolveResult(success=False, failure_reason=f"Could not read ASTAP's solution: {exc}")
 

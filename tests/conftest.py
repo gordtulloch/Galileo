@@ -176,6 +176,8 @@ def mock_flat_panel():
     fp.open_cover = AsyncMock()
     fp.close_cover = AsyncMock()
     fp.set_brightness = AsyncMock()
+    fp.light_on = AsyncMock()
+    fp.light_off = AsyncMock()
     return fp
 
 
