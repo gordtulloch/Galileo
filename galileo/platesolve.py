@@ -431,9 +431,25 @@ class SolveWorkflow:
     async def _slew(self, coords: tuple[float, float], system: str | None) -> None:
         ra, dec = j2000_to_mount_frame(*coords, system)
         self._log(f"Slewing to RA:{_hms(coords[0])} DEC:{_dms(coords[1])}…")
+        before = await self._mount_position()
         await self.mount.slew_to_coordinates(ra, dec)
         await self._wait_for_slew()
+        after = await self._mount_position()
+        self._log_slew_result(coords, before, after, system)
         await self._resume_tracking()
+
+    def _log_slew_result(self, coords, before, after, system: str | None) -> None:
+        """Log where the mount says it started and finished a slew, as offsets from the requested
+        position (arcsec, RA offset on the sky), so a mount that stops short or lands off can be
+        told apart from a bad solve."""
+        def offset(position):
+            if position is None:
+                return "unknown"
+            d_ra, d_dec = angular_offset_arcsec(
+                *mount_frame_to_j2000(position[0], position[1], system), *coords)
+            return f"dRA {d_ra:+.1f}″ dDec {d_dec:+.1f}″"
+        self._log(f"Mount reports {offset(after)} from the requested position at the end of the slew "
+                  f"(it was {offset(before)} before).")
 
     async def _resume_tracking(self) -> None:
         """Track the target at its own rate now the mount has arrived (EQP-MNT-050). A failure

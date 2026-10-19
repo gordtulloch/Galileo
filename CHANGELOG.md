@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Plate-solve slews now log where the mount says it ended up.** Slew to Target was giving up a little outside the accuracy setting (e.g. 37.9″ against 30″) and the log couldn't show whether the mount was stopping short or the solve was off. After every slew the log now reads "Mount reports dRA … dDec … from the requested position at the end of the slew (it was … before)". Diagnostic only; if it shows the mount stopping short, the sync-then-slew loop will be reworked. No control changed, so no help/wiki change.
+
 ### Fixed
 
 - **Polar alignment no longer takes a frame before the mount has reached its position.** A run started at the pole could capture and try to solve at the pole before the move away from it had begun, so the solve failed. The mount's "slewing" flag can still read false just after a slew command, and the workflow took that as having arrived. It now polls the mount's reported position after every slew (the move off the pole and each RA turn) and only settles and captures once it is within 1° of where it was sent; if it never gets there within `arrival_timeout_s` (120 s) the run stops and says so instead of solving the wrong place. Tests added; no control changed, so no inline-help or wiki change.
