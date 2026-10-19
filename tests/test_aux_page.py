@@ -173,6 +173,23 @@ def test_tc_eqp_aux_010_number_set_button_writes_the_slider_value(window):
 
 @pytest.mark.requirement("TC-EQP-AUX-010")
 @pytest.mark.priority("P2")
+def test_tc_eqp_aux_010_non_finite_number_does_not_break_panel(window):
+    """EQP-AUX-010: a driver-reported NaN is rendered as an editable finite value instead of crashing the panel."""
+    aux = FakeAux()
+    aux.groups[0].properties[2].elements[0].value = float("nan")
+
+    page = _connect(window, aux)
+    tab = page.findChildren(QtWidgets.QTabWidget)[0]
+    spin = tab.findChildren(QtWidgets.QDoubleSpinBox)[0]
+
+    assert spin.value() == pytest.approx(1.0)
+    assert "non-finite value" in spin.toolTip()
+    _button(tab, "Set").click()
+    assert ("CAP_DURATION", {"DURATION": 1.0}) in aux.calls
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
 def test_tc_eqp_aux_010_disconnect_clears_the_panel(window):
     """EQP-AUX-010: the Pier-level Disconnect path tears down the panel back to the placeholder."""
     aux = FakeAux()

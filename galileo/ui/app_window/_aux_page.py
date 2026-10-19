@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import math
+
 from galileo.ui.qt_helpers import take_widget
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
@@ -186,11 +188,15 @@ class AppWindowAuxPageMixin:
             for el in prop.elements:
                 if multi:
                     row.addWidget(QLabel(el.label))
-                lo = el.min if el.min is not None else 0.0
-                value = float(el.value) if el.value is not None else lo
-                hi = el.max if el.max is not None else max(lo + 1.0, value * 2.0, 100.0)
-                step = el.step or 1.0
-                scale = (1.0 / step) if step > 0 else 1.0
+                lo = el.min if el.min is not None and math.isfinite(el.min) else 0.0
+                raw_value = float(el.value) if el.value is not None else lo
+                value = raw_value if math.isfinite(raw_value) else lo
+                hi = el.max if el.max is not None and math.isfinite(el.max) else max(lo + 1.0, value * 2.0, 100.0)
+                step = el.step if el.step is not None and math.isfinite(el.step) and el.step > 0 else 1.0
+                if hi <= lo:
+                    hi = lo + step
+                value = min(max(value, lo), hi)
+                scale = 1.0 / step
 
                 slider = QSlider(Qt.Orientation.Horizontal)
                 slider.setRange(round(lo * scale), round(hi * scale))
@@ -200,6 +206,10 @@ class AppWindowAuxPageMixin:
                 spin.setDecimals(3 if step < 1 else 1)
                 spin.setValue(value)
                 slider.setValue(round(value * scale))
+                if not math.isfinite(raw_value):
+                    spin.setToolTip(
+                        "The driver reported a non-finite value. Edit this field and click Set to send a valid value."
+                    )
                 spin.setEnabled(prop.perm != "ro")
                 slider.setEnabled(prop.perm != "ro")
 
@@ -230,9 +240,12 @@ class AppWindowAuxPageMixin:
                     value = live.get(name)
                     if value is None:
                         continue
+                    numeric_value = float(value)
+                    if not math.isfinite(numeric_value):
+                        continue
                     spin.blockSignals(True)
                     slider.blockSignals(True)
-                    spin.setValue(float(value))
+                    spin.setValue(numeric_value)
                     slider.setValue(round(spin.value() * scale))
                     spin.blockSignals(False)
                     slider.blockSignals(False)

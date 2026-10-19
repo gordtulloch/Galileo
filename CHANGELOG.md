@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Opening OnStep LX200 driver parameters in Equipment > Aux no longer crashes when a numeric INDI field reports `NaN`.** The Aux controls now use a finite editable fallback for invalid values and ignore subsequent non-finite refreshes, so the driver panel remains usable. No controls changed; regression test added.
 - **Polar alignment no longer takes a frame before the mount has reached its position.** A run started at the pole could capture and try to solve at the pole before the move away from it had begun, so the solve failed. The mount's "slewing" flag can still read false just after a slew command, and the workflow took that as having arrived. It now polls the mount's reported position after every slew (the move off the pole and each RA turn) and only settles and captures once it is within 1° of where it was sent; if it never gets there within `arrival_timeout_s` (120 s) the run stops and says so instead of solving the wrong place. Tests added; no control changed, so no inline-help or wiki change.
 - **Linux AppImage still aborted after the GLib fix (`Fatal Python error: none_dealloc` in the Star Atlas grid).** The release build had resolved PySide6 6.12.0, newer than the 6.11.2 the app is developed on; the abort is a refcount error inside PySide6/shiboken. PySide6 is now capped at `<6.12` in `pyproject.toml` so the installers bundle 6.11.x. Raise the cap once a fixed PySide6 is verified. No help/wiki/design-doc impact.
 
