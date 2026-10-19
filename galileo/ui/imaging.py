@@ -33,8 +33,8 @@ LANDSCAPE = "landscape"
 
 # Nudge speeds in deg/s (the unit of the mount adapters' ``move_axis``), slowest first.
 # INDI snaps each to one of the driver's standard rates (guide / centering / find).
-# deg/s. Fifty times what they once were (10x, then a further 5x): users still found the speeds extremely slow.
-NUDGE_RATES: dict = {"Fine": 1.0, "Medium": 10.0, "Coarse": 50.0}
+# deg/s. Keep the maximum at 10°/s so short nudges remain controlled.
+NUDGE_RATES: dict = {"Fine": 1.0, "Medium": 5.0, "Coarse": 10.0}
 NUDGE_DIRECTIONS = ("N", "S", "E", "W")
 
 

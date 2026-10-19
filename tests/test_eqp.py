@@ -1306,7 +1306,7 @@ def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window)
     from PySide6 import QtWidgets
     page = window._build_mount_page()
     rate = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.findData(10.0) >= 0)
-    assert [rate.itemData(i) for i in range(rate.count())] == [1.0, 10.0, 50.0]
+    assert [rate.itemData(i) for i in range(rate.count())] == [1.0, 5.0, 10.0]
     mount = MagicMock()
     mount.get_status = AsyncMock(return_value={})
     mount.move_axis = AsyncMock()
