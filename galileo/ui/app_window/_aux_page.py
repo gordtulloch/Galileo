@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 # Alpaca Aux panels show a steady grey dot — not a regression, there's simply
 # nothing else to show.
 _STATE_COLOR = {"Ok": "#2ecc71", "Busy": "#f1c40f", "Alert": "#e74c3c"}
+_AUX_SLIDER_STEPS = 10_000
 
 
 class AppWindowAuxPageMixin:
@@ -183,8 +184,8 @@ class AppWindowAuxPageMixin:
             row.addStretch(1)
 
             multi = len(prop.elements) > 1
-            # (slider, spin, element name, slider-per-unit scale)
-            controls: list[tuple[Any, Any, str, float]] = []
+            # (slider, spin, element name, numeric minimum, numeric maximum)
+            controls: list[tuple[Any, Any, str, float, float]] = []
             for el in prop.elements:
                 if multi:
                     row.addWidget(QLabel(el.label))
@@ -196,16 +197,16 @@ class AppWindowAuxPageMixin:
                 if hi <= lo:
                     hi = lo + step
                 value = min(max(value, lo), hi)
-                scale = 1.0 / step
 
                 slider = QSlider(Qt.Orientation.Horizontal)
-                slider.setRange(round(lo * scale), round(hi * scale))
+                slider.setRange(0, _AUX_SLIDER_STEPS)
                 spin = QDoubleSpinBox()
                 spin.setRange(lo, hi)
                 spin.setSingleStep(step)
                 spin.setDecimals(3 if step < 1 else 1)
                 spin.setValue(value)
-                slider.setValue(round(value * scale))
+                fraction = ((value / 2 - lo / 2) / (hi / 2 - lo / 2)) if hi != lo else 0.0
+                slider.setValue(round(fraction * _AUX_SLIDER_STEPS))
                 if not math.isfinite(raw_value):
                     spin.setToolTip(
                         "The driver reported a non-finite value. Edit this field and click Set to send a valid value."
@@ -213,12 +214,18 @@ class AppWindowAuxPageMixin:
                 spin.setEnabled(prop.perm != "ro")
                 slider.setEnabled(prop.perm != "ro")
 
-                slider.valueChanged.connect(lambda v, spin=spin, scale=scale: spin.setValue(v / scale))
-                spin.valueChanged.connect(lambda v, slider=slider, scale=scale: slider.setValue(round(v * scale)))
+                slider.valueChanged.connect(
+                    lambda v, spin=spin, lo=lo, hi=hi:
+                        spin.setValue(lo * (1 - v / _AUX_SLIDER_STEPS) + hi * (v / _AUX_SLIDER_STEPS))
+                )
+                spin.valueChanged.connect(
+                    lambda v, slider=slider, lo=lo, hi=hi:
+                        slider.setValue(round(((v / 2 - lo / 2) / (hi / 2 - lo / 2)) * _AUX_SLIDER_STEPS))
+                )
 
                 row.addWidget(slider, 1)
                 row.addWidget(spin)
-                controls.append((slider, spin, el.name, scale))
+                controls.append((slider, spin, el.name, lo, hi))
 
             set_btn = QPushButton("Set")
             set_btn.setObjectName("AccentButton")
@@ -226,7 +233,7 @@ class AppWindowAuxPageMixin:
             row.addWidget(set_btn)
 
             def _on_set() -> None:
-                values = {name: spin.value() for _slider, spin, name, _scale in controls}
+                values = {name: spin.value() for _slider, spin, name, _lo, _hi in controls}
                 _write(prop.name, values)
 
             set_btn.clicked.connect(_on_set)
@@ -234,7 +241,7 @@ class AppWindowAuxPageMixin:
             def _refresh(p) -> None:
                 dot.setStyleSheet(f"color: {_STATE_COLOR.get(p.state, '#888888')}; font-size: 14px;")
                 live = {el.name: el.value for el in p.elements}
-                for slider, spin, name, scale in controls:
+                for slider, spin, name, lo, hi in controls:
                     if spin.hasFocus() or slider.isSliderDown():
                         continue  # don't clobber a value the user is mid-edit on
                     value = live.get(name)
@@ -246,7 +253,8 @@ class AppWindowAuxPageMixin:
                     spin.blockSignals(True)
                     slider.blockSignals(True)
                     spin.setValue(numeric_value)
-                    slider.setValue(round(spin.value() * scale))
+                    fraction = ((spin.value() / 2 - lo / 2) / (hi / 2 - lo / 2)) if hi != lo else 0.0
+                    slider.setValue(round(fraction * _AUX_SLIDER_STEPS))
                     spin.blockSignals(False)
                     slider.blockSignals(False)
 

@@ -190,6 +190,25 @@ def test_tc_eqp_aux_010_non_finite_number_does_not_break_panel(window):
 
 @pytest.mark.requirement("TC-EQP-AUX-010")
 @pytest.mark.priority("P2")
+def test_tc_eqp_aux_010_very_small_driver_step_uses_bounded_slider(window):
+    """EQP-AUX-010: tiny driver increments do not overflow the integer-backed Qt slider."""
+    aux = FakeAux()
+    duration = aux.groups[0].properties[2].elements[0]
+    duration.min = -16_384_000_000.0
+    duration.max = 16_384_000_000.0
+    duration.step = 1e-7
+    duration.value = 0.0
+
+    page = _connect(window, aux)
+    tab = page.findChildren(QtWidgets.QTabWidget)[0]
+    slider = tab.findChildren(QtWidgets.QSlider)[0]
+
+    assert slider.minimum() == 0
+    assert slider.maximum() == 10_000
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
 def test_tc_eqp_aux_010_disconnect_clears_the_panel(window):
     """EQP-AUX-010: the Pier-level Disconnect path tears down the panel back to the placeholder."""
     aux = FakeAux()
