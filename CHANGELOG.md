@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Plate-solve slews now log where the mount says it ended up.** Slew to Target was giving up a little outside the accuracy setting (e.g. 37.9″ against 30″) and the log couldn't show whether the mount was stopping short or the solve was off. After every slew the log now reads "Mount reports dRA … dDec … from the requested position at the end of the slew (it was … before)". Diagnostic only; if it shows the mount stopping short, the sync-then-slew loop will be reworked. No control changed, so no help/wiki change.
+
 ### Fixed
 
 - **Opening OnStep LX200 driver parameters in Equipment > Aux no longer crashes when a numeric INDI field reports `NaN`.** The Aux controls now use a finite editable fallback for invalid values and ignore subsequent non-finite refreshes, so the driver panel remains usable. No controls changed; regression test added.
