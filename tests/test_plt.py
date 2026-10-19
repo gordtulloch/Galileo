@@ -1113,6 +1113,13 @@ def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0, dec=70.0):
                                                "equatorial_system": "JNOW", "slewing": False})
     slews: list = []
     mount.slew_to_coordinates = AsyncMock(side_effect=lambda ra, dec: slews.append((ra, dec)))
+    initial = mount.get_status.return_value if hasattr(mount.get_status, "return_value") else None
+
+    async def where_it_is():             # the fake mount ends up where it was last sent
+        if not slews:
+            return dict(initial)
+        return {**initial, "right_ascension": slews[-1][0] / 15.0, "declination": slews[-1][1]}
+    mount.get_status = AsyncMock(side_effect=where_it_is)
     mount.abort_slew = AsyncMock()
     solver = PlateSolver(backend="astap", executable="unused")
     solver._run_solver = AsyncMock(side_effect=results)
@@ -1628,3 +1635,40 @@ def test_tc_plt_080_target_offset_is_nil_on_the_pole_and_points_toward_it_otherw
     dx, dy = target_offset_arcmin(result, off, when, LATITUDE, LONGITUDE)
     assert np.hypot(dx, dy) == pytest.approx(30.0, rel=0.15)
     assert target_offset_arcmin(SolveResult(success=True, ra_deg=ra, dec_deg=dec), off, when, LATITUDE, LONGITUDE) is None
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_no_frame_is_taken_until_the_mount_has_arrived(tmp_path):
+    """PLT-080: A mount whose status still shows the old position (or "not slewing") just after a slew command is waited for; no frame is taken at the pole."""
+    from galileo.polaralign import PolarAlignSettings
+    seen: list = []
+    workflow, slews, _ = _polar_rig(tmp_path, [], seen.append, dec=89.9)
+    real_status = workflow.mount.get_status
+    polls = {"n": 0}
+
+    async def lagging():                 # the first few polls after the slew still show the pole
+        status = await real_status()
+        if slews and polls["n"] < 3:
+            polls["n"] += 1
+            return {**status, "declination": 89.9}
+        return status
+    workflow.mount.get_status = AsyncMock(side_effect=lagging)
+    frames_at: list = []
+    workflow.camera.start_exposure = AsyncMock(side_effect=lambda **kw: frames_at.append(
+        workflow.mount.get_status.await_count and polls["n"]))
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west"))
+    assert polls["n"] == 3 and frames_at and frames_at[0] == 3      # the first frame came only after the lag cleared
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_run_stops_if_the_mount_never_arrives(tmp_path):
+    """PLT-080: If the mount never reaches the position it was sent to, the run says so and takes no frame."""
+    from galileo.polaralign import PolarAlignSettings
+    seen: list = []
+    workflow, slews, _ = _polar_rig(tmp_path, [], seen.append, dec=89.9)
+    stuck = {"right_ascension": 1.0, "declination": 89.9, "equatorial_system": "JNOW", "slewing": False}
+    workflow.mount.get_status = AsyncMock(return_value=stuck)
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, arrival_timeout_s=0.2))
+    assert "did not reach" in seen[-1].message and workflow.camera.start_exposure.await_count == 0

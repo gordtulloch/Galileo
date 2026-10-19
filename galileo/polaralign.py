@@ -60,6 +60,7 @@ SIDEREAL_DEG_PER_S = 360.98564736629 / 86400.0
 _MAX_FAILED_ADJUST_SOLVES = 3         # consecutive failures that end the adjust phase
 _TRAVEL_WARN_FRACTION = 0.9           # warn if the mount turned less than this share of what was asked
 _POLE_NEIGHBOURHOOD_DEG = 2.0         # within this of a pole a meridian flip is no concern
+_ARRIVAL_TOLERANCE_DEG = 1.0          # how close to its target the mount must report being before a frame is taken
 _WORK_DEC_BAND = (60.0, 75.0)         # |Dec| range the measuring solves are taken in, away from the pole
 
 
@@ -283,6 +284,7 @@ class PolarAlignSettings(SolveSettings):
     step_deg: float = 30.0            # how far the mount turns in RA between the measuring solves
     direction: str = "east"           # "east" or "west": which way the RA axis turns
     refraction: bool = True           # raise solved altitudes by atmospheric refraction
+    arrival_timeout_s: float = 120.0  # how long to wait for the mount to reach each position before giving up
 
 
 @dataclass
@@ -336,6 +338,28 @@ class PolarAlignWorkflow(SolveWorkflow):
         hour_angles = [_wrap180(lst - (start_ra + offset)) for offset in offsets]
         return min(hour_angles) <= 0.0 <= max(hour_angles)
 
+    async def _slew_and_arrive(self, ra: float, dec: float, system: str | None, settings: PolarAlignSettings,
+                               ) -> tuple[float, float, str | None] | None:
+        """Slew to the mount-frame position (*ra*, *dec*) and wait until the mount reports being there, then settle.
+        Returns where it ended up, or ``None`` (after saying so) if it never got there. A mount's "slewing" flag can
+        still read false just after the command, so the slew finishing is not taken as arriving: a frame taken then
+        is of the wrong place."""
+        await self._slew(mount_frame_to_j2000(ra, dec, system), system)
+        deadline = asyncio.get_running_loop().time() + settings.arrival_timeout_s
+        while True:
+            position = await self._mount_position()
+            if position is not None:
+                separation = math.hypot(_wrap180(position[0] - ra) * math.cos(math.radians(dec)), position[1] - dec)
+                if separation <= _ARRIVAL_TOLERANCE_DEG:
+                    break
+            if asyncio.get_running_loop().time() >= deadline:
+                self._report("measuring", "The mount did not reach the position it was sent to, so no frame was taken "
+                                          "there. Check that it is unparked, tracking, and clear of its limits.")
+                return None
+            await asyncio.sleep(1.0)
+        await asyncio.sleep(settings.settle_s)
+        return position
+
     async def _align(self, settings: PolarAlignSettings) -> None:
         if self.mount is None:
             self._log("Polar alignment needs a connected mount to rotate.")
@@ -361,10 +385,10 @@ class PolarAlignWorkflow(SolveWorkflow):
                 reach = max(90.0, (MEASURE_POINTS - 1) * settings.step_deg + 15.0)
                 start_ra = (lst - direction * reach) % 360.0
             self._report("measuring", f"Moving away from the pole to Dec {target_dec:+.0f}° before measuring…")
-            await self._slew(mount_frame_to_j2000(start_ra, target_dec, system), system)
-            await asyncio.sleep(settings.settle_s)
-            moved = await self._mount_position()
-            start_ra, dec, system = moved if moved is not None else (start_ra, target_dec, system)
+            moved = await self._slew_and_arrive(start_ra, target_dec, system, settings)
+            if moved is None:
+                return
+            start_ra, dec, system = moved
 
         if self._crosses_meridian(*j2000_to_mount_frame(*mount_frame_to_j2000(start_ra, dec, system), None), offsets):
             self._report("measuring", f"Turning {abs(offsets[-1]):g}° {settings.direction} would take the mount "
@@ -379,14 +403,13 @@ class PolarAlignWorkflow(SolveWorkflow):
         for i in range(MEASURE_POINTS):
             if i:
                 self._report("measuring", f"Rotating the mount {settings.step_deg:g}° {settings.direction}…", i)
-                await self._slew(mount_frame_to_j2000((start_ra + offsets[i]) % 360.0, dec, system), system)
-                await asyncio.sleep(settings.settle_s)
-                moved = await self._mount_position()
-                if moved is not None:
-                    hint = mount_frame_to_j2000(moved[0], moved[1], system)
-                    turned = _wrap180(moved[0] - start_ra)
-                    if abs(turned) < _TRAVEL_WARN_FRACTION * abs(offsets[i]):
-                        self._log(f"The mount turned {turned:+.1f}° of the {offsets[i]:+.1f}° asked for; carrying on.")
+                moved = await self._slew_and_arrive((start_ra + offsets[i]) % 360.0, dec, system, settings)
+                if moved is None:
+                    return
+                hint = mount_frame_to_j2000(moved[0], moved[1], system)
+                turned = _wrap180(moved[0] - start_ra)
+                if abs(turned) < _TRAVEL_WARN_FRACTION * abs(offsets[i]):
+                    self._log(f"The mount turned {turned:+.1f}° of the {offsets[i]:+.1f}° asked for; carrying on.")
             self._report("measuring", f"Solving position {i + 1} of {MEASURE_POINTS}…", i + 1)
             solved = await self._capture_solve(settings, hint, attempt)
             attempt += 1
