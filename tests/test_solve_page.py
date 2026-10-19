@@ -645,6 +645,12 @@ def _lst_now() -> float:
     return local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), _POLAR_LON)
 
 
+def _zenith_solution() -> SolveResult:
+    """The solve of the frame taken at the zenith that starts a polar-alignment run."""
+    ra, dec = mount_frame_to_j2000(_lst_now(), _POLAR_LAT, None)
+    return SolveResult(success=True, ra_deg=ra, dec_deg=dec, rotation_deg=0.0, scale_arcsec_px=3.0)
+
+
 def _polar_solutions(count: int) -> list[SolveResult]:
     """*count* solves of a camera 35° from an axis 12′ too high and 0.3° east of the pole at the test site,
     turned 30° about it between solves (the last repeated)."""
@@ -696,10 +702,14 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     """PLT-080: Start Polar Alignment turns the mount, solves, and shows the measured error with plain advice; Stop ends it."""
     window.observatory.latitude, window.observatory.longitude = _POLAR_LAT, _POLAR_LON
     window.observatory.save()
-    devices = _Devices(window, page, _polar_solutions(8))
-    # Pointing well before the meridian wherever the test happens to run, so turning west doesn't cross it.
+    devices = _Devices(window, page, [_zenith_solution()] + _polar_solutions(8))
+    # The scope starts anywhere (here low in the south-east, nowhere near the pole); the fake mount ends up where it is sent.
+    slewed: list = []
+    devices.mount.slew_to_coordinates = AsyncMock(side_effect=lambda ra, dec: (
+        slewed.append((ra, dec)), devices.calls.append(("slew", ra, dec))))
     devices.mount.get_status = AsyncMock(side_effect=lambda: {
-        "right_ascension": ((_lst_now() + 90.0) % 360.0) / 15.0, "declination": 70.0,
+        "right_ascension": (slewed[-1][0] if slewed else 100.0) / 15.0,
+        "declination": slewed[-1][1] if slewed else 10.0,
         "equatorial_system": "JNOW", "slewing": False})
     page.settle_spin.setValue(0)
     page.exposure_spin.setValue(0.1)
@@ -714,8 +724,9 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     assert page.polar_total.text().startswith("16′")        # 12′ high and 0.3°·cos(51°) east: 16.5′ from the pole
     assert re.match(r"Lower the polar axis by 1[123]′", page.polar_altitude.text())
     assert page.polar_azimuth.text().startswith("Move the polar axis west by")
-    start = (_lst_now() + 90.0) % 360.0
-    assert [round((start - call[1]) % 360.0) for call in devices.calls if call[0] == "slew"] == [30, 60]
+    slews = [call[1:] for call in devices.calls if call[0] == "slew"]
+    assert slews[0][0] == pytest.approx(_lst_now(), abs=0.5) and slews[0][1] == pytest.approx(_POLAR_LAT, abs=0.01)  # zenith first
+    assert [round((slews[1][0] - ra) % 360.0) for ra, _ in slews[1:]] == [0, 30, 60]     # then the measuring turns
 
     page.stop()
     assert _pump(window, lambda: page.polar_start_btn.isEnabled())

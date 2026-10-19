@@ -44,3 +44,6 @@ PySide6>=6.5
 
 # Async
 qasync>=0.27
+
+# Satellites
+sgp4

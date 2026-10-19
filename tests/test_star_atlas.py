@@ -263,6 +263,7 @@ def test_star_atlas_view_draws_constellation_boundaries_when_enabled(view):
     view.set_catalogs(sa._fallback_catalog(), [], sa.build_boundaries(codes, ra, dec))
     view.show_grid = False
     view.show_labels = False
+    view.set_option("show_boundaries", True)   # off by default
     view.center_on_altaz(view._bnd_center_alt[0], view._bnd_center_az[0])
     view.set_fov(60.0)
 
@@ -1329,3 +1330,23 @@ def test_gc_paused_disables_the_collector_until_the_last_worker_finishes():
         assert not gc.isenabled(), "a collector that was already off stays off"
     finally:
         gc.enable()
+
+
+@pytest.mark.requirement("TC-SKYMAP-040")
+@pytest.mark.priority("P2")
+def test_star_atlas_failing_minor_kind_does_not_hide_the_others(view, monkeypatch):
+    """SKYMAP-040: if one overlay kind cannot be computed (e.g. satellites without sgp4), comets and asteroids stay shown."""
+    from galileo.planning import minor_bodies as mb
+
+    def fake_orbits(orbits, when):
+        return [{"name": orbits, "kind": orbits, "ra_deg": 10.0, "dec_deg": 10.0, "mag": 5.0}]
+
+    def broken_satellites(*args, **kwargs):
+        raise ImportError("no sgp4")
+
+    monkeypatch.setattr(mb, "minor_body_positions", fake_orbits)
+    monkeypatch.setattr(mb, "satellite_positions", broken_satellites)
+    view._minor_data = {mb.COMET: mb.COMET, mb.ASTEROID: mb.ASTEROID, mb.SATELLITE: object()}
+    view.show_comets = view.show_asteroids = view.show_satellites = True
+    view._recompute_minor()
+    assert {b["kind"] for b in view._minor} == {mb.COMET, mb.ASTEROID}

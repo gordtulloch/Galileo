@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Polar alignment no longer needs the scope pointed at the pole first.** The run now starts by slewing the mount to the zenith from wherever it is, then takes a frame and solves it. If the solution is more than 1° from the zenith (a mount that has never been synced has no idea where it points) the mount is synced to the solution and slewed to the zenith again, up to three rounds; a frame that won't solve (hinted, then blind) ends the run with a message. Only then does it move to about Dec 70° and measure, choosing a spot off the meridian so the swing never needs a flip — which also retires the "would cross the meridian" refusal for the start position. Tests updated and added (start from any position, unsynced mount); inline help, wiki, SRS `PLT-080` and SDD updated; no control changed.
+
+### Fixed
+
+- **Star Map: turning on Satellites no longer makes Comets and Asteroids disappear.** Positions for all three overlays were computed in one `try`, so if the satellite calculation failed (e.g. the `sgp4` package missing from the environment) the error cleared every overlay. Each kind is now computed on its own, so a failure only affects that kind (and is logged). Satellites still need `sgp4` installed (`pip install -e .`). Test added; no control changed, so no help/wiki change.
+
+### Changed
+
+- **Star Map: Constellation boundaries and Daylight sky are now off by default.** A fresh install gets a dark, less cluttered sky; both are still one checkbox away. Anyone who has already toggled them keeps their saved choice. Inline help notes the new defaults; no wiki change (the articles don't state defaults).
+
 ### Fixed
 
 - **Mount jog (Equipment > Mount N/S/E/W) now moves an Alpaca mount at the Medium and Coarse speeds.** The presets are 10°/s and 50°/s, but an Alpaca mount rejects a `MoveAxis` rate outside its `AxisRates`, so the press was refused and the mount didn't move; the error only went to the log. The Alpaca adapter now reads the mount's `AxisRates` once per axis and sends the fastest rate it allows when the requested one is higher, and the Mount page shows "The mount would not move: …" in the status bar if a jog still fails. Test added; no control changed, so no help/wiki change.

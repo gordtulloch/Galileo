@@ -51,6 +51,7 @@ from galileo.platesolve import (
     j2000_to_mount_frame,
     mount_frame_to_j2000,
 )
+from galileo.platesolve_solvers import angular_offset_arcsec
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,8 @@ SIDEREAL_DEG_PER_S = 360.98564736629 / 86400.0
 _MAX_FAILED_ADJUST_SOLVES = 3         # consecutive failures that end the adjust phase
 _TRAVEL_WARN_FRACTION = 0.9           # warn if the mount turned less than this share of what was asked
 _POLE_NEIGHBOURHOOD_DEG = 2.0         # within this of a pole a meridian flip is no concern
+_ZENITH_PASSES = 3                    # solve-sync-reslew rounds spent getting the mount onto the zenith
 _ARRIVAL_TOLERANCE_DEG = 1.0          # how close to its target the mount must report being before a frame is taken
-_WORK_DEC_BAND = (60.0, 75.0)         # |Dec| range the measuring solves are taken in, away from the pole
 
 
 class PolarAlignError(Exception):
@@ -279,8 +280,8 @@ def axis_after_adjustment(axis: np.ndarray, anchor: np.ndarray, new: np.ndarray,
 class PolarAlignSettings(SolveSettings):
     """One polar-alignment run's settings. ``exposure_s``, ``settle_s`` and ``scale_hint_arcsec_px``
     are those of :class:`~galileo.platesolve.SolveSettings`."""
-    work_dec_deg: float = 70.0        # declination (magnitude) to measure at, when the scope doesn't already
-                                      # sit in the 60-75° band: solves right at the pole are unreliable
+    work_dec_deg: float = 70.0        # declination (magnitude) to measure at, after the zenith start:
+                                      # solves right at the pole are unreliable
     step_deg: float = 30.0            # how far the mount turns in RA between the measuring solves
     direction: str = "east"           # "east" or "west": which way the RA axis turns
     refraction: bool = True           # raise solved altitudes by atmospheric refraction
@@ -360,6 +361,51 @@ class PolarAlignWorkflow(SolveWorkflow):
         await asyncio.sleep(settings.settle_s)
         return position
 
+    def _zenith_j2000(self) -> tuple[float, float]:
+        """The zenith now (RA = local sidereal time, Dec = latitude, of date) as J2000 coordinates."""
+        from galileo.planning.star_atlas import julian_date, local_sidereal_deg
+        lst = local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), self.longitude)
+        return mount_frame_to_j2000(lst, self.latitude, None)
+
+    async def _go_to_zenith(self, settings: PolarAlignSettings, system: str | None) -> int | None:
+        """Slew to the zenith and solve to check the mount really is there. If it is not (it has never been synced,
+        so its idea of its position is wrong) sync it to the solution and slew again, up to ``_ZENITH_PASSES``
+        times. Returns how many frames were taken, or ``None`` after saying why the run cannot start."""
+        attempt = 0
+        for pass_number in range(1, _ZENITH_PASSES + 1):
+            zenith = self._zenith_j2000()
+            self._report("measuring", "Moving the mount to the zenith to start…" if pass_number == 1
+                         else "Moving the mount to the zenith again…")
+            mount_zenith = j2000_to_mount_frame(*zenith, system)
+            if await self._slew_and_arrive(mount_zenith[0], mount_zenith[1], system, settings) is None:
+                return None
+            self._report("measuring", "Taking a frame at the zenith to check the mount is there…")
+            solved = None
+            for hint in (zenith, None):              # then blind, in case the mount's position is far out
+                frame = await self._capture(settings, attempt)
+                attempt += 1
+                if frame is None:
+                    return None
+                result = await self._solve(frame, hint, settings)
+                if result.success and result.ra_deg is not None and result.dec_deg is not None:
+                    solved = (result.ra_deg, result.dec_deg)
+                    break
+            if solved is None:
+                self._report("measuring", "The frame at the zenith did not solve, so the mount's position cannot be "
+                                          "checked. Check focus and exposure, and that the sky is clear overhead.")
+                return None
+            d_ra, d_dec = angular_offset_arcsec(*solved, *zenith)
+            off_deg = math.hypot(d_ra, d_dec) / 3600.0
+            if off_deg <= _ARRIVAL_TOLERANCE_DEG:
+                self._log(f"The mount is at the zenith ({off_deg * 60.0:.1f}′ off).")
+                return attempt
+            self._report("measuring", f"The mount is {off_deg:.1f}° from the zenith, not where it reports being. "
+                                      "Syncing it to the solution" +
+                         (" and moving to the zenith again…" if pass_number < _ZENITH_PASSES else "."))
+            await self._sync(solved, system)
+        self._log("The mount is still not at the zenith after syncing; carrying on from where it is.")
+        return attempt
+
     async def _align(self, settings: PolarAlignSettings) -> None:
         if self.mount is None:
             self._log("Polar alignment needs a connected mount to rotate.")
@@ -368,27 +414,32 @@ class PolarAlignWorkflow(SolveWorkflow):
         if position is None:
             self._log("The mount's position is unknown, so it cannot be rotated.")
             return
-        start_ra, dec, system = position
+        system = position[2]
         direction = 1.0 if settings.direction == "east" else -1.0
         offsets = [direction * settings.step_deg * i for i in range(MEASURE_POINTS)]
 
-        # The user starts with the scope at the pole. Solves there are unreliable (the field's RA
-        # converges) and an RA turn about the axis barely moves the camera, so the three measuring
-        # positions are taken well away from the pole, at a declination of the working band.
-        if not _WORK_DEC_BAND[0] <= abs(dec) <= _WORK_DEC_BAND[1]:
-            target_dec = math.copysign(settings.work_dec_deg, self.latitude if self.latitude else 1.0)
-            if abs(dec) > 90.0 - _POLE_NEIGHBOURHOOD_DEG:
-                # At the pole RA means nothing, so choose one that leaves the whole swing on one side of the
-                # meridian: east of it (negative hour angle) when turning west, and the reverse turning east.
-                from galileo.planning.star_atlas import julian_date, local_sidereal_deg
-                lst = local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), self.longitude)
-                reach = max(90.0, (MEASURE_POINTS - 1) * settings.step_deg + 15.0)
-                start_ra = (lst - direction * reach) % 360.0
-            self._report("measuring", f"Moving away from the pole to Dec {target_dec:+.0f}° before measuring…")
-            moved = await self._slew_and_arrive(start_ra, target_dec, system, settings)
-            if moved is None:
-                return
-            start_ra, dec, system = moved
+        # The scope can be anywhere to begin with, and its idea of where it points may be wrong (never synced).
+        # It is first sent to the zenith, a known position clear of the pole and of any cable or limit trouble,
+        # and a solve there confirms it; if it is somewhere else the mount is synced to the solution and sent
+        # again. Then it goes to the measuring position. Solves at the pole are unreliable (the field's RA
+        # converges) and an RA turn about the axis barely moves the camera, so the three measuring positions
+        # are taken well away from it, at a declination of the working band.
+        attempt = await self._go_to_zenith(settings, system)
+        if attempt is None:
+            return
+        from galileo.planning.star_atlas import julian_date, local_sidereal_deg
+        lst = local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), self.longitude)
+
+        # RA means nothing at the zenith as a starting point, so choose one that leaves the whole swing on one
+        # side of the meridian: east of it (negative hour angle) when turning west, and the reverse turning east.
+        target_dec = math.copysign(settings.work_dec_deg, self.latitude if self.latitude else 1.0)
+        reach = max(90.0, (MEASURE_POINTS - 1) * settings.step_deg + 15.0)
+        start_ra = (lst - direction * reach) % 360.0
+        self._report("measuring", f"Moving to Dec {target_dec:+.0f}° before measuring…")
+        moved = await self._slew_and_arrive(start_ra, target_dec, system, settings)
+        if moved is None:
+            return
+        start_ra, dec, system = moved
 
         if self._crosses_meridian(*j2000_to_mount_frame(*mount_frame_to_j2000(start_ra, dec, system), None), offsets):
             self._report("measuring", f"Turning {abs(offsets[-1]):g}° {settings.direction} would take the mount "
@@ -398,7 +449,6 @@ class PolarAlignWorkflow(SolveWorkflow):
         vectors: list[np.ndarray] = []
         stamps: list[dt.datetime] = []
         hint = mount_frame_to_j2000(start_ra, dec, system)
-        attempt = 0
 
         for i in range(MEASURE_POINTS):
             if i:

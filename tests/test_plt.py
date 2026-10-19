@@ -4,6 +4,7 @@
 """PLT — Plate Solving (TC-PLT-010 … TC-PLT-060)."""
 
 import asyncio
+import datetime as dt
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1096,6 +1097,13 @@ def _sky_solutions(vectors):
     return results
 
 
+def _zenith_solution(off_deg=0.0):
+    """The solve of a frame taken at the zenith (or *off_deg* of Dec away from it, for a mount that was out)."""
+    from galileo.platesolve import SolveResult, mount_frame_to_j2000
+    ra, dec = mount_frame_to_j2000(_lst_now(), LATITUDE + off_deg, None)
+    return [SolveResult(success=True, ra_deg=ra, dec_deg=dec, rotation_deg=0.0, scale_arcsec_px=3.0)]
+
+
 def _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0, dec=70.0):
     """A PolarAlignWorkflow on a fake camera and mount (pointing at *hour_angle_deg*, dec 70), with a solver
     that returns *results* in turn."""
@@ -1135,7 +1143,7 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
     reporting as the field moves, until stopped."""
     from galileo.polaralign import PolarAlignSettings
     vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
-    results = _sky_solutions(vectors) + _sky_solutions(vectors[2:])      # then a solve with nothing touched
+    results = _zenith_solution() + _sky_solutions(vectors) + _sky_solutions(vectors[2:])      # then a solve with nothing touched
     seen: list = []
 
     def on_progress(progress):
@@ -1147,8 +1155,9 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
                                             refraction=False))
 
-    assert [round((start_ra - ra) % 360.0) for ra, _ in slews] == [30, 60]       # turned west by 30° twice
-    assert all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews)
+    assert slews[0][1] == pytest.approx(LATITUDE, abs=0.01)                      # the zenith first, wherever it began
+    assert [round((slews[1][0] - ra) % 360.0) for ra, _ in slews[1:]] == [0, 30, 60]   # then turned west by 30° twice
+    assert all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews[1:])
     measured = [p.error for p in seen if p.error is not None]
     assert len(measured) >= 2 and workflow.stopped
     assert measured[0].altitude_arcsec == pytest.approx(0.2 * 3600, abs=60)
@@ -1158,11 +1167,14 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
 
 @pytest.mark.requirement("TC-PLT-080")
 @pytest.mark.priority("P2")
-async def test_tc_plt_080_workflow_moves_away_from_the_pole_before_measuring(tmp_path):
-    """PLT-080: Started at the pole, the mount first slews to about Dec 70° (a solve at the pole is unreliable), then measures there."""
+@pytest.mark.parametrize("hour_angle_deg, dec", [(-10.0, 20.0), (60.0, -30.0), (0.0, 89.9)])
+async def test_tc_plt_080_workflow_starts_from_the_zenith_wherever_the_scope_is(tmp_path, hour_angle_deg, dec):
+    """PLT-080: The scope need not be pre-positioned: from any position (near the meridian, below the equator, at
+    the pole) the mount first slews to the zenith, then to about Dec 70° off the meridian, and measures there."""
+    from galileo.planning.star_atlas import julian_date, local_sidereal_deg
     from galileo.polaralign import PolarAlignSettings
     vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
-    results = _sky_solutions(vectors) + _sky_solutions(vectors[2:])
+    results = _zenith_solution() + _sky_solutions(vectors) + _sky_solutions(vectors[2:])
     seen: list = []
 
     def on_progress(progress):
@@ -1170,28 +1182,46 @@ async def test_tc_plt_080_workflow_moves_away_from_the_pole_before_measuring(tmp
         if sum(p.error is not None for p in seen) >= 2:
             workflow.stop()
 
-    workflow, slews, _ = _polar_rig(tmp_path, results, on_progress, dec=89.9)
-    workflow.mount.get_status = AsyncMock(side_effect=lambda: {      # the fake mount now ends up where it was sent
-        "right_ascension": slews[-1][0] / 15.0, "declination": slews[-1][1], "equatorial_system": "JNOW",
-        "slewing": False} if slews else {"right_ascension": 0.0, "declination": 89.9,
-                                         "equatorial_system": "JNOW", "slewing": False})
+    workflow, slews, _ = _polar_rig(tmp_path, results, on_progress, hour_angle_deg=hour_angle_deg, dec=dec)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
                                             refraction=False))
-    assert len(slews) == 3 and all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews)
-    assert [round((slews[0][0] - ra) % 360.0) for ra, _ in slews] == [0, 30, 60]     # then the usual two RA turns
-    assert any("away from the pole" in p.message for p in seen)
+    assert len(slews) == 4
+    assert slews[0][1] == pytest.approx(LATITUDE, abs=0.01)                      # zenith: Dec = latitude, on the meridian
+    lst = local_sidereal_deg(julian_date(dt.datetime.now(dt.UTC)), LONGITUDE)
+    assert slews[0][0] == pytest.approx(lst, abs=0.5)
+    assert all(d == pytest.approx(70.0, abs=0.01) for _, d in slews[1:])
+    assert [round((slews[1][0] - ra) % 360.0) for ra, _ in slews[1:]] == [0, 30, 60]     # then the usual two RA turns
+    hour_angles = [((lst - ra + 180.0) % 360.0) - 180.0 for ra, _ in slews[1:]]
+    assert all(h < 0 for h in hour_angles) or all(h > 0 for h in hour_angles)        # the swing never crosses the meridian
+    assert any("zenith" in p.message for p in seen)
     assert workflow.error is not None
 
 
 @pytest.mark.requirement("TC-PLT-080")
 @pytest.mark.priority("P2")
-async def test_tc_plt_080_workflow_refuses_a_rotation_across_the_meridian(tmp_path):
-    """PLT-080: Turning a GEM across the meridian would flip it mid-measurement, so the run says so and does not move the mount."""
+async def test_tc_plt_080_unsynced_mount_is_synced_to_the_zenith_solve_and_sent_there_again(tmp_path):
+    """PLT-080: A mount that is not really at the zenith when it says it is (never synced) is synced to the solution
+    and slewed to the zenith again before the measuring starts."""
     from galileo.polaralign import PolarAlignSettings
+    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
+    results = (_zenith_solution(off_deg=-12.0) + _zenith_solution() + _sky_solutions(vectors)
+               + _sky_solutions(vectors[2:]))
     seen: list = []
-    workflow, slews, _ = _polar_rig(tmp_path, [], seen.append, hour_angle_deg=-10.0)
-    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west"))
-    assert slews == [] and "meridian" in seen[-1].message and workflow.error is None
+
+    def on_progress(progress):
+        seen.append(progress)
+        if sum(p.error is not None for p in seen) >= 2:
+            workflow.stop()
+
+    workflow, slews, _ = _polar_rig(tmp_path, results, on_progress, hour_angle_deg=40.0, dec=-20.0)
+    workflow.mount.sync_to_coordinates = AsyncMock()
+    await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
+                                            refraction=False))
+    assert workflow.mount.sync_to_coordinates.await_count == 1
+    synced_dec = workflow.mount.sync_to_coordinates.await_args.args[1]
+    assert synced_dec == pytest.approx(LATITUDE - 12.0, abs=0.05)
+    assert len(slews) == 5 and slews[0][1] == pytest.approx(LATITUDE, abs=0.01) == pytest.approx(slews[1][1], abs=0.01)
+    assert any("from the zenith" in p.message for p in seen) and workflow.error is not None
 
 
 @pytest.mark.requirement("TC-PLT-080")
@@ -1201,7 +1231,7 @@ async def test_tc_plt_080_workflow_stops_when_a_solve_fails(tmp_path):
     from galileo.platesolve import SolveResult
     from galileo.polaralign import PolarAlignSettings
     seen: list = []
-    workflow, _, _ = _polar_rig(tmp_path, [SolveResult(success=False, failure_reason="No stars.")], seen.append)
+    workflow, _, _ = _polar_rig(tmp_path, [SolveResult(success=False, failure_reason="No stars.")] * 2, seen.append)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, direction="west"))
     assert workflow.error is None
     assert "did not solve" in seen[-1].message and seen[-1].error is None

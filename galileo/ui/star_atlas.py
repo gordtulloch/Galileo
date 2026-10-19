@@ -135,7 +135,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self.mag_limit = 5.5
         self.dso_mag_limit = 9.0
         self.show_grid = True
-        self.show_boundaries = True
+        self.show_boundaries = False
         self.show_lines = True
         self.abbreviate_constellations = False
         self.show_dsos = True
@@ -143,7 +143,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self.show_bodies = True
         self.show_labels = True
         self.show_ground = True
-        self.daylight_sky = True
+        self.daylight_sky = False
         self.show_horizon = False       # shade the horizon obstructions (Options > Star Atlas)
         self._horizon: HorizonProfile | None = None
         # Telescope reticles, one per Pier (SKYMAP-090); the page refills these as the mounts move.
@@ -401,18 +401,18 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
     def _recompute_minor(self) -> None:
         """Positions of the enabled comets, asteroids and satellites at the view's time and place."""
         found: list[dict[str, Any]] = []
-        try:
-            for option, kind in MINOR_BODY_TOGGLES.items():
-                data = self._minor_data.get(kind)
-                if not getattr(self, option) or data is None:
-                    continue
+        for option, kind in MINOR_BODY_TOGGLES.items():
+            data = self._minor_data.get(kind)
+            if not getattr(self, option) or data is None:
+                continue
+            # Per kind, so one failing (e.g. satellites without sgp4) doesn't hide the others.
+            try:
                 if kind == mb.SATELLITE:
                     found += mb.satellite_positions(data, self.when, self.latitude, self.longitude, self.elevation_m)
                 else:
                     found += mb.minor_body_positions(data, self.when)
-        except Exception:
-            logger.exception("Could not compute comet/asteroid/satellite positions")
-            found = []
+            except Exception:
+                logger.exception("Could not compute %s positions", kind)
         self._minor = found
         if found:
             self._minor_alt, self._minor_az = self._altaz_arrays(

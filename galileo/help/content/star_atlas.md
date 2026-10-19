@@ -55,7 +55,7 @@ Draws lines of right ascension and declination.
 
 ## Constellation boundaries
 
-Draws the official borders between constellations.
+Draws the official borders between constellations. Off by default.
 
 ## Constellation outlines
 
@@ -83,7 +83,7 @@ Shades the sky below the horizon.
 
 ## Daylight sky
 
-Brightens the sky background when the Sun is up (or twilight), as the real sky would look.
+Brightens the sky background when the Sun is up (or twilight), as the real sky would look. Off by default, so the background stays dark.
 
 ## Horizon
 
