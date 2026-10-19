@@ -106,6 +106,9 @@ def frame_size(path: str) -> tuple[int, int]:
         return 0, 0
 
 
+_UNSET = object()
+
+
 class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     """The Solve section."""
 
@@ -136,6 +139,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._shown_path: str | None = None
         self._loading_path: str | None = None
         self._mount_busy: dict = {}
+        self._displayed_pier = _UNSET            # which Pier the results above belong to
         self.make_solver = self._default_solver  # replaced by tests
 
         self._build()
@@ -204,6 +208,12 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         Capture/Load/Stop buttons must reflect whether THIS Pier has its own run
         in progress — a different Pier's in-flight solve is untouched either way."""
         key = self._pier_key()
+        previous, self._displayed_pier = self._displayed_pier, key
+        if previous is not _UNSET and key != previous:
+            # The results table, solution panel, error plot and preview are one shared view, so
+            # they'd still be showing the previous Pier's solves; start the new Pier clean.
+            # (Options > Solve also calls reload() with the Pier unchanged — that keeps them.)
+            self._clear_for_pier_switch()
         self.refresh_target()
         self.scope_ra.clear()
         self.scope_dec.clear()
@@ -213,6 +223,17 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if self.isVisible():
             self.refresh_view()
             self.poll_mount()
+
+    def _clear_for_pier_switch(self) -> None:
+        """Drop every recorded solve and the preview. A solve still running keeps its row so its
+        result has somewhere to land."""
+        self._rows = [r for r in self._rows if r.status == "solving"]
+        self._latest_path = self._rows[-1].fits_path if self._rows else None
+        self._shown_path = None
+        self._loading_path = None
+        self.image_view.clear_image()
+        if self.isVisible():
+            self.refresh_view()
 
     def _select_saved_backend(self) -> None:
         """Preselect the Solver Mode saved for the current Pier in Options > Solve."""

@@ -699,8 +699,9 @@ class AppWindowMountPageMixin:
                 asyncio.run(adapter.move_axis(axis, rate))
             except MountParkedError:
                 self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Mount move_axis failed (axis=%s rate=%s)", axis, rate)
+                self._window.statusBar().showMessage(f"The mount would not move: {exc}", 8000)
 
         def _jog(direction: str) -> None:
             rate = float(jog_rate_combo.currentData())

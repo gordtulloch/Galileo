@@ -396,9 +396,8 @@ def test_tc_plt_070_capture_and_solve_fills_the_screen(window, page):
 def test_tc_plt_070_two_piers_solve_concurrently(window, page):
     """PLT-070: two Piers can each run their own Capture & Solve at once — starting one on Pier B
     is not blocked by Pier A's still-running (held) solve, and Pier B's own buttons/busy-state follow
-    only that Pier. The shared results table still shows both Piers' solves interleaved — by design,
-    this screen "shows every solve... not only the ones started from its own buttons" (module docstring),
-    which does not change with two Piers now able to solve concurrently."""
+    only that Pier. A solve still running when the Pier is switched keeps its row, so the table shows
+    both Piers' solves here (finished results from before the switch are cleared; see the next test)."""
     import threading
     from galileo.current_object import pier_key
     from galileo.observatory import create_observatory, create_pier
@@ -435,6 +434,29 @@ def test_tc_plt_070_two_piers_solve_concurrently(window, page):
     release_a.set()
     assert _pump(window, lambda: not page._running.get(pier_key(pier_a), False))
     assert page.table.rowCount() == 2, "the shared results log shows both Piers' solves"
+
+
+def test_tc_plt_070_switching_piers_clears_the_previous_piers_results_and_preview(window, page, tmp_path):
+    """PLT-070: the results table, solution panel and preview belong to one shared view, so a Pier
+    switch empties them rather than showing the previous Pier's solves. Reloading for the same Pier
+    (as Options > Solve does) keeps them."""
+    from galileo.observatory import create_observatory, create_pier
+    from galileo.ui.solve_widgets import SolveRow
+
+    _open(window)
+    page._rows.append(SolveRow("a.fits"))
+    page._rows[-1].status = "solved"
+    page._latest_path = "a.fits"
+    page.image_view.show_array(np.zeros((4, 4), dtype=np.uint8))
+    page.refresh_view()
+    page.reload()
+    assert page.table.rowCount() == 1 and page.image_view.has_image, "same Pier: nothing cleared"
+
+    window._current_pier = create_pier(create_observatory("Other Obs"), "Pier B")
+    window._on_pier_changed()
+    assert page.table.rowCount() == 0
+    assert not page.image_view.has_image
+    assert page._latest_path is None
 
 
 def test_tc_plt_070_the_chosen_action_is_carried_out(window, page):

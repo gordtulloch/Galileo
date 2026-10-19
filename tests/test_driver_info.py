@@ -207,6 +207,24 @@ async def test_tc_eqp_mnt_010_alpaca_unparked_mount_moves_and_unreadable_park_st
     assert [p[0] for p in unreadable.puts] == ["moveaxis"]
 
 
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_010_alpaca_jog_rate_is_limited_to_the_mounts_axis_rates():
+    """EQP-MNT-010: a jog faster than the mount's AxisRates is sent at the mount's maximum (in the
+    requested direction) rather than being rejected, which looked like the mount not moving."""
+    mount = _alpaca_mount(False)
+
+    async def fake_get(attribute, **extra):
+        return None if attribute == "atpark" else [{"Minimum": 0.0, "Maximum": 3.0}]
+
+    mount._get = fake_get
+    await mount.move_axis(0, 10.0)
+    await mount.move_axis(1, -50.0)
+    await mount.move_axis(1, 1.0)
+    await mount.move_axis(1, 0.0)
+    assert [p[1]["Rate"] for p in mount.puts] == [3.0, -3.0, 1.0, 0.0]
+
+
 @pytest.mark.requirement("TC-EQP-070")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_070_alpaca_unreachable_device_fails_once_not_four_times():

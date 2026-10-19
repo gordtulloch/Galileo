@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mount jog (Equipment > Mount N/S/E/W) now moves an Alpaca mount at the Medium and Coarse speeds.** The presets are 10°/s and 50°/s, but an Alpaca mount rejects a `MoveAxis` rate outside its `AxisRates`, so the press was refused and the mount didn't move; the error only went to the log. The Alpaca adapter now reads the mount's `AxisRates` once per axis and sends the fastest rate it allows when the requested one is higher, and the Mount page shows "The mount would not move: …" in the status bar if a jog still fails. Test added; no control changed, so no help/wiki change.
+- **Switching Piers no longer leaves the previous Pier's results on the Solve and Imaging screens.** Solve's results table, solution panel, error plot and preview are one view shared by every Pier, so after a switch they still showed the old Pier's solves; they are now cleared (a solve still running keeps its row so its result lands somewhere; reloading for the same Pier, as Options > Solve does, keeps everything). Imaging already keeps a service per Pier, but a Pier with no frame yet left the old Pier's preview on screen; it now shows an empty preview. Focus was already repainted per Pier and needed no change. Test added; no control changed, so no help/wiki change.
+
 ### Changed
 
 - **Plate-solve slews now log where the mount says it ended up.** Slew to Target was giving up a little outside the accuracy setting (e.g. 37.9″ against 30″) and the log couldn't show whether the mount was stopping short or the solve was off. After every slew the log now reads "Mount reports dRA … dDec … from the requested position at the end of the slew (it was … before)". Diagnostic only; if it shows the mount stopping short, the sync-then-slew loop will be reworked. No control changed, so no help/wiki change.

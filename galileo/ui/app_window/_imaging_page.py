@@ -537,6 +537,9 @@ class AppWindowImagingPageMixin:
         def _refresh_preview(service) -> None:
             data = service.display_preview
             if data is None:
+                # This Pier has no frame yet: don't leave the previously shown Pier's on screen.
+                preview_view.clear_image()
+                _refresh_annotate_status(service)
                 return
             preview_view.show_array(data)
             _refresh_annotate_status(service)

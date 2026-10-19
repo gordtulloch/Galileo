@@ -113,7 +113,27 @@ class AlpacaMountAdapter(AlpacaAdapter):
         (``rate=0``) is always allowed."""
         if rate:
             await self._refuse_if_parked("move_axis")
+            rate = await self._clamp_to_axis_rates(axis, rate)
         await self._put("moveaxis", Axis=axis, Rate=rate)
+
+    async def _clamp_to_axis_rates(self, axis: int, rate: float) -> float:
+        """*rate* limited to the fastest speed the mount accepts on *axis*. ``MoveAxis`` rejects
+        a rate outside ``AxisRates`` (the jog presets go up to 50°/s, well past what a typical
+        mount allows), which looks like the mount simply not moving. Unchanged if the driver
+        doesn't report its rates."""
+        cache = self.__dict__.setdefault("_axis_max_rate", {})
+        if axis not in cache:
+            try:
+                ranges = await self._get("axisrates", Axis=axis) or []
+                cache[axis] = max((abs(float(r.get("Maximum", 0.0))) for r in ranges), default=0.0)
+            except Exception:
+                logger.debug("Could not read the mount's AxisRates for axis %s", axis, exc_info=True)
+                return rate
+        limit = cache[axis]
+        if limit and abs(rate) > limit:
+            logger.info("Mount axis %s: %g°/s is faster than the mount allows; using %g°/s", axis, rate, limit)
+            return limit if rate > 0 else -limit
+        return rate
 
     async def set_tracking(self, enabled: bool) -> None:
         if enabled:
