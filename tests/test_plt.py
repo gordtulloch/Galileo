@@ -1151,7 +1151,7 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
         if sum(p.error is not None for p in seen) >= 2:
             workflow.stop()
 
-    workflow, slews, start_ra = _polar_rig(tmp_path, results, on_progress)
+    workflow, slews, _start_ra = _polar_rig(tmp_path, results, on_progress)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west",
                                             refraction=False))
 
@@ -1697,7 +1697,7 @@ async def test_tc_plt_080_run_stops_if_the_mount_never_arrives(tmp_path):
     """PLT-080: If the mount never reaches the position it was sent to, the run says so and takes no frame."""
     from galileo.polaralign import PolarAlignSettings
     seen: list = []
-    workflow, slews, _ = _polar_rig(tmp_path, [], seen.append, dec=89.9)
+    workflow, _slews, _ = _polar_rig(tmp_path, [], seen.append, dec=89.9)
     stuck = {"right_ascension": 1.0, "declination": 89.9, "equatorial_system": "JNOW", "slewing": False}
     workflow.mount.get_status = AsyncMock(return_value=stuck)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, arrival_timeout_s=0.2))

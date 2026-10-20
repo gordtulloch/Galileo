@@ -702,7 +702,7 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     """PLT-080: Start Polar Alignment turns the mount, solves, and shows the measured error with plain advice; Stop ends it."""
     window.observatory.latitude, window.observatory.longitude = _POLAR_LAT, _POLAR_LON
     window.observatory.save()
-    devices = _Devices(window, page, [_zenith_solution()] + _polar_solutions(8))
+    devices = _Devices(window, page, [_zenith_solution(), *_polar_solutions(8)])
     # The scope starts anywhere (here low in the south-east, nowhere near the pole); the fake mount ends up where it is sent.
     slewed: list = []
     devices.mount.slew_to_coordinates = AsyncMock(side_effect=lambda ra, dec: (

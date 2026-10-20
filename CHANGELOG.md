@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cleared the four ruff errors failing the CI static-analysis job.** `polaralign` now writes `self.latitude or 1.0` (FURB110), two unused unpacked variables in `tests/test_plt.py` are underscore-prefixed (RUF059), and `tests/test_solve_page.py` builds its list with unpacking instead of concatenation (RUF005). No behaviour change.
+
 ### Changed
 
 - **Polar alignment no longer needs the scope pointed at the pole first.** The run now starts by slewing the mount to the zenith from wherever it is, then takes a frame and solves it. If the solution is more than 1° from the zenith (a mount that has never been synced has no idea where it points) the mount is synced to the solution and slewed to the zenith again, up to three rounds; a frame that won't solve (hinted, then blind) ends the run with a message. Only then does it move to about Dec 70° and measure, choosing a spot off the meridian so the swing never needs a flip — which also retires the "would cross the meridian" refusal for the start position. Tests updated and added (start from any position, unsynced mount); inline help, wiki, SRS `PLT-080` and SDD updated; no control changed.

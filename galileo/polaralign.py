@@ -432,7 +432,7 @@ class PolarAlignWorkflow(SolveWorkflow):
 
         # RA means nothing at the zenith as a starting point, so choose one that leaves the whole swing on one
         # side of the meridian: east of it (negative hour angle) when turning west, and the reverse turning east.
-        target_dec = math.copysign(settings.work_dec_deg, self.latitude if self.latitude else 1.0)
+        target_dec = math.copysign(settings.work_dec_deg, self.latitude or 1.0)
         reach = max(90.0, (MEASURE_POINTS - 1) * settings.step_deg + 15.0)
         start_ra = (lst - direction * reach) % 360.0
         self._report("measuring", f"Moving to Dec {target_dec:+.0f}° before measuring…")
