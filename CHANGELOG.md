@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **README now describes Galileo as an alpha pre-release.** The status badge and Status section moved from "pre-alpha" to the 0.9.0alpha pre-release (linking the GitHub release), so the README matches how the installers are published. Documentation only.
+
 ### Fixed
 
 - **Cleared the four ruff errors failing the CI static-analysis job.** `polaralign` now writes `self.latitude or 1.0` (FURB110), two unused unpacked variables in `tests/test_plt.py` are underscore-prefixed (RUF059), and `tests/test_solve_page.py` builds its list with unpacking instead of concatenation (RUF005). No behaviour change.

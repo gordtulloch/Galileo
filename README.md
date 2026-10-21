@@ -3,7 +3,7 @@
 ![Galileo logo](assets/images/logo.png)
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
-![Status: Pre-alpha](https://img.shields.io/badge/status-pre--alpha%20%E2%80%94%20early%20development-orange.svg)
+![Status: Alpha](https://img.shields.io/badge/status-0.9.0%20alpha%20%E2%80%94%20pre--release-orange.svg)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
 A cross-platform Python-based astrophotography imaging application for Windows, macOS, and Linux — built on [INDI](https://indilib.org/) and [ASCOM Alpaca](https://ascom-standards.org/AlpacaDeveloper/) Supports a mix of INDI and Alpaca devices on multiple piers per observatory, multiple optical tubes and cameras per mount.  
@@ -35,7 +35,7 @@ Two things motivate this project:
 
 ## Status
 
-**Pre-alpha — early development.** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Download it and give it a try today! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
+**Alpha — current pre-release: [v0.9.0alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.0alpha).** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Installers are published as GitHub pre-releases. Download it and give it a try today, and please report problems! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
 
 - **Design docs**: a complete Project Scope Document, a Software Requirements Specification (282 numbered requirements across 28 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
 - **Automated tests**: one file per SRS domain under `tests/`, run on every CI build with `pytest -m "not soak and not hardware and not integration and not perf"`. Soak, hardware and integration tests are excluded from normal runs. As of 2026-10-10 a local fast run showed one known failure (`test_tc_help_060`, which flags undocumented controls from the VSTarget plugin installed in the developer's venv); the full-suite pass count was not recorded, so the former "773 passing" badge has been removed rather than left stale.
