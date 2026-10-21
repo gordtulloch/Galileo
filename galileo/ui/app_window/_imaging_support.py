@@ -42,7 +42,7 @@ class AppWindowImagingSupportMixin:
         return (f"{name} is selected but not connected. Connect it on Equipment > Camera, or pick "
                 "another camera in the Camera selector at the top of the window.")
 
-    def _imaging_frame_context(self: AppWindowState, pier=None) -> dict:
+    def _imaging_frame_context(self: AppWindowState, pier=None, camera_slot: str | None = None) -> dict:
         """What the Imaging page knows about the rig, as FITS header values for
         ``ImagingService.frame_context`` (IMG-150): telescope and camera, optics, the site, where the
         mount is pointing and what it is aiming at, and the focuser position. Whatever can't be found
@@ -50,7 +50,10 @@ class AppWindowImagingSupportMixin:
 
         *pier* defaults to the selected Pier. For any other Pier (a scheduled session running on
         a Pier that is not on screen, OBS-140) its own devices are used, with its primary camera
-        and first optical tube since the top-bar selectors only describe the selected Pier."""
+        and first optical tube since the top-bar selectors only describe the selected Pier.
+
+        *camera_slot* names the camera whose details go in the header; a session passes its own,
+        otherwise it is the top-bar selection (selected Pier) or the primary camera."""
         import asyncio
         from galileo.current_object import get_current_objects, pier_key
         from galileo.ui.imaging import format_dec_dms, format_ra_hms
@@ -59,7 +62,7 @@ class AppWindowImagingSupportMixin:
         pier = selected if pier is None else pier
         key = pier_key(pier)
         is_selected = key == pier_key(selected)
-        camera_slot = self._active_camera_slot if is_selected else "primary"
+        camera_slot = camera_slot or (self._active_camera_slot if is_selected else "primary")
 
         context: dict = {}
         tube = self.active_optical_tube(pier)

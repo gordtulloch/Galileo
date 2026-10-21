@@ -31,6 +31,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -168,6 +169,9 @@ class SessionRegion:
         self._job: Any = None
         self._screen: SessionsScreen | None = None
         self._pier_name: str | None = None
+        # The camera (a Camera DeviceConfigRecord slot id) this session images with. A session
+        # belongs to one camera: every action of its run uses it, whatever the top bar is on.
+        self.camera_slot: str = "primary"
 
     # --- Editing state (SES-210) ------------------------------------------
 
@@ -270,7 +274,8 @@ class SessionRegion:
         """Persist this region for reuse (SES-060) — not run until Schedule is used."""
         path = self._store_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"name": self.name, "blocks": [_block_to_dict(b) for b in self.blocks]}
+        data = {"name": self.name, "camera_slot": self.camera_slot,
+                "blocks": [_block_to_dict(b) for b in self.blocks]}
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def save_as_template(self, name: str) -> None:
@@ -653,6 +658,25 @@ class BlockListWidget(QListWidget):
         self.refresh()
         self._on_changed(None)
 
+    def _accepts_drag(self, event) -> bool:
+        return event.source() is self or event.source() is self._palette
+
+    def dragEnterEvent(self, event) -> None:
+        # Qt's stock handling refuses a drop whose pointer is still over the
+        # dragged block's own row — exactly where an indent/unindent drag (a
+        # sideways move on the same row) ends — so dropEvent never ran and
+        # dragging left to leave a loop did nothing.
+        if self._accepts_drag(event):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if self._accepts_drag(event):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
     def dropEvent(self, event) -> None:
         source = event.source()
         hovered = self.indexAt(event.pos())
@@ -748,6 +772,20 @@ class _RegionWidget(QFrame):
             header.addWidget(btn)
         layout.addLayout(header)
 
+        # The camera this session belongs to: every block of its run images with it.
+        camera_row = QHBoxLayout()
+        camera_row.addWidget(QLabel("Camera:"))
+        self._camera_combo = QComboBox()
+        self._camera_combo.setMinimumWidth(240)
+        self._camera_combo.setToolTip("The camera this session images with. Every action of the session "
+                                      "uses it, whichever camera is chosen elsewhere.")
+        self._window = window
+        self._fill_camera_combo()
+        self._camera_combo.activated.connect(self._on_camera_chosen)
+        camera_row.addWidget(self._camera_combo)
+        camera_row.addStretch(1)
+        layout.addLayout(camera_row)
+
         # Live progress while the session runs (SES-050): state, current block, frame N of M.
         self._progress_label = QLabel("")
         self._progress_label.setObjectName("StatusHint")
@@ -761,6 +799,30 @@ class _RegionWidget(QFrame):
         self._apply_boundary_style()
         self.refresh_run_state()
 
+    def _fill_camera_combo(self) -> None:
+        """List the Pier's configured cameras, with the session's own selected. A slot that is
+        no longer configured stays listed so the session never silently changes camera."""
+        from galileo.ui.app_window._common import _camera_slot_label
+        slots: list[str] = []
+        pier = getattr(self._window, "_current_pier", None)
+        if pier is not None:
+            try:
+                from galileo.observatory import list_device_config_slots
+                slots = list(list_device_config_slots(pier, "camera"))
+            except Exception:
+                slots = []
+        if self._region.camera_slot not in slots:
+            slots.append(self._region.camera_slot)
+        self._camera_combo.clear()
+        for slot in slots:
+            self._camera_combo.addItem(_camera_slot_label(slot), slot)
+        self._camera_combo.setCurrentIndex(slots.index(self._region.camera_slot))
+
+    def _on_camera_chosen(self, index: int) -> None:
+        slot = self._camera_combo.itemData(index)
+        if slot and self._region.is_editable:
+            self._region.camera_slot = slot
+
     def _on_block_change(self, error: str | None) -> None:
         self._blocks_list.refresh()
         if error:
@@ -773,6 +835,7 @@ class _RegionWidget(QFrame):
             else "QFrame#SessionRegion { border: 1px solid #555; }"
         )
         self._schedule_btn.setText("Deschedule" if scheduled else "Schedule")
+        self._camera_combo.setEnabled(not scheduled)
         self._template_btn.setEnabled(not scheduled)
         self._load_btn.setEnabled(not scheduled and self._region.can_load_from_template())
 
@@ -786,6 +849,7 @@ class _RegionWidget(QFrame):
         for btn in (self._save_btn, self._template_btn, self._load_btn, self._schedule_btn,
                     self._delete_btn, self._run_btn):
             btn.setEnabled(not running)
+        self._camera_combo.setEnabled(not running and self._region.is_editable)
         if not running:
             self._apply_boundary_style()
         self._pause_btn.setVisible(running)
@@ -854,8 +918,11 @@ class _RegionWidget(QFrame):
         self.refresh_run_state()
         if conflicts:
             names = ", ".join(c.name for c in conflicts)
+            # Parent the dialog to the main window, not this card: the run's progress signals
+            # rebuild the session cards (a finished session is reaped), deleting this widget while
+            # the modal dialog is still open on it — a native crash.
             QMessageBox.warning(
-                self, "Run", f"{self._region.name!r} is running now, but overlaps: {names}. "
+                self.window(), "Run", f"{self._region.name!r} is running now, but overlaps: {names}. "
                              "Resolve the conflict on the Schedule screen.")
 
     def _toggle_pause(self) -> None:
@@ -945,6 +1012,10 @@ class SessionsPageWidget(QWidget):
             self._local_schedulers[key] = ObservatoryScheduler()
         return self._local_schedulers[key]
 
+    def _default_camera_slot(self) -> str:
+        """A new session starts on the camera the top bar is on; it can be changed on the card."""
+        return getattr(self._window, "_active_camera_slot", None) or "primary"
+
     def _active_pier_name(self) -> str | None:
         pier = getattr(self._window, "_current_pier", None)
         return getattr(pier, "name", None)
@@ -952,11 +1023,13 @@ class SessionsPageWidget(QWidget):
     def create_session_for_target(self, name: str, ra_deg: float, dec_deg: float) -> None:
         """Called when a target is selected elsewhere in the app (SES-160)."""
         region = self.sessions_screen.create_session_for_target(name, ra_deg, dec_deg)
+        region.camera_slot = self._default_camera_slot()
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 
     def _add_session_from_menu(self) -> None:
         region = self.sessions_screen.add_session_from_context_menu()
+        region.camera_slot = self._default_camera_slot()
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 
@@ -974,6 +1047,7 @@ class SessionsPageWidget(QWidget):
         except KeyError as exc:
             QMessageBox.warning(self, "Add Session from Template", str(exc))
             return
+        region.camera_slot = self._default_camera_slot()
         region._scheduler = self._scheduler_for(region._pier_name)
         self._rebuild_regions()
 
@@ -989,6 +1063,9 @@ class SessionsPageWidget(QWidget):
     def _on_run_changed(self, _pier_key=None) -> None:
         """A run started, progressed, or finished: update the cards in place, and rebuild once
         no run is left (a completed session is reaped and its card must go — SES-210)."""
+        refresh_label = getattr(self._window, "_refresh_session_camera_label", None)
+        if refresh_label is not None:
+            refresh_label()
         if not self._controller.is_running():
             self.reload()
             return

@@ -123,14 +123,18 @@ def _build_notify_service(window: Any) -> Any:
     return service
 
 
-def build_session_context(window: Any, pier: Any = None) -> SessionContext:
+def build_session_context(window: Any, pier: Any = None, camera_slot: str | None = None) -> SessionContext:
     """Snapshot a Pier's connected devices and services for one run. Call on the UI thread.
     Anything not connected is left ``None``; the executor's pre-flight reports it.
 
     *pier* defaults to the selected Pier, whose devices are what the Equipment pages show and
     whose camera/optics follow the top-bar selectors. Any other Pier of the Observatory is read
     from the connections its pages keep for it, with its primary camera and first optical tube
-    (OBS-140), so scheduled sessions can run on Piers that are not on screen."""
+    (OBS-140), so scheduled sessions can run on Piers that are not on screen.
+
+    *camera_slot* is the camera the session is bound to (``SessionRegion.camera_slot``): every
+    action of the run uses it, whichever camera the top bar's selector is on. ``None`` falls back
+    to that selector (selected Pier) or the primary camera."""
     from galileo.current_object import pier_key
     from galileo.ui.app_window._common import _camera_backend_key_for_slot
 
@@ -140,7 +144,7 @@ def build_session_context(window: Any, pier: Any = None) -> SessionContext:
     selected = key == pier_key(selected_pier)
     pages = getattr(window, "_device_pages", {})
 
-    camera_slot = getattr(window, "_active_camera_slot", "primary") if selected else "primary"
+    camera_slot = camera_slot or (getattr(window, "_active_camera_slot", "primary") if selected else "primary")
     if selected:
         cameras = getattr(window, "_camera_backends", {})
     else:
@@ -191,7 +195,7 @@ def build_session_context(window: Any, pier: Any = None) -> SessionContext:
         if not (frame_context_getter and camera is not None):
             frame_context = {}
         else:
-            frame_context = frame_context_getter() if selected else frame_context_getter(pier)
+            frame_context = frame_context_getter(pier, camera_slot=camera_slot)
     except Exception:
         logger.exception("Could not gather the FITS header context")
         frame_context = {}
@@ -359,7 +363,7 @@ class SessionRunController(QObject):
             return ["A session is already running on this Pier."], []
         if not region.blocks:
             return ["This session has no blocks to run."], []
-        context = build_session_context(self._window)
+        context = build_session_context(self._window, camera_slot=getattr(region, "camera_slot", None))
         problems = preflight(region.blocks, context)
         if problems:
             return problems, []
@@ -377,7 +381,9 @@ class SessionRunController(QObject):
         executor = SessionExecutor(context, name=region.name)
         run = ActiveRun(region=region, job=job, scheduler=scheduler, executor=executor, manual=manual,
                         was_scheduled=was_scheduled, prior_start=prior_start)
-        thread = _RunThread(run, self)
+        # No Qt parent: ``run.thread`` owns it. A parented QThread crashed natively (access
+        # violation inside its constructor) on a live Pier; see CHANGELOG.
+        thread = _RunThread(run)
         run.thread = thread
 
         def on_progress(progress: SessionProgress) -> None:      # worker thread -> queued to the UI
@@ -529,7 +535,8 @@ class SessionRunController(QObject):
         self._set_blocked(key, "")
         for job in scheduler.due_jobs():
             region = job.sequence
-            context = build_session_context(self._window) if selected else build_session_context(self._window, pier)
+            context = build_session_context(self._window, None if selected else pier,
+                                            camera_slot=getattr(region, "camera_slot", None))
             if not selected and context.camera is None and context.mount is None:
                 # Nothing of this Pier is connected (it was never selected since start-up, or was
                 # disconnected). Hold the job rather than failing it: it starts once the Pier's

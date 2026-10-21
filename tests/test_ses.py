@@ -1022,3 +1022,106 @@ async def test_dark_capture_close_cover_closes_and_reopens_panel():
     await ex._do_DarkCaptureBlock(ui_mod.DarkCaptureBlock(exposures=[5.0], close_cover=True))
     panel.close_cover.assert_awaited_once()
     panel.open_cover.assert_awaited_once()
+
+
+@pytest.mark.requirement("TC-SES-140")
+@pytest.mark.priority("P2")
+def test_dragging_a_body_block_left_unindents_it_out_of_the_loop(qapp):
+    """SES-140: dragging a loop-body tile to the left (and back right) on its own
+    row unindents/indents it; the list also accepts such a same-row drag."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from PySide6.QtCore import QPoint
+
+    region = ui_mod.SessionRegion(name="Loops")
+    loop, image = ui_mod.ForFilterBlock(filters=["L"]), ui_mod.ImageBlock()
+    region.insert_block(loop)
+    region.insert_block(image)
+    assert image.indent == 1
+    palette = ui_mod._build_palette()
+    block_list = ui_mod.BlockListWidget(region, palette, on_changed=lambda err: None)
+
+    class FakeEvent:
+        def __init__(self, source, pos):
+            self._source, self._pos, self.accepted = source, pos, False
+        def source(self): return self._source
+        def pos(self): return self._pos
+        def acceptProposedAction(self): self.accepted = True
+
+    block_list.setCurrentRow(1)
+    rect = block_list.visualItemRect(block_list.item(1))
+    start = rect.center()
+    block_list._drag_start_x = start.x()
+    move = FakeEvent(block_list, start)
+    block_list.dragMoveEvent(move)
+    assert move.accepted
+    block_list.dropEvent(FakeEvent(block_list, QPoint(start.x() - 2 * ui_mod._INDENT_PX, start.y())))
+    assert image.indent == 0 and region.body_of(loop) == []
+    block_list._drag_start_x = start.x()
+    block_list.dropEvent(FakeEvent(block_list, QPoint(start.x() + 2 * ui_mod._INDENT_PX, start.y())))
+    assert image.indent == 1
+
+
+@pytest.mark.requirement("TC-SES-115")
+@pytest.mark.priority("MVP")
+def test_tc_ses_115_a_session_belongs_to_one_camera(qapp, monkeypatch):
+    """SES-115: a session is bound to one camera; its run uses that camera whatever the
+    top-bar selector is on, and the camera is saved with the session and shown while it runs."""
+    import json
+    from types import SimpleNamespace
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    runner = pytest.importorskip("galileo.ui.session_runner")
+
+    region = ui_mod.SessionRegion(name="Wide")
+    assert region.camera_slot == "primary"
+    region.camera_slot = "camera_2"
+    saved = {}
+    monkeypatch.setattr(ui_mod.SessionRegion, "_store_path", lambda self: SimpleNamespace(
+        parent=SimpleNamespace(mkdir=lambda **k: None),
+        write_text=lambda text, encoding=None: saved.update(json.loads(text))))
+    region.save()
+    assert saved["camera_slot"] == "camera_2"
+
+    primary, wide = object(), object()
+    window = SimpleNamespace(
+        _current_pier=None, _active_camera_slot="primary", _device_pages={},
+        _camera_backends={"primary camera": primary, "camera 2": wide})
+    assert runner.build_session_context(window).camera is primary          # top-bar selection
+    assert runner.build_session_context(window, camera_slot="camera_2").camera is wide
+
+
+def test_run_conflict_dialog_is_not_parented_to_the_session_card(qapp, monkeypatch):
+    """The overlap warning shown after Run must outlive the card: a finishing run rebuilds
+    (deletes) the cards while the modal dialog is open, which crashed the app natively."""
+    from types import SimpleNamespace
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    region = ui_mod.SessionRegion(name="Busy")
+    palette = ui_mod._build_palette()
+    from PySide6.QtWidgets import QWidget
+    host = QWidget()
+    card = ui_mod._RegionWidget(region, palette, lambda err: None, window=SimpleNamespace(), parent=host)
+    card._controller = SimpleNamespace(
+        start_region=lambda r: ([], [SimpleNamespace(name="Other")]), run_for=lambda r: None)
+    parents = []
+    monkeypatch.setattr(ui_mod.QMessageBox, "warning", lambda parent, *a, **k: parents.append(parent))
+    card._run_now()
+    assert parents and parents[0] is not card
+
+
+async def test_run_blocking_works_on_a_thread_with_a_running_loop():
+    """The safety check polls devices from the UI thread, whose event loop is already running;
+    asyncio.run would raise there and leave an un-awaited coroutine behind."""
+    from galileo.ui.app_window._weather_page import _run_blocking
+
+    async def poll():
+        return 42
+
+    assert _run_blocking(poll) == 42
+
+
+def test_run_blocking_works_without_a_running_loop():
+    from galileo.ui.app_window._weather_page import _run_blocking
+
+    async def poll():
+        return 7
+
+    assert _run_blocking(poll) == 7

@@ -489,7 +489,7 @@ def test_tc_ses_030_run_button_executes_session_and_completed_session_is_deleted
     from galileo.ui import session_runner
     page = _page(window)
     ctx, frames = make_context()
-    monkeypatch.setattr(session_runner, "build_session_context", lambda _w: ctx)
+    monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
 
     region = page.sessions_screen.add_session_from_context_menu()
     region._scheduler = page._scheduler_for(region._pier_name)
@@ -511,7 +511,7 @@ def test_tc_ses_040_stopped_manual_run_returns_session_to_editable_draft(window,
     from galileo.ui import session_runner
     page = _page(window)
     ctx, _frames = make_context(imaging={"delay": 0.5})
-    monkeypatch.setattr(session_runner, "build_session_context", lambda _w: ctx)
+    monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
 
     region = page.sessions_screen.add_session_from_context_menu()
     region._scheduler = page._scheduler_for(region._pier_name)

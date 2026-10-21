@@ -26,6 +26,24 @@ if TYPE_CHECKING:
     # actual base stays plain `object`.
     from ._state import AppWindowState
 
+def _run_blocking(make_coro):
+    """Run the coroutine ``make_coro()`` to completion and return its result, from any thread.
+
+    ``asyncio.run`` refuses to run on a thread whose event loop is already running — the UI
+    thread under qasync, which is where the scheduler's safety check and the dome ask for a
+    fresh reading. There the coroutine runs on a short-lived helper thread instead (the caller
+    blocks either way). The coroutine is only created where it will run, so a failure can't
+    leave an un-awaited one behind."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(make_coro())
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(make_coro())).result()
+
+
 # How long a Pier's weather-reading trend history is kept — capped by count,
 # not wall-clock time, since the poll interval is itself user-configurable.
 _HISTORY_MAX_SAMPLES = 1000
@@ -270,13 +288,12 @@ class AppWindowWeatherPageMixin:
 
         def _read_adapter(adapter) -> dict:
             """Poll *adapter* once and return its readings; raises if the device can't be read."""
-            import asyncio
             from galileo.core.devices import WeatherController
             if device_type == "safety_monitor":
-                asyncio.run(adapter.poll())
+                _run_blocking(adapter.poll)
                 return {"is_safe": 1.0 if adapter.is_safe else 0.0}
             controller = WeatherController(adapter)
-            asyncio.run(controller.poll())
+            _run_blocking(controller.poll)
             return controller.get_readings()
 
         def _poll_once() -> dict | None:

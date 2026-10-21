@@ -5,11 +5,15 @@ A session is a plan for a stretch of imaging, built from **blocks** laid out in 
 
 **To build one:** press **Add Session** (or use *Add to Session* on a target in the Star Atlas or Targets), then drag blocks from the palette on the right into the session. Drag a block within the session to reorder it. To change a block's settings, right-click it. To remove it, drag it out or use its right-click menu.
 
-**Loops:** the *FOR Filter* and *FOR Object* blocks repeat everything indented beneath them — once per filter or once per object. A block dropped under a loop joins its body; drag it right to indent it or left to unindent it. A loop moves with its body.
+**Loops:** the *FOR Filter* and *FOR Object* blocks repeat everything indented beneath them — once per filter or once per object. Only indented blocks are inside the loop: to put a block in a loop's scope, drag it to the right until it is indented under the loop tile; to take a block out of the loop, drag it to the left. A block that is not indented runs once, after the loop finishes. A loop moves with its body.
 
 **Running:** Galileo first checks the equipment each block needs is connected and the order is valid, and lists any problems rather than starting. While it runs, the card shows the block and frame in progress and a green ▶ on the executing block; it is locked against edits. A bad frame is logged and skipped (three in a row abandon that Image block); a failed slew, plate solve, park or dome-open ends the session so the equipment is not left in a bad state. If the safety monitor reports unsafe, only shutdown blocks (park, dome close, guide stop, warm) still run.
 
 A scheduled session is outlined in red and read-only until it is descheduled.
+
+## Camera
+
+The camera this session belongs to, chosen from the Pier's configured cameras. A new session starts on the camera selected in the top bar. Every action of the session — exposures, plate solves, autofocus, flats, cooling — uses this camera, whatever the top bar's Camera selector is set to, so a session cannot silently switch cameras. The choice is saved with the session and is locked while the session is scheduled or running. While it runs, the top bar shows **Session camera** with this camera's name on every screen.
 
 ## Add Session
 

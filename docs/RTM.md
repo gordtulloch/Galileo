@@ -184,6 +184,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SES-090` | P3 | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-090` |
 | `SES-100` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-100` |
 | `SES-110` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-110` |
+| `SES-115` | MVP | SDD 4.6a `galileo.ui.sessions`, `galileo.ui.session_runner` | Test | `TC-SES-115` |
 | `SES-120` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-120` |
 | `SES-130` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-130` |
 | `SES-140` | P2 | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-140` |

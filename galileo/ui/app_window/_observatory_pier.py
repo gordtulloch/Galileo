@@ -596,6 +596,7 @@ class AppWindowObservatoryPierMixin:
                 timed(f"{page_id} autoconnect", autoconnect)
         timed("optics combo", self._refresh_optics_combo)
         timed("camera combo", self._refresh_camera_combo)
+        timed("session camera label", self._refresh_session_camera_label)
         timed("imaging filters", self._refresh_imaging_filters)
         timed("current object", self._refresh_current_object)
         refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)

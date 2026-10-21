@@ -37,6 +37,10 @@ class AppWindowMiscDevicePagesMixin:
             "connected": lambda: (page._service() is not None and page._service().is_connected),
         }
         page.reload()
+        # Like every Equipment page: connect to the Pier's saved PHD2 host at start-up
+        # (honouring the top bar's "Connect on Startup"). Runs on a worker thread.
+        if self._startup_autoconnect_allowed():
+            page.autoconnect()
         return page
 
     def _build_focus_page(self: AppWindowState) -> QWidget:

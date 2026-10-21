@@ -12,7 +12,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Cleared the four ruff errors failing the CI static-analysis job.** `polaralign` now writes `self.latitude or 1.0` (FURB110), two unused unpacked variables in `tests/test_plt.py` are underscore-prefixed (RUF059), and `tests/test_solve_page.py` builds its list with unpacking instead of concatenation (RUF005). No behaviour change.
 
+- **Safety checks on the UI thread always failed to read the weather station / safety monitor.** The scheduler's and dome's "is it safe?" check polls the device with `asyncio.run`, which raises when called on the UI thread (Qt's event loop is already running), so the device was reported as unreadable — i.e. unsafe — and the coroutine was left un-awaited (the `RuntimeWarning: coroutine 'WeatherController.poll' was never awaited` seen when the app crashed). The poll now runs on a helper thread when a loop is already running (`_run_blocking`). Tests added.
+
 ### Changed
+
+- **PHD2 now connects at start-up with the Pier's other devices.** The Guider page registered an auto-connect but, unlike every Equipment page, never ran it when built, so PHD2 only connected on a Pier switch or the top bar's Connect button. It now connects to the Pier's saved PHD2 host/port at launch, honouring "Connect on Startup". No control changed; no help/wiki update.
+
+### Fixed
+
+- **Pressing Run on a session crashed the app with nothing in the log.** The trace (in `faulthandler.log`, since a native crash never reaches the normal log) showed an access violation inside the run thread's `QThread` constructor. The run thread is now created without a Qt parent — the active run already owns it and waits for it to finish — as a mitigation; that did not cure it (the next trace was heap corruption `0xc0000374` on the Run button's own overlap-warning dialog). **Actual cause:** the *"is running now, but overlaps"* dialog was parented to the session card; the run's progress signals rebuild the cards (a finished session is reaped) and deleted the card while the modal dialog was open, a native crash. The dialog is now parented to the main window. Regression test added. No control changed; no help/wiki update.
+
+### Added
+
+- **A session now belongs to one camera.** Each session card has a **Camera** chooser (a new session starts on the camera selected in the top bar); the choice is saved with the session and locked while it is scheduled or running. A run builds its context from the session's camera — exposures, plate solves, autofocus, flats, cooling and the FITS header details — instead of whichever camera the top-bar selector happened to be on, and the top bar shows **Session camera: …** on every screen while the session runs. Requirement `SES-115` / `TC-SES-115` added; inline help, wiki, SRS and RTM updated. `build_session_context` and `_imaging_frame_context` gained an optional `camera_slot`.
+
+### Fixed
+
+- **Dragging a session block left to take it out of a loop now works.** Qt's default drag handling refused a drop while the pointer was still over the dragged block's own row — where a sideways indent/unindent drag ends — so the unindent never ran. The Sessions block list now accepts those drags explicitly. Regression test added (`TC-SES-140`); no control changed, so help/wiki need no update beyond the earlier wording.
+
+### Changed
+
+- **Session-loop scope is now spelled out in the docs.** The Sessions inline help and the Planning wiki article state that only blocks indented under a *FOR Filter* / *FOR Object* tile are inside the loop — drag right to put a block in its scope, left to take it out, and an unindented block runs once after the loop. Documentation only; no behaviour or control changed.
 
 - **Polar alignment no longer needs the scope pointed at the pole first.** The run now starts by slewing the mount to the zenith from wherever it is, then takes a frame and solves it. If the solution is more than 1° from the zenith (a mount that has never been synced has no idea where it points) the mount is synced to the solution and slewed to the zenith again, up to three rounds; a frame that won't solve (hinted, then blind) ends the run with a message. Only then does it move to about Dec 70° and measure, choosing a spot off the meridian so the swing never needs a flip — which also retires the "would cross the meridian" refusal for the start position. Tests updated and added (start from any position, unsynced mount); inline help, wiki, SRS `PLT-080` and SDD updated; no control changed.
 
