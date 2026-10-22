@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Documented the Kasa "Third-Party Compatibility" prerequisite** in the wiki's Equipment article, the Kasa plugin SDD and the Galileo-Plugins README: newer Kasa firmware ships with local control off, so a strip that works in the Kasa app is invisible to Galileo until that setting is turned on.
+- **Equipment pages that host plugin panels (e.g. Switches) now scroll as a whole, with the plugin's panel at the top.** Previously the plugin panel shared the page with the Driver/Server table and results list and got only a squeezed slice of the height, so a power strip's outlets needed their own inner scrollbar. The panel now sits directly under the page title at its natural height, and one scrollbar scrolls the whole page so every outlet of every device is reachable. Pages without plugin panels are unchanged. Inline help and wiki need no change (no controls added or renamed).
+
 ### Added
 
 - **SwitchBot Bot plugin requirements and design** (`docs/plugins/switchbot_bot/`, PSD/SRS/SDD/RTM, `SBOT-010` … `SBOT-050`) for a new first-party plugin, built in the Galileo-Plugins repository, that presses or switches SwitchBot Bot devices over Bluetooth LE as Switch devices — mainly to power a Seestar on and off. The plugin uses `bleak` with its own small Bot protocol layer instead of the suggested `switchbotpy`, which only works on Linux (it drives BlueZ `gatttool` via `pygatt`/`pexpect`) and Python ≤ 3.8; the reasoning is ADR-SBOT-001. Core `SRS.md`, `SDD.md`, `RTM.md` and `PSD.md` now point at it next to Kasa Switch and Generic Relay. No core code changed.
