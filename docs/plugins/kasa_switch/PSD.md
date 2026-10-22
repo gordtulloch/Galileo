@@ -33,7 +33,7 @@ The wire protocol itself — TP-Link's local-network "autokey XOR" framing over 
 |---|---|
 | G1 | Deliver Kasa device control as the `KASA` plugin — a first-party plugin distributed as a downloadable ZIP from the Galileo Plugins repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`). The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
 | G2 | Register a Switch device backend (core `ARCH-070`/`PLUG-010`, satisfying `EQP-SW-010`) that speaks TP-Link Kasa's local-network protocol directly — no cloud account, no internet dependency, no third-party `python-kasa` package |
-| G3 | Present a panel (core `PLUG-070`, secondary nav level) where any number of Kasa devices can be added side by side, each as its own tab, with a table of that device's switches (identifier + On/Off status) that toggles on click |
+| G3 | Present a panel (core `PLUG-070`, on the Equipment > Switches page) where any number of Kasa devices can be added side by side, each as its own tab, with a table of that device's switches (identifier + On/Off status) that toggles on click |
 | G4 | Support both a single-outlet plug and a multi-outlet power strip through the same device backend, enumerating one switch per outlet on a strip |
 
 ## 5. Non-Goals (Explicitly Out of Scope)
@@ -51,7 +51,7 @@ This plugin is a client of the following core capabilities — each is an existi
 |---|---|---|
 | Plugin loading, manifest/version check, fault isolation | `PLUG-010`–`PLUG-050` | Discovered/loaded/isolated the same as any plugin |
 | Installable-plugin enable/disable | `PLUG-060` | Independently toggleable once installed |
-| Secondary-level UI panel insertion | `PLUG-070` | The Kasa Switches panel is a secondary panel, not a peer to a built-in primary section |
+| Plugin-declared panel placement | `PLUG-070` | The Kasa Switches panel declares `equipment:switch` and appears on Equipment > Switches |
 | Device backend registration | `ARCH-070`/`PLUG-010` | `KasaSwitchAdapter` is registered for `DeviceCategory.SWITCH` via `PluginContext.register_device_backend` |
 | Switch device port semantics | `EQP-SW-010` | This plugin's backend satisfies the same read/write switch-state contract the generic INDI/Alpaca Switch adapters do — boolean switches only (no analog outlets) |
 

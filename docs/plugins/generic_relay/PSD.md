@@ -39,7 +39,7 @@ There is no vendor-neutral way to talk to "a relay board" the way INDI/Alpaca gi
 | G1 | Deliver generic relay-board control as the `RELAY` plugin — a first-party plugin distributed as a downloadable ZIP from the Galileo Plugins repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`). The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
 | G2 | Register a Switch device backend (core `ARCH-070`/`PLUG-010`, satisfying `EQP-SW-010`) that toggles a relay by issuing an HTTP GET built from a user-supplied URL template, rather than a fixed vendor API |
 | G3 | Default that template to reproduce the motivating example exactly, so the common case needs no editing, while remaining fully overridable for a board with a different scheme |
-| G4 | Present a panel (core `PLUG-070`, secondary nav level) where any number of relay boards can be added side by side, each as its own tab, with a table of that board's relays (identifier + On/Off status) that toggles on click |
+| G4 | Present a panel (core `PLUG-070`, on the Equipment > Switches page) where any number of relay boards can be added side by side, each as its own tab, with a table of that board's relays (identifier + On/Off status) that toggles on click |
 
 ## 5. Non-Goals (Explicitly Out of Scope)
 
@@ -56,7 +56,7 @@ This plugin is a client of the following core capabilities — each is an existi
 |---|---|---|
 | Plugin loading, manifest/version check, fault isolation | `PLUG-010`–`PLUG-050` | Discovered/loaded/isolated the same as any plugin |
 | Installable-plugin enable/disable | `PLUG-060` | Independently toggleable once installed |
-| Secondary-level UI panel insertion | `PLUG-070` | The Internet Relay panel is a secondary panel, not a peer to a built-in primary section |
+| Plugin-declared panel placement | `PLUG-070` | The Internet Relay panel declares `equipment:switch` and appears on Equipment > Switches |
 | Device backend registration | `ARCH-070`/`PLUG-010` | `GenericRelayAdapter` is registered for `DeviceCategory.SWITCH` via `PluginContext.register_device_backend` |
 | Switch device port semantics | `EQP-SW-010` | This plugin's backend satisfies the same read/write switch-state contract the generic INDI/Alpaca Switch adapters do — boolean switches only, and write-only in effect given Section 5's no-readback non-goal |
 

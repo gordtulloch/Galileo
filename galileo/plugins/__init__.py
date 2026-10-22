@@ -13,6 +13,7 @@ import sys
 import warnings
 import zipfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CURRENT_API_VERSION = "1"
+
+# Where a plugin's panel appears, declared with ``PluginBase.panel_level`` (PLUG-070, PLUG-130):
+#   "science"            -- an item in the Science section's secondary menu ("primary" and
+#                           "secondary" are older spellings of the same place and still work)
+#   "equipment:<cat>"    -- a panel on one Equipment device page, e.g. "equipment:switch"
+#   "top"                -- its own top-level icon in the left sidebar
+LEVEL_TOP = "top"
+LEVEL_SCIENCE = "science"
+_SCIENCE_LEVELS = ("science", "primary", "secondary")
 
 # Name of the JSON file written to a plugin's installed directory to record
 # its pending-removal state across restarts.
@@ -105,6 +115,8 @@ class PluginBase(ABC):
     api_version: str = "1"
     panel_level: str = "secondary"
     panel_label: str = ""
+    # Label of an optional dockable pane (PLUG-140); "" means the plugin has none.
+    dock_label: str = ""
 
     @abstractmethod
     def activate(self, ctx: PluginContext) -> None:
@@ -114,8 +126,33 @@ class PluginBase(ABC):
     def deactivate(self) -> None:
         """Called when the plugin is disabled."""
 
+    def on_enabled_changed(self, enabled: bool) -> None:
+        """Called when the user enables or disables the plugin while it stays loaded, so it can
+        stop (or resume) any background work (PLUG-060: a disabled plugin is inert)."""
+        return None
+
     def build_page(self) -> Any:
         """Return a QWidget for this plugin's main panel, or None for a placeholder."""
+        return None
+
+    def panel_icon_painter(self) -> Callable[[Any, Any], None] | None:
+        """For a ``panel_level = "top"`` plugin: a ``draw(painter, rect)`` callable that paints the
+        sidebar icon with the pen the painter already carries (PLUG-130), or ``None`` for the
+        generic plugin icon."""
+        return None
+
+    def build_dock_widget(self) -> Any:
+        """Return a QWidget for the plugin's dockable pane (PLUG-140), or ``None``. Only asked when
+        :attr:`dock_label` is set."""
+        return None
+
+    def dock_initially_visible(self) -> bool:
+        """Whether the dock pane is open when Galileo starts."""
+        return False
+
+    def on_dock_visibility_changed(self, visible: bool) -> None:
+        """Called when the user opens or closes the dock pane (e.g. with its close button), so the
+        plugin can remember the choice."""
         return None
 
 
@@ -123,16 +160,73 @@ class PluginBase(ABC):
 # Plugin context (PLUG-080)
 # ---------------------------------------------------------------------------
 
+class PluginSettings:
+    """A plugin's own slice of Galileo's configuration store (PLUG-150).
+
+    Values are JSON-serialisable and live in the shared database under the namespace
+    ``plugin.<plugin name>`` -- plugins do not keep config files or ``QSettings`` of their own.
+    Like :mod:`galileo.settings_store`, reads fall back to the default and writes are logged and
+    dropped when the database is unavailable; neither raises."""
+
+    def __init__(self, namespace: str) -> None:
+        self.namespace = namespace
+
+    def get(self, key: str, default: Any = None) -> Any:
+        from galileo import settings_store
+        return settings_store.get_setting(self.namespace, key, default)
+
+    def all(self) -> dict[str, Any]:
+        from galileo import settings_store
+        return settings_store.get_namespace(self.namespace)
+
+    def set(self, key: str, value: Any) -> bool:
+        from galileo import settings_store
+        return settings_store.set_setting(self.namespace, key, value)
+
+    def update(self, values: dict[str, Any]) -> bool:
+        from galileo import settings_store
+        return settings_store.set_namespace(self.namespace, values)
+
+
 class PluginContext:
     """Provides a controlled API surface for a plugin to call core services."""
 
-    def __init__(self, granted_services: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        granted_services: dict[str, Any] | None = None,
+        plugin_name: str = "",
+        host: PluginManager | None = None,
+    ) -> None:
         self._services = granted_services or {}
+        self._plugin_name = plugin_name
+        self._host = host
 
     def get_service(self, name: str) -> Any:
         if name not in self._services:
             raise ServiceAccessDenied(f"Plugin has not been granted access to service {name!r}")
         return self._services[name]
+
+    def settings(self) -> PluginSettings:
+        """This plugin's configuration, stored in the shared database (PLUG-150)."""
+        return PluginSettings(f"plugin.{self._plugin_name or 'unnamed'}")
+
+    def site_location(self) -> Any:
+        """The selected Observatory's ``galileo.planning.visibility.ObservingLocation``, or ``None``
+        when none is selected or it has no latitude/longitude yet (PLUG-160)."""
+        provider = getattr(self._host, "site_provider", None)
+        if provider is None:
+            return None
+        try:
+            return provider()
+        except Exception:
+            logger.exception("Site-location provider failed")
+            return None
+
+    def set_dock_visible(self, visible: bool) -> None:
+        """Show or hide this plugin's dock pane (PLUG-140). A no-op until the main window exists."""
+        controller = getattr(self._host, "dock_controller", None)
+        if controller is not None:
+            controller(self._plugin_name, visible)
 
     def register_device_backend(self, category, adapter_cls) -> None:
         """Register a new device backend for *category* (PLUG-010, ARCH-070)."""
@@ -159,12 +253,28 @@ class UiPanel:
 class UiRegistry:
     def __init__(self) -> None:
         self._panels: list[UiPanel] = []
+        self._dock_plugins: list[PluginBase] = []
 
     def register(self, panel: UiPanel) -> None:
         self._panels.append(panel)
 
+    def register_dock(self, plugin: PluginBase) -> None:
+        self._dock_plugins.append(plugin)
+
     def get_primary_panels(self) -> list[UiPanel]:
         return [p for p in self._panels if p.level == "primary"]
+
+    def get_top_level_panels(self) -> list[UiPanel]:
+        """Panels that get their own icon in the left sidebar (``panel_level = "top"``, PLUG-130)."""
+        return [p for p in self._panels if p.level == LEVEL_TOP]
+
+    def get_science_panels(self) -> list[UiPanel]:
+        """Panels that sit in the Science section's menu (PLUG-070)."""
+        return [p for p in self._panels if p.level in _SCIENCE_LEVELS]
+
+    def get_dock_plugins(self) -> list[PluginBase]:
+        """Loaded plugins that offer a dockable pane (PLUG-140)."""
+        return list(self._dock_plugins)
 
     def get_secondary_panels(self) -> list[UiPanel]:
         return [p for p in self._panels if p.level == "secondary"]
@@ -195,9 +305,12 @@ class PluginManager:
         self._faulted: set[str] = set()
         self._records: dict[str, PluginRecord] = {}
         self._ui_registry = UiRegistry()
+        # Set by the main window once it exists; plugins reach them through PluginContext.
+        self.site_provider: Callable[[], Any] | None = None
+        self.dock_controller: Callable[[str, bool], None] | None = None
 
-    def create_context(self, granted_services: dict | None = None) -> PluginContext:
-        return PluginContext(granted_services=granted_services)
+    def create_context(self, granted_services: dict | None = None, plugin_name: str = "") -> PluginContext:
+        return PluginContext(granted_services=granted_services, plugin_name=plugin_name, host=self)
 
     # --- Introspection ---------------------------------------------------
 
@@ -306,7 +419,7 @@ class PluginManager:
             )
         try:
             instance = plugin_cls()
-            ctx = self.create_context()
+            ctx = self.create_context(plugin_name=plugin_cls.name)
             instance.activate(ctx)
             self._loaded[plugin_cls.name] = instance
             self._active[plugin_cls.name] = True
@@ -317,6 +430,8 @@ class PluginManager:
                     plugin=instance,
                 )
                 self._ui_registry.register(panel)
+            if getattr(plugin_cls, "dock_label", ""):
+                self._ui_registry.register_dock(instance)
         except Exception:
             logger.exception("Plugin %r failed to activate; marking faulted", plugin_cls.name)
             self._faulted.add(plugin_cls.name)
@@ -330,17 +445,37 @@ class PluginManager:
                 logger.exception("Plugin %r raised during deactivation", name)
         self._active.pop(name, None)
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
+        self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
+
+    def _class_names(self, name: str) -> list[str]:
+        """The loaded plugin class names behind *name*, which is either a class name or the
+        manifest name Options > Plugins uses (one manifest can load several classes)."""
+        record = self._records.get(name)
+        return list(record.loaded_names) if record and record.loaded_names else [name]
 
     def enable(self, name: str) -> None:
-        if name in self._loaded:
-            self._active[name] = True
+        for cls_name in self._class_names(name):
+            if cls_name in self._loaded:
+                self._active[cls_name] = True
+                self._notify_enabled(cls_name, True)
         if name in self._records:
             self._records[name].enabled = True
 
     def disable(self, name: str) -> None:
-        self._active[name] = False
+        for cls_name in self._class_names(name):
+            self._active[cls_name] = False
+            self._notify_enabled(cls_name, False)
         if name in self._records:
             self._records[name].enabled = False
+
+    def _notify_enabled(self, name: str, enabled: bool) -> None:
+        plugin = self._loaded.get(name)
+        if plugin is None:
+            return
+        try:
+            plugin.on_enabled_changed(enabled)
+        except Exception:
+            logger.exception("Plugin %r raised in on_enabled_changed", name)
 
     def set_enabled(self, name: str, enabled: bool) -> None:
         """Enable or disable an installed plugin by name."""

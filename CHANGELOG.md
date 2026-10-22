@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **SwitchBot Bot plugin requirements and design** (`docs/plugins/switchbot_bot/`, PSD/SRS/SDD/RTM, `SBOT-010` … `SBOT-050`) for a new first-party plugin, built in the Galileo-Plugins repository, that presses or switches SwitchBot Bot devices over Bluetooth LE as Switch devices — mainly to power a Seestar on and off. The plugin uses `bleak` with its own small Bot protocol layer instead of the suggested `switchbotpy`, which only works on Linux (it drives BlueZ `gatttool` via `pygatt`/`pexpect`) and Python ≤ 3.8; the reasoning is ADR-SBOT-001. Core `SRS.md`, `SDD.md`, `RTM.md` and `PSD.md` now point at it next to Kasa Switch and Generic Relay. No core code changed.
+- **Plugins can now have a top-level sidebar section, a dockable pane, their own settings and the Observatory location (`PLUG-130` … `PLUG-160`).** Until now a plugin panel could only land under Science or on an Equipment device page. `panel_level = "top"` gives a plugin its own icon in the left sidebar (it may paint its own via `panel_icon_painter()`, otherwise the generic plugin icon is used). `dock_label` + `build_dock_widget()` offers a `QDockWidget` the user can move or float, opened and closed by the plugin through `ctx.set_dock_visible()`; the plugin is told when the user opens or closes it, but not merely because the main window closed (Qt reports both as "not visible", which would otherwise have been saved as "pane closed" on every exit). `ctx.settings()` stores a plugin's options in the shared database under `plugin.<name>` so plugins follow the same no-config-files rule as core, and `ctx.site_location()` hands a plugin the selected Observatory's `ObservingLocation`. Documented in `docs/SRS.md` (new `PLUG-130`–`PLUG-160`, `PLUG-070` reworded), `docs/SDD.md` §4.20, `docs/RTM.md`, and the wiki's Plugin Developers Guide; covered by `TC-PLUG-130` … `TC-PLUG-160` in `tests/test_plug.py`, which build a real offscreen `AppWindow`.
+- **AllSkyCam plugin requirements and design** (`docs/plugins/allskycam/`, PSD/SRS/SDD/RTM, `ASC-010` … `ASC-090`) for a new first-party plugin, built in the Galileo-Plugins repository, that shows the latest image and an animation of the last *n* images from an indi-allsky all-sky camera in its own sidebar section and an optional docked pane. indi-allsky needs no changes: it has no REST API, but its existing `/latestimage` route redirects to the newest processed image. New wiki article "16. AllSkyCam".
+
+### Changed
+
+- **A plugin now declares where its panel goes, and core no longer assumes it (`PLUG-070`).** `panel_level` is `"science"` (the Science menu; `"primary"` / `"secondary"` still work as older spellings), `"equipment:<category>"` (a panel on that Equipment page) or `"top"` (see above). `UiRegistry` gains `get_science_panels()`, `get_top_level_panels()` and `get_dock_plugins()`. The Generic Relay plugin now declares `equipment:switch` like Kasa Switch (it was landing under Science), and VSTarget declares `science` explicitly. The Kasa/Generic Relay/VSTarget design documents are updated to match.
+
+### Fixed
+
+- **Enabling or disabling a plugin in Options > Plugins never reached the plugin.** The page passes the manifest name (`vstarget`) but loaded plugins are keyed by class name (`VSTPlugin`), so `PluginManager.enable/disable` flipped a flag nobody read and a disabled plugin kept running. Both now resolve a manifest name to the loaded classes, and a plugin hears about it through the new `on_enabled_changed(enabled)` hook so it can stop and resume background work (`PLUG-060`, covered by `TC-PLUG-060`).
+
 ### Changed
 
 - **README now describes Galileo as an alpha pre-release.** The status badge and Status section moved from "pre-alpha" to the 0.9.0alpha pre-release (linking the GitHub release), so the README matches how the installers are published. Documentation only.

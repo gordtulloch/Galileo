@@ -33,7 +33,7 @@ VSTarget's own background is unchanged from core PSD Section 2: Galileo's author
 
 | # | Goal |
 |---|---|
-| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party plugin distributed as a downloadable ZIP from the galileo-imaging.com plugin repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`), presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it. The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
+| G1 | Deliver VSTarget's variable-star target planning (AAVSO catalog integration, observing-script generation) as the `VST` plugin — a first-party plugin distributed as a downloadable ZIP from the galileo-imaging.com plugin repository (`PLUG-090`/`PLUG-110`), independently enabled/disabled once installed (core `PLUG-060`), presented in the Science section of the left menu (the plugin declares `panel_level = "science"`, core `PLUG-070`), not nested beneath the Sky Atlas/Targets screen (core `SKY`). The plugin is **not** bundled in the Galileo installer; users install it from the in-app Plugin Marketplace or by selecting the downloaded ZIP via Install from file |
 | G2 | Deliver VSTarget's photometric analysis/AAVSO-reporting workflow as the separate `VST-AN` plugin — also a first-party ZIP distributed from the same website, paired with but independently installed, enabled, and disabled from `VST` |
 | G3 | Reuse core capabilities as a client rather than duplicating them: visibility computation (`SKY-030`), plate solving (`PLT-010`), Scheduler job submission (`SCHED-010`, via `PluginContext`) — this plugin owns no device ports and introduces no new core domain |
 | G4 | Demonstrate, not just declare, that Galileo's plugin architecture (core `PLUG`) is sufficient for a first-party workflow of this complexity — every capability below is expressed through `PLUG`'s existing extension points, with no plugin-specific carve-out added to core to make it fit |
@@ -63,7 +63,7 @@ This plugin is a client of the following core capabilities — each is an existi
 |---|---|---|
 | Plugin loading, manifest/version check, fault isolation | `PLUG-010`–`PLUG-050` | Both `VST` and `VST-AN` are discovered/loaded/isolated the same as any plugin |
 | Pre-loaded first-party plugin enable/disable | `PLUG-060` | Both ship pre-loaded, independently toggleable |
-| Primary-level UI panel insertion | `PLUG-070` | `VST`'s target-planning UI is a peer section to the Sky Atlas/Targets screen, not nested beneath it |
+| Plugin-declared panel placement | `PLUG-070` | `VST`'s target-planning UI declares `science` and appears in the Science section, separate from the Sky Atlas/Targets screen |
 | `PluginContext` core-service callback surface | `PLUG-080` | `VST`'s Scheduler-submission control (Section 8) calls a `PluginContext`-granted `SchedulerJobSubmitter` handle rather than importing `galileo.scheduler` directly |
 | Target visibility computation | `SKY-030` | `VST`'s observable-only filtering reuses this rather than a second rise/transit/set implementation |
 | Simbad object-name lookup | Core `EXT-110` (external interface) | `VST`'s coordinate/magnitude fallback lookup |

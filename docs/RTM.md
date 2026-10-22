@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 283 requirements (267 counted in the SRS's own domain-summary total as of that count's last update — see Section 6's own note on rows that have since drifted ahead of it — the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md). `KASA` (5 requirements) and `RELAY` (5 requirements) are likewise traced in their own plugins' RTMs, not counted here: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md), [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md).
+**Coverage:** 283 requirements (267 counted in the SRS's own domain-summary total as of that count's last update — see Section 6's own note on rows that have since drifted ahead of it — the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md). `KASA` (5 requirements), `RELAY` (5 requirements), `SBOT` (5 requirements) and `ASC` (9 requirements) are likewise traced in their own plugins' RTMs, not counted here: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md), [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md), [`docs/plugins/switchbot_bot/RTM.md`](plugins/switchbot_bot/RTM.md), [`docs/plugins/allskycam/RTM.md`](plugins/allskycam/RTM.md).
 
 **`EQP-WX-020`/`EQP-SAFE-020` added:** this revision adds per-reading Weather-Station safety configuration (Equipment > Weather screen) and its read-only, trend-graphed surfacing on the Equipment > Safety Monitor screen — tracing to SDD 4.16 `galileo.safety` (the rule model/evaluation) and SDD 4.4b `galileo.ui.app_window` (the two new Equipment pages).
 
@@ -422,6 +422,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-100` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-100` |
 | `PLUG-110` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-110` |
 | `PLUG-120` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-120` |
+| `PLUG-130` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-130` |
+| `PLUG-140` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-140` |
+| `PLUG-150` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-150` |
+| `PLUG-160` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-160` |
 
 ### `UI` — Customization & Theming
 
@@ -487,7 +491,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are the VS
 
 ### `KASA` / `RELAY` — Plugin-Owned, Not Core
 
-Kasa smart-plug/power-strip control and generic HTTP relay-board control are, likewise, not core requirements — they are the Kasa Switch and Generic Relay plugins' own, traced in their own RTMs: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md) and [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md). Both consume core's `EQP-SW-010` Switch device-port contract and the `PLUG` framework by reference rather than redefining either here.
+Kasa smart-plug/power-strip control and generic HTTP relay-board control are, likewise, not core requirements — they are the Kasa Switch and Generic Relay plugins' own, traced in their own RTMs: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md) and [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md). Both consume core's `EQP-SW-010` Switch device-port contract and the `PLUG` framework by reference rather than redefining either here. The AllSkyCam plugin's requirements (`ASC`, an indi-allsky all-sky camera viewer) are likewise its own: [`docs/plugins/allskycam/RTM.md`](plugins/allskycam/RTM.md); it is the consumer of `PLUG-130`–`PLUG-160`.
 
 ### `NFR-PERF` — Performance
 
@@ -583,7 +587,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `HIST` | 4 | 0 | 3 | 1 |
 | `META` | 5 | 3 | 1 | 1 |
 | `NOTIF` | 5 | 0 | 1 | 4 |
-| `PLUG` | 8 | 7 | 1 | 0 |
+| `PLUG` | 16 | 15 | 1 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
 | `LIB` | 18 | 11 | 5 | 2 |
@@ -596,4 +600,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **287** | **170** | **101** | **16** |
+| **Total** | **295** | **178** | **101** | **16** |

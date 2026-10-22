@@ -71,7 +71,7 @@ See [this plugin's PSD Section 6](PSD.md#6-dependencies-on-galileo-core) (core c
 
 ### 3.1 `KASA` — Kasa Smart Plug / Power Strip Control
 
-Delivered as a first-party, independently-installable, independently-disableable plugin (core `PLUG-060`) — not a core-compiled module. Presented as a secondary-level panel (core `PLUG-070`) when enabled.
+Delivered as a first-party, independently-installable, independently-disableable plugin (core `PLUG-060`) — not a core-compiled module. Presented as a panel on the Equipment > Switches page (core `PLUG-070`, `panel_level = "equipment:switch"`) when enabled.
 
 | ID | Requirement | Priority |
 |---|---|---|

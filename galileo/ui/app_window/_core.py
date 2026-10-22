@@ -119,6 +119,8 @@ class AppWindowCoreMixin:
         outer.addWidget(body, 1)
 
         self._window.setCentralWidget(central)
+        self._plugin_manager.site_provider = cast("AppWindowState", self)._plugin_site_location
+        cast("AppWindowState", self)._build_plugin_docks()
 
         _progress("Applying theme")
         self._theme.set_theme(self._theme.current_theme)  # applies the stylesheet
@@ -313,7 +315,7 @@ class AppWindowCoreMixin:
         _plugin_primary_labels: set[str] = set()
         if _pm is not None:
             registry = _pm.get_ui_registry()
-            for _panel in registry.get_primary_panels() + registry.get_secondary_panels():
+            for _panel in registry.get_science_panels():
                 _sid = _panel.plugin.name
                 _plugin_ref = _panel.plugin
                 _plabel = _panel.label
@@ -321,7 +323,7 @@ class AppWindowCoreMixin:
                     lambda _p=_plugin_ref, _lbl=_plabel: self._build_plugin_page(_p, _lbl)
                 )
                 _science_plugin_items.append((_sid, _plabel, "plugins"))
-                if _panel.level == "primary":
+                if _panel.level in ("primary", "science"):
                     _plugin_primary_labels.add(_plabel)
         # Drop SCIENCE_ITEMS stubs whose labels are already provided by a
         # primary plugin panel, so installing a plugin doesn't create a
@@ -356,9 +358,12 @@ class AppWindowCoreMixin:
             "dashboard": self._build_dashboard_page,
         }
 
+        # Plugins that declared panel_level = "top" get their own sidebar icon (PLUG-130).
+        top_sections = self._register_plugin_top_sections(page_builders)
+
         pages: dict[str, int] = {}
         self._science_nav = None
-        for section_id, label, _icon_name in PRIMARY_SECTIONS:
+        for section_id, label, _icon_name in [*PRIMARY_SECTIONS, *top_sections]:
             report(f"Building {label} screen")
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
@@ -404,7 +409,7 @@ class AppWindowCoreMixin:
         # of the sidebar next to Options instead of sitting among the
         # screens above the stretch.
         equipment_section = next(s for s in PRIMARY_SECTIONS if s[0] == "equipment")
-        sidebar_items = [s for s in PRIMARY_SECTIONS if s[0] != "equipment"]
+        sidebar_items = [s for s in PRIMARY_SECTIONS if s[0] != "equipment"] + top_sections
         sidebar = _NavColumn(
             object_name="Sidebar",
             button_object_name="NavButton",
@@ -434,6 +439,83 @@ class AppWindowCoreMixin:
             options_page._secondary_nav.hide_item("science")
         stack.setCurrentIndex(pages["star_atlas"])
         return stack, sidebar
+
+    def _register_plugin_top_sections(self: AppWindowState, page_builders: dict) -> list[tuple[str, str, str]]:
+        """One ``(section_id, label, icon_name)`` per plugin with ``panel_level = "top"`` (PLUG-130).
+        Adds each page builder to *page_builders* and the plugin's icon painter to the icon set."""
+        from galileo.ui import icons
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is None:
+            return []
+        sections: list[tuple[str, str, str]] = []
+        for panel in pm.get_ui_registry().get_top_level_panels():
+            plugin = panel.plugin
+            section_id = f"plugin.{plugin.name}"
+            icon_name = "plugins"
+            try:
+                painter_fn = plugin.panel_icon_painter()
+            except Exception:
+                logger.exception("Plugin %r icon painter failed; using the generic icon", plugin.name)
+                painter_fn = None
+            if painter_fn is not None:
+                icon_name = section_id
+                icons.ICONS[icon_name] = painter_fn
+            page_builders[section_id] = lambda _p=plugin, _l=panel.label: self._build_plugin_page(_p, _l)
+            sections.append((section_id, panel.label, icon_name))
+        return sections
+
+    def _build_plugin_docks(self: AppWindowState) -> None:
+        """A QDockWidget per plugin that offers a dock pane (PLUG-140). Each starts closed unless the
+        plugin asks otherwise, and the plugin hears about every open/close."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QDockWidget
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is None:
+            return
+        self._plugin_docks: dict[str, QDockWidget] = {}
+        for plugin in pm.get_ui_registry().get_dock_plugins():
+            try:
+                content = plugin.build_dock_widget()
+            except Exception:
+                logger.exception("Plugin %r dock pane failed to build", plugin.name)
+                continue
+            if content is None:
+                continue
+            dock = QDockWidget(plugin.dock_label, self._window)
+            dock.setObjectName(f"PluginDock.{plugin.name}")
+            dock.setWidget(content)
+            dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+            self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+            dock.setVisible(bool(plugin.dock_initially_visible()))
+
+            # visibilityChanged(False) also fires when the whole main window closes or minimises, which
+            # is not the user closing the pane -- report whether the dock itself was hidden instead.
+            def _on_visibility(_visible: bool, _p=plugin, _dock=dock) -> None:
+                try:
+                    _p.on_dock_visibility_changed(not _dock.isHidden())
+                except Exception:
+                    logger.exception("Plugin %r raised in on_dock_visibility_changed", _p.name)
+
+            dock.visibilityChanged.connect(_on_visibility)
+            self._plugin_docks[plugin.name] = dock
+        pm.dock_controller = self._set_plugin_dock_visible
+
+    def _set_plugin_dock_visible(self: AppWindowState, plugin_name: str, visible: bool) -> None:
+        dock = getattr(self, "_plugin_docks", {}).get(plugin_name)
+        if dock is not None:
+            dock.setVisible(visible)
+
+    def _plugin_site_location(self: AppWindowState):
+        """The selected Observatory as an ``ObservingLocation`` for plugins (PLUG-160), or ``None``."""
+        obs = getattr(self, "_current_observatory", None)
+        if obs is None or getattr(obs, "latitude", None) is None or getattr(obs, "longitude", None) is None:
+            return None
+        from galileo.planning.visibility import ObservingLocation
+        return ObservingLocation(
+            name=getattr(obs, "name", ""), latitude=obs.latitude, longitude=obs.longitude,
+            elevation_m=getattr(obs, "elevation_m", None) or 0.0,
+            timezone=getattr(obs, "timezone", None) or "UTC",
+        )
 
     def _request_quit(self: AppWindowState) -> None:
         from PySide6.QtWidgets import QApplication
