@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import logging
 import math
+import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 _IERS_URL = "https://datacenter.iers.org/data/9/finals2000A.all"
 _IERS_MAX_AGE_DAYS = 30
+_IERS_TIMEOUT_S = 10
 _iers_configured = False
+_iers_failed = False  # a failed setup is not retried in-process, so each call doesn't re-wait on the network
 
 
 def _configure_iers_cache() -> None:
@@ -32,8 +35,8 @@ def _configure_iers_cache() -> None:
     Pre-populates astropy's class-level table cache so coordinate transforms
     never trigger a network fetch after the first download.
     """
-    global _iers_configured
-    if _iers_configured:
+    global _iers_configured, _iers_failed
+    if _iers_configured or _iers_failed:
         return
     try:
         from galileo.platform import get_cache_dir
@@ -53,13 +56,16 @@ def _configure_iers_cache() -> None:
             )
             import urllib.request
             tmp = iers_path.with_suffix(".tmp")
-            urllib.request.urlretrieve(_IERS_URL, tmp)
+            # urlretrieve has no timeout, so an unresponsive server hung the caller indefinitely.
+            with urllib.request.urlopen(_IERS_URL, timeout=_IERS_TIMEOUT_S) as resp, open(tmp, "wb") as out:
+                shutil.copyfileobj(resp, out)
             tmp.replace(iers_path)
 
         iers_conf.auto_download = False
         IERS_Auto.iers_table = IERS_A.open(str(iers_path))
         _iers_configured = True
     except Exception as exc:
+        _iers_failed = True
         logger.debug("IERS cache setup failed (%s); astropy will use its own auto-download", exc)
 
 

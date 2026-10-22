@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plugin panels on Equipment pages now use the plugin's own help file.** A panel such as Kasa or SwitchBot on Switches was documented under the host page (`equipment.switch`), so the help audit flagged its buttons as undocumented and the plugin's `plugin.<Name>.md` help file was reported as an orphan (`test_tc_help_060`/`test_tc_help_010` failed whenever such a plugin was installed). The panel is now tagged `plugin.<name>` when that help file exists, so its controls resolve against it. No "?" button is added, since the panel has no page title.
+- **CI test run timed out in `test_sky.py` when the IERS server didn't answer.** `galileo.planning.visibility._configure_iers_cache` downloaded the Earth-orientation file with `urlretrieve`, which has no timeout, so an unresponsive `datacenter.iers.org` stalled the TLS handshake until pytest's 120 s limit killed the whole job (the failing "Code quality and tests" runs). The download now has a 10 s timeout, and a failed setup is remembered for the rest of the process instead of being retried (and re-waited on) by every altitude calculation. Offline behaviour is unchanged: astropy falls back to its own data.
+
 ### Changed
 
 - **A plugin can put its settings under Options (`PLUG-170`).** Setting `options_label` and implementing `build_options_page()` adds an item after Plugins in the Options menu; a page that fails to build becomes a placeholder. AllSkyCam uses it instead of a Settings tab on its own page.

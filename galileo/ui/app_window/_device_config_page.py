@@ -47,7 +47,16 @@ class AppWindowDeviceConfigMixin:
         has_plugin_panels = False
         if pm is not None:
             for panel in pm.get_ui_registry().get_equipment_panels(cat_id):
-                layout.addWidget(self._build_plugin_page(panel.plugin, panel.label))
+                panel_page = self._build_plugin_page(panel.plugin, panel.label)
+                # The panel's controls are documented in the plugin's own help file. Set the
+                # property rather than tag_help_screen(): that would add a second "?" button
+                # to a panel that has no PageTitle of its own.
+                from galileo import help as help_content
+                from galileo.ui.help import SCREEN_PROPERTY
+                plugin_screen = f"plugin.{panel.plugin.name}"
+                if help_content.load(plugin_screen) is not None:
+                    panel_page.setProperty(SCREEN_PROPERTY, plugin_screen)
+                layout.addWidget(panel_page)
                 has_plugin_panels = True
 
         table = QTableWidget(1, 4)
