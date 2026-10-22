@@ -117,6 +117,8 @@ class PluginBase(ABC):
     panel_label: str = ""
     # Label of an optional dockable pane (PLUG-140); "" means the plugin has none.
     dock_label: str = ""
+    # Label of an optional page under Options (PLUG-170); "" means the plugin has none.
+    options_label: str = ""
 
     @abstractmethod
     def activate(self, ctx: PluginContext) -> None:
@@ -139,6 +141,11 @@ class PluginBase(ABC):
         """For a ``panel_level = "top"`` plugin: a ``draw(painter, rect)`` callable that paints the
         sidebar icon with the pen the painter already carries (PLUG-130), or ``None`` for the
         generic plugin icon."""
+        return None
+
+    def build_options_page(self) -> Any:
+        """Return a QWidget for the plugin's page under Options (PLUG-170), or ``None``. Only asked
+        when :attr:`options_label` is set."""
         return None
 
     def build_dock_widget(self) -> Any:
@@ -254,12 +261,20 @@ class UiRegistry:
     def __init__(self) -> None:
         self._panels: list[UiPanel] = []
         self._dock_plugins: list[PluginBase] = []
+        self._options_plugins: list[PluginBase] = []
 
     def register(self, panel: UiPanel) -> None:
         self._panels.append(panel)
 
     def register_dock(self, plugin: PluginBase) -> None:
         self._dock_plugins.append(plugin)
+
+    def register_options(self, plugin: PluginBase) -> None:
+        self._options_plugins.append(plugin)
+
+    def get_options_plugins(self) -> list[PluginBase]:
+        """Loaded plugins that offer a page under Options (PLUG-170)."""
+        return list(self._options_plugins)
 
     def get_primary_panels(self) -> list[UiPanel]:
         return [p for p in self._panels if p.level == "primary"]
@@ -432,6 +447,8 @@ class PluginManager:
                 self._ui_registry.register(panel)
             if getattr(plugin_cls, "dock_label", ""):
                 self._ui_registry.register_dock(instance)
+            if getattr(plugin_cls, "options_label", ""):
+                self._ui_registry.register_options(instance)
         except Exception:
             logger.exception("Plugin %r failed to activate; marking faulted", plugin_cls.name)
             self._faulted.add(plugin_cls.name)
@@ -446,6 +463,7 @@ class PluginManager:
         self._active.pop(name, None)
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
+        self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]
 
     def _class_names(self, name: str) -> list[str]:
         """The loaded plugin class names behind *name*, which is either a class name or the

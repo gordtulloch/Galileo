@@ -79,7 +79,7 @@ Delivered as a first-party, independently installable and disableable plugin (`P
 | ASC-050 | The system shall provide a **Latest** view showing the newest image as retrieved, scaled to fit with its aspect ratio preserved, with when it was fetched. | MVP |
 | ASC-060 | The system shall provide an **Animation** view that loops through the last *n* images (*n* the configured number) at the configured speed. Images shall be held as compressed bytes within a total memory cap, dropping the oldest first; frames shall be decoded only for display; the animation timer shall run only while the view is visible. An empty or single-image buffer shall display without error. | MVP |
 | ASC-070 | The system shall offer the animation as a pane docked to the Galileo window (`PLUG-140`), openable from the options, movable and floatable by the user, sharing the same fetched images as the main view (one download for both). Closing the pane with its own close button shall turn the option off, and the open/closed state shall persist across restarts. | MVP |
-| ASC-080 | The system shall present the plugin as its own top-level section of the left sidebar with its own icon (`PLUG-130`), containing the Latest, Animation and Settings views. | MVP |
+| ASC-080 | The system shall present the plugin as its own top-level section of the left sidebar with its own icon (`PLUG-130`), containing the Latest and Animation views; its options are a page under Options (`PLUG-170`). | MVP |
 | ASC-090 | The system shall be inert while the plugin is disabled (no fetching, pane closed) and resume when re-enabled (`PLUG-060`), and shall provide in-app help for every control on its screen (`HELP-060`). | MVP |
 
 ---

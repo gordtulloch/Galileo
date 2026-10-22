@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **A plugin can put its settings under Options (`PLUG-170`).** Setting `options_label` and implementing `build_options_page()` adds an item after Plugins in the Options menu; a page that fails to build becomes a placeholder. AllSkyCam uses it instead of a Settings tab on its own page.
 - **Documented the Kasa "Third-Party Compatibility" prerequisite** in the wiki's Equipment article, the Kasa plugin SDD and the Galileo-Plugins README: newer Kasa firmware ships with local control off, so a strip that works in the Kasa app is invisible to Galileo until that setting is turned on.
 - **Equipment pages that host plugin panels (e.g. Switches) now scroll as a whole, with the plugin's panel at the top.** Previously the plugin panel shared the page with the Driver/Server table and results list and got only a squeezed slice of the height, so a power strip's outlets needed their own inner scrollbar. The panel now sits directly under the page title at its natural height, and one scrollbar scrolls the whole page so every outlet of every device is reachable. Pages without plugin panels are unchanged. Inline help and wiki need no change (no controls added or renamed).
 

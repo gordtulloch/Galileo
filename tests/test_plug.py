@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-160)."""
+"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-170)."""
 
 import io
 import zipfile
@@ -956,3 +956,40 @@ def test_tc_plug_060_disable_by_manifest_name_notifies_the_plugin(tmp_path):
     assert events == [False] and not mgr.is_active("WorkerPlugin")
     mgr.set_enabled("workerpkg", True)
     assert events == [False, True] and mgr.is_active("WorkerPlugin")
+
+
+@pytest.mark.requirement("TC-PLUG-170")
+@pytest.mark.priority("MVP")
+def test_tc_plug_170_plugin_options_page_appears_under_options(tmp_path, monkeypatch):
+    """PLUG-170: a plugin with options_label gets an item under Options whose page comes from its
+    build_options_page(); a page that fails to build becomes a placeholder, not a startup failure."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+    plugins = pytest.importorskip("galileo.plugins")
+
+    class OptPlugin(plugins.PluginBase):
+        name = "OptPlugin"
+        version = "1.0"
+        api_version = "1"
+        options_label = "Opt Thing"
+
+        def activate(self, ctx): pass
+        def deactivate(self): pass
+        def build_options_page(self):
+            return QtWidgets.QLabel("opt page")
+
+    class BrokenOptPlugin(OptPlugin):
+        name = "BrokenOptPlugin"
+        options_label = "Broken Thing"
+
+        def build_options_page(self):
+            raise RuntimeError("boom")
+
+    win = _make_window(tmp_path, monkeypatch, [OptPlugin, BrokenOptPlugin])
+    try:
+        registry = win._plugin_manager.get_ui_registry()
+        assert [p.options_label for p in registry.get_options_plugins()] == ["Opt Thing", "Broken Thing"]
+        texts = {w.text() for w in win._options_page.findChildren(QtWidgets.QLabel)}
+        assert "opt page" in texts
+    finally:
+        win._window.close()

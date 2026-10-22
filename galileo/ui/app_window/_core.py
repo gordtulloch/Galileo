@@ -8,12 +8,12 @@ from __future__ import annotations
 from galileo.ui.qt_helpers import need
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ._common import _NEW_OBSERVATORY_LABEL, _MANUAL_URL, PRIMARY_SECTIONS, OPTIONS_ITEMS, OPTIONS_SECTION, PLANNING_ITEMS, SCIENCE_ITEMS, _HAS_QT, QWidget
 from ._widgets import _NavColumn
 from galileo import community
-from galileo.ui.help import HelpController, tag_help_screen
+from galileo.ui.help import SCREEN_PROPERTY, HelpController, tag_help_screen
 
 logger = logging.getLogger(__name__)
 
@@ -387,8 +387,17 @@ class AppWindowCoreMixin:
         option_builders["science"] = self._build_science_settings_page
         option_builders["notifications"] = self._build_notifications_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
+        # Plugins that offer an options page (PLUG-170) get an item after Plugins.
+        options_items = list(OPTIONS_ITEMS)
+        if _pm is not None:
+            for _op in _pm.get_ui_registry().get_options_plugins():
+                _oid = f"plugin.{_op.name}"
+                options_items.append((_oid, _op.options_label, "plugins"))
+                option_builders[_oid] = (
+                    lambda _p=_op: self._build_plugin_options_page(_p)
+                )
         report("Building Options screens")
-        options_page = self._build_submenu_page(OPTIONS_ITEMS, option_builders, help_prefix="options")
+        options_page = self._build_submenu_page(options_items, option_builders, help_prefix="options")
         tag_help_screen(options_page, "options")
         self._options_page = options_page
         pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
@@ -463,6 +472,18 @@ class AppWindowCoreMixin:
             page_builders[section_id] = lambda _p=plugin, _l=panel.label: self._build_plugin_page(_p, _l)
             sections.append((section_id, panel.label, icon_name))
         return sections
+
+    def _build_plugin_options_page(self: AppWindowState, plugin: Any) -> QWidget:
+        """The page a plugin offers under Options (PLUG-170); a placeholder if it fails to build."""
+        try:
+            page = plugin.build_options_page()
+        except Exception:
+            logger.exception("Plugin %r options page failed to build", plugin.name)
+            page = None
+        if page is None:
+            return self._build_placeholder_page(plugin.options_label)
+        # Its help is the plugin's own screen file, the same one its main page uses.
+        return tag_help_screen(page, f"plugin.{plugin.name}")
 
     def _build_plugin_docks(self: AppWindowState) -> None:
         """A QDockWidget per plugin that offers a dock pane (PLUG-140). Each starts closed unless the
@@ -607,7 +628,7 @@ class AppWindowCoreMixin:
         for item_id, label, _icon in items:
             builder = builders.get(item_id)
             sub = builder() if builder else self._build_placeholder_page(label)
-            if help_prefix:
+            if help_prefix and sub.property(SCREEN_PROPERTY) is None:   # a page may carry its own help id
                 tag_help_screen(sub, f"{help_prefix}.{item_id}")
             indexes[item_id] = stack.addWidget(sub)
 

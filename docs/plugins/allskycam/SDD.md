@@ -67,7 +67,7 @@ The single package `allskycam`, its ADRs, and its data design. Core architecture
 - **`allskycam.cycle.run_cycle`** — one scheduled fetch: pause check, then fetch, returned as a `CycleResult` (`FRAME`/`UNCHANGED`/`PAUSED`/`ERROR`); never raises, so it is safe on a worker thread. Satisfies `ASC-020`, `ASC-030`.
 - **`allskycam.buffer.FrameBuffer`** — the rolling, memory-capped frame set (`ADR-ASC-003`). Satisfies `ASC-060`.
 - **`allskycam.service.AllSkyService`** (`QObject`) — owns a repeating `QTimer`, a one-fetch-at-a-time `QThreadPool` job, the `FrameBuffer`, the status text and the options (loaded from, and saved to, `PluginContext.settings()`). Signals: `frame_added`, `status_changed`, `config_changed`, `test_finished`. A result arriving after `stop()` is discarded. Satisfies `ASC-020`, `ASC-040`, `ASC-090`.
-- **`allskycam.ui`** — `AllSkyCamPage` (status line, **Fetch now**, tabs), `LatestView` (`ASC-050`), `AnimationView` (`ASC-060`; timer runs only while shown), `SettingsForm` (`ASC-040`; nothing applies until **Save**; **Test connection** validates locally first), `DockPane` (`ASC-070`).
+- **`allskycam.ui`** — `AllSkyCamPage` (status line, **Fetch now**, Latest/Animation tabs), `LatestView` (`ASC-050`), `AnimationView` (`ASC-060`; timer runs only while shown), `SettingsPage`/`SettingsForm` (`ASC-040`, shown under Options > AllSkyCam via `build_options_page()`, core `PLUG-170`; nothing applies until **Save**; **Test connection** validates locally first), `DockPane` (`ASC-070`).
 - **`allskycam/help/plugin.AllSkyCamPlugin.md`** — one section per control (`ASC-090`).
 - **Satisfies:** `ASC-010`–`ASC-090`.
 

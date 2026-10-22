@@ -533,6 +533,7 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | PLUG-140 | The system shall let a plugin offer a dockable pane in the main window: created closed unless the plugin asks for it open, movable and floatable by the user, opened and closed by the plugin through `PluginContext`, with the plugin told when the user opens or closes it (and not told that the pane "closed" merely because the main window did). | MVP |
 | PLUG-150 | The system shall give each plugin, through `PluginContext`, a settings store in Galileo's shared database under a per-plugin namespace, so plugin configuration follows the same rule as core configuration (no plugin-private config files or `QSettings`); reads fall back to defaults and writes never raise when the database is unavailable. | MVP |
 | PLUG-160 | The system shall expose to plugins, through `PluginContext`, the selected Observatory's location (latitude, longitude, elevation, timezone), or nothing when none is selected or it has no coordinates. | MVP |
+| PLUG-170 | The system shall let a plugin offer a settings page of its own under Options, listed after Plugins and labelled by the plugin, built by the plugin; a page that fails to build shall be replaced by a placeholder without affecting the rest of the application. | MVP |
 
 ### 4.20 `UI` — Customization & Theming
 
