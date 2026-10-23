@@ -72,6 +72,7 @@ This plugin adds no database of its own — switch state itself is not persisted
 
 - **Plugin boundary:** this plugin depends only on core's device port interfaces (`galileo.core.devices.DeviceBackend`/`DeviceCategory.SWITCH`) and the `PluginContext.register_device_backend` call it is given at load time — identical to core SDD Section 6.3's Plugin API Surface description.
 - **External interface this plugin adds:** a direct TCP/9999 connection to each configured Kasa device on the LAN (`kasa_switch.protocol`). This is a device-port-level interface (the same category of thing core's own `galileo.adapters.indi`/`.alpaca` are to their devices), not a third-party web API, so it is not an `EXT`-domain requirement.
+- **Device-side prerequisite:** newer Kasa firmware ships with local control off; the device must have **Third-Party Compatibility** enabled in the Kasa app or it refuses TCP/9999 and is unreachable by scan or by IP.
 
 ---
 

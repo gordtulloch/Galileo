@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-120)."""
+"""PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-170)."""
 
 import io
 import zipfile
@@ -712,3 +712,284 @@ def test_tc_plug_120_remove_deferred_writes_marker(tmp_path):
     assert result is False   # deferred removal needed
     marker = plugins_dir / "TestPlugin-1.0.0" / plugins._PENDING_REMOVAL_MARKER
     assert marker.exists()
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-070 (placement) / TC-PLUG-130 / TC-PLUG-140 / TC-PLUG-150 / TC-PLUG-160
+# ---------------------------------------------------------------------------
+
+def _panel_plugin(plugins, plugin_name, level, label="Panel"):
+    class _P(plugins.PluginBase):
+        name = plugin_name
+        version = "1.0"
+        api_version = "1"
+        panel_level = level
+        panel_label = label
+
+        def activate(self, ctx): pass
+        def deactivate(self): pass
+
+    return _P
+
+
+@pytest.mark.requirement("TC-PLUG-070")
+@pytest.mark.priority("MVP")
+def test_tc_plug_070_plugin_declares_its_menu_location(plugin_manager):
+    """PLUG-070: a plugin declares where its panel sits -- Science, one Equipment device page, or a
+    top-level sidebar entry -- and the registry sorts panels by that declaration."""
+    plugins = pytest.importorskip("galileo.plugins")
+    plugin_manager.load(_panel_plugin(plugins, "SciPlugin", "science", "Sci"))
+    plugin_manager.load(_panel_plugin(plugins, "LegacySciPlugin", "primary", "Legacy"))
+    plugin_manager.load(_panel_plugin(plugins, "EquipPlugin", "equipment:switch", "Relay"))
+    plugin_manager.load(_panel_plugin(plugins, "TopPlugin", "top", "Top"))
+
+    registry = plugin_manager.get_ui_registry()
+    assert {p.label for p in registry.get_science_panels()} == {"Sci", "Legacy"}
+    assert [p.label for p in registry.get_equipment_panels("switch")] == ["Relay"]
+    assert [p.label for p in registry.get_top_level_panels()] == ["Top"]
+    assert registry.get_equipment_panels("camera") == []
+
+
+def _make_window(tmp_path, monkeypatch, plugin_classes):
+    """An offscreen AppWindow whose plugin manager loads *plugin_classes* instead of scanning disk."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    plugins = pytest.importorskip("galileo.plugins")
+
+    def _init(self):
+        for cls in plugin_classes:
+            self.load(cls)
+
+    monkeypatch.setattr(plugins.PluginManager, "initialize_from_disk", _init)
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.library.database import init_db
+    init_db(tmp_path / "plug.db")
+    from galileo.ui.app_window import AppWindow
+    return AppWindow()
+
+
+@pytest.mark.requirement("TC-PLUG-130")
+@pytest.mark.priority("MVP")
+def test_tc_plug_130_top_level_plugin_gets_a_sidebar_section_with_its_icon(tmp_path, monkeypatch):
+    """PLUG-130: a plugin with panel_level 'top' gets its own sidebar entry, built from its
+    build_page(), using the icon it paints (or the generic plugin icon)."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.library.database import db
+    from galileo.ui import icons
+
+    drawn = []
+
+    class TopPlugin(plugins.PluginBase):
+        name = "TopPlugin"
+        version = "1.0"
+        api_version = "1"
+        panel_level = "top"
+        panel_label = "Top Thing"
+
+        def activate(self, ctx): pass
+        def deactivate(self): pass
+        def build_page(self):
+            return QtWidgets.QLabel("top page")
+        def panel_icon_painter(self):
+            return lambda painter, rect: drawn.append(rect)
+
+    class PlainTopPlugin(TopPlugin):
+        name = "PlainTopPlugin"
+        panel_label = "Plain Top"
+        def panel_icon_painter(self):
+            return None
+
+    win = _make_window(tmp_path, monkeypatch, [TopPlugin, PlainTopPlugin])
+    try:
+        nav = win._primary_nav
+        assert "plugin.TopPlugin" in nav._buttons
+        assert nav._buttons["plugin.TopPlugin"].text().replace("\n", " ") == "Top Thing"
+        assert "plugin.PlainTopPlugin" in nav._buttons
+        assert "plugin.TopPlugin" in icons.ICONS and drawn      # its own painter was used
+        assert "plugin.PlainTopPlugin" not in icons.ICONS       # fell back to the generic icon
+        nav._buttons["plugin.TopPlugin"].click()
+        assert win._current_primary_section == "plugin.TopPlugin"
+    finally:
+        icons.ICONS.pop("plugin.TopPlugin", None)
+        win._window.close()
+        db.close()
+
+
+@pytest.mark.requirement("TC-PLUG-140")
+@pytest.mark.priority("MVP")
+def test_tc_plug_140_dock_pane_is_created_toggled_and_reported(tmp_path, monkeypatch):
+    """PLUG-140: a plugin with a dock_label gets a QDockWidget in the main window, initially
+    visible as it asks, controllable via ctx.set_dock_visible, and told when the user closes it."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.library.database import db
+
+    seen = []
+    ctx_holder = {}
+
+    class DockPlugin(plugins.PluginBase):
+        name = "DockPlugin"
+        version = "1.0"
+        api_version = "1"
+        dock_label = "My Dock"
+
+        def activate(self, ctx):
+            ctx_holder["ctx"] = ctx
+        def deactivate(self): pass
+        def build_dock_widget(self):
+            return QtWidgets.QLabel("dock content")
+        def dock_initially_visible(self):
+            return True
+        def on_dock_visibility_changed(self, visible):
+            seen.append(visible)
+
+    win = _make_window(tmp_path, monkeypatch, [DockPlugin])
+    try:
+        win._window.show()
+        dock = win._plugin_docks["DockPlugin"]
+        assert dock.windowTitle() == "My Dock"
+        assert dock.isVisible()
+        ctx_holder["ctx"].set_dock_visible(False)
+        assert not dock.isVisible()
+        ctx_holder["ctx"].set_dock_visible(True)
+        assert dock.isVisible()
+        dock.close()                        # the user's close button
+        assert seen[-1] is False
+        dock.setVisible(True)
+        assert seen[-1] is True
+        win._window.close()                 # closing the app is not the user closing the pane
+        assert seen[-1] is True
+    finally:
+        win._window.close()
+        db.close()
+
+
+@pytest.mark.requirement("TC-PLUG-140")
+@pytest.mark.priority("MVP")
+def test_tc_plug_140_set_dock_visible_is_a_noop_before_the_window_exists(plugin_manager):
+    """PLUG-140: asking for the dock before the main window exists does nothing and does not raise."""
+    ctx = plugin_manager.create_context(plugin_name="Early")
+    ctx.set_dock_visible(True)
+
+
+@pytest.mark.requirement("TC-PLUG-150")
+@pytest.mark.priority("MVP")
+def test_tc_plug_150_plugin_settings_live_in_the_database_under_its_own_namespace(tmp_path):
+    """PLUG-150: ctx.settings() reads and writes the shared settings store, namespaced per plugin;
+    one plugin cannot see or clobber another's values."""
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "plug_settings.db")
+    try:
+        mgr = plugins.PluginManager()
+        a = mgr.create_context(plugin_name="PluginA").settings()
+        b = mgr.create_context(plugin_name="PluginB").settings()
+        assert a.get("url", "default") == "default"
+        assert a.set("url", "http://a") is True
+        assert a.update({"count": 5, "flag": True}) is True
+        assert a.all() == {"url": "http://a", "count": 5, "flag": True}
+        assert b.all() == {}
+        assert a.namespace == "plugin.PluginA"
+    finally:
+        db.close()
+
+
+@pytest.mark.requirement("TC-PLUG-150")
+@pytest.mark.priority("MVP")
+def test_tc_plug_150_settings_without_a_database_fall_back_to_defaults():
+    """PLUG-150: with no database initialised, reads return the default and writes do not raise."""
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.library.models.base import db
+    if db.database is not None:
+        pytest.skip("a database is already initialised in this process")
+    s = plugins.PluginContext(plugin_name="NoDb").settings()
+    assert s.get("x", 7) == 7
+    assert s.all() == {}
+    s.set("x", 1)       # must not raise
+
+
+@pytest.mark.requirement("TC-PLUG-160")
+@pytest.mark.priority("MVP")
+def test_tc_plug_160_site_location_comes_from_the_host_and_survives_a_bad_provider(plugin_manager):
+    """PLUG-160: ctx.site_location() returns what the main window's provider reports; None when
+    there is no provider or it fails."""
+    ctx = plugin_manager.create_context(plugin_name="SitePlugin")
+    assert ctx.site_location() is None
+
+    site = object()
+    plugin_manager.site_provider = lambda: site
+    assert ctx.site_location() is site
+
+    def _boom():
+        raise RuntimeError("no observatory")
+    plugin_manager.site_provider = _boom
+    assert ctx.site_location() is None
+
+
+@pytest.mark.requirement("TC-PLUG-060")
+@pytest.mark.priority("MVP")
+def test_tc_plug_060_disable_by_manifest_name_notifies_the_plugin(tmp_path):
+    """PLUG-060: Options > Plugins toggles by manifest name; disabling it must reach the loaded
+    class so it can stop its background work (and enabling restarts it)."""
+    plugins = pytest.importorskip("galileo.plugins")
+    events = []
+
+    class WorkerPlugin(plugins.PluginBase):
+        name = "WorkerPlugin"
+        version = "1.0"
+        api_version = "1"
+        def activate(self, ctx): pass
+        def deactivate(self): pass
+        def on_enabled_changed(self, enabled):
+            events.append(enabled)
+
+    mgr = plugins.PluginManager()
+    mgr.load(WorkerPlugin)
+    manifest = plugins.PluginManifest("workerpkg", "1.0", "1", "1", "me", "d", "first_party")
+    mgr._records["workerpkg"] = plugins.PluginRecord(manifest, tmp_path, loaded_names=["WorkerPlugin"])
+
+    mgr.set_enabled("workerpkg", False)
+    assert events == [False] and not mgr.is_active("WorkerPlugin")
+    mgr.set_enabled("workerpkg", True)
+    assert events == [False, True] and mgr.is_active("WorkerPlugin")
+
+
+@pytest.mark.requirement("TC-PLUG-170")
+@pytest.mark.priority("MVP")
+def test_tc_plug_170_plugin_options_page_appears_under_options(tmp_path, monkeypatch):
+    """PLUG-170: a plugin with options_label gets an item under Options whose page comes from its
+    build_options_page(); a page that fails to build becomes a placeholder, not a startup failure."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+    plugins = pytest.importorskip("galileo.plugins")
+
+    class OptPlugin(plugins.PluginBase):
+        name = "OptPlugin"
+        version = "1.0"
+        api_version = "1"
+        options_label = "Opt Thing"
+
+        def activate(self, ctx): pass
+        def deactivate(self): pass
+        def build_options_page(self):
+            return QtWidgets.QLabel("opt page")
+
+    class BrokenOptPlugin(OptPlugin):
+        name = "BrokenOptPlugin"
+        options_label = "Broken Thing"
+
+        def build_options_page(self):
+            raise RuntimeError("boom")
+
+    win = _make_window(tmp_path, monkeypatch, [OptPlugin, BrokenOptPlugin])
+    try:
+        registry = win._plugin_manager.get_ui_registry()
+        assert [p.options_label for p in registry.get_options_plugins()] == ["Opt Thing", "Broken Thing"]
+        texts = {w.text() for w in win._options_page.findChildren(QtWidgets.QLabel)}
+        assert "opt page" in texts
+    finally:
+        win._window.close()

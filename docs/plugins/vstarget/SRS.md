@@ -85,7 +85,7 @@ Every other external interface this plugin uses is an existing core requirement:
 
 ### 4.1 `VST` — Variable Star Target Planning
 
-Delivered as a first-party, pre-loaded, independently disableable plugin (core `PLUG-060`), not a core-compiled module — enabling it is functionally equivalent to having it built into core. Presented as a peer-level UI section to the Sky Atlas/Targets screen (core `SKY`) at the primary navigation level (core `PLUG-070`), not nested beneath it, when enabled.
+Delivered as a first-party, pre-loaded, independently disableable plugin (core `PLUG-060`), not a core-compiled module — enabling it is functionally equivalent to having it built into core. Presented in the Science section of the left menu (`panel_level = "science"`, core `PLUG-070`), separate from the Sky Atlas/Targets screen (core `SKY`), when enabled.
 
 | ID | Requirement | Priority |
 |---|---|---|

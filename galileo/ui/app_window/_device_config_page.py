@@ -40,6 +40,25 @@ class AppWindowDeviceConfigMixin:
         heading.setObjectName("PageTitle")
         layout.addWidget(heading)
 
+        # Plugin-contributed controls for this category (e.g. the Kasa plugin's
+        # scan-and-toggle panel on Switches) sit directly under the heading at
+        # their natural height; the page as a whole scrolls (see the return).
+        pm = getattr(self, "_plugin_manager", None)
+        has_plugin_panels = False
+        if pm is not None:
+            for panel in pm.get_ui_registry().get_equipment_panels(cat_id):
+                panel_page = self._build_plugin_page(panel.plugin, panel.label)
+                # The panel's controls are documented in the plugin's own help file. Set the
+                # property rather than tag_help_screen(): that would add a second "?" button
+                # to a panel that has no PageTitle of its own.
+                from galileo import help as help_content
+                from galileo.ui.help import SCREEN_PROPERTY
+                plugin_screen = f"plugin.{panel.plugin.name}"
+                if help_content.load(plugin_screen) is not None:
+                    panel_page.setProperty(SCREEN_PROPERTY, plugin_screen)
+                layout.addWidget(panel_page)
+                has_plugin_panels = True
+
         table = QTableWidget(1, 4)
         table.setHorizontalHeaderLabels(["Driver", "Server", "Port", ""])
         table.verticalHeader().setVisible(False)
@@ -90,6 +109,8 @@ class AppWindowDeviceConfigMixin:
         layout.addLayout(driver_info_row)
 
         results = QListWidget()
+        if has_plugin_panels:
+            results.setMinimumHeight(120)  # no spare height to stretch into inside a scroll area
         layout.addWidget(results, 1)
 
         # Tracks this page's live state (including the device picked from the
@@ -156,13 +177,6 @@ class AppWindowDeviceConfigMixin:
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
 
-        # Plugin-contributed controls for this category (e.g. the Kasa plugin's
-        # scan-and-toggle panel on Switches).
-        pm = getattr(self, "_plugin_manager", None)
-        if pm is not None:
-            for panel in pm.get_ui_registry().get_equipment_panels(cat_id):
-                layout.addWidget(self._build_plugin_page(panel.plugin, panel.label), 1)
-
         log_heading = QLabel("Log")
         log_heading.setObjectName("CriteriaHeading")
         layout.addWidget(log_heading)
@@ -174,6 +188,13 @@ class AppWindowDeviceConfigMixin:
         self._device_pages[cat_id] = page_state
         page_state["reload"]()
 
+        if has_plugin_panels:
+            from PySide6.QtWidgets import QFrame, QScrollArea
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            return scroll
         return page
 
     def _load_device_config_into_page(self: AppWindowState, cat_id: str, state: dict) -> None:

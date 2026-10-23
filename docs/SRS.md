@@ -160,7 +160,7 @@ See scope document Section 11 (A1–A3, C1–C2).
 | EQP-SAFE-020 | The system shall surface, on the Equipment > Safety Monitor screen, the current value and SAFE/UNSAFE verdict of every Weather-Station reading configured as safety-related (`EQP-WX-020`), separately from the connected Safety Monitor device's own SAFE/NOT-SAFE state, alongside a trend graph of recent readings (e.g. wind speed, temperature, dew point) so a developing unsafe condition is visible before it trips. | P2 |
 | EQP-AUX-010 | The system shall provide an "Aux" equipment category for connecting a miscellaneous INDI driver, or an ASCOM Alpaca Switch device, that has no dedicated Galileo device category, and shall present the connected device's driver-defined properties as a tabbed control panel — one tab per INDI property group, or a single tab for an Alpaca Switch device — with fields and switches generated from the driver's own property definitions rather than a fixed per-category UI. | P2 |
 
-**`EQP-SW-010` has two first-party plugin consumers beyond the generic INDI/Alpaca Switch adapters above.** The Equipment > Switches screen these rows describe is intentionally left unpopulated for hardware that speaks neither INDI nor Alpaca; the Kasa Switch plugin ([`docs/plugins/kasa_switch/SRS.md`](plugins/kasa_switch/SRS.md), `KASA-*`) and Generic Relay plugin ([`docs/plugins/generic_relay/SRS.md`](plugins/generic_relay/SRS.md), `RELAY-*`) each register their own `DeviceBackend` for `DeviceCategory.SWITCH` (`ARCH-070`/`PLUG-010`) satisfying this same requirement for TP-Link Kasa devices and generic HTTP-toggled relay boards respectively, surfaced through their own plugin panels rather than this screen.
+**`EQP-SW-010` has three first-party plugin consumers beyond the generic INDI/Alpaca Switch adapters above.** The Equipment > Switches screen these rows describe is intentionally left unpopulated for hardware that speaks neither INDI nor Alpaca; the Kasa Switch plugin ([`docs/plugins/kasa_switch/SRS.md`](plugins/kasa_switch/SRS.md), `KASA-*`) and Generic Relay plugin ([`docs/plugins/generic_relay/SRS.md`](plugins/generic_relay/SRS.md), `RELAY-*`) each register their own `DeviceBackend` for `DeviceCategory.SWITCH` (`ARCH-070`/`PLUG-010`) satisfying this same requirement for TP-Link Kasa devices and generic HTTP-toggled relay boards respectively, surfaced through their own plugin panels rather than this screen. A third, the SwitchBot Bot plugin ([`docs/plugins/switchbot_bot/SRS.md`](plugins/switchbot_bot/SRS.md), `SBOT-*`), does the same for SwitchBot Bot buttons pressed over Bluetooth LE — chiefly to power a Seestar on and off.
 
 ### 4.3 `PROF` — Equipment Profiles (Piers)
 
@@ -523,12 +523,17 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | PLUG-040 | The system shall load and unload plugins without requiring a full application rebuild, and shall isolate a plugin failure from crashing the core application. | MVP |
 | PLUG-050 | The system shall version-check a plugin against the running application's plugin API version and warn on incompatibility before completing installation. | MVP |
 | PLUG-060 | Every installed plugin — whether first-party or third-party — that is enabled shall be functionally indistinguishable from an equivalent capability built into core; a disabled plugin shall be fully inert (no UI, no background activity). No plugins are bundled into the Galileo installer; all plugins, including first-party ones, are obtained via `PLUG-090` or `PLUG-110`. | MVP |
-| PLUG-070 | The system shall allow a plugin's registered UI panel to be inserted at either the primary navigation level (a top-level tab/section, peer to built-in ones) or the secondary level (nested within an existing section), as declared by the plugin. | MVP |
+| PLUG-070 | The system shall allow a plugin to declare where its UI panel appears — in the Science section's menu, on one Equipment device page (e.g. Equipment > Switches), or as its own top-level section (`PLUG-130`) — and shall place the panel there without any per-plugin code in core. | MVP |
 | PLUG-080 | The system shall expose, via `PluginContext`, a documented API for a plugin to invoke specific core services it has been granted access to (e.g. submitting a job to the `SCHED` queue) without those services being otherwise part of the plugin extension-point surface (`PLUG-010`/`020`). | MVP |
 | PLUG-090 | The system shall install a plugin from a ZIP file selected from the local filesystem: extract it to a configured plugins directory, validate the manifest (schema, required fields), version-check against the running application (`PLUG-050`), and make the plugin available immediately or, if dynamic load is not possible, on the next application restart. | MVP |
 | PLUG-100 | The Plugin Marketplace shall fetch the list of available plugins by retrieving and parsing the galileo-imaging.com plugins page (HTML scrape or a structured index file on that page, whichever the website provides), presenting each entry with at minimum: plugin name, short description, current version, author, and a download action. The fetch shall fail gracefully (an explanatory message, not a crash) when the page is unreachable. | MVP |
 | PLUG-110 | The Plugin Marketplace shall allow the user to download and install a listed plugin with a single action, using the same extraction/validation/load path as `PLUG-090`. Download progress shall be shown; a partially-downloaded ZIP shall be discarded if the download fails or is cancelled. | MVP |
 | PLUG-120 | The system shall allow the user to remove (uninstall) an installed plugin from the Options > Plugins screen: delete its files from the plugins directory, deregister its extension-point contributions, and — if full deregistration requires a restart — disable the plugin immediately and complete removal on the next restart, notifying the user of that requirement. A first-party plugin removed this way is re-installable from the Marketplace like any other. | MVP |
+| PLUG-130 | The system shall let a plugin declare a top-level section of its own in the left sidebar, peer to the built-in sections, with an icon the plugin paints (or a generic plugin icon when it supplies none); selecting the entry shows the plugin's page. | MVP |
+| PLUG-140 | The system shall let a plugin offer a dockable pane in the main window: created closed unless the plugin asks for it open, movable and floatable by the user, opened and closed by the plugin through `PluginContext`, with the plugin told when the user opens or closes it (and not told that the pane "closed" merely because the main window did). | MVP |
+| PLUG-150 | The system shall give each plugin, through `PluginContext`, a settings store in Galileo's shared database under a per-plugin namespace, so plugin configuration follows the same rule as core configuration (no plugin-private config files or `QSettings`); reads fall back to defaults and writes never raise when the database is unavailable. | MVP |
+| PLUG-160 | The system shall expose to plugins, through `PluginContext`, the selected Observatory's location (latitude, longitude, elevation, timezone), or nothing when none is selected or it has no coordinates. | MVP |
+| PLUG-170 | The system shall let a plugin offer a settings page of its own under Options, listed after Plugins and labelled by the plugin, built by the plugin; a page that fails to build shall be replaced by a placeholder without affecting the rest of the application. | MVP |
 
 ### 4.20 `UI` — Customization & Theming
 
@@ -696,7 +701,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | HIST | 4 | 0 | 3 | 1 |
 | META | 5 | 3 | 1 | 1 |
 | NOTIF | 5 | 0 | 1 | 4 |
-| PLUG | 8 | 7 | 1 | 0 |
+| PLUG | 16 | 15 | 1 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |
 | LIB | 16 | 10 | 5 | 1 |
@@ -709,7 +714,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **275** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23 — several other domain rows above are currently stale against the body and due a full re-audit, tracked separately from this revision) | | | |
+| **Total** | **283** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23 — several other domain rows above are currently stale against the body and due a full re-audit, tracked separately from this revision) | | | |
 
 ---
 

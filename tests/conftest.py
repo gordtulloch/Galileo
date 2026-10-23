@@ -394,6 +394,24 @@ def _cpu_work_in_threads(monkeypatch):
     monkeypatch.setenv(WORKERS_ENV, "0")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _offline_iers():
+    """Keep astropy and ``galileo.planning.visibility`` off the network for the whole run.
+
+    Without this the first visibility calculation downloads IERS-A data; on a CI runner
+    with a slow or blocked route to the IERS server that stalled a test until the job's
+    timeout. Astropy's bundled IERS-B table is accurate enough for the tests, and
+    ``_iers_failed`` stops Galileo's own downloader from retrying."""
+    from astropy.utils import iers
+
+    import galileo.planning.visibility as visibility
+
+    iers.conf.auto_download = False
+    iers.conf.iers_degraded_accuracy = "ignore"
+    visibility._iers_failed = True
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_current_object_store():
     """Reset ``galileo.current_object``'s process-wide singleton between tests.
