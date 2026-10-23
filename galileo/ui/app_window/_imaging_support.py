@@ -283,6 +283,12 @@ class AppWindowImagingSupportMixin:
                 asyncio.run(adapter.push_context(**site, **optics))
             except Exception:
                 logger.exception("Could not push context to %r", getattr(adapter, "device_name", adapter))
+        # Devices on the same INDI servers that Galileo doesn't drive (a PHD2-owned guide camera).
+        servers = {(a.host, a.port) for a in adapters if getattr(a, "backend", "") == "indi"}
+        if servers and optics["focal_length_mm"] > 0 and optics["aperture_mm"] > 0:
+            from galileo.adapters.indi._base import push_optics_to_server
+            for host, port in servers:
+                asyncio.run(push_optics_to_server(host, port, **optics))
 
     def _connect_camera_device(self: AppWindowState, slot_label: str, driver: str, server: str, port: int, device_name: str) -> None:
         """Connect one camera device — shared by the Camera page's Primary

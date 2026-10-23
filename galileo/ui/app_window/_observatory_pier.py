@@ -740,7 +740,6 @@ class AppWindowObservatoryPierMixin:
             return
 
         def done(status) -> None:
-            self._pier_poll_threads.pop(key, None)
             pointing = None
             if status:
                 ra_hours, dec = status.get("right_ascension"), status.get("declination")
@@ -757,6 +756,14 @@ class AppWindowObservatoryPierMixin:
 
         thread = _MountPositionThread(mount, self._window)
         thread.position.connect(done)
+
+        def finished() -> None:
+            # Release the thread only once run() has really returned — `done` fires
+            # while it is still unwinding, and dropping it then can destroy a live QThread.
+            self._pier_poll_threads.pop(key, None)
+            thread.deleteLater()
+
+        thread.finished.connect(finished)
         self._pier_poll_threads[key] = thread
         thread.start()
 

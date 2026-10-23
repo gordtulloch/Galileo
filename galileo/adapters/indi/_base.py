@@ -35,6 +35,54 @@ _INTERFACE_MASK: dict[DeviceCategory, int] = {
 }
 
 
+def _send_optics(client: ic.IndiClient, device: str, focal_length_mm: float, aperture_mm: float, has=None) -> bool:
+    """Write the telescope's focal length and aperture to whichever of the device's
+    ``SCOPE_INFO`` / ``TELESCOPE_INFO`` vectors it defines, only to elements it really
+    has. ``TELESCOPE_INFO`` also carries a ``GUIDER_*`` pair (what a guide camera such
+    as the Guide Simulator reads); Galileo has no separate guide scope, so it gets the
+    same optics. Returns whether anything was sent."""
+    if focal_length_mm <= 0 or aperture_mm <= 0:
+        return False
+    for name in ("TELESCOPE_INFO", "SCOPE_INFO"):
+        prop = client.get_property(device, name)
+        if not (has(name) if has is not None else prop is not None):
+            continue
+        wanted = {
+            "TELESCOPE_FOCAL_LENGTH": focal_length_mm, "TELESCOPE_APERTURE": aperture_mm,
+            "GUIDER_FOCAL_LENGTH": focal_length_mm, "GUIDER_APERTURE": aperture_mm,
+            "FOCAL_LENGTH": focal_length_mm, "APERTURE": aperture_mm,
+        }
+        elements = getattr(prop, "elements", None)
+        if isinstance(elements, dict):
+            values = {k: v for k, v in wanted.items() if k in elements}
+        else:       # element list not known: the pair the vector is documented to carry
+            keys = ("TELESCOPE_FOCAL_LENGTH", "TELESCOPE_APERTURE") if name == "TELESCOPE_INFO" else ("FOCAL_LENGTH", "APERTURE")
+            values = {k: wanted[k] for k in keys}
+        if values:
+            client.send_number(device, name, values)
+            return True
+    return False
+
+
+async def push_optics_to_server(host: str, port: int, focal_length_mm: float, aperture_mm: float) -> int:
+    """Send the optics to *every* device on an INDI server that wants them, including
+    ones Galileo doesn't drive itself — notably a guide camera that PHD2 owns, which
+    otherwise warns "Telescope focal length is missing" on every exposure. Best effort;
+    returns how many devices were written."""
+    def run() -> int:
+        client = ic.acquire_client(host, port)
+        try:
+            return sum(_send_optics(client, dev, focal_length_mm, aperture_mm) for dev in client.device_names())
+        finally:
+            ic.release_client(client)
+
+    try:
+        return await asyncio.to_thread(run)
+    except Exception:
+        logger.warning("Could not push optics to the INDI server %s:%s", host, port, exc_info=True)
+        return 0
+
+
 class IndiAdapter(DeviceBackend):
     """Base class for all INDI device adapters: owns the (shared) server
     connection, connects/disconnects the named INDI device, and provides
@@ -148,13 +196,7 @@ class IndiAdapter(DeviceBackend):
                     client.send_number(self.device_name, "GEOGRAPHIC_COORD", geo)
                     self._last_geo_push = geo
                     settle("GEOGRAPHIC_COORD")
-            for prop in ("SCOPE_INFO", "TELESCOPE_INFO"):
-                if focal_length_mm > 0 and aperture_mm > 0 and self._has(prop):
-                    client.send_number(self.device_name, prop, {
-                        "FOCAL_LENGTH": focal_length_mm, "APERTURE": aperture_mm,
-                        "TELESCOPE_FOCAL_LENGTH": focal_length_mm, "TELESCOPE_APERTURE": aperture_mm,
-                    } if prop == "TELESCOPE_INFO" else {"FOCAL_LENGTH": focal_length_mm, "APERTURE": aperture_mm})
-                    break
+            _send_optics(client, self.device_name, focal_length_mm, aperture_mm, self._has)
 
         self._log_interaction("push_context", lat=latitude, lon=longitude, focal=focal_length_mm, aperture=aperture_mm)
         try:

@@ -239,6 +239,22 @@ class IndiClient:
 
     # -- incoming message handling -----------------------------------------
 
+    _REPEAT_WINDOW_S = 300.0
+
+    def _throttle_repeat(self, line: str) -> str | None:
+        """A driver that warns on every exposure (a simulator with no catalog, a missing
+        telescope setting) would fill the log with one identical line every couple of
+        seconds. Log the first, stay quiet for a few minutes, then log it again noting how
+        many were held back. Returns the text to log, or ``None`` to skip it."""
+        now = time.monotonic()
+        seen = self.__dict__.setdefault("_repeats", {})
+        last, held = seen.get(line, (None, 0))
+        if last is not None and now - last < self._REPEAT_WINDOW_S:
+            seen[line] = (last, held + 1)
+            return None
+        seen[line] = (now, 0)
+        return f"{line} (repeated {held} more times since last logged)" if held else line
+
     def _handle(self, elem: ET.Element) -> None:
         tag = elem.tag
         if tag == "message":
@@ -254,6 +270,10 @@ class IndiClient:
                 # second while tracking; they would swamp the log, so leave them out.
                 if level == logging.DEBUG and text.lstrip().startswith(_INDI_TRACE_TAGS):
                     return
+                if level >= logging.WARNING:
+                    line = self._throttle_repeat(line)
+                    if line is None:
+                        return
                 logger.log(level, "INDI message %s", line)
             return
         if tag == "delProperty":
