@@ -72,7 +72,7 @@ class AppWindowCoreMixin:
         # Populated whenever either the Weather or Safety Monitor page polls
         # the connected weather station while it is the one on screen.
         self._weather_history_by_observatory: dict = {}
-        self._current_primary_section = "star_atlas"
+        self._current_primary_section = "dashboard"
         self._active_camera_slot: str = "primary"
         self._active_optics_position: int = 0
 
@@ -439,14 +439,13 @@ class AppWindowCoreMixin:
                  self._show_community_menu),
                 ("about", "About Galileo", self._show_about),
             ],
-            initial_selection="star_atlas",
+            initial_selection="dashboard",
         )
         self._nav_columns.append(sidebar)
-        sidebar.hide_item("dashboard")   # Star Atlas is the home screen; the Dashboard page is still built
         if not _has_science:
             sidebar.hide_item("science")
             options_page._secondary_nav.hide_item("science")
-        stack.setCurrentIndex(pages["star_atlas"])
+        stack.setCurrentIndex(pages["dashboard"])
         return stack, sidebar
 
     def _register_plugin_top_sections(self: AppWindowState, page_builders: dict) -> list[tuple[str, str, str]]:
@@ -482,8 +481,35 @@ class AppWindowCoreMixin:
             page = None
         if page is None:
             return self._build_placeholder_page(plugin.options_label)
+        if getattr(plugin, "dashboard_label", ""):
+            page = self._with_publish_on_dashboard(plugin, page)
         # Its help is the plugin's own screen file, the same one its main page uses.
         return tag_help_screen(page, f"plugin.{plugin.name}")
+
+    def _with_publish_on_dashboard(self: AppWindowState, plugin: Any, page: QWidget) -> QWidget:
+        """Add the "Publish on Dashboard" box (OBS-150) under a plugin's Options page, for a plugin
+        that has something to show there. It applies as soon as it is ticked."""
+        from PySide6.QtWidgets import QCheckBox, QVBoxLayout
+
+        from galileo.plugins import is_published_on_dashboard, set_published_on_dashboard
+
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(page, 1)
+        box = QCheckBox("Publish on Dashboard")
+        box.setChecked(is_published_on_dashboard(plugin))
+        box.setToolTip(f"Show {plugin.dashboard_label} above the Pier timelines on the Dashboard.")
+
+        def toggled(checked: bool) -> None:
+            set_published_on_dashboard(plugin, checked)
+            dashboard = (getattr(self, "_device_pages", {}).get("dashboard") or {}).get("sync_plugins")
+            if dashboard is not None:
+                dashboard()
+
+        box.toggled.connect(toggled)
+        layout.addWidget(box)
+        return wrapper
 
     def _build_plugin_docks(self: AppWindowState) -> None:
         """A QDockWidget per plugin that offers a dock pane (PLUG-140). Each starts closed unless the

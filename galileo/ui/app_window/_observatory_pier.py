@@ -595,6 +595,9 @@ class AppWindowObservatoryPierMixin:
             if autoconnect is not None:
                 timed(f"{page_id} autoconnect", autoconnect)
         timed("optics combo", self._refresh_optics_combo)
+        # Auto-connects above pushed the optics before the combo settled on this
+        # Pier's tube; re-send now that the active tube is the new Pier's.
+        timed("push optics to devices", self._push_context_to_devices)
         timed("camera combo", self._refresh_camera_combo)
         timed("camera imaging defaults", self._apply_camera_imaging_defaults)
         timed("session camera label", self._refresh_session_camera_label)

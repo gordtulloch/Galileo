@@ -36,6 +36,7 @@ This RTM maps every requirement in [this plugin's SRS](SRS.md) to the SDD compon
 | `ASC-070` | MVP | SDD 3.1 `allskycam` (`__init__.py`, `ui.py` `DockPane`) | Test | `TC-ASC-070` |
 | `ASC-080` | MVP | SDD 3.1 `allskycam` (`__init__.py`) | Test | `TC-ASC-080` |
 | `ASC-090` | MVP | SDD 3.1 `allskycam` (`__init__.py`, `help/`) | Test | `TC-ASC-090` |
+| `ASC-100` | P2 | SDD 3.1 `allskycam` (`__init__.py`, `ui.py`) | Test | `TC-ASC-100` |
 
 ---
 

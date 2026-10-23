@@ -352,6 +352,12 @@ class SessionRunController(QObject):
             snapshot[key] = ("running" if text == "idle" else text, str(getattr(run.region, "name", "")))
         return snapshot
 
+    def progress_snapshot(self) -> dict[Any, tuple[SessionProgress, str]]:
+        """``{pier_key: (latest SessionProgress, session name)}`` for every Pier with a run in
+        flight — what the Dashboard timelines (OBS-150) sample. Progress objects are replaced,
+        never mutated, so the copy is safe to read from the UI thread."""
+        return {key: (run.progress, str(getattr(run.region, "name", ""))) for key, run in list(self._runs.items())}
+
     # --- Starting -------------------------------------------------------------
 
     def start_region(self, region: Any) -> tuple[list[str], list[Any]]:

@@ -561,6 +561,10 @@ class AppWindowMountPageMixin:
                 self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
                 return
             startup_progress.end_detail(f"Connected to {target}", True)
+            # Give the driver the active tube's focal length and aperture
+            # (TELESCOPE_INFO) — the mount page doesn't go through
+            # _connect_device_adapter, which does this for other devices.
+            self._push_context_to_devices([adapter])
             # Bind this adapter to its own Pier's slew guard (not whichever
             # Observatory happens to be selected elsewhere), so obstruction
             # checks stay correct even if a different Pier's horizon is

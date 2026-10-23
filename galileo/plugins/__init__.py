@@ -119,6 +119,10 @@ class PluginBase(ABC):
     dock_label: str = ""
     # Label of an optional page under Options (PLUG-170); "" means the plugin has none.
     options_label: str = ""
+    # Label of a view the plugin can publish on the Dashboard (OBS-150); "" means it has none.
+    # The user switches it on with the "Publish on Dashboard" box Galileo adds to the plugin's
+    # Options page.
+    dashboard_label: str = ""
 
     @abstractmethod
     def activate(self, ctx: PluginContext) -> None:
@@ -151,6 +155,13 @@ class PluginBase(ABC):
     def build_dock_widget(self) -> Any:
         """Return a QWidget for the plugin's dockable pane (PLUG-140), or ``None``. Only asked when
         :attr:`dock_label` is set."""
+        return None
+
+    def build_dashboard_widget(self) -> Any:
+        """Return a QWidget to show above the Pier timelines on the Dashboard (OBS-150), or ``None``.
+        Only asked when :attr:`dashboard_label` is set and the user ticked "Publish on Dashboard".
+        The widget is given whatever space the Dashboard has left, so it should scale to fit (an
+        animation or live image) and stop any timers while hidden."""
         return None
 
     def dock_initially_visible(self) -> bool:
@@ -193,6 +204,20 @@ class PluginSettings:
     def update(self, values: dict[str, Any]) -> bool:
         from galileo import settings_store
         return settings_store.set_namespace(self.namespace, values)
+
+
+PUBLISH_ON_DASHBOARD_KEY = "publish_on_dashboard"
+
+
+def is_published_on_dashboard(plugin: PluginBase) -> bool:
+    """Whether the user ticked "Publish on Dashboard" on *plugin*'s Options page (OBS-150)."""
+    if not getattr(plugin, "dashboard_label", ""):
+        return False
+    return bool(PluginSettings(f"plugin.{plugin.name}").get(PUBLISH_ON_DASHBOARD_KEY, False))
+
+
+def set_published_on_dashboard(plugin: PluginBase, published: bool) -> None:
+    PluginSettings(f"plugin.{plugin.name}").set(PUBLISH_ON_DASHBOARD_KEY, bool(published))
 
 
 class PluginContext:
@@ -262,6 +287,7 @@ class UiRegistry:
         self._panels: list[UiPanel] = []
         self._dock_plugins: list[PluginBase] = []
         self._options_plugins: list[PluginBase] = []
+        self._dashboard_plugins: list[PluginBase] = []
 
     def register(self, panel: UiPanel) -> None:
         self._panels.append(panel)
@@ -271,6 +297,13 @@ class UiRegistry:
 
     def register_options(self, plugin: PluginBase) -> None:
         self._options_plugins.append(plugin)
+
+    def register_dashboard(self, plugin: PluginBase) -> None:
+        self._dashboard_plugins.append(plugin)
+
+    def get_dashboard_plugins(self) -> list[PluginBase]:
+        """Loaded plugins that can publish a view on the Dashboard (OBS-150)."""
+        return list(self._dashboard_plugins)
 
     def get_options_plugins(self) -> list[PluginBase]:
         """Loaded plugins that offer a page under Options (PLUG-170)."""
@@ -449,6 +482,8 @@ class PluginManager:
                 self._ui_registry.register_dock(instance)
             if getattr(plugin_cls, "options_label", ""):
                 self._ui_registry.register_options(instance)
+            if getattr(plugin_cls, "dashboard_label", ""):
+                self._ui_registry.register_dashboard(instance)
         except Exception:
             logger.exception("Plugin %r failed to activate; marking faulted", plugin_cls.name)
             self._faulted.add(plugin_cls.name)
@@ -464,6 +499,7 @@ class PluginManager:
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
         self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]
+        self._ui_registry._dashboard_plugins = [p for p in self._ui_registry._dashboard_plugins if p is not plugin]
 
     def _class_names(self, name: str) -> list[str]:
         """The loaded plugin class names behind *name*, which is either a class name or the

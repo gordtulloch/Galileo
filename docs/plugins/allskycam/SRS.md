@@ -81,6 +81,7 @@ Delivered as a first-party, independently installable and disableable plugin (`P
 | ASC-070 | The system shall offer the animation as a pane docked to the Galileo window (`PLUG-140`), openable from the options, movable and floatable by the user, sharing the same fetched images as the main view (one download for both). Closing the pane with its own close button shall turn the option off, and the open/closed state shall persist across restarts. | MVP |
 | ASC-080 | The system shall present the plugin as its own top-level section of the left sidebar with its own icon (`PLUG-130`), containing the Latest and Animation views; its options are a page under Options (`PLUG-170`). | MVP |
 | ASC-090 | The system shall be inert while the plugin is disabled (no fetching, pane closed) and resume when re-enabled (`PLUG-060`), and shall provide in-app help for every control on its screen (`HELP-060`). | MVP |
+| ASC-100 | The system shall offer the animation as a view for the Galileo Dashboard (`PLUG-180`, `OBS-150`), shown above the Pier timelines when the user ticks *Publish on Dashboard* on the plugin's Options page, scaled to the height the Dashboard leaves free, and sharing the same fetched images as every other view. | P2 |
 
 ---
 

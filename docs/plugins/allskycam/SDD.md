@@ -60,7 +60,7 @@ The single package `allskycam`, its ADRs, and its data design. Core architecture
 
 ### 3.1 `allskycam` — AllSkyCam Plugin
 
-- **`allskycam.AllSkyCamPlugin`** (`PluginBase`) — declares `panel_level = "top"`, `panel_label = "AllSkyCam"`, `dock_label = "AllSkyCam"`, paints its own sidebar icon (`panel_icon_painter`), and hands out the page (`build_page`) and the pane (`build_dock_widget`). `activate` creates the service when a Qt application exists; `on_enabled_changed` stops/starts it and closes/reopens the pane (`ASC-090`); `on_dock_visibility_changed` records the pane's state (`ASC-070`). Satisfies `ASC-070`, `ASC-080`, `ASC-090`.
+- **`allskycam.AllSkyCamPlugin`** (`PluginBase`) — declares `panel_level = "top"`, `panel_label = "AllSkyCam"`, `dock_label = "AllSkyCam"`, `dashboard_label = "AllSkyCam"`, paints its own sidebar icon (`panel_icon_painter`), and hands out the page (`build_page`) and the pane (`build_dock_widget`). `activate` creates the service when a Qt application exists; `on_enabled_changed` stops/starts it and closes/reopens the pane (`ASC-090`); `on_dock_visibility_changed` records the pane's state (`ASC-070`). Satisfies `ASC-070`, `ASC-080`, `ASC-090`.
 - **`allskycam.config.AllSkyConfig`** — the options as plain data; `from_dict` clamps every numeric to its range and coerces booleans, so corrupt stored values cannot produce a zero interval or a crash. Satisfies `ASC-040`.
 - **`allskycam.client`** — `normalize_base_url`/`latest_image_url` (address handling, `ASC-010`), `AllSkyClient.fetch_latest(known_url)` (manual redirect following, content-type check that turns a login page into an explanation, size cap, empty-body check, every failure mapped to `AllSkyError`; `ASC-010`, `ASC-020`) and the `Frame` value (bytes, URL, fetch time).
 - **`allskycam.daytime.check_pause`** — compares `galileo.planning.visibility.sun_altitude_deg` for the Observatory location with the configured limit; unknown location or altitude never pauses and returns an explanatory message. Satisfies `ASC-030`.
@@ -69,7 +69,8 @@ The single package `allskycam`, its ADRs, and its data design. Core architecture
 - **`allskycam.service.AllSkyService`** (`QObject`) — owns a repeating `QTimer`, a one-fetch-at-a-time `QThreadPool` job, the `FrameBuffer`, the status text and the options (loaded from, and saved to, `PluginContext.settings()`). Signals: `frame_added`, `status_changed`, `config_changed`, `test_finished`. A result arriving after `stop()` is discarded. Satisfies `ASC-020`, `ASC-040`, `ASC-090`.
 - **`allskycam.ui`** — `AllSkyCamPage` (status line, **Fetch now**, Latest/Animation tabs), `LatestView` (`ASC-050`), `AnimationView` (`ASC-060`; timer runs only while shown), `SettingsPage`/`SettingsForm` (`ASC-040`, shown under Options > AllSkyCam via `build_options_page()`, core `PLUG-170`; nothing applies until **Save**; **Test connection** validates locally first), `DockPane` (`ASC-070`).
 - **`allskycam/help/plugin.AllSkyCamPlugin.md`** — one section per control (`ASC-090`).
-- **Satisfies:** `ASC-010`–`ASC-090`.
+- **Dashboard view (`ASC-100`):** `build_dashboard_widget()` returns a `DashboardView` — the shared `AnimationView` (which only runs its timer while visible) over the one `AllSkyService` — for the Dashboard to show above the Pier timelines when the user ticks *Publish on Dashboard* (Galileo adds that box to the Options page, `PLUG-180`).
+- **Satisfies:** `ASC-010`–`ASC-100`.
 
 ### 3.2 Core extension points this plugin required
 

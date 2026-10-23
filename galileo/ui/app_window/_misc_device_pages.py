@@ -110,12 +110,13 @@ class AppWindowMiscDevicePagesMixin:
         return page
 
     def _build_dashboard_page(self: AppWindowState) -> QWidget:
-        """Dashboard page (a primary sidebar section): every Pier of the selected
-        Observatory at a glance (OBS-060) — see ``galileo.ui.dashboard``. It
-        refreshes itself, off the UI thread, while it is on screen."""
+        """Dashboard page (a primary sidebar section): a compact activity timeline of every Pier
+        of the selected Observatory (OBS-060, OBS-150), under whatever plugins publish there — see
+        ``galileo.ui.dashboard``. It records in the background and refreshes itself, off the UI
+        thread, while it is on screen."""
         from galileo.ui.dashboard import DashboardPage
         page = DashboardPage(self)
-        self._device_pages["dashboard"] = {"reload": page.reload}
+        self._device_pages["dashboard"] = {"reload": page.reload, "sync_plugins": page.sync_plugins}
         return page
 
     def _build_solve_page(self: AppWindowState) -> QWidget:

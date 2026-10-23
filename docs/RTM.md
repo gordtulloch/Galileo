@@ -142,6 +142,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `OBS-120` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-120` |
 | `OBS-130` | P2 | SDD 4.4a `galileo.observatory`; `galileo.sequencer.session_exec` | Test | `TC-OBS-130` |
 | `OBS-140` | P2 | SDD 4.4b `galileo.ui.app_window`; SDD 4.9b `galileo.scheduler` (`galileo.ui.session_runner`) | Test | `TC-OBS-140` |
+| `OBS-150` | P2 | SDD 4.4a `galileo.dashboard_timeline`; SDD 4.4b `galileo.ui.dashboard` | Test | `TC-OBS-150` |
 
 ### `IMG` — Imaging Tab
 
@@ -427,6 +428,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-150` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-150` |
 | `PLUG-160` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-160` |
 | `PLUG-170` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-170` |
+| `PLUG-180` | P2 | SDD 4.20 `galileo.plugins`; SDD 4.4b `galileo.ui.dashboard` | Test | `TC-PLUG-180` |
 
 ### `UI` — Customization & Theming
 
