@@ -219,6 +219,27 @@ class AppWindowTopbarOpticsCameraMixin:
         slot = self._camera_combo.itemData(index)
         if slot:
             self._active_camera_slot = slot
+            self._apply_camera_imaging_defaults()
+
+    def _apply_camera_imaging_defaults(self: AppWindowState) -> None:
+        """Set the Imaging page's Gain and Offset from the active camera's saved defaults (Equipment >
+        Camera). Called when a camera is chosen, the Pier changes, or the camera config is saved; a
+        camera with no default set leaves the Imaging fields as they are."""
+        ui = self.__dict__.get("_imaging_ui")
+        if not ui or self._current_pier is None:
+            return
+        from galileo.observatory import get_device_config
+        try:
+            cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
+        except Exception:
+            logger.exception("Could not load camera defaults for Pier %r", self._current_pier.name)
+            return
+        if cfg is None:
+            return
+        if cfg.default_gain is not None:
+            ui["gain"].setValue(cfg.default_gain)
+        if cfg.default_offset is not None:
+            ui["offset"].setValue(cfg.default_offset)
 
     def _refresh_session_camera_label(self: AppWindowState) -> None:
         """Show, in the top bar, which camera the session running on the selected Pier belongs to

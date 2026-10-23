@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Default gain and offset on Equipment > Camera.** Each camera now stores a preferred gain and offset (new `device_configs.default_gain`/`default_offset` columns, migration 030). The Imaging screen's Gain and Offset are set from them when you choose a camera in the top bar, switch Pier, or save the Camera page; a camera with none set leaves Imaging's own default. Inline help and the Equipment wiki article updated.
+
 ### Changed
 
 - **README now describes Galileo as an alpha pre-release.** The status badge and Status section moved from "pre-alpha" to the 0.9.0alpha pre-release (linking the GitHub release), so the README matches how the installers are published. Documentation only.

@@ -190,7 +190,9 @@ def test_tc_lib_010_galileo_tables_created_before_migrations_are_kept(tmp_path):
     init_db(path)
     try:
         assert {c.name for c in db.get_columns("optical_tubes")} >= {"name"}
-        assert {c.name for c in db.get_columns("device_configs")} >= {"bayer_pattern", "max_well_depth"}
+        assert {c.name for c in db.get_columns("device_configs")} >= {
+            "bayer_pattern", "max_well_depth", "default_gain", "default_offset",
+        }
         from galileo.library.models import ObservatoryRecord
         assert ObservatoryRecord.get().name == "Home"
     finally:

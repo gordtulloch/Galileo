@@ -31,6 +31,14 @@ The arrangement of the colour filters on a one-shot-colour sensor, read from the
 
 The sensor's full-well capacity in electrons, from its datasheet. The Flats Assistant uses it to calculate a safe target brightness (ADU) for flat frames. Leave at — (0) if you do not know it.
 
+## Default gain
+
+The gain the Imaging screen's Gain field is set to whenever this camera is selected in the top bar, the Pier changes, or you Save this page. Leave at — to keep the Imaging screen's own default.
+
+## Default offset
+
+The offset the Imaging screen's Offset field is set to, under the same conditions as Default gain. Leave at — to keep the Imaging screen's own default.
+
 ## Download Info
 
 Asks the connected camera for its pixel size and sensor dimensions and fills in those fields. Works for Alpaca/ASCOM cameras; for INDI it depends on what the driver reports.

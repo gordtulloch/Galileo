@@ -191,6 +191,24 @@ class AppWindowCameraPageMixin:
             )
             form.addRow("Max well depth", max_well_depth)
 
+            default_gain = QSpinBox()
+            default_gain.setRange(0, 100000)
+            default_gain.setSpecialValueText("—")
+            default_gain.setToolTip(
+                "Gain the Imaging page starts with whenever this camera (or its Pier) is selected. "
+                "Leave at — to keep the Imaging page's own default."
+            )
+            form.addRow("Default gain", default_gain)
+
+            default_offset = QSpinBox()
+            default_offset.setRange(0, 100000)
+            default_offset.setSpecialValueText("—")
+            default_offset.setToolTip(
+                "Offset the Imaging page starts with whenever this camera (or its Pier) is selected. "
+                "Leave at — to keep the Imaging page's own default."
+            )
+            form.addRow("Default offset", default_offset)
+
             download_btn = QPushButton("Download Info")
             download_btn.setToolTip(
                 "Live-query this device's pixel size and sensor dimensions "
@@ -205,7 +223,8 @@ class AppWindowCameraPageMixin:
                 "device": device_combo, "apply_driver_info": apply_driver_info,
                 "pixel_size": pixel_size,
                 "sensor_w": sensor_w, "sensor_h": sensor_h, "sensor_name": sensor_name,
-                "bayer": bayer_combo, "max_well_depth": max_well_depth, "download": download_btn,
+                "bayer": bayer_combo, "max_well_depth": max_well_depth,
+                "default_gain": default_gain, "default_offset": default_offset, "download": download_btn,
             }
 
         def _renumber_panels() -> None:
@@ -431,6 +450,8 @@ class AppWindowCameraPageMixin:
                     sensor_name=panel["sensor_name"].text().strip() or None,
                     bayer_pattern=panel["bayer"].currentText(),
                     max_well_depth=panel["max_well_depth"].value() or None,
+                    default_gain=panel["default_gain"].value() or None,
+                    default_offset=panel["default_offset"].value() or None,
                 )
 
             # Prune slots from cameras that were since removed from the page.
@@ -452,6 +473,7 @@ class AppWindowCameraPageMixin:
             # it now too. autoconnect_page() skips slots already connected,
             # so this doesn't disrupt an unrelated panel's live connection.
             autoconnect_page()
+            self._apply_camera_imaging_defaults()
 
         save_btn.clicked.connect(save_camera_config)
 
@@ -472,6 +494,8 @@ class AppWindowCameraPageMixin:
             panel["max_well_depth"].setValue(
                 cfg.max_well_depth if cfg is not None and cfg.max_well_depth else 0
             )
+            panel["default_gain"].setValue(cfg.default_gain if cfg is not None and cfg.default_gain else 0)
+            panel["default_offset"].setValue(cfg.default_offset if cfg is not None and cfg.default_offset else 0)
             # Filled by autoconnect (below) or when a device is next picked —
             # not looked up here, so a Pier switch never waits on the network.
             panel["apply_driver_info"](None)

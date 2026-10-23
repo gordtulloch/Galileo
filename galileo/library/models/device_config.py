@@ -53,6 +53,10 @@ class DeviceConfigRecord(BaseModel):
     # Full-well capacity in electrons, set by hand on the Camera page. Feeds
     # the Flat Assistant's target-ADU calculation (CAL-010).
     max_well_depth = pw.IntegerField(null=True)
+    # Preferred gain/offset, set by hand on the Camera page; the Imaging page is initialised with
+    # them when this camera (or its Pier) is selected. NULL = not set.
+    default_gain = pw.IntegerField(null=True)
+    default_offset = pw.IntegerField(null=True)
     # Flat-panel-only: "Flat Panel" (motorized cover + light, Alnitak
     # Flip-Flat style) or "Observatory Panel" (a fixed, light-only panel with
     # no motorized cover) -- the same two names galileo.calibration's
