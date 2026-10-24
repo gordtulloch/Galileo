@@ -82,14 +82,16 @@ async def test_tc_guide_030_saved_options_drive_the_dither_command(config_dir, m
 
 @pytest.mark.requirement("TC-GUIDE-030")
 @pytest.mark.priority("P2")
-def test_tc_guide_030_options_guiding_page_saves_as_you_change(window, config_dir):
-    """GUIDE-030: Options > Guiding shows the saved values and saves a change immediately."""
+def test_tc_guide_030_options_guiding_page_saves_on_save(window, config_dir):
+    """GUIDE-030: Options > Guiding shows the saved values and saves a change when Save is clicked."""
     from galileo.guiding_settings import load_guiding_settings
     page = window._build_guiding_settings_page()
     spins = page.findChildren(QtWidgets.QDoubleSpinBox)
     assert len(spins) == 4 and spins[0].value() == 3.0
     spins[0].setValue(4.5)
     page.findChild(QtWidgets.QCheckBox).setChecked(True)
+    assert load_guiding_settings()["dither_amount_px"] == 3.0
+    next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Save").click()
     saved = load_guiding_settings()
     assert saved["dither_amount_px"] == 4.5 and saved["dither_ra_only"] is True
 

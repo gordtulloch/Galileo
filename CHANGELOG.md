@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A guide camera associated with its own optical tube now gets that tube's focal length and aperture.** Connecting a device or changing the top-bar Optics selector pushed the *selected* tube's optics to every INDI device, including the guide camera behind a second tube. Each device associated with a tube on Equipment > Optics (by its saved device name) now receives its owner's optics, both when Galileo drives it and when it is only on the same INDI server (e.g. PHD2-owned); unassociated devices still follow the selected tube. `push_optics_to_server` gained a `per_device` override. No requirement or help change.
+
+- **Options > Guiding now has a Save button.** The page silently saved on every edit, so there was no visible way to commit changes, unlike the other settings pages. Edits are now held until Save is clicked (status-bar confirmation). Help entry and `TC-GUIDE-030` test updated.
+
 - **Repeated INDI driver warnings no longer flood the log.** A driver that warns on every exposure (e.g. the Guide Simulator's "No stars found in field -- check gsc catalog coverage") produced one identical line every ~2 s. Identical warning/error lines from a server are now logged once, held back for 5 minutes, then logged again with a "repeated N more times" count. The underlying warning is the driver's: the simulator needs the `gsc` catalog installed on the INDI server. No requirement or help change.
 
 - **INDI Guide Simulator (and any PHD2-owned guide camera) no longer warns "Telescope focal length/aperture is missing".** That camera is driven by PHD2, so Galileo never connected to it and the optics push never reached it. When optics are pushed, Galileo now also writes them to every device on the same INDI server that defines `TELESCOPE_INFO`/`SCOPE_INFO`, and fills the `GUIDER_FOCAL_LENGTH`/`GUIDER_APERTURE` pair as well as the telescope pair (the same tube's optics, as Galileo has no separate guide scope). No requirement or help change.
