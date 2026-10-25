@@ -35,7 +35,7 @@ Two things motivate this project:
 
 ## Status
 
-**Alpha — current pre-release: [v0.9.02alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.0alpha).** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Installers are published as GitHub pre-releases. Download it and give it a try today, and please report problems! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
+**Alpha — current pre-release: [v0.9.02alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.02alpha).** Galileo is a runnable PySide6 desktop application today, not just a design document, but some of its screens are still placeholders pending their own build-out.  Installers are published as GitHub pre-releases. Download it and give it a try today, and please report problems! HOWEVER DO NOT USE FOR PRODUCTION PURPOSES.
 
 - **Design docs**: a complete Project Scope Document, a Software Requirements Specification (282 numbered requirements across 28 functional domains and 9 non-functional domains), a Software Design Description covering the full planned architecture, and a Requirements Traceability Matrix at 100% coverage.
 - **Automated tests**: one file per SRS domain under `tests/`, run on every CI build with `pytest -m "not soak and not hardware and not integration and not perf"`. Soak, hardware and integration tests are excluded from normal runs. As of 2026-10-10 a local fast run showed one known failure (`test_tc_help_060`, which flags undocumented controls from the VSTarget plugin installed in the developer's venv); the full-suite pass count was not recorded, so the former "773 passing" badge has been removed rather than left stale.
