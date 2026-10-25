@@ -47,7 +47,7 @@ Two things motivate this project:
 | **Guiding** | Control and monitor PHD2. |
 | **Focus** | Autofocus with a live V-curve, and manual focus. |
 | **Solve** | Plate solving (ASTAP, astrometry.net, tetra3), slew-and-centre, and polar alignment. |
-| **Star Atlas** | Planetarium with deep-sky catalogs, planets, constellations, horizon obstructions and live telescope position. |
+| **Star Atlas** | Planetarium with deep-sky catalogs, planets, comets, asteroids, satellites, constellations, horizon obstructions and live telescope position. |
 | **Planning** | What's Up Tonight recommendations, target search, block-based Sessions, and a multi-night Schedule with Autoschedule and weather-gated execution. |
 | **Framing Assistant** | Field-of-view, rotation and mosaic planning on a survey image. |
 | **Library** | Built-in AstroFiler: image catalog, calibration and master frames, deduplication, cloud backup and command-line tools. |
@@ -60,7 +60,6 @@ Every control has built-in help, and the [wiki](https://github.com/gordtulloch/G
 
 ### Not implemented yet
 
-- Comet, asteroid and satellite display in the Star Atlas
 - In-place plugin updates (remove and reinstall instead)
 
 ### Project health
