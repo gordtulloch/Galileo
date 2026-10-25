@@ -416,6 +416,85 @@ def test_tc_foc_090_equipment_focuser_page_offers_the_emergency_focus(window, pa
     assert any(lbl.text() == "4321" for lbl in window._window.findChildren(QtWidgets.QLabel))
 
 
+def _focuser_page_widgets(window):
+    """The Equipment > Focuser page's driver combo, mode combo and buttons (by help key)."""
+    fp = window._window.findChild(QtWidgets.QWidget, "FocuserPage")
+    combos = fp.findChildren(QtWidgets.QComboBox)
+    driver = next(c for c in combos if [c.itemText(i) for i in range(c.count())] == ["Alpaca", "INDI"])
+    mode = next(c for c in combos if [c.itemText(i) for i in range(c.count())] == ["Absolute", "Pulse"])
+    buttons = {b.property("helpKey"): b for b in fp.findChildren(QtWidgets.QPushButton) if b.property("helpKey")}
+    return fp, driver, mode, buttons
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_040_pulse_fields_only_show_in_pulse_mode_and_pulse_needs_indi(window):
+    """EQP-FOC-040: Equipment > Focuser has an Absolute/Pulse mode; the Pulse set-up controls are only shown for
+    Pulse, and Pulse is not offered for an Alpaca focuser (ASCOM has no timed move)."""
+    fp, driver, mode, buttons = _focuser_page_widgets(window)
+    assert mode.currentText() == "Absolute" and not buttons["reset to middle"].isVisibleTo(fp)
+    assert not mode.model().item(1).isEnabled()                         # Alpaca is the default driver
+    driver.setCurrentText("INDI")
+    assert mode.model().item(1).isEnabled()
+    mode.setCurrentText("Pulse")
+    assert buttons["reset to middle"].isVisibleTo(fp)
+    assert buttons["set min"].isVisibleTo(fp)                            # travel guard-rails are for both modes
+    driver.setCurrentText("Alpaca")                                     # Pulse can't stay selected on Alpaca
+    assert mode.currentText() == "Absolute" and not buttons["reset to middle"].isVisibleTo(fp)
+
+
+@pytest.mark.requirement("TC-EQP-FOC-050")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_050_settings_are_retained_and_reset_to_middle_is_confirmed(window, monkeypatch):
+    """EQP-FOC-050: mode, position and travel limits are kept with the saved focuser and come back on reload;
+    Reset to middle asks first, then retains the middle (25000) of the 0..50000 pulse range."""
+    from galileo.focuser_settings import FocuserSettings
+    from galileo.observatory import (
+        create_observatory, create_pier, get_focuser_settings, save_device_config, save_focuser_settings,
+        set_focuser_position,
+    )
+
+    pier = create_pier(create_observatory("Obs pulse"), "Pier pulse")
+    assert get_focuser_settings(pier) == FocuserSettings()                 # nothing saved: Absolute, no position
+    assert not save_focuser_settings(pier, FocuserSettings(mode="Pulse"))  # no device config row yet
+    save_device_config(pier, "focuser", driver="INDI", server="h", port=1, device_name="F1")
+    assert save_focuser_settings(pier, FocuserSettings(mode="Pulse", position=30_000, travel_min=10_000, travel_max=40_000))
+    assert set_focuser_position(pier, 31_000)
+    saved = get_focuser_settings(pier)
+    assert (saved.mode, saved.position, saved.travel_min, saved.travel_max) == ("Pulse", 31_000, 10_000, 40_000)
+
+    window._current_pier = pier
+    window._device_pages["focuser"]["reload"]()
+    fp, _driver, mode, buttons = _focuser_page_widgets(window)
+    assert mode.currentText() == "Pulse" and buttons["reset to middle"].isVisibleTo(fp)
+    labels = {lbl.text() for lbl in window._window.findChildren(QtWidgets.QLabel)}
+    assert {"10000", "40000"} <= labels
+
+    answers = iter([QtWidgets.QMessageBox.StandardButton.No, QtWidgets.QMessageBox.StandardButton.Yes])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: next(answers)))
+    buttons["reset to middle"].click()
+    assert get_focuser_settings(pier).position == 31_000                    # declined: unchanged
+    buttons["reset to middle"].click()
+    assert get_focuser_settings(pier).position == 25_000
+    buttons["clear travel limits"].click()
+    cleared = get_focuser_settings(pier)
+    assert (cleared.travel_min, cleared.travel_max) == (None, None)
+    buttons["set min"].click()                                              # not connected
+    assert window.boxes[-1] == "Not connected"
+
+
+@pytest.mark.requirement("TC-EQP-FOC-050")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_050_travel_limits_must_leave_a_range():
+    """EQP-FOC-050: a minimum at or above the maximum is rejected; unset bounds never block; moves clamp to the range."""
+    from galileo.focuser_settings import FocuserSettings, clamp_position, travel_problem
+    assert travel_problem(100, 100) and travel_problem(500, 100)
+    assert travel_problem(100, 101) is None and travel_problem(None, 5) is None and travel_problem(5, None) is None
+    assert (clamp_position(5, 10, 20), clamp_position(25, 10, 20), clamp_position(15, None, None)) == (10, 20, 15)
+    assert FocuserSettings(mode="Pulse").start_position() == 25_000
+    assert FocuserSettings(mode="Pulse", position=60_000).start_position() == 50_000    # held on the axis
+
+
 @pytest.mark.requirement("TC-FOC-090")
 @pytest.mark.priority("P2")
 def test_tc_foc_090_layout_follows_the_frame_shape_unless_chosen(window, page):

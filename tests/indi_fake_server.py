@@ -120,6 +120,7 @@ def _devices() -> dict[str, dict]:
             num_vec(foc, "ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": (5000, 0, 60000)}),
             num_vec(foc, "REL_FOCUS_POSITION", {"FOCUS_RELATIVE_POSITION": (0, 0, 2000)}),
             sw_vec(foc, "FOCUS_MOTION", {"FOCUS_INWARD": True, "FOCUS_OUTWARD": False}),
+            num_vec(foc, "FOCUS_TIMER", {"FOCUS_TIMER_VALUE": (0, 0, 10000)}),
             num_vec(foc, "FOCUS_TEMPERATURE", {"TEMPERATURE": (8.25, -50, 50)}, perm="ro"),
         ]},
     }
@@ -130,7 +131,7 @@ class FakeIndiServer:
     as ``(tag, device, property, {element: text})`` for assertions."""
 
     # Properties whose changes show as Busy before Ok, like a real move.
-    _SLOW: ClassVar[set[str]] = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "ABS_ROTATOR_ANGLE"}
+    _SLOW: ClassVar[set[str]] = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "FOCUS_TIMER", "ABS_ROTATOR_ANGLE"}
 
     def __init__(self, preconnected: tuple[str, ...] = ()) -> None:
         self.devices = _devices()

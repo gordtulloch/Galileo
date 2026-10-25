@@ -1,5 +1,7 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later AND GPL-2.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
+# Portions derived from KStars/Ekos (kstars/ekos/align/polaralign.cpp),
+# SPDX-FileCopyrightText: 2021 Hy Murveit, GPL-2.0-or-later. Modified: translated to Python and reworked.
 
 """Plate-solve polar alignment (PLT-080).
 
@@ -25,8 +27,10 @@ and the axis is rotated by the same pair, so the error updates live and is exact
 camera points. The model assumes the mount is level, as does any polar-alignment routine of this
 kind.
 
-This follows the approach of KStars/Ekos' ``PolarAlign`` (Hy Murveit): the same three-point
-plane fit, the same knob model for the live update.
+The knob model for the live update (:func:`knob_adjustment`, :func:`axis_after_adjustment` and the two
+rotation helpers) is derived from ``PolarAlign::processRefreshCoords`` and ``findSmallestThetaY`` in
+KStars/Ekos (Hy Murveit, GPL-2.0-or-later), translated to Python and modified. The axis fit, error
+split, refraction, frame-offset display and the workflow are Galileo's own.
 
 :class:`PolarAlignWorkflow` is domain-core like :class:`~galileo.platesolve.SolveWorkflow`, which
 it extends: it drives a camera, mount and solver through their ports and reports through a

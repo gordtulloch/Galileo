@@ -148,6 +148,48 @@ def test_tc_cal_060_flat_wizard_is_not_a_top_level_navigation_section():
     assert "imaging" in section_ids
 
 
+@pytest.mark.requirement("TC-CAL-100")
+@pytest.mark.priority("MVP")
+def test_tc_cal_100_assistants_are_modeless_and_hide_while_running():
+    """CAL-100: the Darks/Flats Assistants are modeless; while a run is going they hide (run continues), the
+    Imaging button is marked running and reopens the same dialog; a Pier change hides them, closing idle ones."""
+    import os
+    from types import SimpleNamespace
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    app_ = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from galileo.current_object import pier_key
+    from galileo.ui.app_window import _assistant_dialog as ad
+
+    button = QtWidgets.QPushButton("Darks…")
+    pier = SimpleNamespace(name="P1", observatory=SimpleNamespace(name="O"))
+    app = SimpleNamespace(_current_pier=pier, _assistant_dialogs={}, _assistant_buttons={"darks": button})
+    key = pier_key(pier)
+
+    dialog = ad._AssistantDialog()
+    ad.register_assistant(app, "darks", key, dialog)
+    dialog.show()
+    assert not dialog.isModal()
+    assert ad.reopen_assistant(app, "darks", key) and not ad.reopen_assistant(app, "flats", key)
+
+    dialog.running = True
+    ad.refresh_assistant_buttons(app)
+    assert button.text() == "Darks… (running)"
+    dialog.reject()                                      # Hide / ESC / X while running: hides, stays registered
+    assert not dialog.isVisible() and app._assistant_dialogs[("darks", key)] is dialog
+    assert ad.reopen_assistant(app, "darks", key) and dialog.isVisible()
+
+    ad.hide_assistants_on_pier_change(app)               # a run in progress is hidden, not closed
+    assert not dialog.isVisible() and app._assistant_dialogs[("darks", key)] is dialog
+
+    dialog.running = False
+    ad.hide_assistants_on_pier_change(app)               # idle: closed and forgotten
+    assert ("darks", key) not in app._assistant_dialogs
+    ad.refresh_assistant_buttons(app)
+    assert button.text() == "Darks…"
+    app_.processEvents()
+
+
 # ---------------------------------------------------------------------------
 # TC-CAL-090
 # ---------------------------------------------------------------------------

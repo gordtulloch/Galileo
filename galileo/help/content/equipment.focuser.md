@@ -7,6 +7,20 @@ The first row (Driver, Server, Port, Scan) is shared by every focuser panel. Bel
 
 Typical set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick your focuser in **Device**, press **Connect**, then **Save**.
 
+## Mode
+
+How Galileo moves this focuser. **Absolute** (the default) is for focusers whose driver reports and accepts positions — nearly all of them. **Pulse** is for simple focusers that can only be told to run their motor for a number of milliseconds (INDI's `FOCUS_TIMER`) and cannot say where they are; Galileo then keeps the position itself, counting each completed pulse as one step per millisecond on a 0–50000 scale. Pulse needs an **INDI** driver and is not offered for Alpaca. Press **Save** to keep the mode.
+
+In Pulse mode, "step size" anywhere in Galileo (autofocus, the Focus screen's In/Out buttons) means milliseconds of motor run time, and pulses shorter than 32 ms are not sent.
+
+## Pulse set-up
+
+Shown only in Pulse mode. A pulse focuser has no idea where it is, so Galileo needs you to tell it once: move the focuser to the middle of its travel, then press **Reset to middle**. From then on Galileo remembers the position, including across restarts, so you only repeat this if the focuser has been moved by hand or has slipped.
+
+## Reset to middle
+
+Shown only in Pulse mode. After you confirm that the focuser is physically at the middle of its travel, sets Galileo's position to 25000 (the middle of the 0–50000 pulse range) and remembers it. Because the old origin is gone, set **Minimum Travel** and **Maximum Travel** again afterwards. With no position remembered, a pulse focuser is assumed to be at 25000.
+
 ## Is Moving
 
 **Yes** while the focuser is travelling to a new position. Autofocus and sequences wait for this to return to No before taking the next exposure.
@@ -34,6 +48,26 @@ The position, in steps, you want the focuser to go to. It follows the current po
 ## Move
 
 Sends the focuser to **Position (target)**. Connect the focuser first. The move is logged, and **Is Moving** shows progress.
+
+## Minimum Travel
+
+The lowest position moves are allowed to reach, or — if none is set. It protects the focuser from running into its physical stop: autofocus, sequences and the Move button are all held to it, in Absolute and Pulse modes alike. Move the focuser to the safe end of its travel and press **Set Min**. Kept with the focuser; the value is also applied straight away when the focuser is connected.
+
+## Set Min
+
+Remembers the focuser's current position as **Minimum Travel**. Connect the focuser first. It must stay below **Maximum Travel**. Press **Save** the first time so the limit is kept with the focuser's settings; until then it only lasts for this session.
+
+## Maximum Travel
+
+The highest position moves are allowed to reach, or — if none is set. The counterpart of **Minimum Travel**: move the focuser to the safe far end of its travel and press **Set Max**.
+
+## Set Max
+
+Remembers the focuser's current position as **Maximum Travel**. Connect the focuser first. It must stay above **Minimum Travel**.
+
+## Clear
+
+Removes both travel limits, so moves are limited only by the focuser's own range.
 
 ## Emergency Focus
 

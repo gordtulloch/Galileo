@@ -388,30 +388,6 @@ class _MountGuardThread(_QThreadBase):
             result["status"] = await self._mount.get_status() or status
 
 
-class _NudgeThread(_QThreadBase):
-    """Runs one mount nudge (IMG-130) off the Qt UI thread: the mount moves for
-    the nudge's duration, and blocking the UI for that long would freeze the
-    Imaging page's exposure countdown while the user is watching it."""
-
-    finished_ok = Signal()
-    failed = Signal(str)
-
-    def __init__(self, mount, direction: str, rate: float, duration: float,
-                 reversed_axes: tuple, parent=None) -> None:
-        super().__init__(parent)
-        self._args = (mount, direction, rate, duration, reversed_axes)
-
-    def run(self) -> None:
-        import asyncio
-        from galileo.ui.imaging import nudge_mount
-        try:
-            asyncio.run(nudge_mount(*self._args))
-        except Exception as exc:
-            self.failed.emit(str(exc))
-            return
-        self.finished_ok.emit()
-
-
 class _ThumbnailCacheThread(_QThreadBase):
     """Bulk-caches every catalog object's survey-image thumbnail off the Qt UI
     thread (Options > Planning's "Cache all thumbnails" button, SKY-080), so a

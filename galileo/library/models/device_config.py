@@ -67,6 +67,13 @@ class DeviceConfigRecord(BaseModel):
     # Focuser-only: the saved "emergency" position to return to when wildly out of focus (set on
     # the Focus screen or Equipment > Focuser); NULL = none saved. Per focuser (per slot).
     emergency_focus = pw.IntegerField(null=True)
+    # Focuser-only (EQP-FOC-040/050): "Absolute" or "Pulse" (timed moves, no position readout), the
+    # last known position (a pulse focuser's dead-reckoned one, kept across restarts), and the
+    # user-calibrated travel limits that guard against the physical stops. NULL = not set.
+    focuser_mode = pw.TextField(default="Absolute")
+    focuser_position = pw.IntegerField(null=True)
+    travel_min = pw.IntegerField(null=True)
+    travel_max = pw.IntegerField(null=True)
     # Mount-only: the Mount page's "Meridian Flip" and "Limits" sections (EQP-MNT-060/070).
     flip_enabled = pw.BooleanField(default=False)
     flip_ha_deg = pw.FloatField(default=5.0)

@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 import logging
 
 from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
-from ._threads import _PreviewRenderThread, _NudgeThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
+from ._hold_to_move import HoldToMove
+from ._threads import _PreviewRenderThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
 from ._widgets import _HistogramWidget
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,9 @@ class AppWindowImagingPageMixin:
         nudge_north_btn, nudge_west_btn = QPushButton("N"), QPushButton("W")
         nudge_stop_btn = QPushButton("Stop")
         nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
-        nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn}
+        nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn,
+                             "NW": QPushButton("NW"), "NE": QPushButton("NE"),
+                             "SW": QPushButton("SW"), "SE": QPushButton("SE")}
         for _key, btn in nudge_dir_buttons.items():
             btn.setProperty("helpKey", "n s e w")
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
@@ -212,6 +215,8 @@ class AppWindowImagingPageMixin:
         nudge_grid.addWidget(nudge_stop_btn, 1, 1)
         nudge_grid.addWidget(nudge_east_btn, 1, 2)
         nudge_grid.addWidget(nudge_south_btn, 2, 1)
+        for key, (row, col) in {"NW": (0, 0), "NE": (0, 2), "SW": (2, 0), "SE": (2, 2)}.items():
+            nudge_grid.addWidget(nudge_dir_buttons[key], row, col)
         nudge_grid.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         nudge_layout.addLayout(nudge_grid)
         nudge_form = _new_form_layout()
@@ -219,20 +224,12 @@ class AppWindowImagingPageMixin:
         for name, rate in NUDGE_RATES.items():
             nudge_rate_combo.addItem(f"{name} ({rate:g}°/s)", rate)
         nudge_rate_combo.setCurrentIndex(1)
-        nudge_rate_combo.setToolTip("How fast the mount moves during a nudge.")
+        nudge_rate_combo.setToolTip("How fast the mount moves while a button is held.")
         nudge_form.addRow("Speed", nudge_rate_combo)
-        nudge_duration_spin = QDoubleSpinBox()
-        nudge_duration_spin.setRange(0.1, 10.0)
-        nudge_duration_spin.setSingleStep(0.1)
-        nudge_duration_spin.setDecimals(1)
-        nudge_duration_spin.setValue(0.5)
-        nudge_duration_spin.setSuffix(" s")
-        nudge_duration_spin.setToolTip("How long the mount moves for each press.")
-        nudge_form.addRow("Duration", nudge_duration_spin)
         nudge_layout.addLayout(nudge_form)
         nudge_group.setToolTip(
-            "Nudge the telescope while exposing (IMG-130). Uses the mount connected on Equipment > Mount, "
-            "with the same axis directions as its jog pad."
+            "Nudge the telescope while exposing (IMG-130): hold a button to move the mount, release to stop. "
+            "Uses the mount connected on Equipment > Mount, with the same axis directions as its jog pad."
         )
         settings_layout.addWidget(nudge_group)
 
@@ -285,6 +282,7 @@ class AppWindowImagingPageMixin:
             "Open the Darks Assistant: capture one dark frame at each exposure length in a "
             "comma-separated list, saving each to the Library."
         )
+        self._assistant_buttons = {"flats": flats_btn, "darks": darks_btn}
         annotate_status = QLabel("")
         annotate_status.setObjectName("StatusHint")
         zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
@@ -659,62 +657,35 @@ class AppWindowImagingPageMixin:
         orientation_combo.currentIndexChanged.connect(_orientation_choice_changed)
 
         # --- mount nudge (IMG-130) ---------------------------------------------
-        nudge_state = {"thread": None}
-
+        # Hold a button to move, release to stop (as KStars' mount motion pad does).
         def _nudge_mount_adapter():
             return (self._device_pages.get("mount") or {}).get("adapter")
 
-        def _set_nudge_busy(busy: bool) -> None:
-            for btn in nudge_dir_buttons.values():
-                btn.setEnabled(not busy)
+        def _nudge_reversed() -> tuple:
+            getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
+            return getter() if getter is not None else (False, False)
 
-        def _nudge(direction: str) -> None:
-            mount = _nudge_mount_adapter()
-            if mount is None:
+        nudge_motion = HoldToMove(_nudge_mount_adapter, lambda: float(nudge_rate_combo.currentData()),
+                                  _nudge_reversed, page)
+        nudge_state = {"controller": nudge_motion}
+
+        def _nudge_failed(message: str) -> None:
+            if "parked" in message.lower():
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+            else:
+                self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
+
+        nudge_motion.failed.connect(_nudge_failed)
+
+        def _nudge_pressed(direction: str) -> None:
+            if _nudge_mount_adapter() is None:
                 self._window.statusBar().showMessage("Connect the mount on Equipment > Mount to nudge it.", 4000)
-                return
-            if nudge_state["thread"] is not None:
-                return
-            reversed_getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
-            reversed_axes = reversed_getter() if reversed_getter is not None else (False, False)
-            rate, duration = nudge_rate_combo.currentData(), nudge_duration_spin.value()
-
-            def done() -> None:
-                nudge_state["thread"] = None
-                _set_nudge_busy(False)
-
-            def failed(message: str) -> None:
-                done()
-                if "parked" in message.lower():
-                    self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                else:
-                    self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
-                logger.error("Mount nudge %s failed: %s", direction, message)
-
-            thread = _NudgeThread(mount, direction, rate, duration, reversed_axes, self._window)
-            thread.finished_ok.connect(done)
-            thread.failed.connect(failed)
-            nudge_state["thread"] = thread
-            _set_nudge_busy(True)
-            logger.info("Mount: nudge %s at %g°/s for %.1fs", direction, rate, duration)
-            thread.start()
 
         for direction, btn in nudge_dir_buttons.items():
-            btn.clicked.connect(lambda _checked=False, d=direction: _nudge(d))
+            nudge_motion.attach(btn, direction)
+            btn.pressed.connect(lambda d=direction: _nudge_pressed(d))
 
-        def _nudge_stop() -> None:
-            mount = _nudge_mount_adapter()
-            if mount is None:
-                return
-            import asyncio
-            try:
-                asyncio.run(mount.move_axis(0, 0.0))
-                asyncio.run(mount.move_axis(1, 0.0))
-            except Exception:
-                logger.exception("Mount nudge stop failed")
-            logger.info("Mount: nudge Stop requested")
-
-        nudge_stop_btn.clicked.connect(_nudge_stop)
+        nudge_stop_btn.clicked.connect(nudge_motion.stop_all)
 
         self._imaging_ui = {
             "settings_panel": settings_panel, "dock_panel": dock_panel, "log_bar": log_bar,
@@ -727,7 +698,7 @@ class AppWindowImagingPageMixin:
             "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
-            "nudge_rate": nudge_rate_combo, "nudge_duration": nudge_duration_spin,
+            "nudge_rate": nudge_rate_combo,
             "nudge_state": nudge_state,
         }
 

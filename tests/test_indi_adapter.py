@@ -457,6 +457,88 @@ async def test_tc_eqp_foc_010_move_without_motion_properties_raises_not_recurses
         await focuser.move_by(10)
 
 
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_foc_040_pulse_mode_runs_timed_moves_and_tracks_a_virtual_position(server):
+    """EQP-FOC-040: a Pulse-mode focuser is moved with FOCUS_TIMER only; its position starts at the middle
+    of the 0..50000 axis (or the retained position) and advances by each completed pulse, signed by direction."""
+    from galileo.focuser_settings import PULSE_MIDDLE, PULSE_RANGE_MAX, FocuserSettings
+    focuser = make(indi.IndiFocuserAdapter, server, FOCUSER)
+    seen: list[int] = []
+    focuser.position_listener = seen.append
+    focuser.configure(FocuserSettings(mode="Pulse"))
+    await focuser.connect()
+    try:
+        assert (focuser.position, focuser.max_step) == (PULSE_MIDDLE, PULSE_RANGE_MAX)   # driver's 5000 ignored
+        await focuser.move_by(300)
+        await sent(server, FOCUSER, "FOCUS_MOTION", {"FOCUS_OUTWARD": "On", "FOCUS_INWARD": "Off"})
+        await sent(server, FOCUSER, "FOCUS_TIMER", {"FOCUS_TIMER_VALUE": "300"})
+        assert focuser.position == PULSE_MIDDLE + 300
+        await focuser.move_to(PULSE_MIDDLE - 100)
+        await sent(server, FOCUSER, "FOCUS_MOTION", {"FOCUS_INWARD": "On", "FOCUS_OUTWARD": "Off"})
+        await sent(server, FOCUSER, "FOCUS_TIMER", {"FOCUS_TIMER_VALUE": "400"})
+        assert focuser.position == PULSE_MIDDLE - 100
+        assert seen == [PULSE_MIDDLE + 300, PULSE_MIDDLE - 100]
+        assert not commands(server, FOCUSER, "ABS_FOCUS_POSITION") and not commands(server, FOCUSER, "REL_FOCUS_POSITION")
+        assert (await focuser.get_status())["mode"] == "Pulse"
+    finally:
+        await focuser.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_foc_040_pulse_mode_starts_from_the_retained_position_and_rejects_tiny_pulses(server):
+    """EQP-FOC-040/050: the retained position, not the middle, is the start point after a restart; a pulse
+    below the minimum is not sent (and moves nothing); set_position re-calibrates and is retained."""
+    from galileo.focuser_settings import FocuserSettings
+    focuser = make(indi.IndiFocuserAdapter, server, FOCUSER)
+    seen: list[int] = []
+    focuser.position_listener = seen.append
+    focuser.configure(FocuserSettings(mode="Pulse", position=31_234))
+    await focuser.connect()
+    try:
+        assert focuser.position == 31_234
+        await focuser.move_by(10)
+        assert focuser.position == 31_234 and not commands(server, FOCUSER, "FOCUS_TIMER")
+        focuser.set_position(25_000)
+        assert focuser.position == 25_000 and seen == [25_000]
+    finally:
+        await focuser.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-FOC-050")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_foc_050_travel_limits_guard_pulse_and_absolute_moves(server):
+    """EQP-FOC-050: moves are held between the user-set minimum and maximum travel, in both modes."""
+    from galileo.focuser_settings import FocuserSettings
+    focuser = make(indi.IndiFocuserAdapter, server, FOCUSER)
+    focuser.configure(FocuserSettings(mode="Pulse", position=25_000, travel_min=24_000, travel_max=26_000))
+    await focuser.connect()
+    try:
+        await focuser.move_to(30_000)
+        await sent(server, FOCUSER, "FOCUS_TIMER", {"FOCUS_TIMER_VALUE": "1000"})
+        assert focuser.position == 26_000
+        await focuser.move_by(-9_000)
+        assert focuser.position == 24_000
+        focuser.configure(FocuserSettings(mode="Absolute", travel_min=5_100, travel_max=5_300))
+        await focuser.move_to(9_000)
+        await sent(server, FOCUSER, "ABS_FOCUS_POSITION", {"FOCUS_ABSOLUTE_POSITION": "5300"})
+    finally:
+        await focuser.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_foc_040_pulse_mode_without_a_timer_property_raises():
+    """EQP-FOC-040: Pulse mode on a driver with no FOCUS_TIMER raises a clear error instead of moving nothing."""
+    from galileo.focuser_settings import FocuserSettings
+    focuser = indi.IndiFocuserAdapter()
+    focuser.configure(FocuserSettings(mode="Pulse"))
+    focuser._has = lambda name: False
+    with pytest.raises(DevicePropertyError, match="FOCUS_TIMER"):
+        await focuser.move_by(200)
+
+
 # --- rotator -----------------------------------------------------------------
 
 @pytest.mark.requirement("TC-EQP-ROT-010")

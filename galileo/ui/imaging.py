@@ -65,13 +65,11 @@ def format_dec_dms(dec_deg: float) -> str:
     return f"{sign}{int(degrees):02d} {int(minutes):02d} {int(secs):02d}"
 
 
-async def nudge_mount(mount, direction: str, rate: float, duration: float,
-                      reversed_axes: tuple = (False, False)) -> None:
-    """Move *mount* one way for *duration* seconds at *rate* deg/s, then stop.
-    ``N``/``S`` drive the secondary (Dec) axis and ``E``/``W`` the primary (RA)
-    axis, with the same signs as the Mount page's jog pad; *reversed_axes* is
-    that page's (primary, secondary) "reversed" pair. The axis is always
-    stopped afterwards, even if the wait is cancelled or the mount errors."""
+def nudge_command(direction: str, rate: float, reversed_axes: tuple = (False, False)) -> tuple[int, float]:
+    """The ``(axis, signed rate)`` for ``mount.move_axis`` that moves the mount *direction* at *rate* deg/s.
+    ``N``/``S`` drive the secondary (Dec) axis and ``E``/``W`` the primary (RA) axis; *reversed_axes* is
+    the Mount page's (primary, secondary) "reversed" pair. Used by the hold-to-move N/S/E/W pads, which
+    send this on press and a zero rate on the same axis on release."""
     direction = direction.upper()
     if direction not in NUDGE_DIRECTIONS:
         raise ValueError(f"Unknown nudge direction {direction!r}")
@@ -79,11 +77,7 @@ async def nudge_mount(mount, direction: str, rate: float, duration: float,
     sign = 1.0 if direction in ("N", "E") else -1.0
     if reversed_axes[axis]:
         sign = -sign
-    await mount.move_axis(axis, sign * abs(rate))
-    try:
-        await asyncio.sleep(max(0.0, duration))
-    finally:
-        await mount.move_axis(axis, 0.0)
+    return axis, sign * abs(rate)
 
 
 class ImagingService:

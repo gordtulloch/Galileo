@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from galileo.library.models.optical_tube import OpticalTubeRecord
     from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord
     from galileo.autofocus import AutofocusParams, FilterOffset
+    from galileo.focuser_settings import FocuserSettings
     from galileo.mount_limits import MountLimits
     from galileo.platesolve import SolverParams
     from galileo.safety import WeatherSafetyRule
@@ -582,6 +583,45 @@ def set_emergency_focus(pier: PierRecord, position: int | None, slot: str = "pri
         return False
     record.emergency_focus = position
     record.save()
+    return True
+
+
+def get_focuser_settings(pier: PierRecord | None, slot: str = "primary") -> FocuserSettings:
+    """*pier*'s focuser in *slot*: operating mode, retained position and travel limits
+    (defaults if nothing is saved yet)."""
+    from galileo.focuser_settings import FocuserSettings
+    record = None if pier is None else get_device_config(pier, "focuser", slot=slot)
+    if record is None:
+        return FocuserSettings()
+    return FocuserSettings(
+        mode=record.focuser_mode or "Absolute", position=record.focuser_position,
+        travel_min=record.travel_min, travel_max=record.travel_max,
+    )
+
+
+def save_focuser_settings(pier: PierRecord, settings: FocuserSettings, slot: str = "primary") -> bool:
+    """Save *settings* on *pier*'s focuser in *slot*. Returns ``False`` if that focuser has no saved
+    device config yet (Equipment > Focuser > Save)."""
+    record = get_device_config(pier, "focuser", slot=slot)
+    if record is None:
+        return False
+    record.focuser_mode = settings.mode
+    record.focuser_position = settings.position
+    record.travel_min = settings.travel_min
+    record.travel_max = settings.travel_max
+    record.save()
+    return True
+
+
+def set_focuser_position(pier: PierRecord, position: int | None, slot: str = "primary") -> bool:
+    """Retain *position* as the last known position of *pier*'s focuser in *slot* (``None`` forgets it).
+    Returns ``False`` if that focuser has no saved device config yet."""
+    from galileo.library.models.device_config import DeviceConfigRecord
+    record = get_device_config(pier, "focuser", slot=slot)
+    if record is None:
+        return False
+    record.focuser_position = position
+    record.save(only=[DeviceConfigRecord.focuser_position])
     return True
 
 

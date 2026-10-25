@@ -176,18 +176,24 @@ class AppWindowImagingSupportMixin:
             self._track_when_slew_finishes(adapter, obj)
         return True
 
-    def _connect_device_adapter(self: AppWindowState, category, driver: str, server: str, port: int, device_name: str):
+    def _connect_device_adapter(
+        self: AppWindowState, category, driver: str, server: str, port: int, device_name: str, configure=None,
+    ):
         """Instantiate and connect one device backend for *category*, or
         return ``None`` (having logged why) on failure. Shared by any
         Equipment page that needs a live per-device connection — the
         Camera page's auto-connect and the Focuser page's per-panel Connect
-        and status polling."""
+        and status polling. *configure*, if given, is called with the new
+        adapter just before it connects (the Focuser page applies its saved
+        mode and travel limits that way)."""
         import asyncio
         from galileo.ui import startup_progress
         target = f"{device_name or category} at {server}:{port}"
         startup_progress.begin_detail(f"Connecting to {target}")
         try:
             adapter = self._make_adapter(category, driver, server, port, device_name)
+            if configure is not None:
+                configure(adapter)
             asyncio.run(adapter.connect())
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)

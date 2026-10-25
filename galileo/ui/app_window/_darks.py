@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _new_form_layout, _QDialogBase
+from ._assistant_dialog import (
+    _AssistantDialog, refresh_assistant_buttons, register_assistant, reopen_assistant,
+)
+from ._common import _camera_backend_key_for_slot, _new_form_layout
 from ._threads import _DarksThread
 
 logger = logging.getLogger(__name__)
@@ -18,24 +21,18 @@ if TYPE_CHECKING:
     from ._state import AppWindowState
 
 
-class _DarksDialog(_QDialogBase):
-    """Refuses close while a darks run is in progress, the same way _FlatsDialog does."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.running = False
-
-    def reject(self) -> None:
-        if self.running:
-            return
-        super().reject()
+class _DarksDialog(_AssistantDialog):
+    """Modeless; hides rather than closes while a darks run is in progress."""
 
 
 class AppWindowDarksMixin:
     def _open_darks_dialog(self: AppWindowState) -> None:
         """Open the Darks Assistant: capture N dark frames (the "Darks per exposure" count) at
         each exposure length in the user-supplied comma-separated list (default 10, 20, 30,
-        60 s), optionally selecting a filter first, and auto-save each frame to the Library."""
+        60 s), optionally selecting a filter first, and auto-save each frame to the Library.
+
+        The dialog is modeless and per Pier: Hide (or switching Piers) removes it from the
+        screen while the run continues, and the Darks… button reopens it with live progress."""
         from PySide6.QtWidgets import (
             QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
             QMessageBox, QPushButton, QComboBox, QSpinBox, QVBoxLayout,
@@ -44,8 +41,7 @@ class AppWindowDarksMixin:
         from galileo.ui.imaging import ImagingService
 
         key = pier_key(self._current_pier)
-        if self._darks_threads.get(key) is not None:
-            self._window.statusBar().showMessage("A Darks run is already in progress on this Pier.", 4000)
+        if reopen_assistant(self, "darks", key):
             return
         if self._imaging_capture_threads.get(key) is not None:
             self._window.statusBar().showMessage(
@@ -61,6 +57,7 @@ class AppWindowDarksMixin:
         from galileo.ui.help import tag_help_screen
         dialog = tag_help_screen(_DarksDialog(self._window), "imaging.darks")
         dialog.setWindowTitle("Darks Assistant")
+        register_assistant(self, "darks", key, dialog)
         outer = QVBoxLayout(dialog)
         form = _new_form_layout()
         outer.addLayout(form)
@@ -94,6 +91,7 @@ class AppWindowDarksMixin:
         status_label.setWordWrap(True)
         outer.addWidget(status_label)
 
+        pier_name = getattr(self._current_pier, "name", "") or "this Pier"
         fields = (filter_combo, exposures_edit, count_spin)
         run_state: dict = {"service": None, "frames_captured": 0}
 
@@ -104,7 +102,9 @@ class AppWindowDarksMixin:
             park_btn.setEnabled(not running)
             for field in fields:
                 field.setEnabled(not running)
-            buttons.button(QDialogButtonBox.StandardButton.Close).setEnabled(not running)
+            # While a run is going the dialog can only be hidden, never closed.
+            buttons.button(QDialogButtonBox.StandardButton.Close).setText("Hide" if running else "Close")
+            refresh_assistant_buttons(self)
 
         def on_frame_started(exp_i: int, exp_n: int, exposure_s: float, frame_i: int, frame_n: int) -> None:
             status_label.setText(
@@ -120,6 +120,11 @@ class AppWindowDarksMixin:
                 f"(exposure {exp_i} of {exp_n}; {run_state['frames_captured']} of "
                 f"{run_state['frames_total']} frame(s) done)."
             )
+            if not dialog.isVisible():
+                self._window.statusBar().showMessage(
+                    f"Darks ({pier_name}): {run_state['frames_captured']} of "
+                    f"{run_state['frames_total']} frame(s) done.", 3000,
+                )
 
         def finished() -> None:
             self._darks_threads.pop(key, None)
@@ -127,7 +132,7 @@ class AppWindowDarksMixin:
             count = run_state["frames_captured"]
             summary = f"Darks done — {count} frame(s) captured."
             status_label.setText(summary)
-            self._window.statusBar().showMessage(summary, 6000)
+            self._window.statusBar().showMessage(f"{summary} ({pier_name})", 6000)
             _refresh_library()
 
         def failed(message: str) -> None:
@@ -135,7 +140,9 @@ class AppWindowDarksMixin:
             set_running(False)
             logger.error("Darks capture failed: %s", message)
             status_label.setText(f"Failed: {message}")
-            self._window.statusBar().showMessage("Darks capture failed — see log.", 6000)
+            self._window.statusBar().showMessage(f"Darks capture failed on {pier_name} — see log.", 6000)
+            if pier_key(self._current_pier) == key:
+                reopen_assistant(self, "darks", key)    # the user is on this Pier: show them the error
 
         def _refresh_library() -> None:
             images = getattr(getattr(self, "_library_screens", None), "images", None)
@@ -177,7 +184,10 @@ class AppWindowDarksMixin:
             run_state["service"] = svc
 
             filter_name = filter_combo.currentText() if filter_combo.currentIndex() > 0 else ""
-            thread = _DarksThread(svc, exposures, filter_name, count_spin.value(), dialog)
+            # Parented to the window, not the dialog: the dialog is deleted when closed idle, which
+            # must never take a thread that is still returning from run() down with it.
+            thread = _DarksThread(svc, exposures, filter_name, count_spin.value(), self._window)
+            thread.finished.connect(thread.deleteLater)
             thread.frame_started.connect(on_frame_started)
             thread.frame_done.connect(on_frame_done)
             thread.finished_ok.connect(finished)
@@ -215,7 +225,7 @@ class AppWindowDarksMixin:
         stop_btn.clicked.connect(stop)
         buttons.rejected.connect(dialog.reject)
 
-        dialog.exec()
+        dialog.show()
 
 
 def _parse_exposures(text: str) -> list:

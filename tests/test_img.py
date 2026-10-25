@@ -532,71 +532,80 @@ class _FakeMount:
 @pytest.mark.parametrize("direction, expected", [
     ("N", (1, 0.2)), ("S", (1, -0.2)), ("E", (0, 0.2)), ("W", (0, -0.2)),
 ])
-async def test_tc_img_130_nudge_moves_one_axis_then_stops_it(direction, expected):
-    """IMG-130: a nudge moves the mount along one axis with the Mount page's jog signs, then stops that axis."""
-    from galileo.ui.imaging import nudge_mount
-    mount = _FakeMount()
-    await nudge_mount(mount, direction, rate=0.2, duration=0.0)
-    assert mount.calls == [expected, (expected[0], 0.0)]
+def test_tc_img_130_nudge_command_uses_the_jog_pad_signs(direction, expected):
+    """IMG-130: a nudge moves the mount along one axis with the Mount page's jog signs."""
+    from galileo.ui.imaging import nudge_command
+    assert nudge_command(direction, 0.2) == expected
 
 
 @pytest.mark.requirement("TC-IMG-130")
 @pytest.mark.priority("P2")
-async def test_tc_img_130_nudge_honours_reversed_axes_and_rejects_bad_directions():
-    """IMG-130: the Mount page's axis reversal flips the nudge; an unknown direction is refused before anything moves."""
-    from galileo.ui.imaging import nudge_mount
-    mount = _FakeMount()
-    await nudge_mount(mount, "N", 0.2, 0.0, reversed_axes=(False, True))
-    await nudge_mount(mount, "e", 0.2, 0.0, reversed_axes=(True, False))
-    assert mount.calls == [(1, -0.2), (1, 0.0), (0, -0.2), (0, 0.0)]
+def test_tc_img_130_nudge_honours_reversed_axes_and_rejects_bad_directions():
+    """IMG-130: the Mount page's axis reversal flips the nudge; an unknown direction is refused."""
+    from galileo.ui.imaging import nudge_command
+    assert nudge_command("N", 0.2, (False, True)) == (1, -0.2)
+    assert nudge_command("e", 0.2, (True, False)) == (0, -0.2)
     with pytest.raises(ValueError):
-        await nudge_mount(mount, "up", 0.2, 0.0)
-    assert len(mount.calls) == 4
+        nudge_command("up", 0.2)
 
 
-@pytest.mark.requirement("TC-IMG-130")
-@pytest.mark.priority("P2")
-async def test_tc_img_130_nudge_always_stops_the_axis_even_when_interrupted():
-    """IMG-130: a nudge that is cancelled part-way still sends the stop, so the mount is never left running."""
-    import asyncio
-    from galileo.ui.imaging import nudge_mount
-    mount = _FakeMount()
-    task = asyncio.ensure_future(nudge_mount(mount, "W", 0.2, duration=30.0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert mount.calls == [(0, -0.2), (0, 0.0)]
-
-
-def _click_nudge(window, direction):
-    """Press a nudge button as the user would, then wait for the worker thread and deliver its signal."""
+def _hold(window, direction, *, release=True):
+    """Press (and by default release) a nudge button as the user would, then wait for the commands to be sent."""
     ui = window._imaging_ui
-    ui["nudge_buttons"][direction].click()
-    thread = ui["nudge_state"]["thread"]
-    if thread is not None:
-        thread.wait(5000)
-        window.app.processEvents()
+    btn = ui["nudge_buttons"][direction]
+    btn.pressed.emit()
+    if release:
+        btn.released.emit()
+    ui["nudge_state"]["controller"].flush()
+    window.app.processEvents()
 
 
 @pytest.mark.requirement("TC-IMG-130")
 @pytest.mark.priority("P2")
-def test_tc_img_130_nudge_pad_drives_the_connected_mount(window):
-    """IMG-130: the Imaging page's nudge pad moves the mount connected on the Mount page, at the chosen speed and duration."""
+def test_tc_img_130_nudge_moves_while_held_and_stops_on_release(window):
+    """IMG-130: holding a nudge button moves the connected mount at the chosen speed until the button is released."""
     ui = window._imaging_ui
     mount = _FakeMount()
     window._device_pages["mount"]["adapter"] = mount
     window._device_pages["mount"]["axis_reversed"] = lambda: (False, False)
     ui["nudge_rate"].setCurrentIndex(ui["nudge_rate"].findData(10.0))
-    ui["nudge_duration"].setValue(0.1)
 
-    _click_nudge(window, "E")
+    _hold(window, "E", release=False)
+    assert mount.calls == [(0, 10.0)], "moving as soon as the button goes down, with no fixed duration"
+    ui["nudge_buttons"]["E"].released.emit()
+    ui["nudge_state"]["controller"].flush()
     assert mount.calls == [(0, 10.0), (0, 0.0)]
-    assert ui["nudge_state"]["thread"] is None and all(b.isEnabled() for b in ui["nudge_buttons"].values())
 
     window._device_pages["mount"]["axis_reversed"] = lambda: (True, False)
-    _click_nudge(window, "E")
+    _hold(window, "E")
     assert mount.calls[2:] == [(0, -10.0), (0, 0.0)]
+
+
+@pytest.mark.requirement("TC-IMG-130")
+@pytest.mark.priority("P2")
+def test_tc_img_130_diagonal_buttons_move_both_axes_while_held(window):
+    """IMG-130: NW/NE/SW/SE move both axes together while held and stop both on release."""
+    mount = _FakeMount()
+    window._device_pages["mount"]["adapter"] = mount
+    window._device_pages["mount"]["axis_reversed"] = lambda: (False, False)
+    window._imaging_ui["nudge_rate"].setCurrentIndex(window._imaging_ui["nudge_rate"].findData(5.0))
+    _hold(window, "SW", release=False)
+    assert sorted(mount.calls) == [(0, -5.0), (1, -5.0)]
+    window._imaging_ui["nudge_buttons"]["SW"].released.emit()
+    window._imaging_ui["nudge_state"]["controller"].flush()
+    assert sorted(mount.calls[2:]) == [(0, 0.0), (1, 0.0)]
+
+
+@pytest.mark.requirement("TC-IMG-130")
+@pytest.mark.priority("P2")
+def test_tc_img_130_nudge_is_stopped_if_the_button_is_hidden_while_held(window):
+    """IMG-130: a held button that goes away without a release still stops the mount."""
+    mount = _FakeMount()
+    window._device_pages["mount"]["adapter"] = mount
+    _hold(window, "N", release=False)
+    window._imaging_ui["nudge_buttons"]["N"].hide()
+    window._imaging_ui["nudge_state"]["controller"].flush()
+    assert mount.calls[-1] == (1, 0.0)
 
 
 @pytest.mark.requirement("TC-IMG-130")
@@ -604,8 +613,7 @@ def test_tc_img_130_nudge_pad_drives_the_connected_mount(window):
 def test_tc_img_130_nudge_without_a_mount_moves_nothing_and_says_so(window):
     """IMG-130: with no mount connected a nudge does nothing but tell the user to connect one."""
     window._device_pages["mount"]["adapter"] = None
-    _click_nudge(window, "N")
-    assert window._imaging_ui["nudge_state"]["thread"] is None
+    _hold(window, "N")
     assert "mount" in window._window.statusBar().currentMessage().lower()
 
 
@@ -616,6 +624,7 @@ def test_tc_img_130_nudge_stop_halts_both_axes(window):
     mount = _FakeMount()
     window._device_pages["mount"]["adapter"] = mount
     window._imaging_ui["nudge_stop"].click()
+    window._imaging_ui["nudge_state"]["controller"].flush()
     assert sorted(mount.calls) == [(0, 0.0), (1, 0.0)]
 
 

@@ -23,7 +23,7 @@ Closes the cover of the connected flat panel, so no light reaches the sensor bef
 
 ## Start
 
-Starts capturing the darks. The dialog cannot be closed while it runs.
+Starts capturing the darks. The dialog does not block the rest of Galileo, so you can keep working on other Piers. While a run is going its Close button becomes **Hide** (as do Esc and the window's X): the dialog goes away but the run carries on, and the Imaging screen's **Darks…** button shows "(running)" — press it to bring the dialog back with its live progress. Switching Pier also hides it. Once the run has ended, Close closes the dialog.
 
 ## Stop
 
