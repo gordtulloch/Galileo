@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """PyInstaller entry point.
 
 Freezing galileo/app.py directly would make it the top-level script, so its ``__file__`` (used to

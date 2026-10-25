@@ -754,8 +754,11 @@ class AppWindowObservatoryPierMixin:
             if on_done is not None:
                 on_done()
 
+        from PySide6.QtCore import Qt
+        # Explicitly queued: `done` and `finished` touch widgets and Qt objects, so they must run on
+        # the UI thread, never on the worker that emits `position`.
         thread = _MountPositionThread(mount, self._window)
-        thread.position.connect(done)
+        thread.position.connect(done, Qt.ConnectionType.QueuedConnection)
 
         def finished() -> None:
             # Release the thread only once run() has really returned — `done` fires
@@ -763,7 +766,7 @@ class AppWindowObservatoryPierMixin:
             self._pier_poll_threads.pop(key, None)
             thread.deleteLater()
 
-        thread.finished.connect(finished)
+        thread.finished.connect(finished, Qt.ConnectionType.QueuedConnection)
         self._pier_poll_threads[key] = thread
         thread.start()
 

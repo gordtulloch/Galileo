@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 019_add_schedule_timeline_fields.py.
 
 Adds Schedule-timeline placement/outcome columns to ``scheduler_jobs``

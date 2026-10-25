@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 005_recreate_mapping_table_without_is_default.py.
 
 Some examples (model - class or model name)::

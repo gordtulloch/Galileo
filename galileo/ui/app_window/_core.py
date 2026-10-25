@@ -496,7 +496,7 @@ class AppWindowCoreMixin:
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(page, 1)
+        layout.addWidget(page)
         box = QCheckBox("Publish on Dashboard")
         box.setChecked(is_published_on_dashboard(plugin))
         box.setToolTip(f"Show {plugin.dashboard_label} above the Pier timelines on the Dashboard.")
@@ -509,6 +509,7 @@ class AppWindowCoreMixin:
 
         box.toggled.connect(toggled)
         layout.addWidget(box)
+        layout.addStretch(1)  # keep the box under the plugin's fields, not at the window bottom
         return wrapper
 
     def _build_plugin_docks(self: AppWindowState) -> None:

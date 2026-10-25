@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo Upgrade Script for Linux (Debian/Ubuntu)
 # Manually pulls the latest code and refreshes Python dependencies.
 # The desktop launcher (install/launch_galileo.sh) already does this

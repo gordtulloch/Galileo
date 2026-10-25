@@ -207,6 +207,17 @@ def test_tc_img_110_debayer_recovers_a_uniform_colour_for_every_pattern(pattern)
 
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
+def test_tc_img_110_cfa_offsets_shift_the_pattern_and_mono_has_none():
+    """IMG-110: a camera's CFA type plus the offset of the first pixel gives the pattern of the frame as read out;
+    no CFA (or a non-Bayer one) means a mono camera."""
+    from galileo.debayer import pattern_from_cfa, superpixel
+    assert [pattern_from_cfa("RGGB", x, y) for x, y in ((0, 0), (1, 0), (0, 1), (1, 1))] == ["RGGB", "GRBG", "GBRG", "BGGR"]
+    assert pattern_from_cfa(None) is None and pattern_from_cfa("") is None and pattern_from_cfa("CMYK") is None
+    assert superpixel(_mosaic_of((1000, 300, 60), "GBRG"), "GBRG").shape[-1] == 3
+
+
+@pytest.mark.requirement("TC-IMG-110")
+@pytest.mark.priority("MVP")
 def test_tc_img_110_debayer_rejects_an_unknown_pattern_or_a_non_mosaic():
     """IMG-110: only the four Bayer layouts and a 2-D mosaic are accepted."""
     import numpy as np
@@ -219,47 +230,46 @@ def test_tc_img_110_debayer_rejects_an_unknown_pattern_or_a_non_mosaic():
 
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
-async def test_tc_img_110_service_previews_in_colour_only_when_debayer_is_on(mock_indi_camera, imaging_service):
-    """IMG-110: with Debayer on the preview is RGB; off it is the plain grey mosaic; toggling re-renders the frame
-    already captured, and the raw frame - what statistics and Save Frame use - never changes."""
+async def test_tc_img_110_a_colour_camera_is_previewed_debayered_a_mono_one_is_not(mock_indi_camera, imaging_service):
+    """IMG-110: the camera says whether it is colour; a colour camera's preview is RGB with no switch to flip, a mono
+    camera's is the plain grey frame, and the raw frame - what statistics and Save Frame use - never changes."""
     import numpy as np
     raw = _mosaic_of((1000, 300, 60), "RGGB")
     mock_indi_camera.get_image_array = AsyncMock(return_value=raw)
 
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value=None)         # mono
     await imaging_service.capture_and_preview(duration=1.0)
     assert imaging_service.current_preview.shape == raw.shape and imaging_service.debayer_note == ""
+    assert not imaging_service.debayer_enabled
 
-    imaging_service.set_debayer(True)
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value="RGGB")       # colour
+    await imaging_service.capture_and_preview(duration=1.0)
+    assert imaging_service.debayer_enabled and imaging_service.bayer_pattern == "RGGB"
     assert imaging_service.current_preview.shape == (*raw.shape, 3)
     assert imaging_service.debayer_note == "Debayered (RGGB)."
-    imaging_service.set_debayer(False)
-    assert imaging_service.current_preview.shape == raw.shape
-
-    imaging_service.set_debayer(True)
-    await imaging_service.capture_and_preview(duration=1.0)        # a new capture is debayered as it arrives
-    assert imaging_service.current_preview.ndim == 3
     assert imaging_service.current_frame is raw and np.array_equal(imaging_service.current_frame, _mosaic_of((1000, 300, 60), "RGGB"))
 
 
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
-async def test_tc_img_110_service_uses_the_set_pattern_and_defaults_to_rggb(mock_indi_camera, imaging_service):
-    """IMG-110: RGGB until told otherwise; the pattern given is the one used; a bad value falls back to RGGB."""
-    assert imaging_service.bayer_pattern == "RGGB"
+async def test_tc_img_110_service_uses_the_pattern_the_camera_reports(mock_indi_camera, imaging_service):
+    """IMG-110: no pattern until the camera reports one; the pattern given is the one used (case-insensitive);
+    anything that is not a Bayer layout means a mono camera."""
+    assert imaging_service.bayer_pattern is None
     raw = _mosaic_of((1000, 300, 60), "GBRG")
     mock_indi_camera.get_image_array = AsyncMock(return_value=raw)
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value="RGGB")
     await imaging_service.capture_and_preview(duration=1.0)
-    imaging_service.set_debayer(True)
     wrong = imaging_service.current_preview.copy()
 
-    imaging_service.set_bayer_pattern("gbrg")                       # case-insensitive
+    imaging_service.set_bayer_pattern("gbrg")
     assert imaging_service.bayer_pattern == "GBRG" and imaging_service.debayer_note == "Debayered (GBRG)."
     assert not (imaging_service.current_preview == wrong).all()     # re-rendered with the right layout
 
     imaging_service.set_bayer_pattern("RBBG")
-    assert imaging_service.bayer_pattern == "RGGB"
+    assert imaging_service.bayer_pattern is None
     imaging_service.set_bayer_pattern(None)
-    assert imaging_service.bayer_pattern == "RGGB"
+    assert imaging_service.bayer_pattern is None
 
 
 @pytest.mark.requirement("TC-IMG-110")
@@ -268,10 +278,11 @@ async def test_tc_img_110_an_already_colour_frame_is_left_alone(mock_indi_camera
     """IMG-110: a camera that already delivers colour is shown as it is, with a note, not debayered again."""
     import numpy as np
     mock_indi_camera.get_image_array = AsyncMock(return_value=np.full((8, 8, 3), 500, dtype=np.uint16))
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value="RGGB")
     await imaging_service.capture_and_preview(duration=1.0)
-    imaging_service.set_debayer(True)
     assert imaging_service.current_preview.shape == (8, 8, 3)
     assert "already colour" in imaging_service.debayer_note
+
 
 
 # --- the Camera page setting and the Imaging checkbox -----------------------
@@ -304,6 +315,7 @@ def _bayer_combo(page, QtWidgets):
     return matches[0]
 
 
+
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
 def test_tc_img_110_camera_page_bayer_pattern_defaults_to_rggb_and_is_saved(window):
@@ -324,16 +336,16 @@ def test_tc_img_110_camera_page_bayer_pattern_defaults_to_rggb_and_is_saved(wind
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
 def test_tc_img_110_a_stale_off_thread_preview_is_not_shown():
-    """IMG-110 / NFR-PERF-020: the Imaging page re-renders a debayer toggle on a worker thread; a render
-    that finishes after a newer toggle, or after a new frame arrived, is dropped rather than shown."""
+    """IMG-110 / NFR-PERF-020: the Imaging page re-renders a preview on a worker thread; a render
+    that finishes after a newer change, or after a new frame arrived, is dropped rather than shown."""
     import numpy as np
     from galileo.ui.imaging import ImagingService
     service = ImagingService()
     service.current_frame = _mosaic_of((1000, 300, 60), "RGGB")
 
-    service.set_debayer(True, rebuild=False)
+    service.set_bayer_pattern("RGGB", rebuild=False)
     stale = service.render_preview()
-    service.set_debayer(False, rebuild=False)          # toggled back while the first render ran
+    service.set_bayer_pattern(None, rebuild=False)     # changed while the first render ran
     fresh = service.render_preview()
     assert service.apply_preview(stale) is False
     assert service.apply_preview(fresh) is True and service.current_preview.ndim == 2
@@ -344,6 +356,7 @@ def test_tc_img_110_a_stale_off_thread_preview_is_not_shown():
     assert service.apply_preview(None) is False
 
 
+
 def _wait_for_preview_renders(window):
     """Wait for the Imaging page's debayer re-render threads and deliver their results."""
     for thread in list(window._imaging_preview_renders):
@@ -351,25 +364,14 @@ def _wait_for_preview_renders(window):
     window.app.processEvents()
 
 
+
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
-def test_tc_img_110_imaging_debayer_checkbox_uses_the_selected_cameras_pattern(window):
-    """IMG-110: ticking Debayer on the Imaging tab colours the frame using the pattern saved for the selected camera."""
-    import numpy as np
-    from galileo.observatory import save_device_config
-    save_device_config(window.pier, "camera", driver="Alpaca", server="h", port=1, bayer_pattern="GBRG")
-    service = window._imaging_service
-    service.current_frame = _mosaic_of((1000, 300, 60), "GBRG")
-
-    check = window._imaging_debayer_check
-    assert check.text() == "Debayer" and not check.isChecked()
-    check.setChecked(True)
-    _wait_for_preview_renders(window)
-    assert service.bayer_pattern == "GBRG" and service.current_preview.ndim == 3
-    check.setChecked(False)
-    _wait_for_preview_renders(window)
-    assert service.current_preview.ndim == 2
-    assert np.array_equal(service.current_frame, _mosaic_of((1000, 300, 60), "GBRG"))
+def test_tc_img_110_imaging_page_has_no_debayer_switch(window):
+    """IMG-110: colour cameras are debayered automatically, so the Imaging page no longer offers a Debayer checkbox."""
+    from PySide6.QtWidgets import QCheckBox
+    texts = {c.text() for c in window._window.findChildren(QCheckBox)}
+    assert "Debayer" not in texts and "Live Stack" in texts
 
 
 @pytest.mark.requirement("TC-IMG-110")
@@ -2047,7 +2049,7 @@ def test_tc_img_190_higher_level_clips_more_and_brightens_the_preview(imaging_se
 @pytest.mark.priority("P2")
 def test_tc_img_190_set_stretch_clamps_and_marks_the_preview_stale(imaging_service):
     """IMG-190: set_stretch clamps to 0..100 and bumps the render generation the same way
-    set_debayer does, so a render started before the change is dropped by apply_preview."""
+    set_bayer_pattern does, so a render started before the change is dropped by apply_preview."""
     import numpy as np
     imaging_service.current_frame = np.arange(10000, dtype=np.uint16).reshape(100, 100)
 
@@ -2376,3 +2378,29 @@ def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_pa
     stretch_idx = next(i for i, w in enumerate(names) if w is not None and w.findChildren(window.QtWidgets.QSlider))
     assert log_idx < stretch_idx
     assert not any(b.text() == "Panels…" for b in page.findChildren(QPushButton))
+
+
+@pytest.mark.requirement("TC-IMG-150")
+@pytest.mark.priority("P2")
+async def test_tc_img_150_session_frames_are_announced_to_the_imaging_screen():
+    """IMG-150: a frame taken by a session's service (it has a pier_key) is announced on the bus so
+    the Imaging screen can show it; a service without one stays silent."""
+    from galileo.bus import FrameCapturedEvent, get_bus
+    from galileo.ui.imaging import ImagingService
+    seen = []
+    handler = seen.append
+    get_bus().subscribe(FrameCapturedEvent, handler)
+    try:
+        quiet = ImagingService(camera=_CountingCamera())
+        quiet.auto_save_to_library = False
+        await quiet.capture_series(1, 1.0)
+        assert seen == []
+
+        session = ImagingService(camera=_CountingCamera())
+        session.auto_save_to_library = False
+        session.pier_key = "pier-a"
+        await session.capture_series(2, 1.0)
+    finally:
+        get_bus().unsubscribe(FrameCapturedEvent, handler)
+    assert [e.pier for e in seen] == ["pier-a", "pier-a"]
+    assert all(e.service is session for e in seen)

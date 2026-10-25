@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 030_add_camera_default_gain_offset.py.
 
 ``device_configs.default_gain`` / ``default_offset``: a camera's preferred gain and offset, set on

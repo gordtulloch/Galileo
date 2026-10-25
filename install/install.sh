@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo Installation Script for macOS
 # Clones (or updates) the Galileo repository, ensures Python 3.11+ and
 # Homebrew/git are present, creates a virtual environment, installs

@@ -566,6 +566,25 @@ def save_autofocus_params(pier: PierRecord, params: AutofocusParams) -> None:
     record.save()
 
 
+def get_emergency_focus(pier: PierRecord | None, slot: str = "primary") -> int | None:
+    """The saved emergency position of *pier*'s focuser in *slot*, or ``None`` if none is saved."""
+    if pier is None:
+        return None
+    record = get_device_config(pier, "focuser", slot=slot)
+    return None if record is None else record.emergency_focus
+
+
+def set_emergency_focus(pier: PierRecord, position: int | None, slot: str = "primary") -> bool:
+    """Save (or, with ``None``, clear) the emergency position of *pier*'s focuser in *slot*.
+    Returns ``False`` if that focuser has no saved device config yet (Equipment > Focuser > Save)."""
+    record = get_device_config(pier, "focuser", slot=slot)
+    if record is None:
+        return False
+    record.emergency_focus = position
+    record.save()
+    return True
+
+
 def get_filter_offsets(pier: PierRecord | None) -> list[FilterOffset]:
     """Return *pier*'s saved per-filter offset state (Focus screen's Filter
     Offsets dialog, EQP-FW-020) — one entry per filter that has ever been

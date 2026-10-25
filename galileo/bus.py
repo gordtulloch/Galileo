@@ -77,9 +77,18 @@ class CurrentObjectChangedEvent(Event):
     ``galileo.current_object.pier_key``) and ``object`` (a ``CurrentObject``,
     or ``None`` when it was cleared)."""
 
+class FrameCapturedEvent(Event):
+    """An imaging service finished a frame (and saved it). Payload: ``pier`` (the key from
+    ``galileo.current_object.pier_key``) and ``service`` (the ``ImagingService`` holding it). Lets the
+    Imaging screen follow frames taken by a running session, which uses its own service."""
+
 class FocusStartedEvent(Event):
     """An autofocus run began. Payload: ``positions`` (the planned sweep),
     ``initial_position``, ``step_size``, ``num_points``."""
+
+class FocusExposureStartedEvent(Event):
+    """A focus exposure (autofocus sample or manual capture/loop) began. Payload:
+    ``duration_s``. Lets the Focus screen show exposure progress."""
 
 class FocusFrameEvent(Event):
     """One autofocus exposure was measured. Payload: ``position``, ``frame``

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Pushing time, site and optics to an INDI device on connect (EQP INDI adapters)."""
 import asyncio
 from unittest.mock import MagicMock

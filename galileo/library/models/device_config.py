@@ -64,6 +64,9 @@ class DeviceConfigRecord(BaseModel):
     # on the Flat Panel page; toggles whether its Park/Unpark controls are
     # shown (EQP-FP-010).
     panel_type = pw.TextField(default="Flat Panel")
+    # Focuser-only: the saved "emergency" position to return to when wildly out of focus (set on
+    # the Focus screen or Equipment > Focuser); NULL = none saved. Per focuser (per slot).
+    emergency_focus = pw.IntegerField(null=True)
     # Mount-only: the Mount page's "Meridian Flip" and "Limits" sections (EQP-MNT-060/070).
     flip_enabled = pw.BooleanField(default=False)
     flip_ha_deg = pw.FloatField(default=5.0)

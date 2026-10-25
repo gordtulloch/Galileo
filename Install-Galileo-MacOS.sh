@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo Setup for macOS - the one file to download for a fresh install.
 # Download this file, then run it:
 #   chmod +x Install-Galileo-MacOS.sh && ./Install-Galileo-MacOS.sh

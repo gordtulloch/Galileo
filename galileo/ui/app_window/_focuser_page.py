@@ -169,6 +169,19 @@ class AppWindowFocuserPageMixin:
             target_row.addWidget(move_btn)
             form.addRow("Position (target)", target_row)
 
+            emergency_row = QHBoxLayout()
+            emergency_value = QLabel("—")
+            emergency_row.addWidget(emergency_value, 1)
+            emergency_set_btn = QPushButton("Set")
+            emergency_set_btn.setToolTip("Remember this focuser's current position as its emergency focus.")
+            emergency_set_btn.setProperty("helpKey", "emergency focus set")
+            emergency_row.addWidget(emergency_set_btn)
+            emergency_btn = QPushButton("Move")
+            emergency_btn.setToolTip("Move the focuser to the saved emergency focus position.")
+            emergency_btn.setProperty("helpKey", "emergency focus")
+            emergency_row.addWidget(emergency_btn)
+            form.addRow("Emergency Focus", emergency_row)
+
             temp_comp_check = QCheckBox("Enabled")
             form.addRow("Temperature Compensation", temp_comp_check)
 
@@ -182,7 +195,9 @@ class AppWindowFocuserPageMixin:
                 "is_moving_value": is_moving_value, "is_settling_value": is_settling_value,
                 "max_increment_value": max_increment_value, "max_step_value": max_step_value,
                 "position_value": position_value, "target_position": target_position,
-                "move_btn": move_btn, "temp_comp_check": temp_comp_check,
+                "move_btn": move_btn, "emergency_value": emergency_value,
+                "emergency_btn": emergency_btn,
+                "emergency_set_btn": emergency_set_btn, "temp_comp_check": temp_comp_check,
                 "temperature_value": temperature_value, "adapter": None,
                 "_last_is_moving": None, "_last_is_settling": None,
             }
@@ -323,6 +338,53 @@ class AppWindowFocuserPageMixin:
                 return
             _refresh_panel_status(panel)
 
+        def _show_emergency(panel: dict) -> None:
+            from galileo.observatory import get_emergency_focus
+            try:
+                position = get_emergency_focus(self._current_pier, _slot_for_index(panels.index(panel)))
+            except Exception:
+                logger.exception("Could not read the emergency focus position")
+                position = None
+            panel["emergency_value"].setText("—" if position is None else str(position))
+            panel["emergency_btn"].setEnabled(position is not None)
+
+        def _emergency_clicked(panel: dict) -> None:
+            from galileo.observatory import get_emergency_focus
+            adapter = panel.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect this focuser first.")
+                return
+            position = get_emergency_focus(self._current_pier, _slot_for_index(panels.index(panel)))
+            if position is None:
+                return
+            panel["target_position"].setValue(position)
+            logger.info("Focuser %s: moving to emergency focus position %s", panel["title_label"].text(), position)
+            import asyncio
+            try:
+                asyncio.run(adapter.move_to(position))
+            except Exception:
+                logger.exception("Could not move focuser to emergency position %s", position)
+                self._window.statusBar().showMessage("Move failed — see log.", 6000)
+                return
+            _refresh_panel_status(panel)
+
+        def _emergency_set_clicked(panel: dict) -> None:
+            from galileo.observatory import set_emergency_focus
+            adapter = panel.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect this focuser first.")
+                return
+            if self._current_pier is None or not set_emergency_focus(
+                self._current_pier, int(adapter.position), _slot_for_index(panels.index(panel)),
+            ):
+                QMessageBox.information(
+                    self._window, "Save the focuser first",
+                    "Select a Pier and press Save to keep this focuser's settings; the emergency focus is kept with them.",
+                )
+                return
+            logger.info("Focuser %s: emergency focus saved at position %s", panel["title_label"].text(), adapter.position)
+            _show_emergency(panel)
+
         def _temp_comp_toggled(panel: dict, checked: bool) -> None:
             adapter = panel.get("adapter")
             if adapter is None:
@@ -344,6 +406,9 @@ class AppWindowFocuserPageMixin:
             panel["connect_btn"].clicked.connect(lambda: _connect_clicked(panel))
             panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             panel["move_btn"].clicked.connect(lambda: _move_clicked(panel))
+            panel["emergency_btn"].clicked.connect(lambda: _emergency_clicked(panel))
+            panel["emergency_set_btn"].clicked.connect(lambda: _emergency_set_clicked(panel))
+            _show_emergency(panel)
             panel["temp_comp_check"].toggled.connect(lambda checked: _temp_comp_toggled(panel, checked))
             return panel
 
@@ -458,6 +523,7 @@ class AppWindowFocuserPageMixin:
             from galileo.current_object import pier_key
             adapter = adapters_by_pier.get(pier_key(self._current_pier), {}).get(slot)
             panel["adapter"] = adapter
+            _show_emergency(panel)
             if adapter is not None:
                 _refresh_panel_status(panel)
             else:

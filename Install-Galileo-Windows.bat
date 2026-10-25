@@ -1,4 +1,6 @@
 @echo off
+REM SPDX-License-Identifier: GPL-3.0-or-later
+REM Copyright (C) 2025-2026 Gord Tulloch
 REM Galileo Setup - the one file to download for a fresh install.
 REM Double-click this file. It fetches install\install.ps1 from GitHub and
 REM runs it, which clones Galileo, sets up Python/the virtual environment,

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 024_add_weather_safety_rules.py.
 
 ``weather_safety_rules`` (EQP-WX-020): one row per Pier+reading holding the

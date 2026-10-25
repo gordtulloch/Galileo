@@ -10,7 +10,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
+from galileo.bus import FocusCompleteEvent, FocusExposureStartedEvent, FocusFrameEvent, FocusStartedEvent, get_bus
 from galileo.core.compute import run_cpu
 
 logger = logging.getLogger(__name__)
@@ -238,6 +238,9 @@ class AutofocusService:
         and without publishing a ``FocusFrameEvent``."""
         if self._camera is None:
             return None
+        self._publish(FocusExposureStartedEvent(
+            source="autofocus", duration_s=self.exposure_s, pier_key=self.pier_key,
+        ))
         await self._camera.start_exposure(duration=self.exposure_s)
         frame = await self._camera.get_image_array()
         if frame is None:
@@ -284,6 +287,9 @@ class AutofocusService:
         without folding it into the V-curve."""
         if self._camera is None:
             return 2.0
+        self._publish(FocusExposureStartedEvent(
+            source="autofocus", duration_s=self.exposure_s, pier_key=self.pier_key,
+        ))
         await self._camera.start_exposure(duration=self.exposure_s)
         frame = await self._camera.get_image_array()
         if frame is None:
@@ -379,7 +385,8 @@ def _measure_stars(frame) -> tuple[float, int]:
     array = _to_2d(frame)
     try:
         import sep
-        data = array.astype(np.float64)
+        # SEP needs C-contiguous memory; astype() keeps a transposed/F-ordered layout.
+        data = np.ascontiguousarray(array, dtype=np.float64)
         bkg = sep.Background(data)
         data_sub = data - bkg
         objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)

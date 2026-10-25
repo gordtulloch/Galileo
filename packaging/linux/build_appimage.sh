@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Wrap dist/Galileo into dist/Galileo-<version>-linux-<arch>.AppImage (x86_64 or aarch64 / Raspberry Pi 5).
 # Usage: packaging/linux/build_appimage.sh <version>   (run from the repo root, after packaging/build.py)
 set -euo pipefail

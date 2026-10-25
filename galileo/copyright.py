@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Galileo copyright and licence notice.
 
 Single source of truth for the copyright text shown to users (splash screen)

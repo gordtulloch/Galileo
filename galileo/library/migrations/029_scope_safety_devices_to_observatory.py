@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 029_scope_safety_devices_to_observatory.py.
 
 Safety devices (weather stations and safety monitors) and their per-reading rules belong to the

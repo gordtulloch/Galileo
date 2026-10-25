@@ -1,4 +1,6 @@
 @echo off
+REM SPDX-License-Identifier: GPL-3.0-or-later
+REM Copyright (C) 2025-2026 Gord Tulloch
 REM Galileo launcher: checks for updates, then starts the app.
 REM This is the desktop shortcut's actual target (a .bat needs no PowerShell
 REM execution-policy handling to double-click). See launch_galileo.ps1 for

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 023_add_filter_offsets.py.
 
 ``filter_offsets`` (EQP-FW-020, FOC-060): one row per Pier+filter holding the

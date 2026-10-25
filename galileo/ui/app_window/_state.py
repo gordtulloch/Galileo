@@ -60,7 +60,6 @@ class AppWindowState(Protocol):
     _focus_settings_refresh: Any
     _horizon_table_refresh: Any
     _imaging_capture_threads: Any
-    _imaging_debayer_check: Any
     _imaging_filter_combo: Any
     _imaging_filter_threads: Any
     _imaging_preview_renders: Any

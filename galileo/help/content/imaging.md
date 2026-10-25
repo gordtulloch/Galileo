@@ -69,11 +69,7 @@ When ticked (the default), every frame is written to a scratch folder and regist
 
 ## View
 
-How the preview is displayed. None of these change what is saved.
-
-## Debayer
-
-Shows a one-shot-colour camera's frame in colour, using the Bayer pattern set for the camera on Equipment › Camera (RGGB by default). Only the preview changes: statistics, the histogram and **Save Frame** keep the camera's raw data. Leave off for a monochrome camera.
+How the preview is displayed. None of these change what is saved. A one-shot-colour camera's frames are always shown in colour (debayered automatically, using the pattern the camera reports); statistics, the histogram and **Save Frame** keep the camera's raw data.
 
 ## Live Stack
 

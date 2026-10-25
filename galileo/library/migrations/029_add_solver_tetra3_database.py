@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 029_add_solver_tetra3_database.py.
 
 ``solver_settings`` gains the path of the tetra3 star-pattern database (PLT-060); blank means the

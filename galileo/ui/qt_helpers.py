@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Small helpers for Qt calls whose stubs say ``X | None`` but which cannot be ``None`` where we call them.
 
 PySide6's stubs mark many accessors Optional (``QTableWidget.item``, ``QComboBox.lineEdit``, ``QLayout.itemAt``,

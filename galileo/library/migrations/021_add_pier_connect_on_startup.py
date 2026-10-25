@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 021_add_pier_connect_on_startup.py.
 
 ``piers.connect_on_startup``: whether this Pier's configured devices should be

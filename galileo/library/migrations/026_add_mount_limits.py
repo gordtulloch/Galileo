@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 026_add_mount_limits.py.
 
 ``device_configs`` gains the Mount page's "Meridian Flip" and "Limits" settings (EQP-MNT-060,

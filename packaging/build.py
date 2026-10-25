@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Freeze Galileo into a self-contained one-folder app with PyInstaller.
 
 Run from the repo root on the platform being targeted (PyInstaller cannot cross-compile):

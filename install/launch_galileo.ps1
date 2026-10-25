@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo launcher (PowerShell): checks for updates, then starts the app.
 # Installed as the desktop shortcut's target by install.ps1 (via the .bat
 # twin of this script). See install\upgrade.ps1 for a manual, on-demand

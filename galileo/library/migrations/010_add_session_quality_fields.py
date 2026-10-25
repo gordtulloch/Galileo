@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 010_add_session_quality_fields.py.
 
 Legacy migration name expected by some existing databases.

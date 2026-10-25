@@ -106,6 +106,23 @@ def test_tc_foc_090_focus_is_a_primary_section_with_the_reference_controls(windo
 
 
 @pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_camera_panel_shows_exposure_progress(window, page):
+    """FOC-090: a progress bar under the camera controls tracks the exposure in flight and clears when its frame arrives."""
+    from galileo.bus import FocusExposureStartedEvent
+    assert page.exposure_bar.value() == 0 and page.exposure_bar.format() == "—"
+    get_bus().publish(FocusExposureStartedEvent(source="test", duration_s=30.0))
+    assert _pump(window, lambda: page._exposure.get(page._pier_key()) is not None)
+    page._exposure[page._pier_key()] = (time.monotonic() - 15.0, 30.0)
+    page._update_exposure_bar()
+    assert 450 <= page.exposure_bar.value() <= 550 and page.exposure_bar.format().endswith("/ 30.0 s")
+    _started()
+    _frame(5000, 2.0)
+    assert _pump(window, lambda: page.exposure_bar.value() == 0)
+    assert page.exposure_bar.format() == "—" and not page._exposure_timer.isActive()
+
+
+@pytest.mark.requirement("TC-FOC-090")
 @pytest.mark.priority("MVP")
 def test_tc_foc_090_idle_screen_offers_only_what_can_act(window, page):
     """FOC-090: with no run in progress Auto Focus is available and Stop is not."""
@@ -352,6 +369,83 @@ def test_tc_foc_090_manual_move_moves_the_focuser(window, page, rig):
     assert focuser.position == 5123
     assert page.status_label.text() == "Moved to position 5123."
     assert page.position_label.text() == "5123"
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_emergency_focus_is_saved_per_focuser_and_returned_to(window, page, rig):
+    """FOC-090: Set Emergency remembers the focuser's position with that focuser's settings; Go to Emergency returns to it."""
+    from galileo.observatory import create_observatory, create_pier, get_emergency_focus, save_device_config
+
+    _camera, focuser = rig
+    pier = create_pier(create_observatory("Obs emergency"), "Pier emergency")
+    window._current_pier = pier
+    page.reload()
+    assert page.emergency_label.text() == "—" and not page.emergency_go_btn.isEnabled()
+    focuser.position = 5400
+    page.emergency_set_btn.click()          # the focuser's settings are not saved yet
+    assert window.boxes[-1] == "Save the focuser first" and get_emergency_focus(pier) is None
+    save_device_config(pier, "focuser", driver="INDI", server="h", port=1, device_name="F1")
+    save_device_config(pier, "focuser", driver="INDI", server="h", port=1, device_name="F2", slot="focuser_2")
+    page.emergency_set_btn.click()
+    assert get_emergency_focus(pier) == 5400 and page.emergency_label.text() == "5400"
+    assert get_emergency_focus(pier, "focuser_2") is None       # a second focuser keeps its own
+    assert page.emergency_go_btn.isEnabled()
+    focuser.position = 9000
+    page.emergency_go_btn.click()
+    assert focuser.position == 5400
+    other = create_pier(create_observatory("Obs emergency 2"), "Pier emergency 2")
+    window._current_pier = other
+    page.reload()
+    assert page.emergency_label.text() == "—"
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_equipment_focuser_page_offers_the_emergency_focus(window, page):
+    """FOC-090: Equipment > Focuser shows the focuser's saved emergency focus with enabled Set/Move buttons."""
+    from galileo.observatory import create_observatory, create_pier, save_device_config, set_emergency_focus
+
+    pier = create_pier(create_observatory("Obs emergency eq"), "Pier emergency eq")
+    save_device_config(pier, "focuser", driver="INDI", server="h", port=1, device_name="F1")
+    assert set_emergency_focus(pier, 4321)
+    window._current_pier = pier
+    window._device_pages["focuser"]["reload"]()
+    move = [b for b in window._window.findChildren(QtWidgets.QPushButton) if b.property("helpKey") == "emergency focus"]
+    assert len(move) == 1 and move[0].isEnabled()
+    assert any(lbl.text() == "4321" for lbl in window._window.findChildren(QtWidgets.QLabel))
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_layout_follows_the_frame_shape_unless_chosen(window, page):
+    """FOC-090: like the Imaging screen, a portrait frame moves the image to a full-height column on the right
+    and "Choose layout manually" overrides the frame's shape."""
+    from galileo.ui.imaging import LANDSCAPE, PORTRAIT
+    choice = page.layout_choice
+    assert choice.orientation == LANDSCAPE and page._image_box.parent() is page._right
+    _started()
+    get_bus().publish(FocusFrameEvent(
+        source="test", position=5000, hfr=2.0, fwhm=3.0, star_count=9, frame=np.full((60, 40), 1000, dtype=np.uint16),
+    ))
+    assert _pump(window, lambda: choice.orientation == PORTRAIT)
+    assert page._image_box.parent() is page and page._curve_box.parent() is page and not page._right.isVisibleTo(page)
+    choice.check.setChecked(True)
+    choice.combo.setCurrentIndex(0)                     # Landscape, whatever the frame
+    assert choice.orientation == LANDSCAPE and page._image_box.parent() is page._right
+    choice.check.setChecked(False)
+    assert choice.orientation == PORTRAIT
+
+
+@pytest.mark.requirement("TC-FOC-090")
+@pytest.mark.priority("P2")
+def test_tc_foc_090_a_colour_camera_frame_is_previewed_in_colour():
+    """FOC-090: a mosaic is shown debayered (RGB) when the camera has a Bayer pattern, and as plain grey without."""
+    from galileo.ui.focus import _preview
+    mosaic = np.random.default_rng(1).integers(100, 60000, (64, 48)).astype(np.uint16)
+    assert _preview(mosaic).ndim == 2
+    colour = _preview(mosaic, "RGGB")
+    assert colour.ndim == 3 and colour.shape == (32, 24, 3)
 
 
 @pytest.mark.requirement("TC-FOC-090")

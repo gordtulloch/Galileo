@@ -35,6 +35,10 @@ The position, in steps, you want the focuser to go to. It follows the current po
 
 Sends the focuser to **Position (target)**. Connect the focuser first. The move is logged, and **Is Moving** shows progress.
 
+## Emergency Focus
+
+This focuser's saved emergency focus position, or — if none is set. Each focuser keeps its own. Press **Set** when focus is good to remember where the focuser is now (connect it first, and **Save** the focuser's settings at least once); press **Move** to send it back there if you are ever wildly out of focus.
+
 ## Temperature Compensation
 
 Turns the focuser's own temperature compensation on or off, for devices that support it: the focuser adjusts its position automatically as the tube cools through the night, using the coefficient set in its driver. Leave it off if you use Galileo's autofocus on temperature or filter changes, so the two do not both correct the same drift.

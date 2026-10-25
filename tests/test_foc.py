@@ -293,3 +293,21 @@ async def test_tc_foc_090_cancel_stops_the_run_and_restores_the_focuser(foc_serv
     assert [e.payload["position"] for e in focus_events if isinstance(e, FocusFrameEvent)] == [4800, 4900]
     mock_focuser.move_to.assert_called_with(5000)
     assert type(focus_events[-1]).__name__ == "FocusCompleteEvent"
+
+
+@pytest.mark.requirement("TC-FOC-070")
+@pytest.mark.priority("MVP")
+def test_tc_foc_070_measure_stars_accepts_non_contiguous_frame():
+    """FOC-070: star measurement must not fall back to the contrast estimate (SEP rejects
+    non-C-contiguous arrays) when a frame arrives transposed/F-ordered."""
+    from galileo.autofocus import _measure_stars
+    rng = np.random.default_rng(1)
+    frame = rng.normal(800, 20, (200, 300)).astype(np.float32)
+    yy, xx = np.mgrid[-6:7, -6:7]
+    star = 20000 * np.exp(-(yy ** 2 + xx ** 2) / 6.0)
+    for y, x in ((50, 60), (120, 200), (150, 90)):
+        frame[y - 6:y + 7, x - 6:x + 7] += star
+    f_ordered = np.asfortranarray(frame)
+    assert not f_ordered.flags["C_CONTIGUOUS"]
+    _hfr, stars = _measure_stars(f_ordered)
+    assert stars >= 3
