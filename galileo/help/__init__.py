@@ -49,6 +49,15 @@ def register_dir(path: str | Path) -> None:
         screen_ids.cache_clear()
 
 
+def unregister_dir(path: str | Path) -> None:
+    """Forget a directory added with :func:`register_dir` (e.g. a plugin that was removed or updated)."""
+    p = Path(path)
+    if p in _extra_dirs:
+        _extra_dirs.remove(p)
+        _load.cache_clear()
+        screen_ids.cache_clear()
+
+
 def slug(text: str) -> str:
     """Normalise a label to a section key: ``"Position (target):"`` -> ``"position-target"``."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")

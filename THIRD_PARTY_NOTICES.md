@@ -32,5 +32,4 @@ following components under their own licences.
   guiding (`galileo/guiding.py`, which follows the PHD2 event protocol, not KStars' client) and the meridian
   flip service (`galileo/meridianflip.py`). A source comparison found no copied code or comments.
 
-Apache-2.0, MIT and GPL-2.0-or-later are compatible with Galileo's GPL-3.0 licence; the other dependencies' licences are recorded in their
-own package metadata.
+Apache-2.0, MIT and GPL-2.0-or-later are compatible with Galileo's GPL-3.0 licence; the other dependencies' licences are recorded in their own package metadata.

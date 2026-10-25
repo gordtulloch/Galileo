@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import logging
@@ -102,6 +103,21 @@ class PluginRecord:
     loaded: bool = False
     faulted: bool = False
     loaded_names: list[str] = field(default_factory=list)
+    help_dir: Path | None = None
+
+
+def version_key(version: str) -> tuple[int, ...]:
+    """Sortable form of a dotted version string (``"1.10.2"`` > ``"1.9"``); non-numeric parts
+    such as a ``-beta`` suffix are ignored, and an unparseable string sorts lowest."""
+    import re
+    return tuple(int(n) for n in re.findall(r"\d+", version.split("-")[0].split("+")[0]))
+
+
+def is_newer_version(available: str, installed: str) -> bool:
+    """Whether *available* is a later release than *installed* (PLUG-190)."""
+    if not available or not installed:
+        return False
+    return version_key(available) > version_key(installed)
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +372,28 @@ class PluginManager:
         # Set by the main window once it exists; plugins reach them through PluginContext.
         self.site_provider: Callable[[], Any] | None = None
         self.dock_controller: Callable[[str, bool], None] | None = None
+        self._listeners: list[Callable[[], None]] = []
+
+    def add_change_listener(self, listener: Callable[[], None]) -> None:
+        """Call *listener* (no arguments) after a plugin is installed, updated or removed, so the
+        window can bring its menus, sidebar and panes in line without a restart (PLUG-190)."""
+        self._listeners.append(listener)
+
+    def _notify_changed(self) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener()
+            except Exception:
+                logger.exception("Plugin change listener failed")
+
+    def installed_version(self, name: str) -> str:
+        """The installed version of manifest *name*, or ``""`` when it is not installed."""
+        record = self._records.get(name)
+        return record.manifest.version if record else ""
+
+    def update_available(self, name: str, available_version: str) -> bool:
+        """Whether *available_version* (e.g. the marketplace's) is newer than what is installed."""
+        return is_newer_version(available_version, self.installed_version(name))
 
     def create_context(self, granted_services: dict | None = None, plugin_name: str = "") -> PluginContext:
         return PluginContext(granted_services=granted_services, plugin_name=plugin_name, host=self)
@@ -396,15 +434,28 @@ class PluginManager:
             except OSError:
                 logger.exception("Could not remove plugin directory %s", install_dir)
 
-        # Discover and load installed plugins.
+        # Discover installed plugins.  Should an update have left an older version's directory
+        # behind (it was in use when the update ran), only the newest one of each is loaded.
+        newest: dict[str, tuple[PluginManifest, Path]] = {}
         for toml_path in sorted(plugins_dir.glob("*/plugin.toml")):
             install_dir = toml_path.parent
+            if (install_dir / _PENDING_REMOVAL_MARKER).exists():
+                continue
             try:
                 manifest = PluginManifest.from_toml_text(toml_path.read_text(encoding="utf-8"))
             except Exception:
                 logger.exception("Skipping plugin in %s — bad manifest", install_dir)
                 continue
+            current = newest.get(manifest.name)
+            if current is None:
+                newest[manifest.name] = (manifest, install_dir)
+            elif is_newer_version(manifest.version, current[0].version):
+                shutil.rmtree(current[1], ignore_errors=True)
+                newest[manifest.name] = (manifest, install_dir)
+            else:
+                shutil.rmtree(install_dir, ignore_errors=True)
 
+        for manifest, install_dir in newest.values():
             record = PluginRecord(manifest=manifest, install_dir=install_dir, enabled=True)
             self._records[manifest.name] = record
             self._load_from_record(record)
@@ -429,7 +480,7 @@ class PluginManager:
             record.faulted = True
             return
 
-        self._register_help(mod)
+        record.help_dir = self._register_help(mod)
         for attr_name in dir(mod):
             cls = getattr(mod, attr_name)
             if (
@@ -444,7 +495,7 @@ class PluginManager:
         record.loaded = True
 
     @staticmethod
-    def _register_help(mod: Any) -> None:
+    def _register_help(mod: Any) -> Path | None:
         """Pick up a plugin's own help (HELP-060): Markdown in a ``help/`` folder beside its entry
         module, named for the screen ids its pages use (``science.<plugin name>.md``)."""
         try:
@@ -453,8 +504,59 @@ class PluginManager:
             help_dir = Path(module_file).parent / "help" if module_file else None
             if help_dir is not None and help_dir.is_dir():
                 help_content.register_dir(help_dir)
+                return help_dir
         except Exception:
             logger.exception("Could not register help for plugin module %r", getattr(mod, "__name__", mod))
+        return None
+
+    def _unload_record(self, record: PluginRecord) -> None:
+        """Deactivate every class loaded from *record* and forget its code, so a different version
+        of the same plugin can be imported afresh in the running process (PLUG-190): its modules
+        leave ``sys.modules``, its folder leaves ``sys.path`` and its help is unregistered."""
+        for cls_name in (record.loaded_names or [record.manifest.name]):
+            self.unload(cls_name)
+            self._faulted.discard(cls_name)
+        self._faulted.discard(record.manifest.name)
+        record.loaded_names = []
+        record.loaded = False
+        record.faulted = False
+
+        root = record.install_dir
+        for mod_name, mod in list(sys.modules.items()):
+            locations = [getattr(mod, "__file__", None)]
+            with contextlib.suppress(Exception):   # a namespace package's __path__ may not iterate
+                locations.extend(getattr(mod, "__path__", None) or [])
+            if any(loc and self._is_under(Path(loc), root) for loc in locations):
+                del sys.modules[mod_name]
+        with contextlib.suppress(ValueError):
+            sys.path.remove(str(root))
+        importlib.invalidate_caches()
+
+        if record.help_dir is not None:
+            from galileo import help as help_content
+            help_content.unregister_dir(record.help_dir)
+            record.help_dir = None
+
+    @staticmethod
+    def _is_under(path: Path, root: Path) -> bool:
+        try:
+            path.resolve().relative_to(root.resolve())
+            return True
+        except (ValueError, OSError):
+            return False
+
+    @staticmethod
+    def _delete_dir_or_mark(install_dir: Path) -> bool:
+        """Delete *install_dir*; if its files are in use, leave a removal marker for the next start."""
+        try:
+            shutil.rmtree(install_dir)
+            return True
+        except OSError:
+            try:
+                (install_dir / _PENDING_REMOVAL_MARKER).write_text("pending", encoding="utf-8")
+            except OSError:
+                logger.exception("Could not write removal marker for %s", install_dir)
+            return False
 
     def load(self, plugin_cls: type[PluginBase]) -> None:
         """Instantiate and activate *plugin_cls*; isolates exceptions (PLUG-040)."""
@@ -607,9 +709,18 @@ class PluginManager:
                         f"running API {_CURRENT_API_VERSION}"
                     )
 
-            # --- 3. Extract ---
+            # --- 3. Retire the version being replaced, if any (PLUG-190) ---
+            # Its code is unloaded now so the new version can be imported under the same module
+            # names; its folder is kept until the new one has loaded, to fall back on.
             plugins_dir = get_plugins_dir()
             install_dir = plugins_dir / f"{manifest.name}-{manifest.version}"
+            previous = self._records.get(manifest.name)
+            if previous is not None:
+                self._unload_record(previous)
+            was_enabled = previous.enabled if previous is not None else True
+            replaced_in_place = previous is not None and previous.install_dir == install_dir
+
+            # --- 4. Extract ---
             if install_dir.exists():
                 shutil.rmtree(install_dir)
             install_dir.mkdir(parents=True)
@@ -617,27 +728,41 @@ class PluginManager:
                 zf.extractall(install_dir)
             except Exception as exc:
                 shutil.rmtree(install_dir, ignore_errors=True)
+                self._restore(previous, replaced_in_place)
                 raise PluginInstallError(f"Extraction failed: {exc}") from exc
 
-        # --- 4. Load ---
+        # --- 5. Load ---
         record = PluginRecord(manifest=manifest, install_dir=install_dir, enabled=True)
         self._records[manifest.name] = record
+        failure = ""
         try:
             self._load_from_record(record)
         except Exception as exc:
+            failure = f"Plugin loaded but raised during activation: {exc}"
+        if not failure and record.faulted:
+            failure = f"Plugin {manifest.name!r} faulted during activation; installation rolled back"
+        if failure:
+            self._unload_record(record)
             shutil.rmtree(install_dir, ignore_errors=True)
             self._records.pop(manifest.name, None)
-            raise PluginInstallError(f"Plugin loaded but raised during activation: {exc}") from exc
+            self._restore(previous, replaced_in_place)
+            raise PluginInstallError(failure)
 
-        if record.faulted:
-            shutil.rmtree(install_dir, ignore_errors=True)
-            self._records.pop(manifest.name, None)
-            raise PluginInstallError(
-                f"Plugin {manifest.name!r} faulted during activation; installation rolled back"
-            )
+        if not was_enabled:
+            self.disable(manifest.name)
+        if previous is not None and not replaced_in_place:
+            self._delete_dir_or_mark(previous.install_dir)
 
         logger.info("Installed plugin %r v%s to %s", manifest.name, manifest.version, install_dir)
+        self._notify_changed()
         return record
+
+    def _restore(self, previous: PluginRecord | None, replaced_in_place: bool) -> None:
+        """Bring back the version an install was replacing after the install failed."""
+        if previous is None or replaced_in_place or not previous.install_dir.exists():
+            return
+        self._records[previous.manifest.name] = previous
+        self._load_from_record(previous)
 
     # --- Remove (PLUG-120) ------------------------------------------------
 
@@ -662,30 +787,26 @@ class PluginManager:
         # registry key is the class name (e.g. "VSTPlugin"), not the manifest
         # name (e.g. "vstarget"), so unloading by manifest name alone misses them.
         record = self._records.get(plugin_name)
-        for cls_name in (record.loaded_names if record else [plugin_name]):
-            self.unload(cls_name)
-        record = self._records.pop(plugin_name, None)
         if record is None:
+            self.unload(plugin_name)
             return True
+        self._unload_record(record)
+        self._records.pop(plugin_name, None)
 
-        install_dir = record.install_dir
-        try:
-            shutil.rmtree(install_dir)
-            logger.info("Removed plugin %r from %s", plugin_name, install_dir)
-            return True
-        except OSError:
+        removed = self._delete_dir_or_mark(record.install_dir)
+        if removed:
+            logger.info("Removed plugin %r from %s", plugin_name, record.install_dir)
+        else:
             # Files in use (e.g. the loaded .pyd/.so is memory-mapped on Windows).
-            marker = install_dir / _PENDING_REMOVAL_MARKER
-            try:
-                marker.write_text("pending", encoding="utf-8")
-            except OSError:
-                logger.exception("Could not write removal marker for %s", install_dir)
             logger.info("Plugin %r marked for deferred removal; restart required", plugin_name)
-            return False
+        self._notify_changed()
+        return removed
 
-    # --- Deprecated: update stub -----------------------------------------
+    # --- Update (PLUG-190) -------------------------------------------------
 
-    def update(self, plugin_name: str) -> None:
-        """Update a plugin by re-installing from the marketplace.
-        (Stub — callers should download the new ZIP and call install().)"""
-        raise NotImplementedError("Call install() with the updated ZIP path")
+    def update(self, zip_path: str | Path) -> PluginRecord:
+        """Replace an installed plugin with the version in *zip_path* without restarting: the old
+        version is unloaded, the new one imported and activated, and listeners told. Same as
+        :meth:`install`, which already handles a plugin that is installed; kept as the named
+        entry point the Options > Plugins **Update** button uses."""
+        return self.install(zip_path)

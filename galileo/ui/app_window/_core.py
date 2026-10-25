@@ -125,6 +125,7 @@ class AppWindowCoreMixin:
         self._window.setCentralWidget(central)
         self._plugin_manager.site_provider = cast("AppWindowState", self)._plugin_site_location
         cast("AppWindowState", self)._build_plugin_docks()
+        self._plugin_manager.add_change_listener(cast("AppWindowState", self)._on_plugins_changed)
 
         _progress("Applying theme")
         self._theme.set_theme(self._theme.current_theme)  # applies the stylesheet
@@ -312,33 +313,8 @@ class AppWindowCoreMixin:
         stack = QStackedWidget()
         stack.setObjectName("PrimaryStack")
 
-        # Collect plugin panels to inject into the Science submenu.
         _pm = getattr(self, "_plugin_manager", None)
-        _science_plugin_items: list[tuple[str, str, str]] = []
-        _science_plugin_builders: dict = {}
-        _plugin_primary_labels: set[str] = set()
-        if _pm is not None:
-            registry = _pm.get_ui_registry()
-            for _panel in registry.get_science_panels():
-                _sid = _panel.plugin.name
-                _plugin_ref = _panel.plugin
-                _plabel = _panel.label
-                _science_plugin_builders[_sid] = (
-                    lambda _p=_plugin_ref, _lbl=_plabel: self._build_plugin_page(_p, _lbl)
-                )
-                _science_plugin_items.append((_sid, _plabel, "plugins"))
-                if _panel.level in ("primary", "science"):
-                    _plugin_primary_labels.add(_plabel)
-        # Drop SCIENCE_ITEMS stubs whose labels are already provided by a
-        # primary plugin panel, so installing a plugin doesn't create a
-        # duplicate entry alongside the static stub.
-        _effective_science_items = [
-            item for item in SCIENCE_ITEMS if item[1] not in _plugin_primary_labels
-        ]
-
-        # Science only has content when a plugin (e.g. VSTarget) provides it.
-        _science_items = _effective_science_items + _science_plugin_items
-        _has_science = bool(_science_items)
+        _has_science = self._science_page_content()[2]
 
         page_builders = {
             "equipment": self._build_equipment_page,
@@ -349,11 +325,7 @@ class AppWindowCoreMixin:
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page,
                                   "history": self._build_history_page}, help_prefix="planning"),
-            "science": lambda: (
-                self._build_submenu_page(_science_items, _science_plugin_builders, help_prefix="science")
-                if _has_science else
-                self._build_placeholder_page("Science", "Install a science plugin under Options > Plugins.")
-            ),
+            "science": self._build_science_page,
             "library": self._build_library_page,
             "imaging": self._build_imaging_page,
             "guiding": self._build_guider_page,
@@ -365,16 +337,19 @@ class AppWindowCoreMixin:
         # Plugins that declared panel_level = "top" get their own sidebar icon (PLUG-130).
         top_sections = self._register_plugin_top_sections(page_builders)
 
-        pages: dict[str, int] = {}
+        pages: dict[str, QWidget] = {}
+        self._primary_pages = pages
         self._science_nav = None
         for section_id, label, _icon_name in [*PRIMARY_SECTIONS, *top_sections]:
             report(f"Building {label} screen")
             builder = page_builders.get(section_id)
             page = builder() if builder else self._build_placeholder_page(label)
             tag_help_screen(page, section_id)
-            pages[section_id] = stack.addWidget(page)
+            pages[section_id] = page
+            stack.addWidget(page)
             if section_id == "science":
                 self._science_nav = getattr(page, "_secondary_nav", None)
+        self._plugin_top_built = dict(self._plugin_top_plugins)
 
         option_builders: dict[str, Callable[[], QWidget]] = {
             item_id: (lambda label=label: self._build_placeholder_page(f"{label} settings"))
@@ -393,6 +368,9 @@ class AppWindowCoreMixin:
         option_builders["plugins"] = self._build_plugins_settings_page
         # Plugins that offer an options page (PLUG-170) get an item after Plugins.
         options_items = list(OPTIONS_ITEMS)
+        # Option items and the plugin instance each was built from, so a live install, update or
+        # removal (PLUG-190) only touches what changed.
+        self._plugin_options_built: dict[str, Any] = {}
         if _pm is not None:
             for _op in _pm.get_ui_registry().get_options_plugins():
                 _oid = f"plugin.{_op.name}"
@@ -400,15 +378,17 @@ class AppWindowCoreMixin:
                 option_builders[_oid] = (
                     lambda _p=_op: self._build_plugin_options_page(_p)
                 )
+                self._plugin_options_built[_oid] = _op
         report("Building Options screens")
         options_page = self._build_submenu_page(options_items, option_builders, help_prefix="options")
         tag_help_screen(options_page, "options")
         self._options_page = options_page
-        pages[OPTIONS_SECTION[0]] = stack.addWidget(options_page)
+        pages[OPTIONS_SECTION[0]] = options_page
+        stack.addWidget(options_page)
 
         def _on_section_selected(section_id: str) -> None:
             self._current_primary_section = section_id
-            stack.setCurrentIndex(pages[section_id])
+            stack.setCurrentWidget(pages[section_id])
             # The library is about the whole catalog, not any one Pier's equipment.
             for widget in (self._pier_label, self._pier_combo, self._pier_edit_btn, self._pier_delete_btn,
                            self._pier_connect_startup_check, self._pier_connect_btn):
@@ -449,14 +429,42 @@ class AppWindowCoreMixin:
         if not _has_science:
             sidebar.hide_item("science")
             options_page._secondary_nav.hide_item("science")
-        stack.setCurrentIndex(pages["dashboard"])
+        stack.setCurrentWidget(pages["dashboard"])
+        self._primary_stack_widget = stack
         return stack, sidebar
+
+    def _science_page_content(self: AppWindowState) -> tuple[list, dict, bool]:
+        """``(items, builders, has_science)`` for the Science submenu: the plugin panels placed
+        there (PLUG-070), since Science has no content of its own."""
+        pm = getattr(self, "_plugin_manager", None)
+        plugin_items: list[tuple[str, str, str]] = []
+        builders: dict = {}
+        primary_labels: set[str] = set()
+        if pm is not None:
+            for panel in pm.get_ui_registry().get_science_panels():
+                sid = panel.plugin.name
+                builders[sid] = lambda _p=panel.plugin, _lbl=panel.label: self._build_plugin_page(_p, _lbl)
+                plugin_items.append((sid, panel.label, "plugins"))
+                if panel.level in ("primary", "science"):
+                    primary_labels.add(panel.label)
+        # Drop SCIENCE_ITEMS stubs whose labels a plugin panel already provides, so installing
+        # a plugin doesn't create a duplicate entry alongside the static stub.
+        items = [item for item in SCIENCE_ITEMS if item[1] not in primary_labels] + plugin_items
+        return items, builders, bool(items)
+
+    def _build_science_page(self: AppWindowState) -> QWidget:
+        items, builders, has_science = self._science_page_content()
+        if has_science:
+            return self._build_submenu_page(items, builders, help_prefix="science")
+        return self._build_placeholder_page("Science", "Install a science plugin under Options > Plugins.")
 
     def _register_plugin_top_sections(self: AppWindowState, page_builders: dict) -> list[tuple[str, str, str]]:
         """One ``(section_id, label, icon_name)`` per plugin with ``panel_level = "top"`` (PLUG-130).
         Adds each page builder to *page_builders* and the plugin's icon painter to the icon set."""
         from galileo.ui import icons
         pm = getattr(self, "_plugin_manager", None)
+        # section id -> the plugin instance its sidebar entry was built from
+        self._plugin_top_plugins: dict[str, Any] = {}
         if pm is None:
             return []
         sections: list[tuple[str, str, str]] = []
@@ -474,7 +482,118 @@ class AppWindowCoreMixin:
                 icons.ICONS[icon_name] = painter_fn
             page_builders[section_id] = lambda _p=plugin, _l=panel.label: self._build_plugin_page(_p, _l)
             sections.append((section_id, panel.label, icon_name))
+            self._plugin_top_plugins[section_id] = plugin
         return sections
+
+    # --- Live plugin changes (PLUG-190) -----------------------------------
+
+    def _on_plugins_changed(self: AppWindowState) -> None:
+        """A plugin was installed, updated or removed: bring the sidebar, Science and Options
+        menus and the dock panes in line with what is loaded now, without a restart. Deferred to
+        the event loop because the Options > Plugins page that triggered it is itself a page
+        this may rebuild around."""
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._sync_plugin_ui)
+
+    def _sync_plugin_ui(self: AppWindowState) -> None:
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is None or getattr(self, "_primary_pages", None) is None:
+            return
+        for step in (self._sync_science_page, self._sync_plugin_top_sections,
+                     self._sync_plugin_options_items, self._sync_plugin_docks,
+                     self._sync_plugin_dashboard):
+            try:
+                step()
+            except Exception:
+                logger.exception("Updating the plugin UI failed in %s", step.__name__)
+
+    def _sync_science_page(self: AppWindowState) -> None:
+        """Rebuild the Science submenu from the panels loaded now (it holds nothing but plugins)."""
+        pages = self._primary_pages
+        stack = self._primary_stack_widget
+        old = pages["science"]
+        was_current = stack.currentWidget() is old
+        new = self._build_science_page()
+        tag_help_screen(new, "science")
+        old_nav = getattr(old, "_secondary_nav", None)
+        if old_nav in self._nav_columns:
+            self._nav_columns.remove(old_nav)
+        index = stack.indexOf(old)
+        stack.removeWidget(old)
+        old.deleteLater()
+        stack.insertWidget(index, new)
+        pages["science"] = new
+        self._science_nav = getattr(new, "_secondary_nav", None)
+        if was_current:
+            stack.setCurrentWidget(new)
+
+        has_science = self._science_page_content()[2]
+        options_nav = self._options_page._secondary_nav
+        for nav in (self._primary_nav, options_nav):
+            if has_science:
+                nav.show_item("science")
+            else:
+                nav.hide_item("science")
+        if not has_science and self._current_primary_section == "science":
+            self._primary_nav.select("dashboard")
+
+    def _sync_plugin_top_sections(self: AppWindowState) -> None:
+        """Add, replace or remove the sidebar entries of plugins with ``panel_level = "top"``."""
+        pages = self._primary_pages
+        stack = self._primary_stack_widget
+        sidebar = self._primary_nav
+        builders: dict = {}
+        wanted = {sid: (label, icon) for sid, label, icon in self._register_plugin_top_sections(builders)}
+        built = getattr(self, "_plugin_top_built", {})
+        current = dict(self._plugin_top_plugins)   # section id -> plugin instance now loaded
+        for sid in [s for s in built if s not in wanted or built[s] is not current.get(s)]:
+            if self._current_primary_section == sid:
+                sidebar.select("dashboard")
+            sidebar.remove_item(sid)
+            page = pages.pop(sid, None)
+            if page is not None:
+                stack.removeWidget(page)
+                page.deleteLater()
+        for sid, (label, icon) in wanted.items():
+            if sid in pages:
+                continue
+            page = builders[sid]()
+            tag_help_screen(page, sid)
+            pages[sid] = page
+            stack.addWidget(page)
+            sidebar.add_item(sid, label, icon)
+        self._plugin_top_built = current
+
+    def _sync_plugin_options_items(self: AppWindowState) -> None:
+        """Add, replace or remove the Options pages plugins offer (PLUG-170)."""
+        options = self._options_page
+        current = {f"plugin.{p.name}": p for p in self._plugin_manager.get_ui_registry().get_options_plugins()}
+        built = self._plugin_options_built
+        for oid in [o for o in built if o not in current or built[o] is not current[o]]:
+            options._remove_subpage(oid)
+        for oid, plugin in current.items():
+            if not options._has_subpage(oid):
+                options._add_subpage(oid, plugin.options_label, "plugins",
+                                     lambda _p=plugin: self._build_plugin_options_page(_p))
+        self._plugin_options_built = current
+
+    def _sync_plugin_docks(self: AppWindowState) -> None:
+        """Create the dock panes of newly loaded plugins and delete those of plugins that went."""
+        docks = getattr(self, "_plugin_docks", None)
+        if docks is None:
+            return
+        live = {p.name: p for p in self._plugin_manager.get_ui_registry().get_dock_plugins()}
+        for name in [n for n, d in docks.items() if live.get(n) is not self._plugin_dock_owners.get(n)]:
+            dock = docks.pop(name)
+            self._plugin_dock_owners.pop(name, None)
+            self._window.removeDockWidget(dock)
+            dock.deleteLater()
+        self._build_plugin_docks()
+
+    def _sync_plugin_dashboard(self: AppWindowState) -> None:
+        sync = (getattr(self, "_device_pages", {}).get("dashboard") or {}).get("sync_plugins")
+        if sync is not None:
+            sync()
 
     def _build_plugin_options_page(self: AppWindowState, plugin: Any) -> QWidget:
         """The page a plugin offers under Options (PLUG-170); a placeholder if it fails to build."""
@@ -524,8 +643,14 @@ class AppWindowCoreMixin:
         pm = getattr(self, "_plugin_manager", None)
         if pm is None:
             return
-        self._plugin_docks: dict[str, QDockWidget] = {}
+        # Idempotent: also called after a live plugin change (PLUG-190), when only the docks of
+        # plugins that are new (or were replaced by a new version) are created.
+        if not hasattr(self, "_plugin_docks"):
+            self._plugin_docks: dict[str, QDockWidget] = {}
+            self._plugin_dock_owners: dict[str, Any] = {}
         for plugin in pm.get_ui_registry().get_dock_plugins():
+            if plugin.name in self._plugin_docks:
+                continue
             try:
                 content = plugin.build_dock_widget()
             except Exception:
@@ -550,6 +675,7 @@ class AppWindowCoreMixin:
 
             dock.visibilityChanged.connect(_on_visibility)
             self._plugin_docks[plugin.name] = dock
+            self._plugin_dock_owners[plugin.name] = plugin
         pm.dock_controller = self._set_plugin_dock_visible
 
     def _set_plugin_dock_visible(self: AppWindowState, plugin_name: str, visible: bool) -> None:
@@ -655,13 +781,18 @@ class AppWindowCoreMixin:
         layout.setSpacing(0)
 
         stack = QStackedWidget()
-        indexes: dict[str, int] = {}
-        for item_id, label, _icon in items:
-            builder = builders.get(item_id)
+        subpages: dict[str, QWidget] = {}
+
+        def build_subpage(item_id: str, label: str, builder) -> QWidget:
             sub = builder() if builder else self._build_placeholder_page(label)
             if help_prefix and sub.property(SCREEN_PROPERTY) is None:   # a page may carry its own help id
                 tag_help_screen(sub, f"{help_prefix}.{item_id}")
-            indexes[item_id] = stack.addWidget(sub)
+            subpages[item_id] = sub
+            stack.addWidget(sub)
+            return sub
+
+        for item_id, label, _icon in items:
+            build_subpage(item_id, label, builders.get(item_id))
 
         secondary = _NavColumn(
             object_name="SecondarySidebar",
@@ -672,11 +803,35 @@ class AppWindowCoreMixin:
             button_min_height=52,
             accent=self._theme.accent_color,
             dim_color=self._theme.palette()["text_dim"],
-            on_select=lambda item_id: stack.setCurrentIndex(indexes[item_id]),
+            on_select=lambda item_id: stack.setCurrentWidget(subpages[item_id]),
         )
         self._nav_columns.append(secondary)
         page._secondary_nav = secondary
-        stack.setCurrentIndex(indexes[items[0][0]])
+        stack.setCurrentWidget(subpages[items[0][0]])
+
+        def add_subpage(item_id: str, label: str, icon: str, builder) -> None:
+            """Add an item and its page after the existing ones (a plugin installed live)."""
+            if item_id in subpages:
+                return
+            build_subpage(item_id, label, builder)
+            secondary.add_item(item_id, label, icon)
+
+        def remove_subpage(item_id: str) -> None:
+            sub = subpages.pop(item_id, None)
+            if sub is None:
+                return
+            if stack.currentWidget() is sub and subpages:
+                first = next(iter(subpages))
+                stack.setCurrentWidget(subpages[first])
+                if secondary.has_item(first):
+                    secondary.select(first)
+            secondary.remove_item(item_id)
+            stack.removeWidget(sub)
+            sub.deleteLater()
+
+        page._add_subpage = add_subpage
+        page._remove_subpage = remove_subpage
+        page._has_subpage = lambda item_id: item_id in subpages
 
         layout.addWidget(secondary)
         layout.addWidget(stack, 1)
