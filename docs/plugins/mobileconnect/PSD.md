@@ -89,6 +89,7 @@ The app is a second front end to the **same domain services** the desktop UI dri
 | C4 | **Server-side preview rendering** of the current exposure, any Library frame and any guide/focus cut-out (stretch, binning, JPEG), as a core utility the plugin calls | G5 |
 | C6 | **Manual focus owned by the focus module.** Manual focus (move relative / absolute, halt, position and temperature) is a function of core's focus module, alongside autofocus, rather than logic inside the desktop focus screen. The desktop focus screen **consumes** it from the module, and the Control Surface publishes the same operations, so the desktop, MobileConnect and WebConnect all use one implementation and any later platform gets it for free. If the desktop screen currently drives the focuser directly, moving that logic into the module is a core change | G2 |
 | C5 | **Deadman semantics for held motion**: a manual slew/jog or focuser move started from a remote client stops when its keep-alive stops or the client disconnects | G6 |
+| C7 | **A sky-data streaming service**, so that remote clients (the Meta Quest and tablet planetarium views above all) render the sky from data streamed by the Master rather than from a catalog and ephemeris they carry: catalog by sky region, limiting magnitude and level of detail; ephemeris for a time or time range; Observatory location and horizon profile; the tile pyramid of C4. Compact, delta-coded, per-client rate-limited, and lower priority than the running session. Serving the Meta Quest edition requires the Master to be PC/Mac-class hardware; a Raspberry Pi-class Master serves tablet, phone and web clients with reduced limits and tells a headset that VR streaming is unavailable (capability handshake). Specified in the core SRS with the Control Surface; client-side scope is in the [Galileo-MobileConnect PSD](https://github.com/gordtulloch/Galileo-MobileConnect) (Q-13) | G2, G5 |
 
 ### 6.4 Operational surface
 
@@ -153,7 +154,7 @@ One domain, **`MCON`** (MobileConnect), specified in a future SRS. Provisional s
 
 | # | Constraint |
 |---|---|
-| PC1 | The node side is cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class ARM) and must be light enough that serving a phone does not disturb imaging on a Pi: previews are rendered on demand and cached, state is event-pushed, nothing is polled in a loop |
+| PC1 | The node side is cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class ARM) and must be light enough that serving a tablet or phone does not disturb imaging on a Pi (VR streaming excepted: it needs a PC/Mac-class Master, C7): previews are rendered on demand and cached, state is event-pushed, nothing is polled in a loop |
 | PC2 | All plugin configuration in the shared database (core's firm rule), never a plugin-private file or `QSettings`; the app stores only its pairing credentials in the phone's secure storage |
 | PC3 | Network work never runs on the Qt UI thread; operations are dispatched to the same threads/executors the desktop UI uses |
 | PC4 | The wire API is **versioned, documented and language-neutral** (an OpenAPI description plus the event schema), so the app and the node can be released independently and a third-party client is possible; the version handshake (Connect Link L8) tells an old app to update |
