@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 022_add_observatory_notification_fields.py.
 
 ``observatories.notification_type``: how the operator wants to be notified

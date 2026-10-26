@@ -1312,5 +1312,10 @@ def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window)
     mount.move_axis = AsyncMock()
     window._device_pages["mount"]["adapter"] = mount
     rate.setCurrentIndex(rate.findData(10.0))
-    next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E").click()
-    mount.move_axis.assert_awaited_once_with(0, 10.0)
+    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E")
+    east.pressed.emit()
+    window._device_pages["mount"]["jog_controller"].flush()
+    mount.move_axis.assert_awaited_once_with(0, 10.0)   # held: still moving
+    east.released.emit()
+    window._device_pages["mount"]["jog_controller"].flush()
+    assert mount.move_axis.await_args_list[-1].args == (0, 0.0)

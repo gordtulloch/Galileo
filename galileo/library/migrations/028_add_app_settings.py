@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 028_add_app_settings.py.
 
 ``app_settings``: the one generic configuration store (see ``galileo.settings_store``). Every

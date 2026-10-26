@@ -94,6 +94,21 @@ class AlpacaCameraAdapter(AlpacaAdapter):
     async def warm_up(self) -> None:
         await self._put("cooleron", CoolerOn=False)
 
+    async def get_bayer_pattern(self) -> str | None:
+        """The Bayer pattern of the frames this camera delivers, from the standard ASCOM
+        ``SensorType`` (2 = RGGB mosaic) and ``BayerOffsetX/Y``, or ``None`` for a mono sensor
+        or a camera that does not say."""
+        from galileo.debayer import pattern_from_cfa
+        try:
+            if int(await self._get("sensortype")) != 2:
+                return None
+            return pattern_from_cfa(
+                "RGGB", int(await self._get("bayeroffsetx") or 0), int(await self._get("bayeroffsety") or 0),
+            )
+        except Exception:
+            logger.debug("SensorType not available from %s", self.base_url, exc_info=True)
+            return None
+
     async def get_sensor_info(self) -> dict:
         """Live-query this camera's sensor configuration from the standard
         ASCOM Camera properties (PixelSizeX/Y, CameraXSize/YSize, SensorName)

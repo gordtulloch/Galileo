@@ -30,6 +30,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **`CAL-080` added:** Darks Assistant — the Imaging tab's Darks… button (zoom toolbar in landscape, Tools panel in portrait) opening a dialog that captures one dark frame at each user-supplied exposure length in sequence, with optional filter selection, auto-saving each frame to the Library — tracing to SDD 4.5 `galileo.ui.imaging` (same component as `CAL-060`; the dialog itself lives in `galileo.ui.app_window._darks`).
 
+**`CAL-100` added:** the Darks and Flats Assistants are modeless and hideable while running (Imaging button marks the run and reopens the dialog; a Pier change hides it) — tracing to SDD 4.5 `galileo.ui.imaging` (the shared behaviour lives in `galileo.ui.app_window._assistant_dialog`).
+
 **`SEQ`/`SEQ-ADV` → `SES`:** this revision replaces the former `SEQ`/`SEQ-ADV` domains with the unified `SES` ("Sessions") domain end to end (SRS Sections 4.5/4.5a/4.6). Every row below uses `SES-*` IDs; there is no `SEQ`/`SEQ-ADV` row remaining in this matrix.
 
 ---
@@ -96,6 +98,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-FOC-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-010` |
 | `EQP-FOC-020` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FOC-020` |
 | `EQP-FOC-030` | MVP | SDD 4.1 `galileo.core.devices` | Test | `TC-EQP-FOC-030` |
+| `EQP-FOC-040` | P2 | SDD 4.2 `galileo.adapters.indi`; `galileo.focuser_settings` | Test | `TC-EQP-FOC-040` |
+| `EQP-FOC-050` | P2 | SDD 4.1 `galileo.focuser_settings`; SDD 4.2 `galileo.adapters.indi` / `galileo.adapters.alpaca` | Test | `TC-EQP-FOC-050` |
 | `EQP-ROT-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-ROT-010` |
 | `EQP-GDR-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-GDR-010` |
 | `EQP-SW-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SW-010` |
@@ -303,6 +307,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-070` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-070` |
 | `CAL-080` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-080` |
 | `CAL-090` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-090` |
+| `CAL-100` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-100` |
 
 ### `FOC` — Autofocus
 
@@ -429,6 +434,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-160` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-160` |
 | `PLUG-170` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-170` |
 | `PLUG-180` | P2 | SDD 4.20 `galileo.plugins`; SDD 4.4b `galileo.ui.dashboard` | Test | `TC-PLUG-180` |
+| `PLUG-190` | MVP | SDD 4.20 `galileo.plugins`; `galileo.ui.app_window` | Test | `TC-PLUG-190` |
 
 ### `UI` — Customization & Theming
 

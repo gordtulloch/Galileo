@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 022_add_flat_panel_type.py.
 
 ``device_configs.panel_type``: which kind of flat panel is configured —

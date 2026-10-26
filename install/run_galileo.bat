@@ -1,4 +1,6 @@
 @echo off
+REM SPDX-License-Identifier: GPL-3.0-or-later
+REM Copyright (C) 2025-2026 Gord Tulloch
 REM Starts Galileo: venv check, launch, and error logging. Split out of
 REM launch_galileo.bat so this half can change freely across releases - see
 REM the comment in launch_galileo.bat for why the update-check half can't.

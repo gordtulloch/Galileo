@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 003_add_mapping_table.py.
 
 Some examples (model - class or model name)::

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 020_add_observatory_elevation.py.
 
 ``observatories.elevation_m``: site elevation above sea level in metres, set

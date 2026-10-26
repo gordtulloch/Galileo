@@ -60,3 +60,51 @@ def debayer(mosaic, pattern: str):
                     mask[(rows == row) & (cols == col)] = 1.0
         planes.append(_convolve3(data * mask, kernel))
     return np.stack(planes, axis=-1)
+
+
+def pattern_from_cfa(cfa_type: str | None, offset_x: int = 0, offset_y: int = 0) -> str | None:
+    """The Bayer pattern of the frame as read out, from a sensor's CFA description: the *cfa_type*
+    mosaic (``RGGB`` ...) shifted by the (x, y) pixel offsets of the first readout pixel into it.
+    ``None`` if *cfa_type* is missing or not a Bayer layout, i.e. the sensor is mono."""
+    if not cfa_type or cfa_type.upper() not in BAYER_PATTERNS:
+        return None
+    tile = [cfa_type.upper()[0:2], cfa_type.upper()[2:4]]
+    row, col = int(offset_y) & 1, int(offset_x) & 1
+    return tile[row][col] + tile[row][1 - col] + tile[1 - row][col] + tile[1 - row][1 - col]
+
+
+def superpixel(mosaic, pattern: str):
+    """A half-resolution ``(height // 2, width // 2, 3)`` float32 RGB image from a Bayer ``mosaic``:
+    each 2x2 block gives one pixel (red, the mean of the two greens, blue). Far cheaper than
+    :func:`debayer` and exact at that size, so it suits previews that are shown reduced anyway."""
+    import numpy as np
+
+    pattern = pattern.upper()
+    if pattern not in BAYER_PATTERNS:
+        raise ValueError(f"Unknown Bayer pattern {pattern!r}; expected one of {', '.join(BAYER_PATTERNS)}")
+    data = np.asarray(mosaic)
+    if data.ndim != 2:
+        raise ValueError(f"Only a 2-D mosaic can be debayered, got shape {data.shape}")
+    height, width = data.shape[0] // 2 * 2, data.shape[1] // 2 * 2
+    data = data[:height, :width].astype(np.float32)
+    planes = {"R": [], "G": [], "B": []}
+    for row in (0, 1):
+        for col in (0, 1):
+            planes[pattern[row * 2 + col]].append(data[row::2, col::2])
+    return np.stack([np.mean(planes[c], axis=0) for c in "RGB"], axis=-1)
+
+
+def camera_pattern(camera) -> str | None:
+    """The Bayer pattern *camera* reports for its frames, or ``None`` for a mono camera, no camera,
+    or one that cannot say. Talks to the device (``asyncio.run``), so call it from a worker thread."""
+    getter = getattr(camera, "get_bayer_pattern", None)
+    if getter is None:
+        return None
+    import asyncio
+    import logging
+    try:
+        pattern = asyncio.run(getter())
+    except Exception:
+        logging.getLogger(__name__).debug("Could not read the camera's Bayer pattern", exc_info=True)
+        return None
+    return pattern if isinstance(pattern, str) and pattern.upper() in BAYER_PATTERNS else None

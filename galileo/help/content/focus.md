@@ -69,6 +69,18 @@ The focuser position to move to, in steps. Type a value and press **Move**.
 
 Moves the focuser to the position in the box beside it.
 
+## Set Emergency
+
+Remembers the focuser's current position as its **emergency focus** — a known-good position to come back to if you are ever wildly out of focus (a filter or camera change, a bumped focuser, a failed autofocus). Set it when focus is good. Applies to the primary focuser. Needs a connected focuser whose settings have been saved on Equipment > Focuser; the position is kept with those settings and survives a restart.
+
+## Go to Emergency
+
+Moves the focuser back to the saved emergency focus position, the same way **Move** does. Greyed out until one has been set, and while an autofocus run is in progress.
+
+## Emergency position
+
+The saved emergency focus position, or — if none has been set for this focuser.
+
 ## Capture
 
 Takes one exposure (using **Exp**) and measures the stars in it, updating the picture and the statistics line.
@@ -96,3 +108,15 @@ The star count, median HFR and equivalent FWHM (about 1.5 × HFR) for the frame 
 ## Clear
 
 Forgets the last run's picture, statistics and curve, returning the screen to idle.
+
+## Exposure progress
+
+Shows how far through the current exposure the camera is, as elapsed / total seconds. It fills during each autofocus sample and each manual Capture or Loop exposure, and holds full while the frame downloads and is measured. Empty (—) when no exposure is running.
+
+## Choose layout manually
+
+By default the screen arranges itself to suit the frame: a portrait frame (taller than it is wide) gets a full-height column on the right, about a third of the screen wide, with everything else beside it. Tick this to pick the arrangement yourself with **Layout**.
+
+## Layout
+
+**Landscape** or **Portrait** arrangement of the screen. Available only when **Choose layout manually** is ticked.

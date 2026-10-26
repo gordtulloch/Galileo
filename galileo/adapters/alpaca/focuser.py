@@ -9,6 +9,7 @@ import logging
 
 from galileo.adapters.alpaca._base import AlpacaAdapter
 from galileo.core.devices import DeviceCategory
+from galileo.focuser_settings import FocuserSettings, clamp_position
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,22 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
         self.max_step: int | None = None
         self.max_increment: int | None = None
         self.absolute: bool | None = None
+        self.travel_min: int | None = None
+        self.travel_max: int | None = None
+
+    def configure(self, settings: FocuserSettings) -> None:
+        """Apply the saved travel guard-rails (EQP-FOC-050). An ASCOM focuser is always Absolute:
+        it has no timed-move equivalent, so its operating mode is not applied."""
+        self.travel_min, self.travel_max = settings.travel_min, settings.travel_max
+
+    def _guard(self, target: int) -> int:
+        limited = clamp_position(target, self.travel_min, self.travel_max)
+        if limited != target:
+            logger.warning(
+                "Alpaca focuser %s: move to %d is beyond the set travel limits (%s..%s); limiting to %d.",
+                self.base_url, target, self.travel_min, self.travel_max, limited,
+            )
+        return limited
 
     async def connect(self) -> None:
         await super().connect()
@@ -57,6 +74,7 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
             logger.debug("Temperature not available from %s", self.base_url)
 
     async def move_to(self, position: int) -> None:
+        position = self._guard(position)
         await self._put("move", Position=position)
         try:
             self.position = int(await self._get("position"))
@@ -69,6 +87,7 @@ class AlpacaFocuserAdapter(AlpacaAdapter):
             logger.debug("IsMoving not available from %s", self.base_url)
 
     async def move_by(self, steps: int) -> None:
+        steps = self._guard(self.position + steps) - self.position
         if self.absolute is False:
             # Relative-only focuser: Move's Position argument *is* the step
             # delta, so send it directly rather than computing (and

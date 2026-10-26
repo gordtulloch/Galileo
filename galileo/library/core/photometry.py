@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 from __future__ import annotations
 
 import csv
@@ -118,7 +120,7 @@ def extract_sources_sep(data: np.ndarray, *, source_snr: float = 20.0) -> np.nda
     _require_sep()
 
     # SEP expects native-endian float32.
-    data_sep = np.asarray(data, dtype=np.float32)
+    data_sep = np.ascontiguousarray(data, dtype=np.float32)
     bkg = sep.Background(data_sep)  # type: ignore[union-attr]
     data_sub = data_sep - bkg
     threshold = float(source_snr) * float(bkg.globalrms)
@@ -137,7 +139,7 @@ def aperture_photometry_sep(
     """Circular-aperture photometry at given (x,y) positions using SEP."""
     _require_sep()
 
-    data_sep = np.asarray(data, dtype=np.float32)
+    data_sep = np.ascontiguousarray(data, dtype=np.float32)
     if subtract_background:
         bkg = sep.Background(data_sep)  # type: ignore[union-attr]
         data_sep = data_sep - bkg
@@ -171,7 +173,7 @@ def run_aperture_photometry(
     _, _median, _ = sigma_clipped_stats(image, sigma=3.0)
 
     # SEP expects native-endian float32.
-    image_sep = np.asarray(image, dtype=np.float32)
+    image_sep = np.ascontiguousarray(image, dtype=np.float32)
     bkg = sep.Background(image_sep)  # type: ignore[union-attr]
     image_sub = image_sep - bkg
 

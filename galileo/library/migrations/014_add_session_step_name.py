@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 014_add_session_step_name.py.
 
 ``fitsSession.fitsSessionStepName``: the sequence step that produced a session.

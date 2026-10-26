@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Pushing time, site and optics to an INDI device on connect (EQP INDI adapters)."""
 import asyncio
 from unittest.mock import MagicMock
@@ -39,6 +41,26 @@ def test_tc_eqp_cam_010_optics_reach_unmanaged_guide_camera(monkeypatch):
     assert asyncio.run(push_optics_to_server("h", 7624, 600.0, 80.0)) == 2
     sent = {c.args[0]: c.args[2] for c in client.send_number.call_args_list}
     assert sent["Guide Simulator"]["GUIDER_FOCAL_LENGTH"] == 600.0 and sent["Guide Simulator"]["GUIDER_APERTURE"] == 80.0
+
+
+@pytest.mark.requirement("TC-EQP-CAM-010")
+@pytest.mark.priority("P2")
+def test_tc_eqp_cam_010_guide_camera_gets_its_own_tubes_optics(monkeypatch):
+    """EQP-CAM-010: a device behind a different optical tube gets that tube's optics, not the default pair."""
+    from galileo.adapters import indi_client as ic
+    from galileo.adapters.indi._base import push_optics_to_server
+
+    client = MagicMock()
+    client.device_names.return_value = ["Main Cam", "Guide Cam"]
+    info = ic.IndiProperty.__new__(ic.IndiProperty)
+    info.elements = {k: MagicMock() for k in ("TELESCOPE_APERTURE", "TELESCOPE_FOCAL_LENGTH")}
+    client.get_property.side_effect = lambda dev, name: info if name == "TELESCOPE_INFO" else None
+    monkeypatch.setattr(ic, "acquire_client", lambda host, port: client)
+    monkeypatch.setattr(ic, "release_client", lambda c: None)
+    asyncio.run(push_optics_to_server("h", 7624, 1000.0, 200.0, {"Guide Cam": (240.0, 50.0)}))
+    sent = {c.args[0]: c.args[2] for c in client.send_number.call_args_list}
+    assert sent["Main Cam"]["TELESCOPE_FOCAL_LENGTH"] == 1000.0
+    assert sent["Guide Cam"] == {"TELESCOPE_FOCAL_LENGTH": 240.0, "TELESCOPE_APERTURE": 50.0}
 
 
 @pytest.mark.requirement("TC-EQP-CAM-010")

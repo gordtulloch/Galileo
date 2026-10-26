@@ -11,6 +11,7 @@ import logging
 
 from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
 
+from ._hold_to_move import HoldToMove
 from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,13 @@ class AppWindowMountPageMixin:
         pad_grid.addWidget(stop_btn, 1, 1)
         pad_grid.addWidget(east_btn, 1, 2)
         pad_grid.addWidget(south_btn, 2, 1)
+        diagonal_btns = {}
+        for key, (row, col) in {"NW": (0, 0), "NE": (0, 2), "SW": (2, 0), "SE": (2, 2)}.items():
+            diagonal_btns[key] = btn = QPushButton(key)
+            btn.setObjectName("AccentButton")
+            btn.setFixedSize(44, 44)
+            btn.setProperty("helpKey", "n s e w")
+            pad_grid.addWidget(btn, row, col)
         pad_row.addLayout(pad_grid)
         pad_row.addStretch(1)
         home_park_col = QVBoxLayout()
@@ -694,45 +702,31 @@ class AppWindowMountPageMixin:
         alt_slew_btn.clicked.connect(_slew_altaz_clicked)
         az_slew_btn.clicked.connect(_slew_altaz_clicked)
 
-        def _move_axis(axis: int, rate: float) -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.move_axis(axis, rate))
-            except MountParkedError:
+        # Hold a button to move, release to stop (as KStars' mount motion pad does).
+        jog_motion = HoldToMove(
+            lambda: state.get("adapter"), lambda: float(jog_rate_combo.currentData()),
+            lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked()), page)
+        state["jog_controller"] = jog_motion
+
+        def _jog_failed(message: str) -> None:
+            if "parked" in message.lower():
                 self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-            except Exception as exc:
-                logger.exception("Mount move_axis failed (axis=%s rate=%s)", axis, rate)
-                self._window.statusBar().showMessage(f"The mount would not move: {exc}", 8000)
+            else:
+                self._window.statusBar().showMessage(f"The mount would not move: {message}", 8000)
 
-        def _jog(direction: str) -> None:
-            rate = float(jog_rate_combo.currentData())
-            primary_rate = rate * (-1.0 if primary_reversed_check.isChecked() else 1.0)
-            secondary_rate = rate * (-1.0 if secondary_reversed_check.isChecked() else 1.0)
-            if direction == "N":
-                _move_axis(1, secondary_rate)
-            elif direction == "S":
-                _move_axis(1, -secondary_rate)
-            elif direction == "E":
-                _move_axis(0, primary_rate)
-            elif direction == "W":
-                _move_axis(0, -primary_rate)
-
-        north_btn.clicked.connect(lambda: _jog("N"))
-        south_btn.clicked.connect(lambda: _jog("S"))
-        east_btn.clicked.connect(lambda: _jog("E"))
-        west_btn.clicked.connect(lambda: _jog("W"))
+        jog_motion.failed.connect(_jog_failed)
+        for direction, btn in (("N", north_btn), ("S", south_btn), ("E", east_btn), ("W", west_btn),
+                               *diagonal_btns.items()):
+            jog_motion.attach(btn, direction)
 
         def _stop_clicked() -> None:
             adapter = state.get("adapter")
             if adapter is None:
                 return
             import asyncio
+            jog_motion.stop_all()
             try:
-                asyncio.run(adapter.move_axis(0, 0.0))
-                asyncio.run(adapter.move_axis(1, 0.0))
+                jog_motion.flush()
                 asyncio.run(adapter.abort_slew())
             except Exception:
                 logger.exception("Mount stop failed")

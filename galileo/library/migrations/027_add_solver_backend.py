@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 027_add_solver_backend.py.
 
 ``solver_settings`` gains the choice of solver backend (``astap``, ``astrometry_local`` or

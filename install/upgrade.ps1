@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo Upgrade Script for Windows (PowerShell)
 # Manually pulls the latest code and refreshes dependencies. Runs in its own
 # console window (green on black). The desktop shortcut/launch script already

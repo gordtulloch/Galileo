@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Wrap dist/Galileo.app into dist/Galileo-<version>-macos-<arch>.dmg.
 # Usage: packaging/macos/build_dmg.sh <version>   (run from the repo root, after packaging/build.py)
 # Signing/notarization run only when APPLE_SIGN_IDENTITY (and APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD) are set.

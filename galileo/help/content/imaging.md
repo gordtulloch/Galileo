@@ -69,11 +69,7 @@ When ticked (the default), every frame is written to a scratch folder and regist
 
 ## View
 
-How the preview is displayed. None of these change what is saved.
-
-## Debayer
-
-Shows a one-shot-colour camera's frame in colour, using the Bayer pattern set for the camera on Equipment › Camera (RGGB by default). Only the preview changes: statistics, the histogram and **Save Frame** keep the camera's raw data. Leave off for a monochrome camera.
+How the preview is displayed. None of these change what is saved. A one-shot-colour camera's frames are always shown in colour (debayered automatically, using the pattern the camera reports); statistics, the histogram and **Save Frame** keep the camera's raw data.
 
 ## Live Stack
 
@@ -97,19 +93,15 @@ Nudges the telescope while you are looking at the preview — to centre a star, 
 
 ## N S E W
 
-Moves the mount north, south, east or west for the **Duration** set below, at the chosen **Speed**, then stops.
+Hold a button to move the mount north, south, east or west (or diagonally with NW, NE, SW and SE, which drive both axes) at the chosen **Speed**; it stops the moment you release the button (or if the window loses focus).
 
 ## Mount Nudge Stop
 
-Stops the mount immediately, if you want to end a nudge early.
+Stops both axes immediately, in case a button was not released cleanly.
 
 ## Mount Nudge Speed
 
-How fast the mount moves during a nudge: **Fine**, **Medium** or **Coarse**, with the speed in degrees per second.
-
-## Mount Nudge Duration
-
-How long the mount moves for each press, in seconds (0.1–10).
+How fast the mount moves while a button is held: **Fine**, **Medium** or **Coarse**, with the speed in degrees per second.
 
 ## Annotate
 

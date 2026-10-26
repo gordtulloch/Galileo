@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo Installation Script for Windows (PowerShell)
 # Clones (or updates) the Galileo repository, ensures Python 3.11+, creates a
 # virtual environment, installs dependencies, and creates a desktop shortcut.

@@ -39,8 +39,8 @@ def _send_optics(client: ic.IndiClient, device: str, focal_length_mm: float, ape
     """Write the telescope's focal length and aperture to whichever of the device's
     ``SCOPE_INFO`` / ``TELESCOPE_INFO`` vectors it defines, only to elements it really
     has. ``TELESCOPE_INFO`` also carries a ``GUIDER_*`` pair (what a guide camera such
-    as the Guide Simulator reads); Galileo has no separate guide scope, so it gets the
-    same optics. Returns whether anything was sent."""
+    as the Guide Simulator reads); the caller passes the optics of the tube the device
+    sits behind. Returns whether anything was sent."""
     if focal_length_mm <= 0 or aperture_mm <= 0:
         return False
     for name in ("TELESCOPE_INFO", "SCOPE_INFO"):
@@ -64,15 +64,23 @@ def _send_optics(client: ic.IndiClient, device: str, focal_length_mm: float, ape
     return False
 
 
-async def push_optics_to_server(host: str, port: int, focal_length_mm: float, aperture_mm: float) -> int:
+async def push_optics_to_server(
+    host: str, port: int, focal_length_mm: float, aperture_mm: float,
+    per_device: dict[str, tuple[float, float]] | None = None,
+) -> int:
     """Send the optics to *every* device on an INDI server that wants them, including
     ones Galileo doesn't drive itself — notably a guide camera that PHD2 owns, which
-    otherwise warns "Telescope focal length is missing" on every exposure. Best effort;
-    returns how many devices were written."""
+    otherwise warns "Telescope focal length is missing" on every exposure. *per_device*
+    maps an INDI device name to its own ``(focal_length_mm, aperture_mm)`` — a device
+    behind a different optical tube than the default pair. Best effort; returns how many
+    devices were written."""
+    own = per_device or {}
+
     def run() -> int:
         client = ic.acquire_client(host, port)
         try:
-            return sum(_send_optics(client, dev, focal_length_mm, aperture_mm) for dev in client.device_names())
+            return sum(_send_optics(client, dev, *own.get(dev, (focal_length_mm, aperture_mm)))
+                       for dev in client.device_names())
         finally:
             ic.release_client(client)
 

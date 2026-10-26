@@ -31,7 +31,7 @@ class AppWindowPluginsPageMixin:
             from ._common import QWidget as _W
             return _W()  # type: ignore[return-value]
 
-        from galileo.plugins import PluginInstallError, PluginManager
+        from galileo.plugins import PluginInstallError, PluginManager, is_newer_version
         from galileo.plugins.marketplace import MarketplaceClient, MarketplaceEntry
 
         page = QWidget()
@@ -77,6 +77,25 @@ class AppWindowPluginsPageMixin:
                 )
             return None
 
+        _client = MarketplaceClient()
+        # Latest marketplace entry per plugin name; drives the "Update available" tags (PLUG-190).
+        _latest: dict[str, MarketplaceEntry] = {}
+
+        def _update_entry(name: str, installed_version: str) -> MarketplaceEntry | None:
+            """The marketplace entry for *name* when it is newer than *installed_version*."""
+            entry = _latest.get(name)
+            if entry is not None and is_newer_version(entry.version, installed_version):
+                return entry
+            return None
+
+        def _update_tag() -> QLabel:
+            tag = QLabel("Update available")
+            tag.setStyleSheet(
+                "border: none; border-radius: 4px; padding: 1px 6px; font-size: 11px;"
+                " font-weight: bold; color: #ffffff; background: #d9822b;"
+            )
+            return tag
+
         # ------------------------------------------------------------------
         # Tab 1 — Installed
         # ------------------------------------------------------------------
@@ -96,6 +115,12 @@ class AppWindowPluginsPageMixin:
         restart_banner.setObjectName("WarningBanner")
         restart_banner.setVisible(False)
         installed_layout.addWidget(restart_banner)
+
+        installed_status = QLabel("")
+        installed_status.setObjectName("StatusHint")
+        installed_status.setWordWrap(True)
+        installed_status.setVisible(False)
+        installed_layout.addWidget(installed_status)
 
         install_btn = QPushButton("Install from file…")
         install_btn.setToolTip("Select a plugin ZIP file to install")
@@ -165,18 +190,23 @@ class AppWindowPluginsPageMixin:
                         )
                         if confirm != QMessageBox.StandardButton.Yes:
                             return
-                        section_ids = m.get_panel_section_ids(name)
                         needs_restart = not m.remove(name)
-                        science_nav = getattr(self, "_science_nav", None)
-                        if science_nav is not None:
-                            for sid in section_ids:
-                                science_nav.hide_item(sid)
                         if needs_restart:
                             restart_banner.setVisible(True)
                         _refresh_installed()
 
                     toggle.toggled.connect(_on_toggle)
                     remove_btn.clicked.connect(_on_remove)
+                    newer = _update_entry(plugin_name, record.manifest.version)
+                    if newer is not None:
+                        header_row.addWidget(_update_tag())
+                        update_btn = QPushButton("Update")
+                        update_btn.setFixedWidth(70)
+                        update_btn.setToolTip(f"Update to v{newer.version} without restarting")
+                        update_btn.clicked.connect(
+                            lambda _checked=False, e=newer: _do_market_install(e, updating=True)
+                        )
+                        header_row.addWidget(update_btn)
                     header_row.addWidget(toggle)
                     header_row.addWidget(remove_btn)
                     right_col.addLayout(header_row)
@@ -215,6 +245,8 @@ class AppWindowPluginsPageMixin:
                 mgr.install(path)
                 _refresh_installed()
                 tabs.setCurrentIndex(0)
+                installed_status.setText("Plugin installed — it is available now, no restart needed.")
+                installed_status.setVisible(True)
             except PluginInstallError as exc:
                 QMessageBox.critical(page, "Install failed", str(exc))
 
@@ -248,8 +280,6 @@ class AppWindowPluginsPageMixin:
         refresh_btn = QPushButton("Refresh")
         market_layout.addWidget(refresh_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        _client = MarketplaceClient()
-
         class _FetchThread(QThread):
             done = Signal(list, str)
 
@@ -267,8 +297,15 @@ class AppWindowPluginsPageMixin:
 
         _fetch_thread: _FetchThread | None = None
 
+        def _remember_latest(entries: list) -> None:
+            _latest.clear()
+            _latest.update({e.name: e for e in entries})
+            _refresh_installed()
+
         def _populate_market(entries: list, error: str) -> None:
             market_progress.setVisible(False)
+            if not error:
+                _remember_latest(entries)
             if error:
                 market_status.setText(
                     f"Could not reach galileo-imaging.com — {error}\nCheck your connection and Refresh."
@@ -281,9 +318,9 @@ class AppWindowPluginsPageMixin:
             market_scroll.setVisible(True)
 
             mgr = _mgr()
-            installed_names: set[str] = set()
+            installed_versions: dict[str, str] = {}
             if mgr:
-                installed_names = {r.manifest.name for r in mgr.list_installed()}
+                installed_versions = {r.manifest.name: r.manifest.version for r in mgr.list_installed()}
 
             container = QWidget()
             container_layout = QVBoxLayout(container)
@@ -327,7 +364,9 @@ class AppWindowPluginsPageMixin:
                 header_row.addWidget(name_lbl)
                 header_row.addStretch()
 
-                if entry.name in installed_names:
+                if entry.name in installed_versions:
+                    if _update_entry(entry.name, installed_versions[entry.name]) is not None:
+                        header_row.addWidget(_update_tag())
                     inst_lbl = QLabel("Installed")
                     inst_lbl.setStyleSheet("border: none; color: palette(mid);")
                     header_row.addWidget(inst_lbl)
@@ -390,43 +429,48 @@ class AppWindowPluginsPageMixin:
 
         _dl_thread: _DownloadInstallThread | None = None
 
-        def _do_market_install(entry: MarketplaceEntry) -> None:
+        def _do_market_install(entry: MarketplaceEntry, updating: bool = False) -> None:
             nonlocal _dl_thread
             import tempfile
             import os
             tmp_path = os.path.join(
                 tempfile.gettempdir(), f"{entry.name}-{entry.version}.zip"
             )
+            verb = "Updating" if updating else "Downloading"
+
+            def _say(text: str) -> None:
+                for label in (market_status, installed_status):
+                    label.setText(text)
+                    label.setVisible(True)
+
             market_progress.setRange(0, 0)
             market_progress.setVisible(True)
-            market_status.setText(f"Downloading {entry.name}…")
-            market_status.setVisible(True)
+            _say(f"{verb} {entry.name}…")
 
             _dl_thread = _DownloadInstallThread(_client, entry, tmp_path)
 
             def _on_dl_done(ok: bool, path: str) -> None:
                 market_progress.setVisible(False)
                 if not ok:
-                    market_status.setText(f"Download of '{entry.name}' failed or was cancelled.")
-                    market_status.setVisible(True)
+                    _say(f"Download of '{entry.name}' failed or was cancelled.")
                     return
                 mgr = _mgr()
                 if mgr is None:
-                    market_status.setText("Plugin manager not available.")
-                    market_status.setVisible(True)
+                    _say("Plugin manager not available.")
                     return
                 try:
-                    mgr.install(path)
-                    market_status.setText(
-                        f"'{entry.name}' installed — restart Galileo to add its panel to the sidebar."
-                    )
-                    market_status.setVisible(True)
-                    restart_banner.setVisible(True)
+                    # Loads (or replaces) the plugin in the running app; the window rebuilds the
+                    # sidebar and menus from the manager's change notification (PLUG-190).
+                    if updating:
+                        mgr.update(path)
+                    else:
+                        mgr.install(path)
+                    _say(f"'{entry.name}' {'updated' if updating else 'installed'} "
+                         f"(v{entry.version}) — ready to use, no restart needed.")
                     _refresh_installed()
-                    _fetch_thread_start(force=True)
+                    _fetch_thread_start(force=False)
                 except PluginInstallError as exc:
-                    market_status.setText(f"Install failed: {exc}")
-                    market_status.setVisible(True)
+                    _say(f"{'Update' if updating else 'Install'} failed: {exc}")
                 finally:
                     import os as _os
                     with contextlib.suppress(OSError):
@@ -447,6 +491,24 @@ class AppWindowPluginsPageMixin:
             _fetch_thread.start()
 
         refresh_btn.clicked.connect(lambda: _fetch_thread_start(force=True))
+
+        class _LatestThread(QThread):
+            """Looks up the latest marketplace versions in the background so the Installed tiles
+            can be tagged without opening the Marketplace tab (PLUG-190)."""
+            done = Signal(list, str)
+
+            def __init__(self, client: MarketplaceClient) -> None:
+                super().__init__()
+                self._client = client
+
+            def run(self) -> None:
+                entries, err = self._client.fetch()
+                self.done.emit(entries, err)
+
+        _latest_thread = _LatestThread(_client)
+        _latest_thread.done.connect(lambda entries, err: None if err else _remember_latest(entries))
+        page._latest_thread = _latest_thread   # keep the thread object alive
+        _latest_thread.start()
         tabs.addTab(market_tab, "Marketplace")
 
         # Kick off the marketplace fetch when the tab is first shown.

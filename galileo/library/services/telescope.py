@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """
 Astrofiler Smart Telescope Integration
 Handles communication with smart telescopes like SEESTAR for automated file retrieval.

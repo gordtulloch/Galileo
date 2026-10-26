@@ -31,7 +31,7 @@ The smallest exposure step, in seconds, taken while hunting for the right exposu
 
 ## Start
 
-Starts capturing. The dialog cannot be closed while a run is in progress; the status line shows which filter and frame it is on.
+Starts capturing; the status line shows which filter and frame it is on. The dialog does not block the rest of Galileo, so you can keep working on other Piers. While a run is going its Close button becomes **Hide** (as do Esc and the window's X): the dialog goes away but the run carries on, and the Imaging screen's **Flats…** button shows "(running)" — press it to bring the dialog back with its live progress. Switching Pier also hides it, and a failed run brings it back with the reason on its status line. Once the run has ended, Close closes the dialog.
 
 ## Stop
 

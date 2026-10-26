@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 017_add_autofocus_and_solver_settings.py.
 
 ``autofocus_settings`` (FOC-070) and ``solver_settings`` (PLT-060): one row per

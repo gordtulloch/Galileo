@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget, QTabWidget, QVBoxLayout, QWidget
 from galileo.platesolve import SolveAction
 from galileo.ui._image_view import build_zoom_toolbar
+from galileo.ui.frame_layout import FrameLayoutChoice
 from galileo.ui.solve_widgets import PolarTargetPlot, SolveErrorPlot, SolveImageView
 
 
@@ -46,23 +47,59 @@ class SolveBuildMixin(_MixinBase):
         root.setContentsMargins(16, 16, 16, 12)
         root.setSpacing(12)
 
+        self._root = root
         root.addWidget(self._build_left_column())
 
-        right = QVBoxLayout()
-        right.setSpacing(8)
-        upper = QVBoxLayout()
+        # Two boxes the layout can arrange: the frame (with its zoom toolbar) and the results
+        # (tabs and log). Landscape stacks them in the right column; portrait puts the results
+        # beside the controls and the frame in its own full-height column (see _apply_orientation).
+        self._right = QWidget()
+        self._right_layout = QVBoxLayout(self._right)
+        self._right_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_layout.setSpacing(8)
+        self._image_box = QWidget()
+        upper = QVBoxLayout(self._image_box)
+        upper.setContentsMargins(0, 0, 0, 0)
         self.image_view = SolveImageView()
         upper.addLayout(self._build_image_tools())
         upper.addWidget(self.image_view, 1)
-        right.addLayout(upper, 3)
-        right.addWidget(self._build_tabs(), 2)
-        right.addWidget(self._build_log_pane())
-        root.addLayout(right, 1)
+        self._results_box = QWidget()
+        lower = QVBoxLayout(self._results_box)
+        lower.setContentsMargins(0, 0, 0, 0)
+        lower.setSpacing(8)
+        lower.addWidget(self._build_tabs(), 1)
+        lower.addWidget(self._build_log_pane())
+        self._right_layout.addWidget(self._image_box, 3)
+        self._right_layout.addWidget(self._results_box, 2)
+        root.addWidget(self._right, 1)
+        self.layout_choice = FrameLayoutChoice(self, self._image_box, self._apply_orientation)
+        self._left_layout.insertWidget(self._left_layout.count() - 1, self.layout_choice.group)
+
+    def _apply_orientation(self, orientation: str) -> None:
+        """Landscape: the frame above the results, right of the controls. Portrait: the results
+        beside the controls and the frame in its own full-height column at the right."""
+        from galileo.ui.imaging import PORTRAIT
+        for box in (self._image_box, self._results_box):
+            self._right_layout.removeWidget(box)
+            self._root.removeWidget(box)
+        if orientation == PORTRAIT:
+            self._root.removeWidget(self._right)
+            self._right.setVisible(False)
+            self._root.addWidget(self._results_box, 1)
+            self._root.addWidget(self._image_box)
+        else:
+            self._right.setVisible(True)
+            self._root.addWidget(self._right, 1)
+            self._right_layout.addWidget(self._image_box, 3)
+            self._right_layout.addWidget(self._results_box, 2)
+        self._image_box.setVisible(True)
+        self._results_box.setVisible(True)
 
     def _build_left_column(self) -> QWidget:
         column = QWidget()
         column.setFixedWidth(330)
         box = QVBoxLayout(column)
+        self._left_layout = box
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(6)
 

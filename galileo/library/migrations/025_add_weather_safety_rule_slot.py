@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 025_add_weather_safety_rule_slot.py.
 
 The Equipment > Safety screen now holds any number of safety devices (weather

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 015_add_horizon_points.py.
 
 ``horizon_points``: an Observatory's horizon obstruction table — the altitude below

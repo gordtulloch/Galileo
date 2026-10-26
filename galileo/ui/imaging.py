@@ -13,7 +13,7 @@ from pathlib import Path
 
 from galileo.core.compute import run_cpu
 from galileo.current_object import safe_file_stem
-from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN, debayer
+from galileo.debayer import BAYER_PATTERNS, debayer
 from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker, MosaicStacker
 
 logger = logging.getLogger(__name__)
@@ -65,13 +65,11 @@ def format_dec_dms(dec_deg: float) -> str:
     return f"{sign}{int(degrees):02d} {int(minutes):02d} {int(secs):02d}"
 
 
-async def nudge_mount(mount, direction: str, rate: float, duration: float,
-                      reversed_axes: tuple = (False, False)) -> None:
-    """Move *mount* one way for *duration* seconds at *rate* deg/s, then stop.
-    ``N``/``S`` drive the secondary (Dec) axis and ``E``/``W`` the primary (RA)
-    axis, with the same signs as the Mount page's jog pad; *reversed_axes* is
-    that page's (primary, secondary) "reversed" pair. The axis is always
-    stopped afterwards, even if the wait is cancelled or the mount errors."""
+def nudge_command(direction: str, rate: float, reversed_axes: tuple = (False, False)) -> tuple[int, float]:
+    """The ``(axis, signed rate)`` for ``mount.move_axis`` that moves the mount *direction* at *rate* deg/s.
+    ``N``/``S`` drive the secondary (Dec) axis and ``E``/``W`` the primary (RA) axis; *reversed_axes* is
+    the Mount page's (primary, secondary) "reversed" pair. Used by the hold-to-move N/S/E/W pads, which
+    send this on press and a zero rate on the same axis on release."""
     direction = direction.upper()
     if direction not in NUDGE_DIRECTIONS:
         raise ValueError(f"Unknown nudge direction {direction!r}")
@@ -79,11 +77,7 @@ async def nudge_mount(mount, direction: str, rate: float, duration: float,
     sign = 1.0 if direction in ("N", "E") else -1.0
     if reversed_axes[axis]:
         sign = -sign
-    await mount.move_axis(axis, sign * abs(rate))
-    try:
-        await asyncio.sleep(max(0.0, duration))
-    finally:
-        await mount.move_axis(axis, 0.0)
+    return axis, sign * abs(rate)
 
 
 class ImagingService:
@@ -92,6 +86,7 @@ class ImagingService:
     def __init__(self, camera=None, output_dir: Path | str = ".") -> None:
         self._camera = camera
         self._output_dir = Path(output_dir)
+        self.pier_key = None   # set on a session's service so its frames reach the Imaging screen
         self.current_frame = None
         self.current_preview = None
         # Statistics and histogram of ``_analysed_frame``, worked out off the UI thread as each frame
@@ -107,8 +102,9 @@ class ImagingService:
         self._panel_layout: dict = {}
         self._capture_status: str = "idle"
         # Debayering (IMG-110) only changes the preview; current_frame stays the camera's raw mosaic.
-        self.debayer_enabled: bool = False
-        self.bayer_pattern: str = DEFAULT_PATTERN  # the camera's mosaic layout, as set on its Equipment page
+        # The camera says whether it is a colour one (``bayer_pattern`` is its mosaic layout, or
+        # None for mono), and a colour camera's preview is always debayered.
+        self.bayer_pattern: str | None = None
         self.debayer_note: str = ""                # what the last preview did, for the UI to show
         # Auto-stretch strength (IMG-190), set by the slider above the histogram. Preview-only —
         # never affects current_frame, frame_stats, frame_histogram or a saved file.
@@ -355,9 +351,21 @@ class ImagingService:
                 self._auto_save_to_library(index)
             if stacking:
                 await self._stack_current_frame()
+            self._announce_frame()
             if on_frame_done is not None:
                 on_frame_done(index, count)
         return list(self.library_ids)
+
+    def _announce_frame(self) -> None:
+        """Tell the Imaging screen a frame is ready, when this service was made for a session (it has
+        a ``pier_key``; the screen's own services show their frames through the capture thread)."""
+        if self.pier_key is None:
+            return
+        from galileo.bus import FrameCapturedEvent, get_bus
+        try:
+            get_bus().publish(FrameCapturedEvent("imaging", pier=self.pier_key, service=self))
+        except Exception:
+            logger.exception("Could not announce the captured frame")
 
     # --- Mosaic capture (IMG-180, FRAME-090) ------------------------------
 
@@ -442,6 +450,7 @@ class ImagingService:
                 self._auto_save_to_library(index)
             if stacking:
                 await self._stack_current_mosaic_pane(step.pane_index)
+            self._announce_frame()
             if on_frame_done is not None:
                 on_frame_done(index, count)
         return list(self.library_ids)
@@ -633,6 +642,7 @@ class ImagingService:
         self.last_saved_array = data
 
         if data is not None and analyse:
+            await self._detect_bayer_pattern()
             await self._analyse_current_frame()
 
         self._capture_status = "preview_ready"
@@ -661,17 +671,22 @@ class ImagingService:
 
     # --- Debayer (IMG-110) -----------------------------------------------
 
-    def set_debayer(self, enabled: bool, rebuild: bool = True) -> None:
-        """Turn debayering of the displayed frame on or off, re-rendering the
-        current frame at once (no new exposure) unless ``rebuild`` is false —
-        the Imaging page passes false and re-renders on a worker thread instead
-        (:meth:`render_preview` / :meth:`apply_preview`), since a debayer and
-        stretch takes seconds on a large frame (NFR-PERF-020). The raw frame —
+    @property
+    def debayer_enabled(self) -> bool:
+        """Whether the preview is debayered: true for a one-shot-colour camera. The raw frame —
         what statistics, the histogram and Save Frame use — is never changed."""
-        self.debayer_enabled = enabled
-        self._preview_generation += 1
-        if rebuild:
-            self._rebuild_preview()
+        return self.bayer_pattern is not None
+
+    async def _detect_bayer_pattern(self) -> None:
+        """Ask the camera whether it is a colour one, and set :attr:`bayer_pattern` to match."""
+        getter = getattr(self._camera, "get_bayer_pattern", None)
+        pattern = None
+        if getter is not None:
+            try:
+                pattern = await getter()
+            except Exception:
+                logger.debug("Could not read the camera's Bayer pattern", exc_info=True)
+        self.set_bayer_pattern(pattern if isinstance(pattern, str) else None, rebuild=False)
 
     def render_preview(self) -> tuple | None:
         """Render the preview for the current frame and display settings, without showing it.
@@ -697,7 +712,8 @@ class ImagingService:
     def set_stretch(self, level: int, rebuild: bool = True) -> None:
         """Set the auto-stretch slider's strength (0..100, IMG-190), re-rendering the current
         frame at once unless ``rebuild`` is false — the Imaging page passes false and re-renders
-        on a worker thread instead, the same as :meth:`set_debayer`."""
+        on a worker thread instead (:meth:`render_preview` / :meth:`apply_preview`), since a debayer
+        and stretch takes seconds on a large frame (NFR-PERF-020)."""
         self.stretch_level = max(0, min(100, int(level)))
         self._preview_generation += 1
         if rebuild:
@@ -707,10 +723,9 @@ class ImagingService:
         """Set the mosaic layout used to debayer (``RGGB``, ``GRBG``, ``GBRG``
         or ``BGGR``), re-rendering the current frame unless ``rebuild`` is
         false (e.g. just before a capture, which replaces it anyway).
-        Anything else — ``None``, or a bad value in a saved config — falls
-        back to the default."""
+        Anything else — ``None`` or a bad value — means a mono camera: no debayering."""
         pattern = (pattern or "").strip().upper()
-        self.bayer_pattern = pattern if pattern in BAYER_PATTERNS else DEFAULT_PATTERN
+        self.bayer_pattern = pattern if pattern in BAYER_PATTERNS else None
         self._preview_generation += 1
         if rebuild:
             self._rebuild_preview()
@@ -749,7 +764,7 @@ class ImagingService:
         """``(image, note)``: *data* debayered with ``bayer_pattern``, or
         unchanged with a note saying why not. Wrong colours mean the pattern
         set on the camera's Equipment page doesn't match the sensor."""
-        if data.ndim != 2:
+        if data.ndim != 2 or self.bayer_pattern is None:
             return data, "Frame is already colour — not debayered."
         return debayer(data, self.bayer_pattern), f"Debayered ({self.bayer_pattern})."
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -39,9 +41,11 @@ from PySide6.QtWidgets import (
 )
 
 from galileo.autofocus import AutofocusParams
-from galileo.bus import FocusCompleteEvent, FocusFrameEvent, FocusStartedEvent, get_bus
+from galileo.debayer import camera_pattern
+from galileo.bus import FocusCompleteEvent, FocusExposureStartedEvent, FocusFrameEvent, FocusStartedEvent, get_bus
 from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
 from galileo.ui.guider import _PLOT_FG, _PlotBase
+from galileo.ui.frame_layout import FrameLayoutChoice
 from galileo.ui.imaging import _auto_stretch
 
 logger = logging.getLogger(__name__)
@@ -54,14 +58,19 @@ _FIT_COLOR = QColor("#ffa040")
 _BEST_COLOR = QColor("#31c24a")
 
 
-def _preview(frame) -> np.ndarray | None:
+def _preview(frame, bayer_pattern: str | None = None) -> np.ndarray | None:
     """An 8-bit, auto-stretched, decimated copy of *frame* for display — ``(h, w)``
-    or ``(h, w, 3)`` — or ``None`` if it isn't an image."""
+    or ``(h, w, 3)`` — or ``None`` if it isn't an image. With *bayer_pattern* a mono mosaic is
+    shown in colour (a half-resolution superpixel debayer, before any decimation, which would
+    otherwise destroy the mosaic). Star measurements are always made on the raw frame."""
     arr = np.asarray(frame)
     if arr.ndim == 3:
         arr = arr if arr.shape[2] == 3 else arr[..., 0]
     elif arr.ndim != 2:
         return None
+    elif bayer_pattern:
+        from galileo.debayer import superpixel
+        arr = superpixel(arr, bayer_pattern)
     step = max(1, max(arr.shape[:2]) // _PREVIEW_MAX_SIDE)
     return _auto_stretch(arr[::step, ::step])
 
@@ -201,6 +210,7 @@ class FocusPage(QWidget):
     _complete = Signal(object, object)
     _run_finished = Signal(object)
     _manual_frame = Signal(object, object)
+    _exposure_started = Signal(object, float)
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -222,6 +232,14 @@ class FocusPage(QWidget):
         # Loop; ``_manual_stop`` is the Loop's own stop flag, checked between exposures.
         self._manual_active: dict = {}
         self._manual_stop: dict = {}
+        # Exposure in flight per Pier: (monotonic start time, duration in s). Drives the camera
+        # panel's progress bar from a short UI timer, so no per-second camera polling is needed.
+        self._exposure: dict = {}
+        # The camera's Bayer pattern per Pier (None = mono), read when a run starts, so frames
+        # are shown in colour; used from the run's worker thread, hence a plain dict.
+        self._bayer: dict = {}
+        self._exposure_timer = QTimer(self)
+        self._exposure_timer.timeout.connect(self._update_exposure_bar)
         # True while ``reload()`` is setting the step/points/exposure/backlash spin boxes from a
         # saved Pier's settings, so those set-calls' own ``valueChanged`` signals don't immediately
         # save the just-loaded values right back (and, for a Pier with none saved yet, don't create
@@ -236,9 +254,11 @@ class FocusPage(QWidget):
         self._complete.connect(self._on_complete)
         self._run_finished.connect(self._on_run_finished)
         self._manual_frame.connect(self._on_manual_frame)
+        self._exposure_started.connect(self._on_exposure_started)
         bus = get_bus()
         handlers = (
             (FocusStartedEvent, self._on_started_event),
+            (FocusExposureStartedEvent, self._on_exposure_started_event),
             (FocusFrameEvent, self._on_frame_event),
             (FocusCompleteEvent, self._on_complete_event),
         )
@@ -250,6 +270,12 @@ class FocusPage(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_devices)
         self._timer.start(1000)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        choice = getattr(self, "layout_choice", None)
+        if choice is not None:
+            choice.fit_width()
 
     # --- Layout -----------------------------------------------------------
 
@@ -265,11 +291,14 @@ class FocusPage(QWidget):
         self.status_label.setProperty("helpKey", "status")
         layout.addWidget(self.status_label)
 
-        content = QHBoxLayout()
-        content.setSpacing(12)
-        content.addWidget(self._build_left_column())
-        content.addLayout(self._build_right_column(), 1)
-        layout.addLayout(content, 1)
+        self._content = QHBoxLayout()
+        self._content.setSpacing(12)
+        self._content.addWidget(self._build_left_column())
+        self._right = self._build_right_column()
+        self._content.addWidget(self._right, 1)
+        layout.addLayout(self._content, 1)
+        self.layout_choice = FrameLayoutChoice(self, self._image_box, self._apply_orientation)
+        self._left_layout.insertWidget(self._left_layout.count() - 1, self.layout_choice.group)
 
         layout.addWidget(_heading("Log"))
         log_pane = self._window._build_log_pane()
@@ -280,6 +309,7 @@ class FocusPage(QWidget):
         column = QWidget()
         column.setFixedWidth(380)
         box = QVBoxLayout(column)
+        self._left_layout = box
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(10)
 
@@ -351,6 +381,12 @@ class FocusPage(QWidget):
         self.exposure_spin.setToolTip("Exposure time of each frame measured during the sweep.")
         self.exposure_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.exposure_spin, 1, 1)
+        self.exposure_bar = QProgressBar()
+        self.exposure_bar.setRange(0, 1000)
+        self.exposure_bar.setToolTip("Progress of the exposure in flight.")
+        self.exposure_bar.setProperty("helpKey", "exposure progress")
+        grid.addWidget(self.exposure_bar, 2, 0, 1, 2)
+        self.exposure_bar.setFormat("—")
         box.addWidget(camera)
 
         manual = QGroupBox("Manual Focus")
@@ -377,19 +413,48 @@ class FocusPage(QWidget):
         self.manual_stop_btn.setEnabled(False)
         self.manual_stop_btn.clicked.connect(self.stop_loop)
         grid.addWidget(self.manual_stop_btn, 1, 2)
+        self.emergency_set_btn = QPushButton("Set Emergency")
+        self.emergency_set_btn.setToolTip(
+            "Remember the focuser's current position as the emergency focus, to come back to "
+            "if you are ever wildly out of focus."
+        )
+        self.emergency_set_btn.clicked.connect(self.set_emergency_focus)
+        grid.addWidget(self.emergency_set_btn, 2, 0)
+        self.emergency_go_btn = QPushButton("Go to Emergency")
+        self.emergency_go_btn.setToolTip("Move the focuser back to the saved emergency focus position.")
+        self.emergency_go_btn.clicked.connect(self.go_to_emergency_focus)
+        grid.addWidget(self.emergency_go_btn, 2, 1)
+        self.emergency_label = QLabel("—")
+        self.emergency_label.setProperty("helpKey", "emergency position")
+        self.emergency_label.setToolTip("The saved emergency focus position.")
+        grid.addWidget(self.emergency_label, 2, 2)
         box.addWidget(manual)
 
         box.addStretch(1)
         return column
 
-    def _build_right_column(self) -> QVBoxLayout:
-        column = QVBoxLayout()
+    def _build_right_column(self) -> QWidget:
+        """Two boxes the layout can arrange: the frame (with its zoom toolbar) and the V-curve
+        (with the statistics line). Landscape stacks them in this column; portrait moves them
+        into the page itself (see :meth:`_apply_orientation`)."""
+        right = QWidget()
+        self._right_layout = QVBoxLayout(right)
+        self._right_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_layout.setSpacing(8)
+
+        self._image_box = QWidget()
+        column = QVBoxLayout(self._image_box)
+        column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
         self.image_view = FocusImageView()
         self.image_view.setProperty("helpKey", "frame")
         column.addLayout(build_zoom_toolbar(self.image_view))
-        column.addWidget(self.image_view, 3)
+        column.addWidget(self.image_view, 1)
 
+        self._curve_box = QWidget()
+        column = QVBoxLayout(self._curve_box)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(8)
         stats = QHBoxLayout()
         stats.addWidget(_heading("V-Curve"))
         stats.addStretch(1)
@@ -405,8 +470,30 @@ class FocusPage(QWidget):
 
         self.plot = VCurvePlot()
         self.plot.setProperty("helpKey", "v-curve")
-        column.addWidget(self.plot, 2)
-        return column
+        column.addWidget(self.plot, 1)
+        self._right_layout.addWidget(self._image_box, 3)
+        self._right_layout.addWidget(self._curve_box, 2)
+        return right
+
+    def _apply_orientation(self, orientation: str) -> None:
+        """Landscape: the frame above the V-curve, right of the controls. Portrait: the V-curve
+        beside the controls and the frame in its own full-height column at the right."""
+        from galileo.ui.imaging import PORTRAIT
+        for box in (self._image_box, self._curve_box):
+            self._right_layout.removeWidget(box)
+            self._content.removeWidget(box)
+        if orientation == PORTRAIT:
+            self._content.removeWidget(self._right)
+            self._right.setVisible(False)
+            self._content.addWidget(self._curve_box, 1)
+            self._content.addWidget(self._image_box)
+        else:
+            self._right.setVisible(True)
+            self._content.addWidget(self._right, 1)
+            self._right_layout.addWidget(self._image_box, 3)
+            self._right_layout.addWidget(self._curve_box, 2)
+        self._image_box.setVisible(True)
+        self._curve_box.setVisible(True)
 
     # --- Bus handlers (any thread) -----------------------------------------
 
@@ -415,6 +502,9 @@ class FocusPage(QWidget):
         self._receiving[key] = True
         self._started.emit(key, dict(event.payload))
 
+    def _on_exposure_started_event(self, event) -> None:
+        self._exposure_started.emit(event.payload.get("pier_key"), float(event.payload.get("duration_s", 0.0)))
+
     def _on_frame_event(self, event) -> None:
         key = event.payload.get("pier_key")
         if not self._receiving.get(key):
@@ -422,7 +512,7 @@ class FocusPage(QWidget):
         payload = event.payload
         self._frame.emit(key, {
             "position": payload["position"], "hfr": payload["hfr"], "fwhm": payload["fwhm"],
-            "star_count": payload["star_count"], "preview": _preview(payload["frame"]),
+            "star_count": payload["star_count"], "preview": _preview(payload["frame"], self._bayer.get(key)),
             "confirm": payload.get("confirm", False),
         })
 
@@ -437,6 +527,31 @@ class FocusPage(QWidget):
         from galileo.current_object import pier_key
         return pier_key(self._window._current_pier)
 
+    def _on_exposure_started(self, key, duration_s: float) -> None:
+        self._exposure[key] = (time.monotonic(), duration_s)
+        if not self._exposure_timer.isActive():
+            self._exposure_timer.start(100)
+        self._update_exposure_bar()
+
+    def _end_exposure(self, key) -> None:
+        self._exposure.pop(key, None)
+        self._update_exposure_bar()
+
+    def _update_exposure_bar(self) -> None:
+        """Repaint the progress bar from the displayed Pier's exposure in flight (if any). Once
+        the exposure's time is up it holds at 100% until the frame arrives (download/measure)."""
+        current = self._exposure.get(self._pier_key())
+        if current is None:
+            self.exposure_bar.setValue(0)
+            self.exposure_bar.setFormat("—")
+        else:
+            start, duration = current
+            elapsed = min(time.monotonic() - start, duration)
+            self.exposure_bar.setValue(int(1000 * elapsed / duration) if duration > 0 else 1000)
+            self.exposure_bar.setFormat(f"{elapsed:.1f} / {duration:.1f} s")
+        if not self._exposure and self._exposure_timer.isActive():
+            self._exposure_timer.stop()
+
     def _on_started(self, key, payload: dict) -> None:
         self._active[key] = True
         self._last_run[key] = {
@@ -449,6 +564,7 @@ class FocusPage(QWidget):
         self._sync_buttons()
 
     def _on_frame(self, key, payload: dict) -> None:
+        self._end_exposure(key)
         run = self._last_run.setdefault(key, {
             "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
         })
@@ -467,6 +583,7 @@ class FocusPage(QWidget):
             return
         if payload["preview"] is not None:
             self.image_view.set_image(payload["preview"])
+            self.layout_choice.set_frame(payload["preview"])
         self.stats_label.setText(run["stats"])
         self.position_label.setText(str(payload["position"]))
         if not payload["confirm"]:
@@ -474,6 +591,7 @@ class FocusPage(QWidget):
         self.status_label.setText(run["status"])
 
     def _on_complete(self, key, result) -> None:
+        self._end_exposure(key)
         self._active[key] = False
         run = self._last_run.setdefault(key, {
             "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
@@ -529,6 +647,10 @@ class FocusPage(QWidget):
             or self._manual_active.get(key, False)
         )
 
+    def _autofocus_busy(self, key) -> bool:
+        """Whether *key*'s Pier has an autofocus sweep running (which owns the focuser)."""
+        return self._active.get(key, False) or self._services.get(key) is not None
+
     def _sync_buttons(self) -> None:
         key = self._pier_key()
         busy = self._busy(key)
@@ -536,7 +658,10 @@ class FocusPage(QWidget):
         self.stop_btn.setEnabled(self._services.get(key) is not None)
         self.filter_offsets_btn.setEnabled(not busy)
         self.clear_btn.setEnabled(not busy)
-        self.manual_move_btn.setEnabled(not busy)
+        # Moving the focuser while a manual Loop runs is how you focus by eye.
+        self.manual_move_btn.setEnabled(not self._autofocus_busy(key))
+        self.emergency_set_btn.setEnabled(not self._autofocus_busy(key))
+        self.emergency_go_btn.setEnabled(not self._autofocus_busy(key) and self._emergency_position() is not None)
         self.capture_btn.setEnabled(not busy)
         self.loop_btn.setEnabled(not busy)
         self.manual_stop_btn.setEnabled(self._manual_active.get(key, False))
@@ -588,6 +713,7 @@ class FocusPage(QWidget):
 
     def _run_worker(self, service, key, step_size: int, num_points: int) -> None:
         import asyncio
+        self._bayer[key] = camera_pattern(getattr(service, "_camera", None))
         try:
             asyncio.run(service.run(step_size=step_size, num_points=num_points))
         except Exception:
@@ -604,10 +730,58 @@ class FocusPage(QWidget):
             self.status_label.setText("Stopping — waiting for the current exposure to finish…")
 
     def _on_run_finished(self, key) -> None:
+        self._end_exposure(key)
         self._services.pop(key, None)
         self._sync_buttons()
 
     # --- Manual focus (Move / Capture / Loop) --------------------------------
+
+    def _emergency_position(self) -> int | None:
+        from galileo.observatory import get_emergency_focus
+        try:
+            return get_emergency_focus(self._window._current_pier)
+        except Exception:
+            logger.exception("Could not read the emergency focus position")
+            return None
+
+    def _show_emergency(self) -> None:
+        position = self._emergency_position()
+        self.emergency_label.setText("—" if position is None else str(position))
+        self._sync_buttons()
+
+    def set_emergency_focus(self) -> None:
+        pier = self._window._current_pier
+        focuser = self._focuser()
+        if pier is None:
+            QMessageBox.information(
+                self._window._window, "No Pier selected",
+                "Select (or create) an Observatory and Pier first; the emergency focus is saved per Pier.",
+            )
+            return
+        position = getattr(focuser, "position", None) if focuser is not None else None
+        if position is None:
+            QMessageBox.information(
+                self._window._window, "Focuser not connected",
+                "Connect a focuser on the Equipment page first.",
+            )
+            return
+        from galileo.observatory import set_emergency_focus
+        if not set_emergency_focus(pier, int(position)):
+            QMessageBox.information(
+                self._window._window, "Save the focuser first",
+                "Save the focuser's settings on Equipment > Focuser first; the emergency focus is kept with them.",
+            )
+            return
+        logger.info("Emergency focus saved at position %d.", position)
+        self.status_label.setText(f"Emergency focus saved at position {int(position)}.")
+        self._show_emergency()
+
+    def go_to_emergency_focus(self) -> None:
+        position = self._emergency_position()
+        if position is None:
+            return
+        self.manual_position_spin.setValue(position)
+        self.manual_move()
 
     def manual_move(self) -> None:
         key = self._pier_key()
@@ -618,7 +792,7 @@ class FocusPage(QWidget):
                 "Connect a focuser on the Equipment page first.",
             )
             return
-        if self._busy(key):
+        if self._autofocus_busy(key):
             return
         position = self.manual_position_spin.value()
         from galileo.autofocus import AutofocusService
@@ -665,6 +839,7 @@ class FocusPage(QWidget):
     def _manual_worker(self, service, key, focuser, loop: bool) -> None:
         import asyncio
         stop_event = self._manual_stop[key]
+        pattern = self._bayer[key] = camera_pattern(getattr(service, "_camera", None))
         try:
             while True:
                 try:
@@ -677,7 +852,7 @@ class FocusPage(QWidget):
                     position = getattr(focuser, "position", None) if focuser is not None else None
                     self._manual_frame.emit(key, {
                         "position": position, "hfr": hfr, "fwhm": fwhm,
-                        "star_count": star_count, "preview": _preview(frame),
+                        "star_count": star_count, "preview": _preview(frame, pattern),
                     })
                 if not loop or stop_event.is_set():
                     break
@@ -692,6 +867,7 @@ class FocusPage(QWidget):
             self.status_label.setText("Stopping — waiting for the current exposure to finish…")
 
     def _on_manual_frame(self, key, payload: dict) -> None:
+        self._end_exposure(key)
         run = self._last_run.setdefault(key, {
             "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None, "status": "",
         })
@@ -705,6 +881,7 @@ class FocusPage(QWidget):
             return
         if payload["preview"] is not None:
             self.image_view.set_image(payload["preview"])
+            self.layout_choice.set_frame(payload["preview"])
         self.stats_label.setText(run["stats"])
         self.position_label.setText(position_text)
         self.status_label.setText(run["status"])
@@ -745,6 +922,8 @@ class FocusPage(QWidget):
         repaint the frame/plot/stats/status/buttons for whichever Pier is now
         selected — idle, mid-run, or just finished."""
         key = self._pier_key()
+        self._update_exposure_bar()
+        self._show_emergency()
         if not self._active.get(key, False):
             from galileo.observatory import get_autofocus_params
             params = get_autofocus_params(self._window._current_pier)

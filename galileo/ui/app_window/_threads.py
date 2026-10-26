@@ -205,19 +205,22 @@ class _FlatsThread(_QThreadBase):
 
 class _DarksThread(_QThreadBase):
     """Captures one dark frame at each requested exposure length in order, off the Qt UI thread.
-    Calls ImagingService.capture_series(1, exposure_s, filter_name, "Dark") for each entry so
-    each frame is auto-saved to the Library the same way a manual capture is."""
+    Calls ImagingService.capture_series(count, exposure_s, filter_name, "Dark") for each entry
+    so every frame is auto-saved to the Library the same way a manual capture is."""
 
-    exposure_started = Signal(int, int, float)   # (index, total, exposure_s)
-    exposure_done = Signal(int, int, float)       # (index, total, exposure_s)
+    # (exposure index, exposure total, exposure_s, frame index, frame total)
+    frame_started = Signal(int, int, float, int, int)
+    frame_done = Signal(int, int, float, int, int)
     finished_ok = Signal()
     failed = Signal(str)
 
-    def __init__(self, service, exposures: list, filter_name: str, parent=None) -> None:
+    def __init__(self, service, exposures: list, filter_name: str, count: int = 1,
+                 parent=None) -> None:
         super().__init__(parent)
         self._service = service
         self._exposures = exposures
         self._filter_name = filter_name
+        self._count = max(1, int(count))
 
     def run(self) -> None:
         import asyncio
@@ -225,16 +228,16 @@ class _DarksThread(_QThreadBase):
         for i, exposure_s in enumerate(self._exposures):
             if self._service.stop_requested:
                 break
-            self.exposure_started.emit(i + 1, total, exposure_s)
             try:
                 asyncio.run(self._service.capture_series(
-                    1, exposure_s, self._filter_name, "Dark",
+                    self._count, exposure_s, self._filter_name, "Dark",
+                    on_frame_start=lambda f, n, i=i, e=exposure_s: self.frame_started.emit(i + 1, total, e, f, n),
+                    on_frame_done=lambda f, n, i=i, e=exposure_s: self.frame_done.emit(i + 1, total, e, f, n),
                 ))
             except Exception as exc:
                 if not self._service.stop_requested:
                     self.failed.emit(str(exc))
                     return
-            self.exposure_done.emit(i + 1, total, exposure_s)
         self.finished_ok.emit()
 
 
@@ -383,30 +386,6 @@ class _MountGuardThread(_QThreadBase):
             await service.execute_flip(target_ra=ra * 15.0, target_dec=status.get("declination") or 0.0)
             await resume_tracking(self._mount, None)
             result["status"] = await self._mount.get_status() or status
-
-
-class _NudgeThread(_QThreadBase):
-    """Runs one mount nudge (IMG-130) off the Qt UI thread: the mount moves for
-    the nudge's duration, and blocking the UI for that long would freeze the
-    Imaging page's exposure countdown while the user is watching it."""
-
-    finished_ok = Signal()
-    failed = Signal(str)
-
-    def __init__(self, mount, direction: str, rate: float, duration: float,
-                 reversed_axes: tuple, parent=None) -> None:
-        super().__init__(parent)
-        self._args = (mount, direction, rate, duration, reversed_axes)
-
-    def run(self) -> None:
-        import asyncio
-        from galileo.ui.imaging import nudge_mount
-        try:
-            asyncio.run(nudge_mount(*self._args))
-        except Exception as exc:
-            self.failed.emit(str(exc))
-            return
-        self.finished_ok.emit()
 
 
 class _ThumbnailCacheThread(_QThreadBase):

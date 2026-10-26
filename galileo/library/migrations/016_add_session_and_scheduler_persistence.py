@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 016_add_session_and_scheduler_persistence.py.
 
 ``session_templates`` (SES-180/SES-190) and ``scheduler_jobs`` (SCHED-100):

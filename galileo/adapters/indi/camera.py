@@ -169,6 +169,20 @@ class IndiCameraAdapter(IndiAdapter):
             "sensor_name": self.device_name or None,
         }
 
+    async def get_bayer_pattern(self) -> str | None:
+        """The Bayer pattern of the frames this camera delivers, from INDI's standard ``CCD_CFA``
+        vector (``CFA_TYPE`` plus the ``CFA_OFFSET_X/Y`` of the first pixel), or ``None`` for a
+        mono camera, which has no such vector."""
+        from galileo.debayer import pattern_from_cfa
+
+        def offset(name: str) -> int:
+            try:
+                return int(float(self._txt("CCD_CFA", name) or 0))
+            except ValueError:
+                return 0
+
+        return pattern_from_cfa(self._txt("CCD_CFA", "CFA_TYPE"), offset("CFA_OFFSET_X"), offset("CFA_OFFSET_Y"))
+
 
 class IndiCameraSimulator(IndiCameraAdapter):
     """Simulator camera backend for development without hardware (EQP-CAM-040).

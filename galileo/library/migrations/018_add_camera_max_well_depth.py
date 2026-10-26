@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 """Peewee migrations -- 018_add_camera_max_well_depth.py.
 
 ``device_configs.max_well_depth``: a camera's full-well capacity in electrons,

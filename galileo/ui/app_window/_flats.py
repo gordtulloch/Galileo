@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _new_form_layout, _QDialogBase
+from ._assistant_dialog import (
+    _AssistantDialog, refresh_assistant_buttons, register_assistant, reopen_assistant,
+)
+from ._common import _camera_backend_key_for_slot, _new_form_layout
 from ._threads import _FlatsThread
 
 logger = logging.getLogger(__name__)
@@ -18,21 +21,10 @@ if TYPE_CHECKING:
     from ._state import AppWindowState
 
 
-class _FlatsDialog(_QDialogBase):
-    """A plain ``QDialog`` except that ESC, the title bar's X, and the button box's
-    Close button are all refused while ``running`` is set — a Sky Flats run underway
-    on a background ``_FlatsThread`` is still updating this dialog's own widgets
-    through connected signals, so closing out from under it would leave those signal
-    handlers firing against a destroyed window."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.running = False
-
-    def reject(self) -> None:
-        if self.running:
-            return
-        super().reject()
+class _FlatsDialog(_AssistantDialog):
+    """Modeless; ESC, the title bar's X and the Close button hide it rather than close it
+    while a flats run is going — the run on its background ``_FlatsThread`` is still
+    updating this dialog's widgets through connected signals, so it must not be destroyed."""
 
 
 class AppWindowFlatsMixin:
@@ -72,7 +64,10 @@ class AppWindowFlatsMixin:
         Panel (CAL-090) run ``CalibrationService.run_panel_flats_all_filters``;
         Flat Panel is only selectable while a flat panel is connected. The
         run is off-thread (``_FlatsThread``); a ``FlatCalibrationError`` is
-        shown to the user."""
+        shown to the user.
+
+        The dialog is modeless and per Pier: Hide (or switching Piers) removes it from the
+        screen while the run continues, and the Flats… button reopens it with live progress."""
         from PySide6.QtWidgets import (
             QComboBox, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout,
             QLabel, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
@@ -81,8 +76,7 @@ class AppWindowFlatsMixin:
         from galileo.current_object import pier_key
 
         key = pier_key(self._current_pier)
-        if self._flats_threads.get(key) is not None:
-            self._window.statusBar().showMessage("A Flats run is already in progress on this Pier.", 4000)
+        if reopen_assistant(self, "flats", key):
             return
 
         camera = self._camera_backends.get(_camera_backend_key_for_slot(self._active_camera_slot))
@@ -93,6 +87,8 @@ class AppWindowFlatsMixin:
         from galileo.ui.help import tag_help_screen
         dialog = tag_help_screen(_FlatsDialog(self._window), "imaging.flats")
         dialog.setWindowTitle("Flats Assistant")
+        register_assistant(self, "flats", key, dialog)
+        pier_name = getattr(self._current_pier, "name", "") or "this Pier"
         outer = QVBoxLayout(dialog)
         form = _new_form_layout()
         outer.addLayout(form)
@@ -180,7 +176,9 @@ class AppWindowFlatsMixin:
             stop_btn.setEnabled(running)
             for field in fields:
                 field.setEnabled(not running)
-            buttons.button(QDialogButtonBox.StandardButton.Close).setEnabled(not running)
+            # While a run is going the dialog can only be hidden, never closed.
+            buttons.button(QDialogButtonBox.StandardButton.Close).setText("Hide" if running else "Close")
+            refresh_assistant_buttons(self)
 
         def on_filter_start(filter_name: str, index: int, total: int) -> None:
             status_label.setText(f"Filter {filter_name or '(none)'} ({index} of {total})…")
@@ -189,6 +187,11 @@ class AppWindowFlatsMixin:
             status_label.setText(
                 f"Filter {filter_name or '(none)'}: frame {frame_index} of {frame_total} captured."
             )
+            if not dialog.isVisible():
+                self._window.statusBar().showMessage(
+                    f"Flats ({pier_name}): filter {filter_name or '(none)'}, "
+                    f"frame {frame_index} of {frame_total} captured.", 3000,
+                )
 
         def finished(results) -> None:
             self._flats_threads.pop(key, None)
@@ -196,7 +199,7 @@ class AppWindowFlatsMixin:
             total_frames = sum(r.frames_captured for r in results)
             summary = f"{run_state['method']} done — {total_frames} frame(s) captured."
             status_label.setText(summary)
-            self._window.statusBar().showMessage(summary, 6000)
+            self._window.statusBar().showMessage(f"{summary} ({pier_name})", 6000)
 
         def failed(message: str) -> None:
             self._flats_threads.pop(key, None)
@@ -204,8 +207,11 @@ class AppWindowFlatsMixin:
             name = run_state["method"]
             logger.error("%s failed: %s", name, message)
             status_label.setText(f"Failed: {message}")
-            self._window.statusBar().showMessage(f"{name} failed — see log.", 6000)
-            QMessageBox.warning(dialog, f"{name} failed", message)
+            self._window.statusBar().showMessage(f"{name} failed on {pier_name} — see log.", 6000)
+            # A modal message box would lock out every other Pier; bring the dialog back instead
+            # (when the user is on this Pier), where the status line shows the error.
+            if pier_key(self._current_pier) == key:
+                reopen_assistant(self, "flats", key)
 
         def start() -> None:
             method = method_combo.currentText()
@@ -259,9 +265,12 @@ class AppWindowFlatsMixin:
 
             thread = _FlatsThread(
                 svc, filters, count_spin.value(), max_well_depth, location,
-                adu_method_combo.currentText(), exposure_s, increment_spin.value(), dialog,
+                adu_method_combo.currentText(), exposure_s, increment_spin.value(), self._window,
                 method=method,
             )
+            # Parented to the window, not the dialog: the dialog is deleted when closed idle, which
+            # must never take a thread that is still returning from run() down with it.
+            thread.finished.connect(thread.deleteLater)
             thread.filter_started.connect(on_filter_start)
             thread.frame_done.connect(on_frame_done)
             thread.finished_ok.connect(finished)
@@ -281,4 +290,4 @@ class AppWindowFlatsMixin:
         stop_btn.clicked.connect(stop)
         buttons.rejected.connect(dialog.reject)
 
-        dialog.exec()
+        dialog.show()

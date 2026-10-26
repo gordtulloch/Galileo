@@ -11,6 +11,8 @@ reporter installed — tests, ``--selftest``, a window built after start-up — 
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,37 @@ def add_steps(count: int) -> None:
     """Grow the expected number of operations once a phase knows how many it has."""
     if _reporter is not None:
         _reporter.add_steps(count)
+
+
+@contextmanager
+def transient_progress(total: int) -> Iterator[bool]:
+    """Show the progress splash for a long operation after start-up (e.g. switching Pier).
+
+    Yields True when it installed its own splash, False when none was shown — a start-up reporter is
+    already running (the operation is part of start-up), or there is no Qt application/logo. Either way
+    :func:`report` / :func:`begin_detail` calls inside the block are safe.
+    """
+    if _reporter is not None:
+        yield False
+        return
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    splash = None
+    if app is not None:
+        from galileo.app import _show_splash
+        splash = _show_splash(app)
+    if splash is None:
+        yield False
+        return
+    progress = StartupProgress(splash, app, total=total)
+    set_reporter(progress)
+    try:
+        yield True
+    finally:
+        set_reporter(None)
+        progress.finish()
+        splash.close()
 
 
 class StartupProgress:

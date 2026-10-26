@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Starts Galileo: venv check, launch, and error logging. Split out of
 # launch_galileo.ps1 so this half can change freely across releases - see
 # the comment in launch_galileo.ps1 for why the update-check half can't.

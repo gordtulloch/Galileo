@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 name: Code quality and tests
 
 # Everything the code review ("Code Review.md") ran by hand, on every push to main and every pull request.

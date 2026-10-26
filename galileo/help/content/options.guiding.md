@@ -3,6 +3,10 @@
 
 How PHD2 dithers and settles. These are used by the Guiding screen's Guide and Dither buttons and by dithers in a session, and apply from the next command. They are saved for the whole application. PHD2's host and port are set on the Guiding screen.
 
+## Save
+
+Saves the values below. Changes are not stored until you click Save.
+
 ## Dither amount
 
 The maximum distance, in guide-camera pixels, that a dither moves the guide star away from its position (0.1–30).

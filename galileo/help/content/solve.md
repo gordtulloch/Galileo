@@ -214,3 +214,11 @@ Which way and how much to move the mount's azimuth adjuster, in words.
 ## Polar target
 
 The aiming view that appears once the axis has been measured. The **circle** is where the mount's polar axis points now; the **X** is the celestial pole, drawn in the orientation of the camera frame. Turn the altitude and azimuth adjusters to bring the X into the circle: the circle turns green when the error is within a minute of arc. It updates with every solve. Some solvers don't report the field geometry it needs, in which case it isn't drawn and the written corrections above are all you get.
+
+## Choose layout manually
+
+By default the screen arranges itself to suit the frame: a portrait frame (taller than it is wide) gets a full-height column on the right, about a third of the screen wide, with everything else beside it. Tick this to pick the arrangement yourself with **Layout**.
+
+## Layout
+
+**Landscape** or **Portrait** arrangement of the screen. Available only when **Choose layout manually** is ticked.

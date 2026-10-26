@@ -25,7 +25,7 @@ The sensor model, read-only, when the driver reports it.
 
 ## Bayer pattern
 
-The arrangement of the colour filters on a one-shot-colour sensor, read from the top-left 2×2 pixels (RGGB is the most common). The Imaging screen's Debayer option uses it to turn raw frames into colour. If colours look wrong (for example blue where red should be), try another pattern. It is ignored for a monochrome camera.
+The arrangement of the colour filters on a one-shot-colour sensor, read from the top-left 2×2 pixels (RGGB is the most common). It is recorded in the frames Galileo saves (the BAYERPAT header). The Imaging, Focus and Solve screens work out for themselves whether the camera is colour and which pattern it uses, and show its frames debayered; this setting does not change that. It is ignored for a monochrome camera.
 
 ## Max well depth
 

@@ -506,7 +506,7 @@ class HelpWindow(QWidget):
                 self._browser.setMarkdown(doc.markdown)
                 self._current = doc.screen_id
             self._scroll_to(section.title if section is not None and section.key != help_content.OVERVIEW else None)
-        # Over a modal dialog (Flats Assistant, a block's settings…) the help must itself be modal,
+        # Over a modal dialog (a session block's settings…) the help must itself be modal,
         # or the dialog blocks all input to it and it could not even be scrolled.
         over_modal = QApplication.activeModalWidget() not in (None, self)
         wanted = Qt.WindowModality.ApplicationModal if over_modal else Qt.WindowModality.NonModal

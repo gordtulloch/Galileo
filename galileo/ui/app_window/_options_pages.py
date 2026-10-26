@@ -5,7 +5,7 @@
 
 * Equipment: the crash/hang watchdog (SAFE-060) — whether it is armed and its timeout. Per-device
   settings (driver, server, port, poll interval) live on each Equipment device page, saved per Pier.
-* Guiding: the dither and settle parameters sent to PHD2 (GUIDE-030). Saved as they change
+* Guiding: the dither and settle parameters sent to PHD2 (GUIDE-030). Saved by the Save button
   (``galileo.guiding_settings``); the PHD2 host/port are saved per Pier on the Guiding screen.
 * Science: Galileo's core holds no science settings; plugin-provided science tools keep their own.
 """
@@ -79,7 +79,7 @@ class AppWindowOptionsPagesMixin:
 
     def _build_guiding_settings_page(self) -> QWidget:
         """Options > Guiding: dither and settle parameters (GUIDE-030). Apply to the next command."""
-        from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QLabel, QVBoxLayout
+        from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QLabel, QPushButton, QVBoxLayout
         from galileo.guiding_settings import RANGES, load_guiding_settings, save_guiding_settings
 
         settings = load_guiding_settings()
@@ -117,7 +117,6 @@ class AppWindowOptionsPagesMixin:
 
         def _store(key: str, value) -> None:
             settings[key] = value
-            save_guiding_settings(settings)
 
         form.addRow("Dither amount", _spin(
             "dither_amount_px", " px", 1, "The maximum distance a dither moves the guide star."))
@@ -133,11 +132,21 @@ class AppWindowOptionsPagesMixin:
         form.addRow("Settle timeout", _spin(
             "settle_timeout_s", " s", 0, "Give up and report a failed settle after this long."))
 
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("AccentButton")
+        layout.addWidget(save_btn)
+
         hint = QLabel("Applies to the next guide or dither command. Saved for the whole application.")
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(1)
+
+        def save() -> None:
+            save_guiding_settings(settings)
+            self._window.statusBar().showMessage("Saved Guiding settings.", 4000)
+
+        save_btn.clicked.connect(save)
         return page
 
     def _build_science_settings_page(self) -> QWidget:

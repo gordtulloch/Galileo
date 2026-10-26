@@ -993,3 +993,180 @@ def test_tc_plug_170_plugin_options_page_appears_under_options(tmp_path, monkeyp
         assert "opt page" in texts
     finally:
         win._window.close()
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-190 -- in-place install and update, "update available"
+# ---------------------------------------------------------------------------
+
+def _versioned_zip(version: str, label: str = "Live Panel", broken: bool = False) -> bytes:
+    """A plugin package whose code reports *version*, so a test can tell which one is loaded."""
+    toml = (
+        'name = "livepanel"\n'
+        f'version = "{version}"\n'
+        'api_min = "1"\napi_max = "1"\nauthor = "T"\ndescription = "d"\n'
+        'tier = "third_party"\nentry_point = "livepanel"\n'
+    )
+    body = (
+        "from galileo.plugins import PluginBase\n"
+        f"CODE_VERSION = {version!r}\n"
+        "class LivePlugin(PluginBase):\n"
+        "    name = 'LivePlugin'\n"
+        f"    version = {version!r}\n"
+        "    api_version = '1'\n"
+        "    panel_level = 'science'\n"
+        f"    panel_label = {label!r}\n"
+        "    def activate(self, ctx): pass\n"
+        "    def deactivate(self): pass\n"
+    )
+    if broken:
+        body += "raise RuntimeError('boom')\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", toml)
+        zf.writestr("livepanel/__init__.py", body)
+    return buf.getvalue()
+
+
+@pytest.mark.requirement("TC-PLUG-190")
+@pytest.mark.priority("MVP")
+def test_tc_plug_190_version_comparison_decides_whether_an_update_is_available():
+    """PLUG-190: a marketplace version counts as an update only when it is later than the installed
+    one, comparing numerically (1.10 is later than 1.9) and never flagging an unknown version."""
+    plugins = pytest.importorskip("galileo.plugins")
+    assert plugins.is_newer_version("1.10.0", "1.9.3")
+    assert plugins.is_newer_version("2.0", "1.99.99")
+    assert not plugins.is_newer_version("1.0.0", "1.0.0")
+    assert not plugins.is_newer_version("0.9", "1.0")
+    assert not plugins.is_newer_version("", "1.0")
+    assert not plugins.is_newer_version("1.1", "")
+
+
+@pytest.mark.requirement("TC-PLUG-190")
+@pytest.mark.priority("MVP")
+def test_tc_plug_190_update_replaces_the_running_code_without_a_restart(tmp_path):
+    """PLUG-190: installing a newer version of a loaded plugin unloads the old code, imports the
+    new in the same process, drops the old folder, keeps one panel, and tells the listeners."""
+    import sys
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    v1, v2 = tmp_path / "v1.zip", tmp_path / "v2.zip"
+    v1.write_bytes(_versioned_zip("1.0.0", "Old Label"))
+    v2.write_bytes(_versioned_zip("2.0.0", "New Label"))
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        changes = []
+        mgr.add_change_listener(lambda: changes.append(mgr.installed_version("livepanel")))
+        mgr.install(v1)
+        assert sys.modules["livepanel"].CODE_VERSION == "1.0.0"
+        assert mgr.update_available("livepanel", "2.0.0")
+        assert not mgr.update_available("livepanel", "1.0.0")
+
+        mgr.update(v2)
+
+    try:
+        assert sys.modules["livepanel"].CODE_VERSION == "2.0.0"
+        assert mgr.installed_version("livepanel") == "2.0.0"
+        assert not mgr.update_available("livepanel", "2.0.0")
+        assert [p.label for p in mgr.get_ui_registry().get_science_panels()] == ["New Label"]
+        assert not (plugins_dir / "livepanel-1.0.0").exists()
+        assert (plugins_dir / "livepanel-2.0.0").exists()
+        assert str(plugins_dir / "livepanel-1.0.0") not in sys.path
+        assert changes == ["1.0.0", "2.0.0"]
+    finally:
+        mgr.remove("livepanel")
+
+
+@pytest.mark.requirement("TC-PLUG-190")
+@pytest.mark.priority("MVP")
+def test_tc_plug_190_failed_update_keeps_the_working_version(tmp_path):
+    """PLUG-190: an update whose code fails to load is rolled back and the version that was
+    running is loaded again, files and panel intact."""
+    import sys
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    good, bad = tmp_path / "good.zip", tmp_path / "bad.zip"
+    good.write_bytes(_versioned_zip("1.0.0"))
+    bad.write_bytes(_versioned_zip("2.0.0", broken=True))
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.install(good)
+        with pytest.raises(plugins.PluginInstallError):
+            mgr.update(bad)
+
+    try:
+        assert mgr.installed_version("livepanel") == "1.0.0"
+        assert mgr.is_loaded("LivePlugin")
+        assert sys.modules["livepanel"].CODE_VERSION == "1.0.0"
+        assert (plugins_dir / "livepanel-1.0.0").exists()
+        assert not (plugins_dir / "livepanel-2.0.0").exists()
+        assert len(mgr.get_ui_registry().get_science_panels()) == 1
+    finally:
+        mgr.remove("livepanel")
+
+
+@pytest.mark.requirement("TC-PLUG-190")
+@pytest.mark.priority("MVP")
+def test_tc_plug_190_startup_loads_only_the_newest_left_over_version(tmp_path):
+    """PLUG-190: should an update have left an older version's folder behind, the next start loads
+    only the newest and clears the stale one."""
+    import sys
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    for version in ("1.0.0", "1.10.0", "1.9.0"):
+        d = plugins_dir / f"livepanel-{version}"
+        d.mkdir(parents=True)
+        with zipfile.ZipFile(io.BytesIO(_versioned_zip(version))) as zf:
+            zf.extractall(d)
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+        mgr = plugins.PluginManager()
+        mgr.initialize_from_disk()
+        try:
+            assert [r.manifest.version for r in mgr.list_installed()] == ["1.10.0"]
+            assert sys.modules["livepanel"].CODE_VERSION == "1.10.0"
+            assert sorted(p.name for p in plugins_dir.iterdir()) == ["livepanel-1.10.0"]
+        finally:
+            mgr.remove("livepanel")
+
+
+@pytest.mark.requirement("TC-PLUG-190")
+@pytest.mark.priority("MVP")
+def test_tc_plug_190_window_gains_and_loses_plugin_ui_live(tmp_path, monkeypatch):
+    """PLUG-190: installing, updating and removing a plugin changes the Science menu of the running
+    window; nothing needs a restart."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+    pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    zips = {}
+    for v in ("1.0.0", "2.0.0"):
+        zips[v] = tmp_path / f"{v}.zip"
+        zips[v].write_bytes(_versioned_zip(v, f"Panel{v}"))
+
+    win = _make_window(tmp_path, monkeypatch, [])
+    app = QtWidgets.QApplication.instance()
+    try:
+        with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir):
+            win._plugin_manager.install(zips["1.0.0"])
+            app.processEvents()
+            nav = win._primary_pages["science"]._secondary_nav
+            assert nav.has_item("LivePlugin")
+            first_page = win._primary_pages["science"]
+
+            win._plugin_manager.update(zips["2.0.0"])
+            app.processEvents()
+            assert win._primary_pages["science"] is not first_page
+            nav = win._primary_pages["science"]._secondary_nav
+            assert nav._buttons["LivePlugin"].text() == "Panel2.0.0"
+
+            win._plugin_manager.remove("livepanel")
+            app.processEvents()
+            assert not hasattr(win._primary_pages["science"], "_secondary_nav")
+    finally:
+        win._window.close()

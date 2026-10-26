@@ -9,6 +9,7 @@ from galileo.ui.qt_helpers import need
 from typing import TYPE_CHECKING, Any
 
 import logging
+from contextlib import nullcontext
 
 from ._common import _new_form_layout, _NEW_OBSERVATORY_LABEL, _NEW_PIER_LABEL
 from ._threads import _GeocodeThread, _MountPositionThread, _ResumeTrackingThread
@@ -573,14 +574,25 @@ class AppWindowObservatoryPierMixin:
         a Pier switch blocks the UI until the last device has connected."""
         import time
 
+        from ._assistant_dialog import hide_assistants_on_pier_change, refresh_assistant_buttons
+        hide_assistants_on_pier_change(self)
+        refresh_assistant_buttons(self)
+
         self._observatory_edit_btn.setEnabled(self._current_observatory is not None)
         self._observatory_delete_btn.setEnabled(self._current_observatory is not None)
         self._pier_edit_btn.setEnabled(self._current_pier is not None)
         self._pier_delete_btn.setEnabled(self._current_pier is not None)
 
+        from galileo.ui import startup_progress
+
+        pier_name = self._current_pier.name if self._current_pier is not None else None
+        window_shown = bool(getattr(self._window, "isVisible", lambda: False)())
+        autoconnect_count = sum(1 for s in self._device_pages.values() if s.get("autoconnect") is not None)
+        total = len(self._device_pages) + autoconnect_count + 10
         timings: list[tuple[str, float]] = []
 
-        def timed(label: str, fn) -> None:
+        def timed(label: str, fn, message: str | None = None) -> None:
+            startup_progress.report(message or label)
             start = time.perf_counter()
             try:
                 fn()
@@ -588,29 +600,34 @@ class AppWindowObservatoryPierMixin:
                 timings.append((label, time.perf_counter() - start))
 
         switch_start = time.perf_counter()
-        for page_id, state in self._device_pages.items():
-            timed(f"{page_id} reload", state["reload"])
-        for page_id, state in self._device_pages.items():
-            autoconnect = state.get("autoconnect")
-            if autoconnect is not None:
-                timed(f"{page_id} autoconnect", autoconnect)
-        timed("optics combo", self._refresh_optics_combo)
-        # Auto-connects above pushed the optics before the combo settled on this
-        # Pier's tube; re-send now that the active tube is the new Pier's.
-        timed("push optics to devices", self._push_context_to_devices)
-        timed("camera combo", self._refresh_camera_combo)
-        timed("camera imaging defaults", self._apply_camera_imaging_defaults)
-        timed("session camera label", self._refresh_session_camera_label)
-        timed("imaging filters", self._refresh_imaging_filters)
-        timed("current object", self._refresh_current_object)
-        refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
-        if refresh_star_atlas_site is not None:
-            timed("star atlas site", refresh_star_atlas_site)
-        timed("horizon", self._apply_horizon)
-        for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
-            refresh = getattr(self, refresh_name, None)
-            if refresh is not None:
-                timed(refresh_name.strip("_").replace("_", " "), refresh)
+        # A switch blocks the UI until the last device has connected, so show the same progress splash as
+        # start-up (a no-op when start-up's own is already up, or before the window is shown).
+        progress = startup_progress.transient_progress(total) if window_shown else nullcontext(False)
+        with progress:
+            startup_progress.report(f"Switching to Pier {pier_name}" if pier_name else "Switching Pier")
+            for page_id, state in self._device_pages.items():
+                timed(f"{page_id} reload", state["reload"], f"Loading {page_id} settings")
+            for page_id, state in self._device_pages.items():
+                autoconnect = state.get("autoconnect")
+                if autoconnect is not None:
+                    timed(f"{page_id} autoconnect", autoconnect, f"Connecting {page_id} devices")
+            timed("optics combo", self._refresh_optics_combo, "Selecting optical train")
+            # Auto-connects above pushed the optics before the combo settled on this
+            # Pier's tube; re-send now that the active tube is the new Pier's.
+            timed("push optics to devices", self._push_context_to_devices, "Sending optics to devices")
+            timed("camera combo", self._refresh_camera_combo, "Selecting camera")
+            timed("camera imaging defaults", self._apply_camera_imaging_defaults, "Applying camera defaults")
+            timed("session camera label", self._refresh_session_camera_label)
+            timed("imaging filters", self._refresh_imaging_filters, "Loading filters")
+            timed("current object", self._refresh_current_object, "Restoring current target")
+            refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
+            if refresh_star_atlas_site is not None:
+                timed("star atlas site", refresh_star_atlas_site, "Updating star atlas site")
+            timed("horizon", self._apply_horizon, "Applying horizon")
+            for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
+                refresh = getattr(self, refresh_name, None)
+                if refresh is not None:
+                    timed(refresh_name.strip("_").replace("_", " "), refresh)
         self._log_pier_switch_timings(time.perf_counter() - switch_start, timings)
         self._refresh_pier_connect_controls()
 
@@ -754,8 +771,11 @@ class AppWindowObservatoryPierMixin:
             if on_done is not None:
                 on_done()
 
+        from PySide6.QtCore import Qt
+        # Explicitly queued: `done` and `finished` touch widgets and Qt objects, so they must run on
+        # the UI thread, never on the worker that emits `position`.
         thread = _MountPositionThread(mount, self._window)
-        thread.position.connect(done)
+        thread.position.connect(done, Qt.ConnectionType.QueuedConnection)
 
         def finished() -> None:
             # Release the thread only once run() has really returned — `done` fires
@@ -763,7 +783,7 @@ class AppWindowObservatoryPierMixin:
             self._pier_poll_threads.pop(key, None)
             thread.deleteLater()
 
-        thread.finished.connect(finished)
+        thread.finished.connect(finished, Qt.ConnectionType.QueuedConnection)
         self._pier_poll_threads[key] = thread
         thread.start()
 

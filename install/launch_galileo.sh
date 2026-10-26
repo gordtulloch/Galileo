@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
 # Galileo launcher for macOS: checks for updates, then starts the app.
 # Created by install/install.sh as the desktop app icon's target.
 # See install/upgrade.sh for a manual, on-demand update that does not

@@ -204,6 +204,7 @@ def build_session_context(window: Any, pier: Any = None, camera_slot: str | None
         from galileo.ui.imaging import ImagingService
         svc = ImagingService(camera=camera)
         svc.auto_save_to_library = True
+        svc.pier_key = key
         svc.frame_context = dict(frame_context)
         svc._mount = mount
         return svc

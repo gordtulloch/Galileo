@@ -76,19 +76,23 @@ _POLAR_FAIR_ARCSEC = 300.0       # amber below this, red above
 
 def load_preview(path: str, bayer_pattern: str | None = None) -> np.ndarray | None:
     """The frame at *path* as an auto-stretched 8-bit array ``(h, w)`` or ``(h, w, 3)``, sub-sampled
-    if very large. With *bayer_pattern* a mono mosaic is debayered first (before sub-sampling, which
-    would otherwise destroy the mosaic). ``None`` if it can't be read (the frame may be gone or half
-    written)."""
+    if very large. A mono mosaic is debayered first (a half-resolution superpixel debayer, before
+    sub-sampling, which would otherwise destroy the mosaic) using the frame's own ``BAYERPAT``
+    header if it has one, else *bayer_pattern* (what the camera reports). ``None`` if it can't be
+    read (the frame may be gone or half written)."""
     try:
         from astropy.io import fits
 
-        from galileo.debayer import debayer
+        from galileo.debayer import BAYER_PATTERNS, superpixel
         from galileo.ui.imaging import _auto_stretch
-        data = np.asarray(fits.getdata(path))
+        with fits.open(path) as hdul:
+            data = np.asarray(hdul[0].data)
+            header_pattern = str(hdul[0].header.get("BAYERPAT", "")).strip().upper()
         if data.ndim == 3:                           # FITS stores colour plane-first
             data = np.moveaxis(data[:3], 0, -1) if data.shape[0] >= 3 else data[0]
-        if bayer_pattern and data.ndim == 2:
-            data = debayer(data, bayer_pattern)
+        pattern = header_pattern if header_pattern in BAYER_PATTERNS else bayer_pattern
+        if pattern and data.ndim == 2:
+            data = superpixel(data, pattern)
         step = max(1, max(data.shape[:2]) // _MAX_PREVIEW_PX)
         return _auto_stretch(data[::step, ::step])
     except Exception:
@@ -301,12 +305,13 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if path == self._loading_path:
             return
         self._loading_path = path
-        # Follow the Imaging tab's Debayer box (IMG-110): the preview is debayered when it is ticked.
-        service = self._window._imaging_service
-        pattern = service.bayer_pattern if service.debayer_enabled else None
+        camera = self._camera()
 
         def work() -> None:
-            self._emit("preview_ready", {"path": path, "array": load_preview(path, pattern)})
+            # A colour camera's frames are shown debayered; the frame's own BAYERPAT header (read
+            # in load_preview) wins over what the connected camera reports.
+            from galileo.debayer import camera_pattern
+            self._emit("preview_ready", {"path": path, "array": load_preview(path, camera_pattern(camera))})
         threading.Thread(target=work, name="solve-preview", daemon=True).start()
 
     # --- UI-thread slots --------------------------------------------------
@@ -350,6 +355,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             self._loading_path = None
         if payload["array"] is not None and self.isVisible() and payload["path"] == self._latest_path:
             self.image_view.show_array(payload["array"])
+            self.layout_choice.set_frame(payload["array"])
             self._shown_path = payload["path"]
             self._update_frame_label()
 
@@ -435,6 +441,12 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     def _scale_hint(self) -> float | None:
         focal, _aperture, pixel_um = self._optics()
         return _ARCSEC_PER_RAD_UM_MM * pixel_um / focal if focal and pixel_um else None
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        choice = getattr(self, "layout_choice", None)
+        if choice is not None:
+            choice.fit_width()
 
     # --- Devices ----------------------------------------------------------
 

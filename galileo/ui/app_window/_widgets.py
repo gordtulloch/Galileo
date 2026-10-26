@@ -549,8 +549,14 @@ class _NavColumn(_QWidgetBase):
             self._buttons[section_id] = btn
             return btn
 
+        self._layout = layout
+        self._group = group
+        self._add_button = add_button
+        self._top_ids: list[str] = []   # the buttons above the stretch, in order
+
         for section_id, label, icon_name in items:
             add_button(section_id, label, icon_name)
+            self._top_ids.append(section_id)
 
         layout.addStretch(1)
 
@@ -604,6 +610,39 @@ class _NavColumn(_QWidgetBase):
         btn = self._buttons.get(section_id)
         if btn is not None:
             btn.setVisible(False)
+
+    def show_item(self, section_id: str) -> None:
+        """Show a button hidden with :meth:`hide_item`."""
+        btn = self._buttons.get(section_id)
+        if btn is not None:
+            btn.setVisible(True)
+
+    def has_item(self, section_id: str) -> bool:
+        return section_id in self._buttons
+
+    def add_item(self, section_id: str, label: str, icon_name: str) -> None:
+        """Append a button after the existing ones above the stretch (a plugin installed while
+        Galileo is running)."""
+        if section_id in self._buttons:
+            return
+        btn = self._add_button(section_id, label, icon_name)
+        # add_button appended it at the end of the layout; move it above the stretch.
+        self._layout.removeWidget(btn)
+        self._layout.insertWidget(len(self._top_ids), btn)
+        self._top_ids.append(section_id)
+
+    def remove_item(self, section_id: str) -> None:
+        """Delete the button for *section_id*. The caller selects something else first if it was
+        the checked one."""
+        btn = self._buttons.pop(section_id, None)
+        if btn is None:
+            return
+        if section_id in self._top_ids:
+            self._top_ids.remove(section_id)
+        self._group.removeButton(btn)
+        self._layout.removeWidget(btn)
+        self._icon_entries = [e for e in self._icon_entries if e[0] is not btn]
+        btn.deleteLater()
 
     def refresh_icons(self, dim_color: str, accent: str) -> None:
         """Regenerate every icon in this column after a theme/accent change."""

@@ -226,7 +226,7 @@ def test_tc_plt_070_screen_has_the_reference_elements(page):
     QW = QtWidgets
     titles = [g.title() for g in page.findChildren(QW.QGroupBox)]
     assert titles == ["Solver Control", "Solver Action", "Telescope Coordinates (JNow)",
-                      "Solution Coordinates (JNow)", "Plate Solve Capture Options", "Solver Mode"]
+                      "Solution Coordinates (JNow)", "Plate Solve Capture Options", "Solver Mode", "View"]
     buttons = _texts(page, QW.QPushButton)
     for label in ("Capture && Solve", "Load && Slew…", "Stop"):
         assert label in buttons
@@ -792,15 +792,42 @@ def test_tc_plt_070_capture_options_reach_the_camera_and_filter_wheel(window, pa
     assert all(c.kwargs["binning"] == 2 and c.kwargs["gain"] == 120 for c in exposures)
 
 
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("P2")
+def test_tc_plt_070_layout_follows_the_frame_shape_unless_chosen(window, page):
+    """PLT-070: like the Imaging screen, a portrait frame moves the image to a full-height column on the right
+    and "Choose layout manually" overrides the frame's shape."""
+    import numpy as np
+    from galileo.ui.imaging import LANDSCAPE, PORTRAIT
+    choice = page.layout_choice
+    assert choice.orientation == LANDSCAPE and page._image_box.parent() is page._right
+    choice.set_frame(np.zeros((60, 40), dtype=np.uint8))
+    assert choice.orientation == PORTRAIT
+    assert page._image_box.parent() is page and page._results_box.parent() is page and not page._right.isVisibleTo(page)
+    choice.check.setChecked(True)
+    choice.combo.setCurrentIndex(0)
+    assert choice.orientation == LANDSCAPE and page._image_box.parent() is page._right
+    choice.check.setChecked(False)
+    assert choice.orientation == PORTRAIT
+
+
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("P2")
-def test_tc_img_110_solve_preview_is_debayered_when_pattern_given(tmp_path):
-    """IMG-110: the Solve screen's preview is debayered (colour) when the Imaging tab's Debayer box is on, mono otherwise."""
+def test_tc_img_110_solve_preview_is_debayered_when_the_camera_or_header_says_colour(tmp_path):
+    """IMG-110: the Solve screen's preview is debayered (colour) when the camera reports a Bayer pattern or the
+    frame's own BAYERPAT header names one, and mono otherwise."""
     import numpy as np
     from astropy.io import fits
     from galileo.ui.solve import load_preview
+    data = (np.random.default_rng(0).random((64, 64)) * 60000).astype(np.uint16)
     path = tmp_path / "frame.fits"
-    fits.writeto(path, (np.random.default_rng(0).random((64, 64)) * 60000).astype(np.uint16))
+    fits.writeto(path, data)
     assert load_preview(str(path)).ndim == 2
     colour = load_preview(str(path), "RGGB")
     assert colour.ndim == 3 and colour.shape[2] == 3
+
+    tagged = tmp_path / "tagged.fits"
+    header = fits.Header()
+    header["BAYERPAT"] = "GRBG"
+    fits.writeto(tagged, data, header)
+    assert load_preview(str(tagged)).ndim == 3

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+# Copyright (C) 2025-2026 Gord Tulloch
+# Portions derived from xisfits (https://github.com/vrruiz/xisfits),
+# Copyright (c) 2019 Víctor R. Ruiz <rvr@linotipo.es>, MIT License (see licenses/xisfits-LICENSE.txt).
 """
 XISF to FITS Converter
 
@@ -10,7 +14,6 @@ XISF (Extensible Image Serialization Format) is an XML-based file format that ca
 
 The converter extracts the header information as FITS-compatible cards and converts the image data.
 
-Thanks to
 """
 
 import os

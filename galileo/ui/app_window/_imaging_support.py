@@ -176,18 +176,24 @@ class AppWindowImagingSupportMixin:
             self._track_when_slew_finishes(adapter, obj)
         return True
 
-    def _connect_device_adapter(self: AppWindowState, category, driver: str, server: str, port: int, device_name: str):
+    def _connect_device_adapter(
+        self: AppWindowState, category, driver: str, server: str, port: int, device_name: str, configure=None,
+    ):
         """Instantiate and connect one device backend for *category*, or
         return ``None`` (having logged why) on failure. Shared by any
         Equipment page that needs a live per-device connection — the
         Camera page's auto-connect and the Focuser page's per-panel Connect
-        and status polling."""
+        and status polling. *configure*, if given, is called with the new
+        adapter just before it connects (the Focuser page applies its saved
+        mode and travel limits that way)."""
         import asyncio
         from galileo.ui import startup_progress
         target = f"{device_name or category} at {server}:{port}"
         startup_progress.begin_detail(f"Connecting to {target}")
         try:
             adapter = self._make_adapter(category, driver, server, port, device_name)
+            if configure is not None:
+                configure(adapter)
             asyncio.run(adapter.connect())
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)
@@ -269,9 +275,26 @@ class AppWindowImagingSupportMixin:
                             "elevation": getattr(obs, "elevation_m", None)}
             except Exception:
                 logger.exception("Could not read the Observatory location to send to the devices")
+        def optics_of(tube) -> dict:
+            return {"focal_length_mm": getattr(tube, "focal_length_mm", 0.0) or 0.0,
+                    "aperture_mm": getattr(tube, "aperture_mm", 0.0) or 0.0}
+
         tube = self.active_optical_tube()
-        optics = {"focal_length_mm": getattr(tube, "focal_length_mm", 0.0) or 0.0,
-                      "aperture_mm": getattr(tube, "aperture_mm", 0.0) or 0.0}
+        optics = optics_of(tube)
+        # A device associated with a tube on the Optics page (a guide camera behind its own
+        # guide scope) gets that tube's optics, not the selected tube's.
+        owned: dict[str, dict] = {}
+        if pier is not None:
+            try:
+                from galileo.observatory import get_device_config, list_optical_tubes
+                for owner in list_optical_tubes(pier):
+                    for key in owner.associated:
+                        category, _, slot = key.partition(":")
+                        cfg = get_device_config(pier, category, slot=slot)
+                        if cfg is not None and cfg.device_name:
+                            owned[cfg.device_name] = optics_of(owner)
+            except Exception:
+                logger.exception("Could not work out which optical tube each device sits behind")
         if adapters is None:
             adapters = list(self._camera_backends.values())
             adapters += [page.get("adapter") for page in self._device_pages.values()
@@ -280,15 +303,18 @@ class AppWindowImagingSupportMixin:
             if adapter is None or not hasattr(adapter, "push_context"):
                 continue
             try:
-                asyncio.run(adapter.push_context(**site, **optics))
+                asyncio.run(adapter.push_context(
+                    **site, **owned.get(getattr(adapter, "device_name", None), optics)))
             except Exception:
                 logger.exception("Could not push context to %r", getattr(adapter, "device_name", adapter))
         # Devices on the same INDI servers that Galileo doesn't drive (a PHD2-owned guide camera).
         servers = {(a.host, a.port) for a in adapters if getattr(a, "backend", "") == "indi"}
-        if servers and optics["focal_length_mm"] > 0 and optics["aperture_mm"] > 0:
+        if servers:
             from galileo.adapters.indi._base import push_optics_to_server
+            per_device = {name: (o["focal_length_mm"], o["aperture_mm"]) for name, o in owned.items()}
             for host, port in servers:
-                asyncio.run(push_optics_to_server(host, port, **optics))
+                asyncio.run(push_optics_to_server(host, port, optics["focal_length_mm"],
+                                                  optics["aperture_mm"], per_device))
 
     def _connect_camera_device(self: AppWindowState, slot_label: str, driver: str, server: str, port: int, device_name: str) -> None:
         """Connect one camera device — shared by the Camera page's Primary

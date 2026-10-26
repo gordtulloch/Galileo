@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 import logging
 
 from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
-from ._threads import _PreviewRenderThread, _NudgeThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
+from ._hold_to_move import HoldToMove
+from ._threads import _PreviewRenderThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
 from ._widgets import _HistogramWidget
 
 logger = logging.getLogger(__name__)
@@ -165,14 +166,6 @@ class AppWindowImagingPageMixin:
         view_group = QGroupBox("View")
         view_form = _new_form_layout(view_group)
 
-        debayer_check = QCheckBox("Debayer")
-        debayer_check.setToolTip(
-            "Show the frame from a one-shot-colour camera in colour, using the Bayer pattern set for "
-            "the camera on Equipment > Camera (RGGB by default) (IMG-110). Only the preview changes: "
-            "statistics, the histogram and Save Frame keep the camera's raw data."
-        )
-        view_form.addRow(debayer_check)
-
         live_stack_check = QCheckBox("Live Stack")
         live_stack_check.setToolTip(
             f"Build the frames of one Capture into a single image instead of each replacing the last "
@@ -209,7 +202,9 @@ class AppWindowImagingPageMixin:
         nudge_north_btn, nudge_west_btn = QPushButton("N"), QPushButton("W")
         nudge_stop_btn = QPushButton("Stop")
         nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
-        nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn}
+        nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn,
+                             "NW": QPushButton("NW"), "NE": QPushButton("NE"),
+                             "SW": QPushButton("SW"), "SE": QPushButton("SE")}
         for _key, btn in nudge_dir_buttons.items():
             btn.setProperty("helpKey", "n s e w")
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
@@ -220,6 +215,8 @@ class AppWindowImagingPageMixin:
         nudge_grid.addWidget(nudge_stop_btn, 1, 1)
         nudge_grid.addWidget(nudge_east_btn, 1, 2)
         nudge_grid.addWidget(nudge_south_btn, 2, 1)
+        for key, (row, col) in {"NW": (0, 0), "NE": (0, 2), "SW": (2, 0), "SE": (2, 2)}.items():
+            nudge_grid.addWidget(nudge_dir_buttons[key], row, col)
         nudge_grid.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         nudge_layout.addLayout(nudge_grid)
         nudge_form = _new_form_layout()
@@ -227,20 +224,12 @@ class AppWindowImagingPageMixin:
         for name, rate in NUDGE_RATES.items():
             nudge_rate_combo.addItem(f"{name} ({rate:g}°/s)", rate)
         nudge_rate_combo.setCurrentIndex(1)
-        nudge_rate_combo.setToolTip("How fast the mount moves during a nudge.")
+        nudge_rate_combo.setToolTip("How fast the mount moves while a button is held.")
         nudge_form.addRow("Speed", nudge_rate_combo)
-        nudge_duration_spin = QDoubleSpinBox()
-        nudge_duration_spin.setRange(0.1, 10.0)
-        nudge_duration_spin.setSingleStep(0.1)
-        nudge_duration_spin.setDecimals(1)
-        nudge_duration_spin.setValue(0.5)
-        nudge_duration_spin.setSuffix(" s")
-        nudge_duration_spin.setToolTip("How long the mount moves for each press.")
-        nudge_form.addRow("Duration", nudge_duration_spin)
         nudge_layout.addLayout(nudge_form)
         nudge_group.setToolTip(
-            "Nudge the telescope while exposing (IMG-130). Uses the mount connected on Equipment > Mount, "
-            "with the same axis directions as its jog pad."
+            "Nudge the telescope while exposing (IMG-130): hold a button to move the mount, release to stop. "
+            "Uses the mount connected on Equipment > Mount, with the same axis directions as its jog pad."
         )
         settings_layout.addWidget(nudge_group)
 
@@ -293,6 +282,7 @@ class AppWindowImagingPageMixin:
             "Open the Darks Assistant: capture one dark frame at each exposure length in a "
             "comma-separated list, saving each to the Library."
         )
+        self._assistant_buttons = {"flats": flats_btn, "darks": darks_btn}
         annotate_status = QLabel("")
         annotate_status.setObjectName("StatusHint")
         zoom_toolbar = build_zoom_toolbar(preview_view, label=annotate_status)
@@ -558,45 +548,18 @@ class AppWindowImagingPageMixin:
             hist = service.get_histogram()
             histogram.set_data(hist.get("counts", []))
 
-        def _use_camera_bayer_pattern(service, rebuild: bool) -> None:
-            # The pattern saved for the selected camera on Equipment > Camera (RGGB until changed).
-            from galileo.observatory import get_device_config
-            pattern = None
-            if self._current_pier is not None:
-                try:
-                    cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
-                    pattern = cfg.bayer_pattern if cfg is not None else None
-                except Exception:
-                    logger.exception("Could not load the camera's Bayer pattern")
-            service.set_bayer_pattern(pattern, rebuild=rebuild)
-
         # Debayer + stretch takes seconds on a large frame, so it renders on a worker thread
-        # (numpy releases the GIL, so a thread is enough — NFR-PERF-020). Each toggle starts a
-        # new render; the service drops any that finish after a newer toggle.
+        # (numpy releases the GIL, so a thread is enough — NFR-PERF-020). Each change starts a
+        # new render; the service drops any that finish after a newer one.
         preview_renders: set = set()
 
         def _preview_rendered(service, thread, rendered) -> None:
             preview_renders.discard(thread)
             if service.apply_preview(rendered):
                 _refresh_preview(service)
-                status_label.setText(service.debayer_note or "Debayer off.")
+                status_label.setText(service.debayer_note)
 
-        def _debayer_toggled(checked: bool) -> None:
-            service = _current_service()
-            _use_camera_bayer_pattern(service, rebuild=False)
-            service.set_debayer(checked, rebuild=False)
-            if service.current_frame is None:
-                return
-            status_label.setText("Debayering…" if checked else "Removing debayer…")
-            thread = _PreviewRenderThread(service, self._window)
-            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(service, t, rendered))
-            thread.finished.connect(thread.deleteLater)
-            preview_renders.add(thread)
-            thread.start()
-
-        debayer_check.toggled.connect(_debayer_toggled)
         self._imaging_preview_renders = preview_renders
-        self._imaging_debayer_check = debayer_check
 
         # Annotate (IMG-200): a fresh plate solve is only started when there is no valid overlay
         # already cached for the frame on screen, so re-checking the box after a capture that
@@ -648,7 +611,7 @@ class AppWindowImagingPageMixin:
 
         # Re-render as the slider moves, but debounced (IMG-190): re-stretching a large frame takes
         # real time, and a slider fires a change per pixel of drag, not once per gesture like the
-        # debayer checkbox. A short idle gap between events is what actually starts the render;
+        # debayer toggle once did. A short idle gap between events is what actually starts the render;
         # apply_preview's generation check drops any render that finishes after a newer one started.
         stretch_render_timer = QTimer(page)
         stretch_render_timer.setSingleShot(True)
@@ -694,62 +657,35 @@ class AppWindowImagingPageMixin:
         orientation_combo.currentIndexChanged.connect(_orientation_choice_changed)
 
         # --- mount nudge (IMG-130) ---------------------------------------------
-        nudge_state = {"thread": None}
-
+        # Hold a button to move, release to stop (as KStars' mount motion pad does).
         def _nudge_mount_adapter():
             return (self._device_pages.get("mount") or {}).get("adapter")
 
-        def _set_nudge_busy(busy: bool) -> None:
-            for btn in nudge_dir_buttons.values():
-                btn.setEnabled(not busy)
+        def _nudge_reversed() -> tuple:
+            getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
+            return getter() if getter is not None else (False, False)
 
-        def _nudge(direction: str) -> None:
-            mount = _nudge_mount_adapter()
-            if mount is None:
+        nudge_motion = HoldToMove(_nudge_mount_adapter, lambda: float(nudge_rate_combo.currentData()),
+                                  _nudge_reversed, page)
+        nudge_state = {"controller": nudge_motion}
+
+        def _nudge_failed(message: str) -> None:
+            if "parked" in message.lower():
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+            else:
+                self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
+
+        nudge_motion.failed.connect(_nudge_failed)
+
+        def _nudge_pressed(direction: str) -> None:
+            if _nudge_mount_adapter() is None:
                 self._window.statusBar().showMessage("Connect the mount on Equipment > Mount to nudge it.", 4000)
-                return
-            if nudge_state["thread"] is not None:
-                return
-            reversed_getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
-            reversed_axes = reversed_getter() if reversed_getter is not None else (False, False)
-            rate, duration = nudge_rate_combo.currentData(), nudge_duration_spin.value()
-
-            def done() -> None:
-                nudge_state["thread"] = None
-                _set_nudge_busy(False)
-
-            def failed(message: str) -> None:
-                done()
-                if "parked" in message.lower():
-                    self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                else:
-                    self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
-                logger.error("Mount nudge %s failed: %s", direction, message)
-
-            thread = _NudgeThread(mount, direction, rate, duration, reversed_axes, self._window)
-            thread.finished_ok.connect(done)
-            thread.failed.connect(failed)
-            nudge_state["thread"] = thread
-            _set_nudge_busy(True)
-            logger.info("Mount: nudge %s at %g°/s for %.1fs", direction, rate, duration)
-            thread.start()
 
         for direction, btn in nudge_dir_buttons.items():
-            btn.clicked.connect(lambda _checked=False, d=direction: _nudge(d))
+            nudge_motion.attach(btn, direction)
+            btn.pressed.connect(lambda d=direction: _nudge_pressed(d))
 
-        def _nudge_stop() -> None:
-            mount = _nudge_mount_adapter()
-            if mount is None:
-                return
-            import asyncio
-            try:
-                asyncio.run(mount.move_axis(0, 0.0))
-                asyncio.run(mount.move_axis(1, 0.0))
-            except Exception:
-                logger.exception("Mount nudge stop failed")
-            logger.info("Mount: nudge Stop requested")
-
-        nudge_stop_btn.clicked.connect(_nudge_stop)
+        nudge_stop_btn.clicked.connect(nudge_motion.stop_all)
 
         self._imaging_ui = {
             "settings_panel": settings_panel, "dock_panel": dock_panel, "log_bar": log_bar,
@@ -762,13 +698,42 @@ class AppWindowImagingPageMixin:
             "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
-            "nudge_rate": nudge_rate_combo, "nudge_duration": nudge_duration_spin,
+            "nudge_rate": nudge_rate_combo,
             "nudge_state": nudge_state,
         }
 
         def _is_displayed(key) -> bool:
             from galileo.current_object import pier_key
             return key == pier_key(self._current_pier)
+
+        # A running session captures through its own ImagingService, so the screen has to be told
+        # when one of its frames lands. The bus handler runs on the session's thread; a queued signal
+        # moves the repaint onto the UI thread.
+        from PySide6.QtCore import Signal
+        from galileo.bus import FrameCapturedEvent, get_bus
+
+        class _SessionFrames(QObject):
+            arrived = Signal(object, object)
+
+        session_frames = _SessionFrames(page)
+
+        def _session_frame_arrived(key, service) -> None:
+            if not _is_displayed(key):
+                return
+            _refresh_preview(service)
+            _refresh_histogram(service)
+            _apply_orientation(service)
+            save_frame_btn.setEnabled(service.current_frame is not None)
+            annotate_btn.setEnabled(service.current_frame is not None)
+
+        session_frames.arrived.connect(_session_frame_arrived, Qt.ConnectionType.QueuedConnection)
+
+        def _on_frame_captured(event) -> None:
+            session_frames.arrived.emit(event.pier, event.service)
+
+        get_bus().subscribe(FrameCapturedEvent, _on_frame_captured)
+        page.destroyed.connect(lambda _=None: get_bus().unsubscribe(FrameCapturedEvent, _on_frame_captured))
+        self._imaging_session_frames = session_frames
 
         def _refresh_library_images() -> None:
             images = getattr(getattr(self, "_library_screens", None), "images", None)
@@ -902,7 +867,6 @@ class AppWindowImagingPageMixin:
             service.auto_save_to_library = auto_save_check.isChecked()
             service.live_stack_enabled = live_stack_check.isChecked()
             service.frame_context = self._imaging_frame_context()
-            _use_camera_bayer_pattern(service, rebuild=False)
 
             # Everything below is scoped to THIS capture (service/key fixed above) —
             # so a second capture started on a different Pier gets its own countdown,
@@ -1000,15 +964,20 @@ class AppWindowImagingPageMixin:
             timer.start(100)
             countdown["timer"] = timer
 
+            # These handlers paint widgets and edit shared state, and the signals are emitted from the
+            # worker thread. A closure connected without a type can run on the emitting thread, so with
+            # two Piers capturing at once two threads would touch the UI together — queue them onto the
+            # UI thread.
+            queued = Qt.ConnectionType.QueuedConnection
             if mosaic_mode:
                 thread = _MosaicCaptureThread(service, quantity, duration, filter_name, frame_type, page)
-                thread.slew_started.connect(on_slew_started)
+                thread.slew_started.connect(on_slew_started, queued)
             else:
                 thread = _CaptureThread(service, quantity, duration, filter_name, frame_type, page)
-            thread.frame_started.connect(on_frame_started)
-            thread.frame_done.connect(on_frame_done)
-            thread.finished_ok.connect(on_capture_finished)
-            thread.failed.connect(on_capture_failed)
+            thread.frame_started.connect(on_frame_started, queued)
+            thread.frame_done.connect(on_frame_done, queued)
+            thread.finished_ok.connect(on_capture_finished, queued)
+            thread.failed.connect(on_capture_failed, queued)
             self._imaging_capture_threads[key] = thread
             thread.start()
 
