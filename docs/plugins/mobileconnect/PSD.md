@@ -8,6 +8,7 @@
 | **Date** | 2026-10-27 |
 | **Parent project** | [Galileo Core PSD](../../PSD.md) |
 | **Sibling plugins** | [NodeConnect](../nodeconnect/PSD.md) — defines the shared Connect Link facility (its Section 6.2); [WebConnect](../webconnect/PSD.md) — the same control surface from a web browser |
+| **Client apps** | The iOS/iPadOS and Android apps have their own scope in the [Galileo-MobileConnect](https://github.com/gordtulloch/Galileo-MobileConnect) repository (`docs/PSD.md`); this document specifies the plugin and the operational surface, and that one how the apps present it |
 | **Downstream documents** | SRS, SDD, RTM — not yet written; to follow this PSD's approval |
 
 ---

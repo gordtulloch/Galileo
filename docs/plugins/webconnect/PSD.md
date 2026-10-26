@@ -8,6 +8,7 @@
 | **Date** | 2026-10-27 |
 | **Parent project** | [Galileo Core PSD](../../PSD.md) |
 | **Sibling plugins** | [MobileConnect](../mobileconnect/PSD.md) — defines the operational surface this plugin reuses (its Section 6.4); [NodeConnect](../nodeconnect/PSD.md) — defines the shared Connect Link facility (its Section 6.2) |
+| **Product repository** | The Flask application (and its plugin shim) is built in [Galileo-WebConnect](https://github.com/gordtulloch/Galileo-WebConnect), whose `docs/PSD.md` is the product scope; this document records the core dependencies and the proxying design |
 | **Downstream documents** | SRS, SDD, RTM — not yet written; to follow this PSD's approval |
 
 ---
