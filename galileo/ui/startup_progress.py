@@ -53,7 +53,7 @@ def add_steps(count: int) -> None:
 
 @contextmanager
 def transient_progress(total: int) -> Iterator[bool]:
-    """Show the progress splash for a long operation after start-up (e.g. switching Pier).
+    """Show the progress panel for a long operation after start-up (e.g. switching Pier), without the logo or notices.
 
     Yields True when it installed its own splash, False when none was shown — a start-up reporter is
     already running (the operation is part of start-up), or there is no Qt application/logo. Either way
@@ -68,7 +68,7 @@ def transient_progress(total: int) -> Iterator[bool]:
     splash = None
     if app is not None:
         from galileo.app import _show_splash
-        splash = _show_splash(app)
+        splash = _show_splash(app, compact=True)
     if splash is None:
         yield False
         return
@@ -168,9 +168,10 @@ def make_splash_class():
             width, height = self.width(), self.height()
             # Version + copyright notice, bottom-aligned within the logo area (above the progress strip).
             logo_h = self._logo_height or height
-            painter.setPen(QColor("white"))
-            painter.drawText(0, 0, width, logo_h,
-                             int(Qt.AlignBottom | Qt.AlignHCenter), self.message())
+            if self.message():
+                painter.setPen(QColor("white"))
+                painter.drawText(0, 0, width, logo_h,
+                                 int(Qt.AlignBottom | Qt.AlignHCenter), self.message())
 
             margin = int(width * 0.12)
             bar_h = 10

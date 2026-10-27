@@ -119,11 +119,13 @@ def _schedule_splash_finish(splash, main_window, started_at: float) -> None:
     QTimer.singleShot(delay_ms, lambda: splash.finish(main_window))
 
 
-def _show_splash(app):
+def _show_splash(app, compact: bool = False):
     """Show the Galileo logo immediately as a translucent splash screen.
 
     It stays up only while startup work (database, main window) runs; ``main``
     closes it as soon as the window is shown, with no fixed minimum display time.
+    *compact* gives a plain dark progress panel with no logo, version or copyright notice, for
+    operations after start-up (switching Observatory or Pier).
     """
     from PySide6.QtGui import QColor, QPixmap
     from PySide6.QtCore import Qt
@@ -142,6 +144,14 @@ def _show_splash(app):
     from PySide6.QtGui import QPainter
 
     from galileo.ui.startup_progress import PROGRESS_AREA_HEIGHT, make_splash_class
+
+    if compact:
+        panel = QPixmap(min(pixmap.width(), 640), PROGRESS_AREA_HEIGHT + 30)
+        panel.fill(QColor(20, 24, 32, 235))
+        splash = make_splash_class()(panel, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        splash.show()
+        app.processEvents()
+        return splash
 
     # Extend the logo downwards with a transparent strip so the progress bar sits beneath the licence notice
     # instead of over the artwork.
