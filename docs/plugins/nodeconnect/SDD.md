@@ -25,7 +25,7 @@ The single package `nodeconnect`, its ADRs, data design and wire API. Core archi
 
 ### 1.3 Design status and prerequisites
 
-The plugin sits on facilities that **do not exist yet**: Connect Link (CL), per-record change tracking with tombstones (C1), the replicable-table registry (C2), the settings-changed event (C3), the session busy signal (C4), the loopback guard (C5), core-owned sync tables (C6), and the Library *On Master* location state (C7). All are named as ports (Section 3.0) so the plugin can be developed against stubs. Where a port's shape is inferred rather than specified, Section 8 says so.
+The plugin sits on facilities that are **now specified in the core SRS/SDD (2026-10-30: `LINK`, `REPL-010`–`080`, `LIB-200`–`220`, `HIST-050`, `PROF-130`, `GUIDE-100`; core SDD §4.28, §4.32) but not yet built**: Connect Link (CL), per-record change tracking with tombstones (C1), the replicable-table registry (C2), the settings-changed event (C3), the session busy signal (C4), the loopback guard (C5), core-owned sync tables (C6), and the Library *On Master* location state (C7). All are named as ports (Section 3.0) so the plugin can be developed against stubs. Where a port's shape is inferred rather than specified, Section 8 says so.
 
 ### 1.4 References
 

@@ -40,23 +40,28 @@ def _attrs(**kw: str) -> str:
     return " ".join(f"{k}={quoteattr(str(v))}" for k, v in kw.items())
 
 
-def text_vec(dev: str, name: str, items: dict[str, str], perm: str = "ro") -> str:
+def text_vec(dev: str, name: str, items: dict[str, str], perm: str = "ro", group: str = "Main") -> str:
     body = "".join(f'<defText name="{k}" label="{k}">{v}</defText>' for k, v in items.items())
-    return f'<defTextVector {_attrs(device=dev, name=name, label=name, group="Main", state="Idle", perm=perm)}>{body}</defTextVector>'
+    return f'<defTextVector {_attrs(device=dev, name=name, label=name, group=group, state="Idle", perm=perm)}>{body}</defTextVector>'
 
 
-def num_vec(dev: str, name: str, items: dict[str, tuple], perm: str = "rw") -> str:
+def num_vec(dev: str, name: str, items: dict[str, tuple], perm: str = "rw", group: str = "Main", step: float = 1) -> str:
     """items: element -> (value, min, max)."""
     body = "".join(
-        f'<defNumber name="{k}" label="{k}" format="%g" min="{lo}" max="{hi}" step="1">{v}</defNumber>'
+        f'<defNumber name="{k}" label="{k}" format="%g" min="{lo}" max="{hi}" step="{step}">{v}</defNumber>'
         for k, (v, lo, hi) in items.items()
     )
-    return f'<defNumberVector {_attrs(device=dev, name=name, label=name, group="Main", state="Idle", perm=perm)}>{body}</defNumberVector>'
+    return f'<defNumberVector {_attrs(device=dev, name=name, label=name, group=group, state="Idle", perm=perm)}>{body}</defNumberVector>'
 
 
-def sw_vec(dev: str, name: str, items: dict[str, bool], rule: str = "OneOfMany") -> str:
+def sw_vec(dev: str, name: str, items: dict[str, bool], rule: str = "OneOfMany", group: str = "Main", perm: str = "rw") -> str:
     body = "".join(f'<defSwitch name="{k}" label="{k}">{"On" if v else "Off"}</defSwitch>' for k, v in items.items())
-    return f'<defSwitchVector {_attrs(device=dev, name=name, label=name, group="Main", state="Idle", perm="rw", rule=rule)}>{body}</defSwitchVector>'
+    return f'<defSwitchVector {_attrs(device=dev, name=name, label=name, group=group, state="Idle", perm=perm, rule=rule)}>{body}</defSwitchVector>'
+
+
+def delete_property(dev: str, name: str) -> str:
+    """The ``delProperty`` a driver sends when it withdraws a property (e.g. on a mode change)."""
+    return f"<delProperty {_attrs(device=dev, name=name)}/>"
 
 
 def blob_vec(dev: str, name: str) -> str:
@@ -138,8 +143,12 @@ class FakeIndiServer:
     # Properties whose changes show as Busy before Ok, like a real move.
     _SLOW: ClassVar[set[str]] = {"EQUATORIAL_EOD_COORD", "FILTER_SLOT", "ABS_FOCUS_POSITION", "FOCUS_TIMER", "ABS_ROTATOR_ANGLE"}
 
-    def __init__(self, preconnected: tuple[str, ...] = ()) -> None:
+    def __init__(self, preconnected: tuple[str, ...] = (), extras: dict[str, dict] | None = None) -> None:
+        """*extras* adds devices on top of the four standard ones (opt-in, so tests that count the
+        standard devices are unaffected), each ``{"static": [...], "on_connect": [...]}`` like ``_devices()``."""
         self.devices = _devices()
+        if extras:
+            self.devices.update(extras)
         self.connected: set[str] = set(preconnected)
         self.received: list[tuple[str, str, str, dict[str, str]]] = []
         self.blob_enabled: set[str] = set()
@@ -161,6 +170,11 @@ class FakeIndiServer:
             with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
             sock.close()
+
+    def push(self, xml: str) -> None:
+        """Send *xml* to every connected client, as a driver does when it changes a property unprompted."""
+        for sock in list(self._clients):
+            self._send(sock, xml)
 
     # -- plumbing ----------------------------------------------------------
 

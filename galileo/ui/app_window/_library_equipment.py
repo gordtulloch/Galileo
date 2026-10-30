@@ -73,6 +73,8 @@ class AppWindowLibraryEquipmentMixin:
                 page_widget = self._build_optics_page()
             elif cat_id == "aux":
                 page_widget = self._build_aux_page()
+            elif cat_id == "switch":
+                page_widget = self._build_switch_page(label)
             elif cat_id == "weather":
                 page_widget = self._build_weather_page()
             elif cat_id == "dome":

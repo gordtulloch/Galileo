@@ -11,6 +11,7 @@ connections per Pier.  No INDI, Alpaca, or Qt dependency lives here.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -20,6 +21,17 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from galileo.core.capabilities import ConnectionState, DeviceCapabilities
 from galileo.core.monitor import ConnectionMonitor as ConnectionMonitor  # re-exported so importers find it here
+from galileo.core.switches import (  # re-exported: the switch panel model and profile types live in galileo.core.switches
+    FlatSwitch as FlatSwitch,
+    ProfileChannel as ProfileChannel,
+    ProfileSensor as ProfileSensor,
+    SwitchChannel as SwitchChannel,
+    SwitchGroup as SwitchGroup,
+    SwitchPanel as SwitchPanel,
+    SwitchProfile as SwitchProfile,
+    SwitchProfileRegistry as SwitchProfileRegistry,
+    SwitchSensor as SwitchSensor,
+)
 
 if TYPE_CHECKING:
     from galileo.bus import EventBus
@@ -190,6 +202,13 @@ class _SafetyMonitorBackend(Protocol):
 
 class _SwitchBackend(Protocol):
     async def set_switch(self, name: str, value: object) -> None: ...
+    # The structured view (EQP-SW-030…140). Backends that cannot build one (the Kasa, Relay and
+    # SwitchBot plugin adapters) simply do not define these; SwitchController falls back to the flat view.
+    async def get_panel(self) -> SwitchPanel: ...
+    async def set_channel(
+        self, channel_id: str, *, on: bool | None = None, duty: float | None = None,
+        volts: float | None = None, value: float | None = None,
+    ) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -717,14 +736,49 @@ class GuiderController(DeviceController):
         await self._service.dither()
 
 
+def _implements(backend: object, method: str) -> bool:
+    """Whether *backend*'s class defines *method* as a real coroutine function. Looked up on the class, not
+    the instance, so a backend that only keeps a flat switch list — or a test double that answers every
+    attribute — is not mistaken for one that can build a panel."""
+    return inspect.iscoroutinefunction(getattr(type(backend), method, None))
+
+
 class SwitchController(DeviceController):
     """Controls switch/relay devices (EQP-SW-010)."""
 
     def list_switches(self) -> list:
+        """The flat view (EQP-SW-100): every switchable channel, addressed by a stable id, which is what
+        ``set_switch`` takes. Unchanged for backends that only keep a ``switches`` list."""
         return list(getattr(self._backend, "switches", []))
 
     async def set_switch(self, name: str, value) -> None:
         await cast(_SwitchBackend, self._backend).set_switch(name, value)
+
+    async def get_panel(self) -> SwitchPanel:
+        """The structured panel (EQP-SW-030…140), or — for a backend that has none — a one-group panel
+        built from its flat switch list, so the Switches page can show any Switch device."""
+        backend = cast(_SwitchBackend, self._backend)
+        if _implements(backend, "get_panel"):
+            return await backend.get_panel()
+        channels = [
+            SwitchChannel(id=str(s.name), label=str(getattr(s, "label", "") or s.name),
+                          on=None if getattr(s, "is_analog", False) else bool(getattr(s, "state", False)))
+            for s in self.list_switches()
+        ]
+        return SwitchPanel(groups=[SwitchGroup(name="Switches", channels=channels)] if channels else [])
+
+    async def set_channel(
+        self, channel_id: str, *, on: bool | None = None, duty: float | None = None,
+        volts: float | None = None, value: float | None = None,
+    ) -> None:
+        backend = cast(_SwitchBackend, self._backend)
+        if _implements(backend, "set_channel"):
+            await backend.set_channel(channel_id, on=on, duty=duty, volts=volts, value=value)
+        elif on is not None:
+            await backend.set_switch(channel_id, on)
+        else:
+            from galileo.exceptions import DevicePropertyError
+            raise DevicePropertyError(f"This switch device cannot set {channel_id!r} to a level — it only switches on and off.")
 
 
 class AuxController(DeviceController):

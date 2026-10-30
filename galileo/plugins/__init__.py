@@ -281,6 +281,23 @@ class PluginContext:
         from galileo.core.devices import DeviceBackend
         DeviceBackend.registered_backends[category].append(adapter_cls)
 
+    def register_switch_profile(self, profile) -> bool:
+        """Register a declarative switch profile (PLUG-210, EQP-SW-080): how a driver that does not use INDI's
+        power interface maps onto the Switches page. The plugin holds no INDI connection and writes no device
+        code; core applies the profile. A malformed profile is rejected with a logged reason and ``False``
+        returned — it never raises into the plugin and never affects another profile. While the registering
+        plugin is disabled its profiles are not offered (PLUG-060); unloading it drops them (PLUG-120)."""
+        from galileo.core.switches import SwitchProfileRegistry
+        try:
+            profile.validate()
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.error("Plugin %r: switch profile rejected: %s", self._plugin_name or "unnamed", exc)  # noqa: TRY400 -- an expected, reportable rejection: the reason is the whole story, a traceback would only bury it
+            return False
+        owner, host = self._plugin_name, self._host
+        probe = (lambda: host.is_active(owner)) if host is not None and owner else None
+        SwitchProfileRegistry.register(profile, owner=owner, is_active=probe)
+        return True
+
     def register_instruction_type(self, instruction_cls) -> None:
         """Register a new session block type (PLUG-020, SES-340)."""
         from galileo.session_exec import BlockRegistry
@@ -598,6 +615,8 @@ class PluginManager:
             except Exception:
                 logger.exception("Plugin %r raised during deactivation", name)
         self._active.pop(name, None)
+        from galileo.core.switches import SwitchProfileRegistry
+        SwitchProfileRegistry.unregister_owner(name)
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
         self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]
