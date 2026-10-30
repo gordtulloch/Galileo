@@ -436,6 +436,33 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-180` | P2 | SDD 4.20 `galileo.plugins`; SDD 4.4b `galileo.ui.dashboard` | Test | `TC-PLUG-180` |
 | `PLUG-190` | MVP | SDD 4.20 `galileo.plugins`; `galileo.ui.app_window` | Test | `TC-PLUG-190` |
 
+### `LINK` — Connect Link
+
+`LINK-010`–`080` are outline requirements pending Connect Link's own design; `LINK-100`–`210` specify the outreach event facility (L9).
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `LINK-010` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-010` |
+| `LINK-020` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-020` |
+| `LINK-030` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-030` |
+| `LINK-040` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-040` |
+| `LINK-050` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-050` |
+| `LINK-060` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-060` |
+| `LINK-070` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-070` |
+| `LINK-080` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-080` |
+| `LINK-100` | MVP | SDD 4.28 `outreach.OutreachFacility` | Test | `TC-LINK-100` |
+| `LINK-110` | MVP | SDD 4.28 `outreach.OutreachOptions` | Test | `TC-LINK-110` |
+| `LINK-120` | MVP | SDD 4.28 `outreach.SecretVault` | Test | `TC-LINK-120` |
+| `LINK-130` | MVP | SDD 4.28 `outreach.Enrolment`, `GuestRegistry` | Test | `TC-LINK-130` |
+| `LINK-140` | MVP | SDD 4.28 `outreach.SubnetGuard` | Test | `TC-LINK-140` |
+| `LINK-150` | MVP | SDD 4.28 `outreach.GuestAllowlist` | Test | `TC-LINK-150` |
+| `LINK-160` | MVP | SDD 4.28 `outreach.LiveImageFeed`, `GuestPreviewRenderer` | Test | `TC-LINK-160` |
+| `LINK-170` | MVP | SDD 4.28 `outreach.GuestLimits` | Test | `TC-LINK-170` |
+| `LINK-180` | MVP | SDD 4.28 `outreach.OutreachAudit` | Test | `TC-LINK-180` |
+| `LINK-190` | MVP | SDD 4.28 `outreach.EventDisplay`, `OutreachFacility` | Test | `TC-LINK-190` |
+| `LINK-200` | MVP | SDD 4.28 `outreach.SurfaceRegistry` | Test | `TC-LINK-200` |
+| `LINK-210` | MVP | SDD 4.28 `outreach.OutreachFacility`, `GuestRegistry` | Test | `TC-LINK-210` |
+
 ### `UI` — Customization & Theming
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
@@ -597,6 +624,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `META` | 5 | 3 | 1 | 1 |
 | `NOTIF` | 5 | 0 | 1 | 4 |
 | `PLUG` | 16 | 15 | 1 | 0 |
+| `LINK` | 20 | 20 | 0 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
 | `LIB` | 18 | 11 | 5 | 2 |
@@ -609,4 +637,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **295** | **178** | **101** | **16** |
+| **Total** | **315** | **198** | **101** | **16** |

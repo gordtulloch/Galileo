@@ -267,10 +267,10 @@ class IndiAdapter(DeviceBackend):
                 self._we_connected_device = True
                 client.wait_for(
                     lambda: client.get_state(self.device_name, "CONNECTION") in (ic.OK, ic.ALERT),
-                    self.CONNECT_TIMEOUT_S, f"{self.device_name} to connect",
+                    self.CONNECT_TIMEOUT_S, f"{self.device_name} to connect", self.device_name,
                 )
                 if not client.get_switch(self.device_name, "CONNECTION", "CONNECT"):
-                    last = client.messages[-1] if client.messages else "no message from driver"
+                    last = client.last_message(self.device_name) or "no message from driver"
                     raise DeviceConnectionError(f"INDI device {self.device_name!r} failed to connect: {last}")
             lap("device CONNECT" if self._we_connected_device else "already connected")
             # Drivers define most of their properties only once connected, and
@@ -426,8 +426,8 @@ class IndiAdapter(DeviceBackend):
         await asyncio.to_thread(
             client.wait_for,
             lambda: (p := client.get_property(self.device_name, prop)) is None or p.state != ic.BUSY,
-            timeout, what,
+            timeout, what, self.device_name,
         )
         if client.get_state(self.device_name, prop) == ic.ALERT:
-            last = client.messages[-1] if client.messages else "no message from driver"
+            last = client.last_message(self.device_name) or "no message from driver"
             raise DeviceError(f"INDI {self.device_name!r} {what} failed: {last}")

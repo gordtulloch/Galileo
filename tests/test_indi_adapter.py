@@ -350,6 +350,46 @@ async def test_tc_eqp_mnt_010_parked_mount_is_not_sent_movement_commands(server)
         await mount.disconnect()
 
 
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_010_home_and_park_positions_are_separate(server):
+    """EQP-MNT-010: on a driver whose TELESCOPE_HOME has only SET/GO (LX200 OnStep), Home sends GO, Set Home
+    sends SET, and Set Park Position sends PARK_CURRENT on the separate park option."""
+    mount = make(indi.IndiMountAdapter, server, MOUNT)
+    await mount.connect()
+    try:
+        await mount.unpark()
+
+        async def _unparked():
+            return not (await mount.get_status())["at_park"]
+
+        await eventually(_unparked)
+        await mount.find_home()
+        await sent(server, MOUNT, "TELESCOPE_HOME", {"SET": "Off", "GO": "On"})
+        await mount.set_home_position()
+        await sent(server, MOUNT, "TELESCOPE_HOME", {"SET": "On", "GO": "Off"})
+        await mount.set_park_position()
+        await sent(server, MOUNT, "TELESCOPE_PARK_OPTION",
+                   {"PARK_CURRENT": "On", "PARK_DEFAULT": "Off", "PARK_WRITE_DATA": "Off"})
+    finally:
+        await mount.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-020")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_020_jog_rate_on_numbered_slew_rates():
+    """EQP-MNT-020: a driver with numbered slew-rate elements (LX200 OnStep: 0-9) still gets a jog speed
+    chosen — slowest tier for guiding speeds, fastest for 10 deg/s — instead of being left at its default."""
+    from galileo.mount_limits import JOG_RATE_LEVELS
+    onstep = [str(i) for i in range(10)]
+    pick = indi.IndiMountAdapter._slew_rate_element
+    for level, rate in JOG_RATE_LEVELS.items():   # the Mount page's level n selects OnStep rate n
+        assert pick(rate, onstep) == str(level)
+    assert pick(5.0, onstep) == "9" and pick(1.0, onstep) == "8"   # the Imaging nudge pad's speeds
+    standard = ["SLEW_GUIDE", "SLEW_CENTERING", "SLEW_FIND", "SLEW_MAX"]
+    assert pick(10.0, standard) == "SLEW_MAX" and pick(0.1, standard) == "SLEW_CENTERING"
+
+
 @pytest.mark.requirement("TC-EQP-MNT-020")
 @pytest.mark.priority("MVP")
 async def test_tc_eqp_mnt_020_jog_direction_and_rate(server):
@@ -371,6 +411,39 @@ async def test_tc_eqp_mnt_020_jog_direction_and_rate(server):
         # This fake mount defines no TELESCOPE_MOTION_WE — unsupported ops say so.
         with pytest.raises(DevicePropertyError, match="TELESCOPE_MOTION_WE"):
             await mount.move_axis(0, 0.1)
+    finally:
+        await mount.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-020")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_mnt_020_driver_slew_rates_and_reversal_are_mirrored_and_set(server):
+    """EQP-MNT-020: the jog pad offers the driver's own slew rates, selecting one is sent once and then
+    move_axis leaves it alone, and axis reversal is read from and written to the driver."""
+    mount = make(indi.IndiMountAdapter, server, MOUNT)
+    await mount.connect()
+    try:
+        await mount.unpark()
+
+        async def _unparked():
+            return not (await mount.get_status())["at_park"]
+
+        await eventually(_unparked)
+        status = await mount.get_status()
+        assert status["slew_rates"] == ["SLEW_GUIDE", "SLEW_CENTERING", "SLEW_FIND", "SLEW_MAX"]
+        assert status["slew_rate_index"] == 0
+        assert status["axis_reversed"] == (True, False)   # (primary = east/west, secondary = north/south)
+
+        await mount.set_slew_rate(2)
+        await sent(server, MOUNT, "TELESCOPE_SLEW_RATE", {"SLEW_FIND": "On"}, exact=False)
+        await mount.move_axis(1, 0.001)   # would snap to SLEW_GUIDE if the choice were not kept
+        await sent(server, MOUNT, "TELESCOPE_MOTION_NS", {"MOTION_NORTH": "On", "MOTION_SOUTH": "Off"})
+        assert (await mount.get_status())["slew_rate_index"] == 2
+        with pytest.raises(ValueError):
+            await mount.set_slew_rate(9)
+
+        await mount.set_axis_reversed(1, True)
+        await sent(server, MOUNT, "TELESCOPE_REVERSE_MOTION", {"REVERSE_NS": "On", "REVERSE_EW": "On"})
     finally:
         await mount.disconnect()
 

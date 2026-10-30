@@ -610,6 +610,35 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 
 Variable Star Target Planning and Variable Star Analysis & Photometry are no longer decomposed here — they are the VSTarget plugin's own requirements, specified in [`docs/plugins/vstarget/SRS.md`](../plugins/vstarget/SRS.md) Sections 4.1–4.2 against this document's `PLUG` domain (`PLUG-060`/`070`/`080`) and a small number of other core requirements consumed by reference (`SKY-030`, `EXT-110`, `PLT-010`, `SCHED-010`). This section number is kept as a placeholder rather than renumbered away, consistent with this document's ID-stability convention elsewhere (e.g. `SES`'s Section 4.5a).
 
+### 4.24 `LINK` — Connect Link
+
+Connect Link is the core service that carries all communication between a Galileo node and other nodes or clients: it is the one authenticated, encrypted listener, the one pairing-with-approval flow and the one scoped-permission model, shared by the NodeConnect, MobileConnect and WebConnect plugins ([NodeConnect PSD §6.2](plugins/nodeconnect/PSD.md)). Plugins register handlers against it and add no transport of their own.
+
+`LINK-010`–`LINK-080` are **outline requirements** derived one-for-one from the capabilities L1–L8 of that PSD, recorded here so the domain exists and the plugins can cite it; each is to be expanded when Connect Link's own design is written. `LINK-100`–`LINK-210` specify **L9, the outreach event facility**, in full.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| LINK-010 | **(L1, outline)** The system shall run one authenticated, encrypted listener per node (HTTPS and WebSocket), started only while at least one enabled plugin has registered a handler, and shall answer no request that lacks a valid credential except as `LINK-020` and `LINK-130` allow. | MVP |
+| LINK-020 | **(L2, outline)** The system shall pair a peer only by a request the peer sends, held until a person approves it on the receiving node, after which a per-peer token and pinned certificate are issued; the only endpoints that answer a caller without a valid token are *request pairing* and, during an outreach event, *outreach enrolment* (`LINK-130`). Pairings shall be revocable per peer. | MVP |
+| LINK-030 | **(L3, outline)** The system shall hold a set of permissions per peer — `config.read`, `config.write`, `data.push`, `data.pull`, `control`, `view` — and the guest-only `outreach.view`, shall never grant `outreach.view` to a paired peer or any paired-peer permission to a guest, and shall keep an audit log of who did what. | MVP |
+| LINK-040 | **(L4, outline)** The system shall advertise the node on the LAN (mDNS/zeroconf) and accept a manually entered address. | MVP |
+| LINK-050 | **(L5, outline)** The system shall let a plugin register versioned request/response routes (for example `/nodeconnect/v1/...`), and shall unregister them when the plugin is disabled. | MVP |
+| LINK-060 | **(L6, outline)** The system shall provide a server-push event stream to each connected peer. | MVP |
+| LINK-070 | **(L7, outline)** The system shall provide resumable, chunked, checksummed binary transfer in both directions. | MVP |
+| LINK-080 | **(L8, outline)** The system shall perform a version handshake exchanging the Galileo version, plugin-API version, schema (migration) level and Connect Link protocol version, and shall let a plugin extend the handshake payload. | MVP |
+| LINK-100 | **Outreach event lifecycle (L9).** The system shall provide outreach as an **event** that is **off by default**, opened on the Master by its owner with a duration and ended by the end of that duration, by the owner, by disabling Connect Link or by a restart. While no event is open, the system shall register no outreach route, open no outreach listener and answer no outreach request. Ending an event shall disconnect every guest and invalidate every guest token and the event secret. | MVP |
+| LINK-110 | **Event options.** The system shall store in Galileo's settings store (never a file): the outreach Wi-Fi network name (SSID); an optional Wi-Fi passphrase, held as a secret in the OS keychain and never logged or audited; the outreach **subnet(s)** as private-range CIDRs; the default duration; the concurrent-guest cap; the guest preview size and quality; the Piers offered for outreach; and which registered surfaces (`LINK-200`) are enabled. Values shall be validated and clamped; a non-private subnet shall be rejected. | MVP |
+| LINK-120 | **Event secret.** On opening an event the system shall generate a cryptographically random secret of at least 128 bits, unique to the event, hold it only in memory (as a salted hash once shown), and be able to re-issue it during the event, whereupon enrolments with the old secret shall be refused and already-enrolled guests shall be unaffected. | MVP |
+| LINK-130 | **Guest enrolment.** The system shall accept an enrolment that presents the current secret from an address inside an outreach subnet and issue an anonymous **guest token**: opaque, random, bound to the event, expiring when the event ends, carrying only `outreach.view`. Enrolment shall require no name, account or per-device approval. The secret shall be compared in constant time, enrolment attempts shall be rate-limited, and every refusal (wrong secret, wrong subnet, event closed or full) shall be indistinguishable to the caller from a closed port, apart from a readable reason only when the caller holds the secret and the event is full. | MVP |
+| LINK-140 | **Subnet confinement.** The system shall check the source address against the outreach subnet(s) **before reading any request body**, on enrolment, on every guest request and on every message of a guest stream, and shall refuse and disconnect any source outside them, including routed, forwarded or internet-originating traffic. If no subnet is configured, an event shall not open. | MVP |
+| LINK-150 | **Guest principal and allowlist.** The system shall represent a guest as a principal type of its own with no role, no lease and no catalogue. A guest shall be permitted exactly three operations — list the Piers offered for outreach (display names only), receive the live image of an offered Pier, and switch to another offered Pier — and every other request shall be refused and counted before reaching any plugin handler. A plugin shall not be able to widen the allowlist. | MVP |
+| LINK-160 | **Live image and guest previews.** The system shall push to each guest the live image of the Pier it is viewing as each frame completes (for a Pier of this node from its frame-complete event; for a spoke's Pier via the relay, only if that node has granted `view`), shall send the most recent image at once to a guest that joins or switches, and shall produce that image through the core preview service in a **guest mode** that encodes from pixel data with **no FITS header, EXIF, GPS or other embedded metadata**, at no more than the guest preview size and quality. | MVP |
+| LINK-170 | **Guest load bounds.** The system shall limit concurrent guests to the configured cap, rate-limit each guest, and give guest work lower priority than a running session and than every paired peer, so that guests never delay imaging or the Emergency operations. | MVP |
+| LINK-180 | **Event audit.** The system shall audit each event — who opened and ended it, when, the Piers offered, the surfaces enabled, peak and total guests, and refusals by kind — and aggregate guest counts per Pier, and shall record no personal data about guests: a guest is a random token and a source address held in memory for the duration of the event only. | MVP |
+| LINK-190 | **Owner controls and event display.** The system shall provide a Connect Link **Outreach** page on the Master, from which the owner opens, extends and ends an event, ejects all guests, re-issues the secret, sees the time remaining, the guest count and the offered Piers, and sees the **event display**: a standard Wi-Fi QR code for the outreach SSID (with the passphrase only if one is set) and one enrolment QR code per enabled surface, each built from the payload that surface supplies. | MVP |
+| LINK-200 | **Surfaces.** The system shall let a plugin register an **outreach surface** — a name, preconditions, the enrolment payload for its QR code, and the transport by which it delivers the facility's guest messages (image, unavailable, ended) — and shall register that surface's routes or listener only while an event is open and the surface is enabled. A surface shall be given the secret only to build its payload, shall be unable to read tokens, issue tokens or alter the allowlist, and shall be able to withhold the event from opening by reporting an unmet precondition (for example, no HTTPS certificate). | MVP |
+| LINK-210 | **Fail closed; nothing durable.** The system shall not open an event if any enabled surface reports an unmet precondition or if the subnet check cannot be applied; shall confine a fault in guest handling to the one guest and a fault in a surface to that surface; shall close the event if its in-memory state is lost; and shall never write the secret or any guest token to the database, a file or a log. A restart therefore voids every guest. | MVP |
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -708,6 +737,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | META | 5 | 3 | 1 | 1 |
 | NOTIF | 5 | 0 | 1 | 4 |
 | PLUG | 16 | 15 | 1 | 0 |
+| LINK | 20 | 20 | 0 | 0 |
 | UI | 3 | 0 | 2 | 1 |
 | LOG | 6 | 4 | 2 | 0 |
 | LIB | 16 | 10 | 5 | 1 |
@@ -720,7 +750,7 @@ Variable Star Target Planning and Variable Star Analysis & Photometry are no lon
 | NFR-SEC | 3 | 1 | 2 | 0 |
 | NFR-OFFLINE | 2 | 2 | 0 | 0 |
 | NFR-INSTALL | 3 | 3 | 0 | 0 |
-| **Total** | **283** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23 — several other domain rows above are currently stale against the body and due a full re-audit, tracked separately from this revision) | | | |
+| **Total** | **303** (exact sum of the rows above; `EXT` requirements are not counted here, see Section 3; `VST`/`VST-AN` moved to the VSTarget plugin's own SRS, Section 4.23 — several other domain rows above are currently stale against the body and due a full re-audit, tracked separately from this revision) | | | |
 
 ---
 

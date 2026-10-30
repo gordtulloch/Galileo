@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import logging
 
 from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
-from ._hold_to_move import HoldToMove
+from ._hold_to_move import HoldToMove, combo_rate, combo_rate_index
 from ._threads import _PreviewRenderThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
 from ._widgets import _HistogramWidget
 
@@ -45,7 +45,7 @@ class AppWindowImagingPageMixin:
         from galileo.livestack import LIVE_STACK_MIN_FRAMES
         from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
         from galileo.ui.imaging import (
-            DEFAULT_GAIN, DEFAULT_OFFSET, DEFAULT_STRETCH_LEVEL, ImagingService, NUDGE_RATES, PORTRAIT, LANDSCAPE,
+            DEFAULT_GAIN, DEFAULT_OFFSET, DEFAULT_STRETCH_LEVEL, ImagingService, PORTRAIT, LANDSCAPE,
         )
 
         page = QWidget()
@@ -221,10 +221,12 @@ class AppWindowImagingPageMixin:
         nudge_layout.addLayout(nudge_grid)
         nudge_form = _new_form_layout()
         nudge_rate_combo = QComboBox()
-        for name, rate in NUDGE_RATES.items():
-            nudge_rate_combo.addItem(f"{name} ({rate:g}°/s)", rate)
-        nudge_rate_combo.setCurrentIndex(1)
-        nudge_rate_combo.setToolTip("How fast the mount moves while a button is held.")
+        from galileo.mount_limits import JOG_RATE_LEVELS
+        for level, rate in JOG_RATE_LEVELS.items():
+            nudge_rate_combo.addItem(f"{level} ({rate:g}°/s)", rate)
+        nudge_rate_combo.setCurrentIndex(6)
+        nudge_rate_combo.setToolTip("How fast the mount moves while a button is held. Matches the Mount page's Rate: "
+                                    "the driver's own slew rates for an INDI mount, otherwise levels 1 (slowest) to 9.")
         nudge_form.addRow("Speed", nudge_rate_combo)
         nudge_layout.addLayout(nudge_form)
         nudge_group.setToolTip(
@@ -585,7 +587,7 @@ class AppWindowImagingPageMixin:
                         service.set_annotate_enabled(False)
                         _refresh_annotate_status(service)
 
-            thread.done.connect(_on_done)
+            thread.done.connect(_on_done, Qt.ConnectionType.QueuedConnection)
             thread.finished.connect(lambda: annotate_threads.discard(thread))
             thread.finished.connect(thread.deleteLater)
             annotate_threads.add(thread)
@@ -622,7 +624,7 @@ class AppWindowImagingPageMixin:
             if service.current_frame is None:
                 return
             thread = _PreviewRenderThread(service, self._window)
-            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(service, t, rendered))
+            thread.rendered.connect(lambda rendered, t=thread: _preview_rendered(service, t, rendered), Qt.ConnectionType.QueuedConnection)
             thread.finished.connect(thread.deleteLater)
             preview_renders.add(thread)
             thread.start()
@@ -665,8 +667,10 @@ class AppWindowImagingPageMixin:
             getter = (self._device_pages.get("mount") or {}).get("axis_reversed")
             return getter() if getter is not None else (False, False)
 
-        nudge_motion = HoldToMove(_nudge_mount_adapter, lambda: float(nudge_rate_combo.currentData()),
-                                  _nudge_reversed, page)
+        nudge_motion = HoldToMove(_nudge_mount_adapter, lambda: combo_rate(nudge_rate_combo),
+                                  _nudge_reversed, page,
+                                  get_rate_index=lambda: combo_rate_index(nudge_rate_combo))
+        nudge_rate_combo.currentIndexChanged.connect(lambda _i: nudge_motion.rate_combo_changed(nudge_rate_combo))
         nudge_state = {"controller": nudge_motion}
 
         def _nudge_failed(message: str) -> None:
@@ -675,7 +679,7 @@ class AppWindowImagingPageMixin:
             else:
                 self._window.statusBar().showMessage("Nudge failed — see log.", 6000)
 
-        nudge_motion.failed.connect(_nudge_failed)
+        nudge_motion.failed.connect(_nudge_failed, Qt.ConnectionType.QueuedConnection)
 
         def _nudge_pressed(direction: str) -> None:
             if _nudge_mount_adapter() is None:
@@ -701,6 +705,10 @@ class AppWindowImagingPageMixin:
             "nudge_rate": nudge_rate_combo,
             "nudge_state": nudge_state,
         }
+        # A mount connected before this page was built: show its driver's slew rates now.
+        _mount_sync = (self._device_pages.get("mount") or {}).get("sync_manual_motion")
+        if _mount_sync is not None:
+            _mount_sync()
 
         def _is_displayed(key) -> bool:
             from galileo.current_object import pier_key

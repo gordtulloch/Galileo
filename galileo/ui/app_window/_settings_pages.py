@@ -300,9 +300,9 @@ class AppWindowSettingsPagesMixin:
             QMessageBox.critical(parent, "Thumbnail Caching Failed", message)
             self._thumbnail_cache_worker = None
 
-        worker.progress.connect(on_progress)
-        worker.finished_ok.connect(on_finished)
-        worker.failed.connect(on_failed)
+        worker.progress.connect(on_progress, Qt.ConnectionType.QueuedConnection)
+        worker.finished_ok.connect(on_finished, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(on_failed, Qt.ConnectionType.QueuedConnection)
         progress_dialog.canceled.connect(worker.stop)
         worker.start()
 

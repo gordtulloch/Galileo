@@ -101,7 +101,7 @@ Stops both axes immediately, in case a button was not released cleanly.
 
 ## Mount Nudge Speed
 
-How fast the mount moves while a button is held: **Fine**, **Medium** or **Coarse**, with the speed in degrees per second.
+How fast the mount moves while a button is held: from **1** (slowest) to **9** (fastest), with the speed in degrees per second. The levels are the same as the Mount page's Rate.
 
 ## Annotate
 

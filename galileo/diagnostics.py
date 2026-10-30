@@ -151,6 +151,9 @@ class DiagnosticsService:
         # asyncio's DEBUG chatter (e.g. "Using proactor: IocpProactor" on every
         # event-loop creation) is noise that would bloat the log in 24/7 use.
         logging.getLogger("asyncio").setLevel(logging.INFO)
+        # peewee logs every SQL statement at DEBUG, which swamps the log (hundreds of lines a minute from the
+        # status timers); real database problems still log at WARNING and above.
+        logging.getLogger("peewee").setLevel(logging.WARNING)
 
         # mode="w" (not the logging default "a") so the datestamped file
         # resets on every run rather than accumulating across same-day runs.

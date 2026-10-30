@@ -312,8 +312,9 @@ class AppWindowFramingMixin:
                 rotator_status.setText(f"Could not determine rotation: {reason}")
 
             thread = _DetermineRotationThread(service, solver, dialog)
-            thread.finished_ok.connect(_succeeded)
-            thread.failed.connect(_failed)
+            from PySide6.QtCore import Qt
+            thread.finished_ok.connect(_succeeded, Qt.ConnectionType.QueuedConnection)
+            thread.failed.connect(_failed, Qt.ConnectionType.QueuedConnection)
             thread.finished.connect(lambda: rotation_threads.discard(thread))
             thread.finished.connect(thread.deleteLater)
             rotation_threads.add(thread)

@@ -99,8 +99,13 @@ class AutofocusService:
         backlash_compensation: int = AutofocusParams.backlash_compensation,
         pier_key=None,
         filter_offsets: dict[str, int] | None = None,
+        gain: int | None = None,
+        offset: int | None = None,
     ) -> None:
         self._camera = camera
+        # Camera gain/offset for the focus exposures; None/0 leaves the camera's own setting alone.
+        self.gain = gain
+        self.offset = offset
         self._focuser = focuser
         self._output_dir = Path(output_dir)
         self._event_bus = event_bus
@@ -241,7 +246,7 @@ class AutofocusService:
         self._publish(FocusExposureStartedEvent(
             source="autofocus", duration_s=self.exposure_s, pier_key=self.pier_key,
         ))
-        await self._camera.start_exposure(duration=self.exposure_s)
+        await self._camera.start_exposure(duration=self.exposure_s, **self._exposure_options())
         frame = await self._camera.get_image_array()
         if frame is None:
             return None
@@ -263,6 +268,14 @@ class AutofocusService:
         return await run_cpu(_compute_regional_hfr, frame)
 
     # --- Private helpers --------------------------------------------------
+
+    def _exposure_options(self) -> dict:
+        options = {}
+        if self.gain:
+            options["gain"] = int(self.gain)
+        if self.offset:
+            options["offset"] = int(self.offset)
+        return options
 
     def _get_current_position(self) -> int:
         if self._focuser is not None:
@@ -290,7 +303,7 @@ class AutofocusService:
         self._publish(FocusExposureStartedEvent(
             source="autofocus", duration_s=self.exposure_s, pier_key=self.pier_key,
         ))
-        await self._camera.start_exposure(duration=self.exposure_s)
+        await self._camera.start_exposure(duration=self.exposure_s, **self._exposure_options())
         frame = await self._camera.get_image_array()
         if frame is None:
             return float("nan")

@@ -588,9 +588,9 @@ def test_tc_img_130_diagonal_buttons_move_both_axes_while_held(window):
     mount = _FakeMount()
     window._device_pages["mount"]["adapter"] = mount
     window._device_pages["mount"]["axis_reversed"] = lambda: (False, False)
-    window._imaging_ui["nudge_rate"].setCurrentIndex(window._imaging_ui["nudge_rate"].findData(5.0))
+    window._imaging_ui["nudge_rate"].setCurrentIndex(window._imaging_ui["nudge_rate"].findData(1.0))
     _hold(window, "SW", release=False)
-    assert sorted(mount.calls) == [(0, -5.0), (1, -5.0)]
+    assert sorted(mount.calls) == [(0, -1.0), (1, -1.0)]
     window._imaging_ui["nudge_buttons"]["SW"].released.emit()
     window._imaging_ui["nudge_state"]["controller"].flush()
     assert sorted(mount.calls[2:]) == [(0, 0.0), (1, 0.0)]

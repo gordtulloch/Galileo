@@ -63,6 +63,14 @@ class AppWindowTopbarOpticsCameraMixin:
             self._active_optics_position = position
         self._push_context_to_devices()
         self._refresh_imaging_filters()
+        self._refresh_focus_context()
+
+    def _refresh_focus_context(self: AppWindowState) -> None:
+        """Tell the Focus page the Optics selection changed, so it shows that tube's focuser."""
+        focus = self._device_pages.get("focus") or {}
+        page = focus.get("page")
+        if page is not None:
+            page.refresh_context()
 
     def _active_filter_wheel(self: AppWindowState):
         """The connected filter wheel that belongs to the active optical tube, or
@@ -143,8 +151,9 @@ class AppWindowTopbarOpticsCameraMixin:
             self._window.statusBar().showMessage("Filter change failed — see log.", 6000)
 
         thread = _FilterMoveThread(wheel, index, self._window)
-        thread.finished_ok.connect(done)
-        thread.failed.connect(failed)
+        from PySide6.QtCore import Qt
+        thread.finished_ok.connect(done, Qt.ConnectionType.QueuedConnection)
+        thread.failed.connect(failed, Qt.ConnectionType.QueuedConnection)
         self._imaging_filter_threads[key] = thread
         self._window.statusBar().showMessage(f"Moving filter wheel to {name}…")
         thread.start()
@@ -225,6 +234,9 @@ class AppWindowTopbarOpticsCameraMixin:
         """Set the Imaging page's Gain and Offset from the active camera's saved defaults (Equipment >
         Camera). Called when a camera is chosen, the Pier changes, or the camera config is saved; a
         camera with no default set leaves the Imaging fields as they are."""
+        focus_page = (self._device_pages.get("focus") or {}).get("page")
+        if focus_page is not None:
+            focus_page.apply_camera_defaults()     # the Focus screen's own Gain / Offset
         ui = self.__dict__.get("_imaging_ui")
         if not ui or self._current_pier is None:
             return

@@ -277,6 +277,7 @@ class FilterOffsetsDialog(QDialog):
                     service = AutofocusService(
                         camera=camera, focuser=focuser, exposure_s=params.exposure_s,
                         backlash_compensation=params.backlash_compensation, pier_key=self._focus_page._pier_key(),
+                        gain=self._focus_page.gain_spin.value(), offset=self._focus_page.offset_spin.value(),
                     )
                     self._service = service
                     result = asyncio.run(service.run(step_size=params.step_size, num_points=params.num_points))

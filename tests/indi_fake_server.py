@@ -98,11 +98,16 @@ def _devices() -> dict[str, dict]:
             sw_vec(mnt, "ON_COORD_SET", {"SLEW": True, "TRACK": False, "SYNC": False}),
             sw_vec(mnt, "TELESCOPE_TRACK_STATE", {"TRACK_ON": False, "TRACK_OFF": True}),
             sw_vec(mnt, "TELESCOPE_PARK", {"PARK": True, "UNPARK": False}, rule="OneOfMany"),
+            # Like LX200 OnStep: Home offers only SET / GO (no FIND); park position is a separate option.
+            sw_vec(mnt, "TELESCOPE_HOME", {"SET": False, "GO": False}, rule="AtMostOne"),
+            sw_vec(mnt, "TELESCOPE_PARK_OPTION", {"PARK_CURRENT": False, "PARK_DEFAULT": False,
+                                                  "PARK_WRITE_DATA": False}, rule="AtMostOne"),
             sw_vec(mnt, "TELESCOPE_PIER_SIDE", {"PIER_EAST": False, "PIER_WEST": True}),
             sw_vec(mnt, "TELESCOPE_ABORT_MOTION", {"ABORT": False}, rule="AtMostOne"),
             sw_vec(mnt, "TELESCOPE_MOTION_NS", {"MOTION_NORTH": False, "MOTION_SOUTH": False}, rule="AtMostOne"),
             sw_vec(mnt, "TELESCOPE_SLEW_RATE", {"SLEW_GUIDE": True, "SLEW_CENTERING": False,
                                                 "SLEW_FIND": False, "SLEW_MAX": False}),
+            sw_vec(mnt, "TELESCOPE_REVERSE_MOTION", {"REVERSE_NS": False, "REVERSE_EW": True}, rule="AnyOfMany"),
         ]},
         fw: {"static": base(fw, 16), "on_connect": [
             num_vec(fw, "FILTER_SLOT", {"FILTER_SLOT_VALUE": (1, 1, 3)}),

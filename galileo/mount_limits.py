@@ -14,6 +14,18 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+#: The Mount page's jog speed levels 1 (slowest) to 9 (fastest), in deg/s. They follow LX200 OnStep's
+#: numbered slew rates (1 = 0.5x … 9 = Max sidereal-based steps), so level n selects OnStep rate n;
+#: other drivers get the nearest of their own rates, and Alpaca mounts get the deg/s figure directly.
+JOG_RATE_LEVELS: dict[int, float] = {1: 0.002, 2: 0.004, 3: 0.008, 4: 0.017, 5: 0.033,
+                                     6: 0.084, 7: 0.2, 8: 1.0, 9: 10.0}
+
+
+def jog_level_text(rate: float) -> str:
+    """How a jog speed reads in the log: ``"rate 9 (10°/s)"`` for a Mount-page level, else just ``"1°/s"``."""
+    level = next((n for n, r in JOG_RATE_LEVELS.items() if math.isclose(r, abs(rate))), None)
+    return f"rate {level} ({abs(rate):g}°/s)" if level else f"{abs(rate):g}°/s"
+
 
 @dataclass
 class MountLimits:

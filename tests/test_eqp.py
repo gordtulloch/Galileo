@@ -1300,13 +1300,57 @@ def test_tc_eqp_mnt_020_park_and_tracking_controls_and_status_text(window):
 
 @pytest.mark.requirement("TC-EQP-MNT-010")
 @pytest.mark.priority("MVP")
-def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window):
-    """EQP-MNT-010: the N/S/E/W pad has a Fine/Medium/Coarse rate drop-down, and a jog moves the
-    mount at the selected rate (1 / 10 / 50 deg/s)."""
+def test_tc_eqp_mnt_010_jog_pad_lists_the_drivers_slew_rates_and_mirrors_its_reversal(window):
+    """EQP-MNT-010: with an INDI mount the Rate drop-down lists the driver's own slew rates (choosing one
+    selects it in the driver, a jog then sends only the direction), and Primary/Secondary reversed show
+    the driver's setting, write changes to it, and are not applied a second time by the UI."""
     from PySide6 import QtWidgets
     page = window._build_mount_page()
     rate = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.findData(10.0) >= 0)
-    assert [rate.itemData(i) for i in range(rate.count())] == [1.0, 5.0, 10.0]
+    mount = MagicMock()
+    mount.get_status = AsyncMock(return_value={})
+    mount.move_axis = AsyncMock()
+    mount.set_slew_rate = AsyncMock()
+    mount.set_axis_reversed = AsyncMock()
+    state = window._device_pages["mount"]
+    state["adapter"] = mount
+    status = {"slew_rates": ["Guide", "Centering", "Find", "Max"], "slew_rate_index": 1,
+              "axis_reversed": (False, True)}
+    state["last_status"] = status
+    state["sync_manual_motion"]()   # what each status refresh does
+    assert [rate.itemText(i) for i in range(rate.count())] == status["slew_rates"]
+    assert rate.currentText() == "Centering"
+    primary = next(c for c in page.findChildren(QtWidgets.QCheckBox) if c.text() == "Primary reversed")
+    secondary = next(c for c in page.findChildren(QtWidgets.QCheckBox) if c.text() == "Secondary reversed")
+    assert (primary.isChecked(), secondary.isChecked()) == (False, True)
+    assert state["axis_reversed"]() == (False, False)   # the driver reverses; the UI must not
+    primary.setChecked(True)
+    mount.set_axis_reversed.assert_awaited_once_with(0, True)
+    rate.setCurrentIndex(3)
+    jog = state["jog_controller"]
+    jog.flush()
+    mount.set_slew_rate.assert_awaited_with(3)
+    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E")
+    east.pressed.emit()
+    jog.flush()
+    east.released.emit()
+    jog.flush()
+    assert mount.move_axis.await_args_list[0].args[0] == 0 and mount.move_axis.await_args_list[0].args[1] > 0
+    state["last_status"] = {}   # no driver rates: back to the fixed levels
+    state["sync_manual_motion"]()
+    assert rate.findData(10.0) >= 0 and state["axis_reversed"]() == (True, True)
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window):
+    """EQP-MNT-010: the N/S/E/W pad has a rate drop-down of levels 1-9, and a jog moves the
+    mount at the selected level's speed (level 9 = 10 deg/s)."""
+    from PySide6 import QtWidgets
+    page = window._build_mount_page()
+    rate = next(c for c in page.findChildren(QtWidgets.QComboBox) if c.findData(10.0) >= 0)
+    assert [rate.itemText(i) for i in range(rate.count())] == [str(n) for n in range(1, 10)]
+    assert rate.itemData(rate.count() - 1) == 10.0 and rate.currentText() == "5"
     mount = MagicMock()
     mount.get_status = AsyncMock(return_value={})
     mount.move_axis = AsyncMock()

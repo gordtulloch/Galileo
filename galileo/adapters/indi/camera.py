@@ -113,9 +113,9 @@ class IndiCameraAdapter(IndiAdapter):
                     or client.get_state(name, "CCD_EXPOSURE") == ic.ALERT)
 
         # Exposure time plus generous margin for readout and a slow Wi-Fi download.
-        await asyncio.to_thread(client.wait_for, _ready, self._exposure_s + 90.0, "the exposure to download")
+        await asyncio.to_thread(client.wait_for, _ready, self._exposure_s + 90.0, "the exposure to download", name)
         if client.blob_seq(name, "CCD1") <= self._blob_seq0:
-            last = client.messages[-1] if client.messages else "no message from driver"
+            last = client.last_message(name) or "no message from driver"
             raise DeviceError(f"INDI camera {name!r} exposure failed: {last}")
         blob = client.latest_blob(name, "CCD1")
         if blob is None:

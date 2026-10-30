@@ -271,10 +271,11 @@ class AppWindowFlatsMixin:
             # Parented to the window, not the dialog: the dialog is deleted when closed idle, which
             # must never take a thread that is still returning from run() down with it.
             thread.finished.connect(thread.deleteLater)
-            thread.filter_started.connect(on_filter_start)
-            thread.frame_done.connect(on_frame_done)
-            thread.finished_ok.connect(finished)
-            thread.failed.connect(failed)
+            from PySide6.QtCore import Qt
+            thread.filter_started.connect(on_filter_start, Qt.ConnectionType.QueuedConnection)
+            thread.frame_done.connect(on_frame_done, Qt.ConnectionType.QueuedConnection)
+            thread.finished_ok.connect(finished, Qt.ConnectionType.QueuedConnection)
+            thread.failed.connect(failed, Qt.ConnectionType.QueuedConnection)
             self._flats_threads[key] = thread
             set_running(True)
             status_label.setText("Starting…")

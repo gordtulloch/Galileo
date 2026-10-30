@@ -245,6 +245,8 @@ class FocusPage(QWidget):
         # save the just-loaded values right back (and, for a Pier with none saved yet, don't create
         # a settings row out of the defaults just by looking at it).
         self._loading_settings = False
+        self._camera_name = "No camera selected"
+        self._focuser_name = "No focuser associated"
         self._build()
         self._sync_buttons()
         self.reload()   # seed from the already-selected Pier's saved defaults, if any
@@ -315,30 +317,36 @@ class FocusPage(QWidget):
 
         focuser = QGroupBox("Focuser")
         grid = QGridLayout(focuser)
-        grid.addWidget(QLabel("Position:"), 0, 0)
+        grid.addWidget(QLabel("Focuser:"), 0, 0)
+        self.focuser_label = QLabel("—")
+        self.focuser_label.setWordWrap(True)
+        self.focuser_label.setToolTip("The focuser associated with the selected Optics on Equipment > Optics.")
+        self.focuser_label.setProperty("helpKey", "focuser device")
+        grid.addWidget(self.focuser_label, 0, 1, 1, 3)
+        grid.addWidget(QLabel("Position:"), 1, 0)
         self.position_label = QLabel("—")
         self.position_label.setProperty("helpKey", "position")
-        grid.addWidget(self.position_label, 0, 1)
-        grid.addWidget(QLabel("Temp.:"), 0, 2)
+        grid.addWidget(self.position_label, 1, 1)
+        grid.addWidget(QLabel("Temp.:"), 1, 2)
         self.temperature_label = QLabel("—")
         self.temperature_label.setProperty("helpKey", "temp")
-        grid.addWidget(self.temperature_label, 0, 3)
-        grid.addWidget(QLabel("Step size:"), 1, 0)
+        grid.addWidget(self.temperature_label, 1, 3)
+        grid.addWidget(QLabel("Step size:"), 2, 0)
         self.step_spin = QSpinBox()
         self.step_spin.setRange(1, 100000)
         self.step_spin.setValue(AutofocusParams.step_size)
         self.step_spin.setSuffix(" steps")
         self.step_spin.setToolTip("Focuser steps between successive exposures.")
         self.step_spin.valueChanged.connect(self._save_autofocus_params)
-        grid.addWidget(self.step_spin, 1, 1)
-        grid.addWidget(QLabel("Points:"), 1, 2)
+        grid.addWidget(self.step_spin, 2, 1)
+        grid.addWidget(QLabel("Points:"), 2, 2)
         self.points_spin = QSpinBox()
         self.points_spin.setRange(3, 41)
         self.points_spin.setValue(AutofocusParams.num_points)
         self.points_spin.setToolTip("Number of exposures across the sweep, centred on the current position.")
         self.points_spin.valueChanged.connect(self._save_autofocus_params)
-        grid.addWidget(self.points_spin, 1, 3)
-        grid.addWidget(QLabel("Backlash:"), 2, 0)
+        grid.addWidget(self.points_spin, 2, 3)
+        grid.addWidget(QLabel("Backlash:"), 3, 0)
         self.backlash_spin = QSpinBox()
         self.backlash_spin.setRange(0, 100000)
         self.backlash_spin.setValue(AutofocusParams.backlash_compensation)
@@ -348,22 +356,22 @@ class FocusPage(QWidget):
             "mechanical backlash is taken up the same way each time (0 disables compensation)."
         )
         self.backlash_spin.valueChanged.connect(self._save_autofocus_params)
-        grid.addWidget(self.backlash_spin, 2, 1)
+        grid.addWidget(self.backlash_spin, 3, 1)
         self.autofocus_btn = QPushButton("Auto Focus")
         self.autofocus_btn.setObjectName("AccentButton")
         self.autofocus_btn.clicked.connect(self.start_autofocus)
-        grid.addWidget(self.autofocus_btn, 3, 0, 1, 2)
+        grid.addWidget(self.autofocus_btn, 4, 0, 1, 2)
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setToolTip("Stop the run started here: the focuser goes back to where it began.")
         self.stop_btn.clicked.connect(self.stop_autofocus)
-        grid.addWidget(self.stop_btn, 3, 2, 1, 2)
+        grid.addWidget(self.stop_btn, 4, 2, 1, 2)
         self.filter_offsets_btn = QPushButton("Filter Offsets")
         self.filter_offsets_btn.setToolTip(
             "Measure each filter's focus offset relative to a Primary filter, and apply it "
             "automatically on future filter changes without a full autofocus run (FOC-060)."
         )
         self.filter_offsets_btn.clicked.connect(self.open_filter_offsets_dialog)
-        grid.addWidget(self.filter_offsets_btn, 4, 0, 1, 4)
+        grid.addWidget(self.filter_offsets_btn, 5, 0, 1, 4)
         box.addWidget(focuser)
 
         camera = QGroupBox("Camera")
@@ -371,7 +379,8 @@ class FocusPage(QWidget):
         grid.addWidget(QLabel("Camera:"), 0, 0)
         self.camera_label = QLabel("—")
         self.camera_label.setProperty("helpKey", "camera")
-        grid.addWidget(self.camera_label, 0, 1)
+        self.camera_label.setWordWrap(True)
+        grid.addWidget(self.camera_label, 0, 1, 1, 3)
         grid.addWidget(QLabel("Exp:"), 1, 0)
         self.exposure_spin = QDoubleSpinBox()
         self.exposure_spin.setRange(0.01, 600.0)
@@ -381,11 +390,29 @@ class FocusPage(QWidget):
         self.exposure_spin.setToolTip("Exposure time of each frame measured during the sweep.")
         self.exposure_spin.valueChanged.connect(self._save_autofocus_params)
         grid.addWidget(self.exposure_spin, 1, 1)
+        grid.addWidget(QLabel("Gain:"), 2, 0)
+        self.gain_spin = QSpinBox()
+        self.gain_spin.setRange(0, 100000)
+        self.gain_spin.setSpecialValueText("—")
+        self.gain_spin.setToolTip(
+            "Camera gain for the focus exposures. Starts at the camera's default gain from "
+            "Equipment > Camera; — leaves the camera's own setting alone."
+        )
+        grid.addWidget(self.gain_spin, 2, 1)
+        grid.addWidget(QLabel("Offset:"), 2, 2)
+        self.offset_spin = QSpinBox()
+        self.offset_spin.setRange(0, 100000)
+        self.offset_spin.setSpecialValueText("—")
+        self.offset_spin.setToolTip(
+            "Camera offset for the focus exposures. Starts at the camera's default offset from "
+            "Equipment > Camera; — leaves the camera's own setting alone."
+        )
+        grid.addWidget(self.offset_spin, 2, 3)
         self.exposure_bar = QProgressBar()
         self.exposure_bar.setRange(0, 1000)
         self.exposure_bar.setToolTip("Progress of the exposure in flight.")
         self.exposure_bar.setProperty("helpKey", "exposure progress")
-        grid.addWidget(self.exposure_bar, 2, 0, 1, 2)
+        grid.addWidget(self.exposure_bar, 3, 0, 1, 4)
         self.exposure_bar.setFormat("—")
         box.addWidget(camera)
 
@@ -672,8 +699,27 @@ class FocusPage(QWidget):
         from galileo.ui.app_window import _camera_backend_key_for_slot
         return self._window._camera_backends.get(_camera_backend_key_for_slot(self._window._active_camera_slot))
 
+    def _associated_focuser_slot(self) -> str | None:
+        """The focuser slot (``"primary"``, ``"focuser_2"``, …) associated with the selected Optics
+        on Equipment > Optics, or ``None`` if that tube has no focuser associated."""
+        tube = self._window.active_optical_tube()
+        for key in (tube.associated if tube is not None else []):
+            category, _, slot = key.partition(":")
+            if category == "focuser" and slot:
+                return slot
+        return None
+
     def _focuser(self):
-        get_adapter = (self._window._device_pages.get("focuser") or {}).get("get_adapter")
+        """The selected Optics' associated focuser if it is connected, otherwise the Pier's first
+        connected focuser (the behaviour before Optics could name one)."""
+        page = self._window._device_pages.get("focuser") or {}
+        slot = self._associated_focuser_slot()
+        by_slot = page.get("adapter_for_slot")
+        if slot is not None and by_slot is not None:
+            adapter = by_slot(slot)
+            if adapter is not None:
+                return adapter
+        get_adapter = page.get("get_adapter")
         return get_adapter() if get_adapter is not None else None
 
     def _filter_wheel(self):
@@ -704,6 +750,7 @@ class FocusPage(QWidget):
         service = self._services[key] = AutofocusService(
             camera=camera, focuser=focuser, exposure_s=self.exposure_spin.value(),
             backlash_compensation=self.backlash_spin.value(), pier_key=key,
+            gain=self.gain_spin.value(), offset=self.offset_spin.value(),
         )
         self._sync_buttons()
         threading.Thread(
@@ -827,7 +874,10 @@ class FocusPage(QWidget):
             return
         focuser = self._focuser()
         from galileo.autofocus import AutofocusService
-        service = AutofocusService(camera=camera, exposure_s=self.exposure_spin.value(), pier_key=key)
+        service = AutofocusService(
+            camera=camera, exposure_s=self.exposure_spin.value(), pier_key=key,
+            gain=self.gain_spin.value(), offset=self.offset_spin.value(),
+        )
         self._manual_stop[key] = threading.Event()
         self._manual_active[key] = True
         self._sync_buttons()
@@ -892,10 +942,9 @@ class FocusPage(QWidget):
         """Cheap, cached readouts only — no device I/O. Skipped while the page is hidden."""
         if not self.isVisible():
             return
-        from galileo.ui.app_window import _camera_slot_label
-        camera_name = _camera_slot_label(self._window._active_camera_slot)
-        self.camera_label.setText(f"{camera_name} ({'connected' if self._camera() is not None else 'not connected'})")
+        self.camera_label.setText(f"{self._camera_name} ({'connected' if self._camera() is not None else 'not connected'})")
         focuser = self._focuser()
+        self.focuser_label.setText(f"{self._focuser_name} ({'connected' if focuser is not None else 'not connected'})")
         if focuser is None:
             self.position_label.setText("—")
             self.temperature_label.setText("—")
@@ -912,7 +961,43 @@ class FocusPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self.refresh_context()
         self._refresh_devices()
+
+    def refresh_context(self) -> None:
+        """Re-read which camera and focuser the top bar's Optics / Camera selection names, for the
+        two device labels. Reads the database, so it runs when the selection changes rather than
+        on the one-second readout timer."""
+        from galileo.observatory import get_device_config
+        pier, window = self._window._current_pier, self._window
+        camera_name = focuser_name = None
+        slot = self._associated_focuser_slot() or "primary"
+        if pier is not None:
+            try:
+                cfg = get_device_config(pier, "camera", slot=window._active_camera_slot)
+                camera_name = cfg.device_name if cfg is not None else None
+                cfg = get_device_config(pier, "focuser", slot=slot)
+                focuser_name = cfg.device_name if cfg is not None else None
+            except Exception:
+                logger.exception("Could not load the camera/focuser names for Pier %r", pier.name)
+        self._camera_name = camera_name or "No camera selected"
+        self._focuser_name = focuser_name or "No focuser associated"
+
+    def apply_camera_defaults(self) -> None:
+        """Set Gain and Offset to the selected camera's defaults from Equipment > Camera. Runs when a
+        camera or Pier is chosen, not on every visit, so a value edited here is not overwritten."""
+        self.refresh_context()
+        pier = self._window._current_pier
+        if pier is None:
+            return
+        from galileo.observatory import get_device_config
+        try:
+            cfg = get_device_config(pier, "camera", slot=self._window._active_camera_slot)
+        except Exception:
+            logger.exception("Could not load camera defaults for Pier %r", pier.name)
+            return
+        self.gain_spin.setValue(cfg.default_gain or 0 if cfg is not None else 0)
+        self.offset_spin.setValue(cfg.default_offset or 0 if cfg is not None else 0)
 
     # --- Per-Pier settings (FOC-070) -----------------------------------------
 
@@ -924,6 +1009,7 @@ class FocusPage(QWidget):
         key = self._pier_key()
         self._update_exposure_bar()
         self._show_emergency()
+        self.apply_camera_defaults()
         if not self._active.get(key, False):
             from galileo.observatory import get_autofocus_params
             params = get_autofocus_params(self._window._current_pier)

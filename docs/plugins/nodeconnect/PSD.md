@@ -3,12 +3,12 @@
 | | |
 |---|---|
 | **Project** | Galileo — NodeConnect Plugin (node-to-node configuration sync and data transfer) |
-| **Document** | PSD (Project Scope Document), v0.2, draft — revised after first review (Section 13) |
+| **Document** | PSD (Project Scope Document), v0.3, draft — revised after first review and SDD review (Section 13) |
 | **Status** | Draft — for review |
 | **Date** | 2026-10-27 |
 | **Parent project** | [Galileo Core PSD](../../PSD.md) |
 | **Sibling plugins** | [MobileConnect](../mobileconnect/PSD.md) and [WebConnect](../webconnect/PSD.md) — consume the same Connect Link facility (Section 6.2) |
-| **Downstream documents** | SRS, SDD, RTM — not yet written; to follow this PSD's approval |
+| **Downstream documents** | [SRS](SRS.md), [SDD](SDD.md), [RTM](RTM.md) |
 
 ---
 
@@ -49,6 +49,7 @@ Galileo already keeps all configuration in one shared database (core's firm rule
 - **No one-shot "copy node" mode.** Making a new node match an existing one is simply pairing it and letting its first (full) sync run.
 - **No file-level database copy.** Replication is per record through Galileo's own models and migrations, never a copy of the database file; nodes on different schema versions are handled by a handshake (Section 9, PC4), not by copying tables blindly.
 - **No translation of node-specific values.** The following are **node-local** and not replicated: the node's identity and pairing token, NodeConnect's own link settings, filesystem paths (Library root, data/cache/log folders) and the database location. The user can opt individual node-local items in; the plugin does not try to rewrite them. Device and PHD2 addresses **are** replicated, because core will refuse `localhost`/loopback in them (Section 6.3, C5), so an address stored on one node means the same machine on every other.
+- **No Master redundancy or promotion in v1.** If the Master is lost, spokes keep working but configuration cannot converge; promoting a spoke to Master is deferred to v2 (D16).
 - **No merging of two Libraries.** Image transfer ingests frames into the Master's Library and de-duplicates by content hash; it does not reconcile two independently grown Libraries or their user-edited catalog fields beyond Section 4 G5.
 - **No image processing at the Master.** No stacking, calibration or re-measurement is performed on transfer; the Master's normal Library ingest does whatever it already does.
 - **No live mirroring.** Running sessions, mount positions and guiding state are not replicated between nodes.
@@ -77,25 +78,28 @@ NodeConnect and MobileConnect must use **the same communication facility** (a st
 | # | Connect Link capability | Used by NodeConnect for | Used by MobileConnect for |
 |---|---|---|---|
 | L1 | One authenticated, encrypted listener per node (HTTPS + WebSocket), started only while at least one enabled plugin has registered a handler | Receiving config requests and uploads | Receiving commands, serving state |
-| L2 | **Pairing with approval**: a client sends a pairing request to the node it wants to join (identifying itself and showing a short code); **the request is held until a person approves it on the receiving node**; only then is a per-peer **token** (and pinned certificate) issued. No endpoint other than "request pairing" answers a caller without a valid token. Revocable per peer | A node asks to join the Master; the Master's user approves; the node is issued its token | A tablet/phone/browser asks to join the node; the node's user approves |
-| L3 | **Scoped permissions** per peer (`config.read`, `config.write`, `data.push`, `control`, `view`) and an audit log of who did what | `config.*`, `data.push` only | `control`, `view` only — never `config.*` |
+| L2 | **Pairing with approval**: a client sends a pairing request to the node it wants to join (identifying itself and showing a short code); **the request is held until a person approves it on the receiving node**; only then is a per-peer **token** (and pinned certificate) issued. No endpoint other than "request pairing" answers a caller without a valid token. Revocable per peer. **One owner-initiated exception — outreach enrolment:** while the node's owner has switched an *outreach event* on (time-limited, off by default), a device that presents the event's secret, shown by the Master as a QR code, and that connects from the event's configured network, is issued a short-lived, anonymous guest token carrying only the `outreach.view` scope (L3). Approval is thereby given by the owner's act of opening the event rather than per device; an unpaired device with no event secret is still answered by nothing (see the [MobileConnect PSD](../mobileconnect/PSD.md) §6.8) | A node asks to join the Master; the Master's user approves; the node is issued its token | A tablet/phone/browser asks to join the node; the node's user approves |
+| L3 | **Scoped permissions** per peer (`config.read`, `config.write`, `data.push`, `data.pull`, `control`, `view`, and the guest-only `outreach.view` — live images of owner-selected Piers and nothing else, never granted to a paired peer) and an audit log of who did what | `config.*`, `data.push`, `data.pull` only | `control`, `view` only — never `config.*` |
 | L4 | **Discovery** on the LAN (mDNS/zeroconf service advertisement) plus manual address entry | Finding the Master | Finding the node |
 | L5 | **Request/response API** with versioned routes that a plugin registers (`/nodeconnect/v1/...`) | Change-set exchange | Operations (Section 6 of the MobileConnect PSD) |
 | L6 | **Server-push event stream** (WebSocket) | The Master pushing changes to connected nodes; nodes notifying the Master | Live state, progress, alerts |
 | L7 | **Resumable, chunked, checksummed binary transfer** in both directions | FITS frames to the Master | Preview images to the phone; frame download |
 | L8 | **Version handshake**: Galileo version, plugin API version, schema (migration) level, Connect Link protocol version | Refuse or restrict a sync across incompatible schemas | Tell the app to update |
+| L9 | **Outreach event facility** (owner-opened, time-limited events; per-event secret; source-subnet guard; anonymous `outreach.view` guest tokens, guest caps and rate limits; aggregate-only audit; metadata-free guest previews through the core preview service; the event display with its Wi-Fi and enrolment QR codes). Hosted in core so that every front end shares one implementation; a plugin contributes only a *surface* (its QR payload, its guest routes, how it delivers images) | — | MobileConnect offers the event to apps, [WebConnect](../webconnect/PSD.md) to browsers |
 
-The Connect Link requirements (`LINK-*`) will be added to the core SRS/SDD if Q1 is accepted. Until then this table is the contract both plugins are designed against.
+The Connect Link requirements (`LINK-*`) are now in the core SRS (Section 4.24) and SDD (Section 4.28): L1–L8 as outlines, L9 in full. Until then this table is the contract both plugins are designed against.
 
 ### 6.3 Other proposed core additions NodeConnect depends on
 
 | # | Addition | Why |
 |---|---|---|
-| C1 | **Per-record change tracking on replicable tables**: a modification timestamp and a monotonic revision on each row, plus a **tombstone** record for deletions (numbered migration under `galileo/library/migrations/`). Today `app_settings` (`namespace`, `key`, `scope`, `value`) has no modification time, so "changed since last sync" cannot be answered, and a deleted row leaves no trace to propagate | G3 |
+| C1 | **Per-record change tracking on replicable tables**: a modification timestamp and a Master-issued monotonic revision on each row, a **`dirty`** flag and the **`base_rev`** an edit started from (with a write hook, so a spoke can ship local edits and the Master can detect conflicts exactly), plus a **tombstone** record for deletions (numbered migration under `galileo/library/migrations/`). Today `app_settings` (`namespace`, `key`, `scope`, `value`) has no modification time, so "changed since last sync" cannot be answered, and a deleted row leaves no trace to propagate | G3 |
 | C2 | **A replicable-table registry**: each core model that holds configuration declares itself replicable, with its natural key and its node-local fields. New configuration tables are then replicated by registration, not by editing NodeConnect (the definition of "complete" stays true as Galileo grows) | G2 |
 | C3 | **A "settings changed" notification** on the event bus after a bulk apply, so open Options pages and screens reload | G3 |
 | C4 | **A busy signal** from the session executor, so a sync can wait out an imaging session | G6 |
 | C5 | **No `localhost` in device or PHD2 addresses.** Wherever the user specifies the host/URL of a device (INDI server, Alpaca device) or of PHD2, core validation refuses `localhost`, `127.0.0.0/8`, `::1` and `0.0.0.0` with a message asking for the machine's real hostname or LAN address; existing profiles that contain one are flagged on load. This is a core change, specified in the core SRS (equipment and guiding domains), and applies with or without NodeConnect. It exists so that a stored address means the same machine on every node — the property replication relies on. Consequence to accept: a single-machine user whose INDI server runs on the same computer must enter that computer's hostname or LAN address | G2 |
+| C6 | **Core-owned sync tables.** The tables NodeConnect needs to be durable — outbox, inbox, snapshots, run reports, transfer queue and per-node sync state — are created by numbered core migrations (not plugin-owned migrations) and exposed to the plugin through a storage port. Core's migration rule is thereby kept intact | G3, G5, G7 |
+| C7 | **Library location state.** `fitsFile` gains a location of *Local* or *On Master* (like the existing cloud-backed state) and Library support for retrieving an On Master frame back to the node; set by NodeConnect after verified receipt, with retrieval over Connect Link under a `data.pull` scope | G5 |
 
 ## 7. Requirement Domain
 
@@ -138,7 +142,7 @@ One domain, **`NCON`** (NodeConnect), specified in a future SRS. Provisional sub
 | R3 | A sync lands mid-session and changes a setting the executor is using | Deferred while a session runs (G6, C4); applied between sessions |
 | R4 | Secrets leak by being replicated, or are exposed in transit | Excluded by default; encrypted and authenticated transport (L1/L2); never written to the run report or log |
 | R5 | A large Library flows over a slow link and starves the node of bandwidth during the night | Bandwidth cap and allowed-hours window; transfer queue is lower priority than anything the session needs |
-| R6 | Core changes (C1–C4) land late or are rejected, leaving the plugin without change tracking | They are small and mechanical, but they are the critical path; the PSD is reviewed with them in view (Section 13, Q2). A degraded fallback (full-table compare by content hash) is possible but slower and cannot propagate deletions |
+| R6 | Core changes (C1–C7) land late or are rejected, leaving the plugin without change tracking | They are small and mechanical, but they are the critical path; the PSD is reviewed with them in view (Section 13, Q2). A degraded fallback (full-table compare by content hash) is possible but slower and cannot propagate deletions |
 | R7 | Version skew makes a sync half-apply | Handshake (L8), per-table all-or-nothing apply inside a database transaction |
 
 ## 11. Success Criteria (Scope-Level)
@@ -179,10 +183,15 @@ One domain, **`NCON`** (NodeConnect), specified in a future SRS. Provisional sub
 | D9 | Device and PHD2 addresses may never be `localhost` (C5) |
 | D10 | **No hostname guard.** Only loopback (`localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`) is refused; a node's own hostname is accepted, since a service may reside on a node that other nodes access |
 | D11 | **Replication is transparent**: there is no manual "apply now" step or override. Changes are held only while a session runs and then applied automatically; the user sees the result in the status view and run report, not a prompt |
+| D12 | **Core owns the sync tables** (C6): NodeConnect does not ship its own migrations |
+| D13 | **C1 is extended** with `dirty` and `base_rev` and a write hook, over the PSD's timestamp, revision and tombstone |
+| D14 | **Images removed from a node stay listed as *On Master* and can be retrieved** (C7, NCON-480/490), with the `data.pull` scope |
+| D15 | **A node can be deleted on the Master**, which revokes it, removes its sync state and releases the tombstones it was holding back; a returning node pairs again and takes a full sync |
+| D16 | **Master redundancy and promotion are deferred to v2** |
 
 ### 13.2 Remaining
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q1 | Should the Master accept changes from nodes while it is itself in a session? | Yes — received and stored at once, applied after the Master's session |
+| Q1 | *(Resolved: yes, SRS NCON-200.)* Should the Master accept changes from nodes while it is itself in a session? | Yes — received and stored at once, applied after the Master's session |
 | Q2 | Are per-node category filters wanted (e.g. a field Pi that should not take the Master's notification settings)? | Not in v1; the node-local list and per-item opt-in cover it, and filters add a second axis of configuration |

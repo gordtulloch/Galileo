@@ -476,7 +476,7 @@ class AppWindowPluginsPageMixin:
                     with contextlib.suppress(OSError):
                         _os.unlink(path)
 
-            _dl_thread.done.connect(_on_dl_done)
+            _dl_thread.done.connect(_on_dl_done, Qt.ConnectionType.QueuedConnection)
             _dl_thread.start()
 
         def _fetch_thread_start(force: bool = False) -> None:
@@ -487,7 +487,7 @@ class AppWindowPluginsPageMixin:
             market_status.setText("Loading plugin list…")
             market_status.setVisible(True)
             _fetch_thread = _FetchThread(_client, force=force)
-            _fetch_thread.done.connect(_populate_market)
+            _fetch_thread.done.connect(_populate_market, Qt.ConnectionType.QueuedConnection)
             _fetch_thread.start()
 
         refresh_btn.clicked.connect(lambda: _fetch_thread_start(force=True))
@@ -506,7 +506,7 @@ class AppWindowPluginsPageMixin:
                 self.done.emit(entries, err)
 
         _latest_thread = _LatestThread(_client)
-        _latest_thread.done.connect(lambda entries, err: None if err else _remember_latest(entries))
+        _latest_thread.done.connect(lambda entries, err: None if err else _remember_latest(entries), Qt.ConnectionType.QueuedConnection)
         page._latest_thread = _latest_thread   # keep the thread object alive
         _latest_thread.start()
         tabs.addTab(market_tab, "Marketplace")
