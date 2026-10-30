@@ -103,6 +103,8 @@ dependencies = [
     "peewee-migrate>=1.12",
     # Network adapters
     "requests>=2.28",
+    "aiohttp>=3.9",           # Connect Link listener (LINK-010, ADR-LINK-006)
+    "cryptography>=42.0",     # Connect Link TLS certificate (LINK-010)
     "paramiko>=3.0",          # SFTP
     "defusedxml>=0.7",        # XISF header parsing (an imported file is untrusted XML)
     "keyring>=24.0",          # OS credential store (NFR-SEC-010) — was already transitively pulled in by astroquery

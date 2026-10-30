@@ -1,6 +1,6 @@
 # NodeConnect / MobileConnect / WebConnect — Implementation Checklist
 
-Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{nodeconnect,mobileconnect,webconnect}/{PSD,SRS,SDD,RTM}.md` (design drafts v0.2, 2026-10-29), core SRS §4.24 (`LINK`), core SDD §4.28 (`galileo.connect_link`). Packaging mechanics are in [`PLUGIN_CHECKLIST.md`](PLUGIN_CHECKLIST.md).
+Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{nodeconnect,mobileconnect,webconnect}/{PSD,SRS,SDD,RTM}.md` (design drafts v0.2, 2026-10-29), core SRS §4.24 (`LINK`), core SDD §4.28 (`galileo.connect_link`).
 
 ## 0. Where things stand (verified 2026-10-30)
 
@@ -73,7 +73,7 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 
 ### 2d. Plugin loader
 - [x] Specified as core `PLUG-200` (SRS, RTM row, SDD §4.20 install step 4a: `requires` in `plugin.toml`, private `.deps/` directory per plugin, rollback on failure, offline refusal)
-- [ ] Implement in `galileo.plugins` (`PluginManager.install()`), write `TC-PLUG-200` in `tests/test_plug.py`, update the Options > Plugins inline help (`python -m galileo.ui.help --audit`) and `PLUGIN_CHECKLIST.md`
+- [x] Implemented 2026-10-30 in `galileo.plugins` (`install_requirements`, `PluginManifest.requires`); `TC-PLUG-200` in `tests/test_plug.py` (3 tests). No control changed, so no inline-help change.
 
 ## 3. Phase A — NodeConnect (needs 2a L1–L8 and 2b only)
 

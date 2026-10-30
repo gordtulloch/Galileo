@@ -4,6 +4,7 @@
 """PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-170)."""
 
 import io
+from pathlib import Path
 import zipfile
 from unittest.mock import MagicMock, patch
 
@@ -1272,3 +1273,92 @@ def test_tc_plug_210_registering_again_replaces_rather_than_duplicates(plugin_ma
     plugin_manager.load(cls)
     assert cls.results == [True, True]
     assert len(profile_registry.profiles()) == 1
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-200
+# ---------------------------------------------------------------------------
+
+def _deps_zip(requires: list[str]) -> bytes:
+    toml = (
+        'name = "depplug"\nversion = "1.0.0"\napi_min = "1"\napi_max = "1"\n'
+        'author = "t"\ndescription = "d"\ntier = "third_party"\n'
+        'entry_point = "depplug"\n'
+        f"requires = {requires!r}\n".replace("'", '"')
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", toml)
+        zf.writestr("depplug/__init__.py", "")
+    return buf.getvalue()
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_requires_installed_into_the_plugins_private_folder(tmp_path):
+    """PLUG-200: a plugin's declared requirements are installed into a folder private to it, on
+    sys.path while it is loaded, and removed with the plugin; Galileo's environment is untouched."""
+    import sys
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    zip_path = tmp_path / "dep.zip"
+    zip_path.write_bytes(_deps_zip(["somepkg>=1.0"]))
+    calls = []
+
+    def fake_pip(args):
+        calls.append(args)
+        target = args[args.index("--target") + 1]
+        (Path(target) / "somepkg").mkdir(parents=True)
+        return 0, ""
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir), \
+            patch("galileo.plugins._run_pip", fake_pip):
+        mgr = plugins.PluginManager()
+        record = mgr.install(zip_path)
+        deps = record.install_dir / ".deps"
+        assert calls and "somepkg>=1.0" in calls[0] and "--target" in calls[0]
+        assert (deps / "somepkg").is_dir()
+        assert str(deps) in sys.path
+        mgr.remove("depplug")
+
+    assert str(deps) not in sys.path
+    assert not record.install_dir.exists()
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_unresolvable_requirement_fails_install_and_rolls_back(tmp_path):
+    """PLUG-200: if a requirement cannot be resolved (offline included) the install fails and
+    leaves nothing behind."""
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    zip_path = tmp_path / "dep.zip"
+    zip_path.write_bytes(_deps_zip(["nosuchpkg"]))
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir), \
+            patch("galileo.plugins._run_pip", lambda args: (1, "no network")):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError, match="dependencies"):
+            mgr.install(zip_path)
+
+    assert list(plugins_dir.iterdir()) == []
+    assert mgr.installed_version("depplug") == ""
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_requires_must_be_a_list_of_strings():
+    """PLUG-200: a malformed ``requires`` entry is rejected when the manifest is read; a plugin
+    without one installs nothing."""
+    plugins = pytest.importorskip("galileo.plugins")
+    base = ('name="x"\nversion="1"\napi_min="1"\napi_max="1"\nauthor="a"\n'
+            'description="d"\ntier="third_party"\n')
+    with pytest.raises(plugins.PluginInstallError):
+        plugins.PluginManifest.from_toml_text(base + 'requires = "numpy"\n')
+    assert plugins.PluginManifest.from_toml_text(base).requires == []
+    calls = []
+    with patch("galileo.plugins._run_pip", lambda a: calls.append(a) or (0, "")):
+        plugins.install_requirements(Path("."), [])
+    assert calls == []
