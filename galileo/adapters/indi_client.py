@@ -143,6 +143,7 @@ class IndiClient:
         self._alive = False
         self._error: str | None = None
         self.messages: deque[str] = deque(maxlen=50)
+        self._device_messages: deque[tuple[str, str]] = deque(maxlen=50)  # (device or "", line)
         self.refcount = 0
 
     # -- lifecycle ---------------------------------------------------------
@@ -262,6 +263,7 @@ class IndiClient:
             if text:
                 line = f"[{elem.get('device') or 'server'}] {text}"
                 self.messages.append(line)
+                self._device_messages.append((elem.get("device") or "", line))
                 # Servers replay recent driver messages to every new client and
                 # drivers chatter routinely, so only problems reach the log pane.
                 level = (logging.ERROR if "[ERROR]" in text
@@ -274,7 +276,9 @@ class IndiClient:
                     line = self._throttle_repeat(line)
                     if line is None:
                         return
-                logger.log(level, "INDI message %s", line)
+                # Several servers share one log, and device names repeat across them
+                # (an all-sky ASI224MC on one host, a guide ASI224MC on another).
+                logger.log(level, "INDI message %s:%d %s", self.host, self.port, line)
             return
         if tag == "delProperty":
             device, name = elem.get("device", ""), elem.get("name")
@@ -436,8 +440,21 @@ class IndiClient:
 
     # -- waiting -----------------------------------------------------------
 
-    def wait_for(self, predicate: Callable[[], bool], timeout: float, what: str = "condition") -> None:
-        """Block until *predicate* (evaluated under the cache lock) holds."""
+    def last_message(self, device: str | None = None) -> str | None:
+        """Most recent driver message relevant to *device* (its own, or a server-level
+        one with no device). A server hosts many devices, so the newest message overall
+        is usually chatter from an unrelated camera. ``None`` device = any message."""
+        if device is None:
+            return self.messages[-1] if self.messages else None
+        for src, line in reversed(self._device_messages):
+            if src in (device, ""):
+                return line
+        return None
+
+    def wait_for(self, predicate: Callable[[], bool], timeout: float, what: str = "condition",
+                 device: str | None = None) -> None:
+        """Block until *predicate* (evaluated under the cache lock) holds. *device*
+        scopes the "last server message" timeout hint to that device."""
         deadline = time.monotonic() + timeout
         with self._cond:
             while not predicate():
@@ -448,7 +465,8 @@ class IndiClient:
                     )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    hint = f" Last server message: {self.messages[-1]}" if self.messages else ""
+                    last = self.last_message(device)
+                    hint = f" Last server message: {last}" if last else ""
                     raise DeviceTimeoutError(f"Timed out after {timeout:g}s waiting for {what}.{hint}")
                 self._cond.wait(remaining)
 

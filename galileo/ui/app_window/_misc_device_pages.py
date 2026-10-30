@@ -49,7 +49,7 @@ class AppWindowMiscDevicePagesMixin:
         is in progress."""
         from galileo.ui.focus import FocusPage
         page = FocusPage(self)
-        self._device_pages["focus"] = {"reload": page.reload}
+        self._device_pages["focus"] = {"reload": page.reload, "page": page}
         return page
 
     def _scheduler_for_pier(self: AppWindowState, pier_name: str | None) -> ObservatoryScheduler:

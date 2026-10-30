@@ -8,10 +8,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import logging
+import os
 
 from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
 
-from ._hold_to_move import HoldToMove
+from ._hold_to_move import HoldToMove, combo_rate, combo_rate_index, sync_rate_combo
 from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class AppWindowMountPageMixin:
             QLabel, QTableWidget, QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox,
             QPushButton, QCheckBox, QHeaderView, QMessageBox, QScrollArea, QGroupBox,
         )
-        from PySide6.QtCore import QTimer
+        from PySide6.QtCore import QSize, Qt, QTimer
 
         page = QWidget()
         page.setObjectName("MountPage")
@@ -302,12 +303,13 @@ class AppWindowMountPageMixin:
 
         rates_form = QFormLayout()
         rates_form.setVerticalSpacing(2)
-        from galileo.ui.imaging import NUDGE_RATES
+        from galileo.mount_limits import JOG_RATE_LEVELS
         jog_rate_combo = QComboBox()
-        for rate_name, rate_value in NUDGE_RATES.items():
-            jog_rate_combo.addItem(f"{rate_name} ({rate_value:g}°/s)", rate_value)
-        jog_rate_combo.setCurrentIndex(1)
-        jog_rate_combo.setToolTip("How fast the N/S/E/W buttons move the mount (same speeds as the Imaging page's nudge).")
+        for level, rate_value in JOG_RATE_LEVELS.items():
+            jog_rate_combo.addItem(str(level), rate_value)
+        jog_rate_combo.setCurrentIndex(4)
+        jog_rate_combo.setToolTip("How fast the N/S/E/W buttons move the mount. With an INDI mount this lists "
+                                  "the driver's own slew rates; otherwise levels 1 (slowest) to 9 (fastest).")
         rates_form.addRow("Rate", jog_rate_combo)
         controls_col.addLayout(rates_form)
 
@@ -342,10 +344,16 @@ class AppWindowMountPageMixin:
         park_btn = QPushButton("Park")
         park_btn.setObjectName("AccentButton")
         unpark_btn = QPushButton("Unpark")
+        set_home_btn = QPushButton("Set Home Position")
+        set_home_btn.setToolTip("Make the mount's present position its home reference. Separate from the park position.")
+        set_park_btn = QPushButton("Set Park Position")
+        set_park_btn.setToolTip("Make the mount's present position its park position.")
         park_status_value = QLabel("Park status: —")
         home_park_col.addWidget(home_btn)
+        home_park_col.addWidget(set_home_btn)
         home_park_col.addWidget(park_btn)
         home_park_col.addWidget(unpark_btn)
+        home_park_col.addWidget(set_park_btn)
         home_park_col.addWidget(park_status_value)
         home_park_col.addStretch(1)
         pad_row.addLayout(home_park_col)
@@ -354,6 +362,10 @@ class AppWindowMountPageMixin:
         reversed_row = QHBoxLayout()
         primary_reversed_check = QCheckBox("Primary reversed")
         secondary_reversed_check = QCheckBox("Secondary reversed")
+        primary_reversed_check.setToolTip("Reverse the east/west buttons. With an INDI driver that has this setting, "
+                                          "this shows the driver's own setting and changes it there.")
+        secondary_reversed_check.setToolTip("Reverse the north/south buttons. With an INDI driver that has this setting, "
+                                            "this shows the driver's own setting and changes it there.")
         reversed_row.addWidget(primary_reversed_check)
         reversed_row.addWidget(secondary_reversed_check)
         reversed_row.addStretch(1)
@@ -367,14 +379,6 @@ class AppWindowMountPageMixin:
         main_scroll.setFrameShape(QFrame.Shape.NoFrame)
         main_scroll.setWidget(main_content)
         layout.addWidget(main_scroll, 1)
-
-        settings_row = QHBoxLayout()
-        settings_heading = QLabel("Settings")
-        settings_heading.setObjectName("CriteriaHeading")
-        settings_row.addWidget(settings_heading)
-        settings_row.addWidget(QLabel("None"))
-        settings_row.addStretch(1)
-        layout.addLayout(settings_row)
 
         state: dict = {"adapter": None, "at_park": None}
         # This Pier's mount adapter persists here across a Pier switch, keyed by
@@ -449,6 +453,8 @@ class AppWindowMountPageMixin:
         for spin in (flip_ha_spin, min_alt_spin, max_alt_spin, max_ha_spin):
             spin.valueChanged.connect(_limits_changed)
 
+        live_guard_threads: set = set()
+
         def _guard_tick() -> None:
             """Every few seconds, off the UI thread: stop the mount if it is outside its limits
             while tracking or slewing, and flip it when a requested flip is due."""
@@ -463,8 +469,16 @@ class AppWindowMountPageMixin:
                 import dataclasses
                 limits = dataclasses.replace(limits, flip_enabled=False)
             from ._threads import _MountGuardThread
-            thread = _MountGuardThread(adapter, limits, self._window)
-            thread.finished_with.connect(_guard_done)
+            # Unparented (guard_state holds the reference) and deleted when finished, so a thread
+            # object isn't left behind as a child of the window every tick.
+            thread = _MountGuardThread(adapter, limits)
+            # Queued: _guard_done updates widgets, so it must run on the UI thread, not the worker's.
+            thread.finished_with.connect(_guard_done, Qt.ConnectionType.QueuedConnection)
+            # _guard_done clears guard_state["thread"] while run() may still be returning, so hold
+            # the thread until it has really finished; dropping it earlier destroys a running QThread.
+            live_guard_threads.add(thread)
+            thread.finished.connect(lambda t=thread: live_guard_threads.discard(t))
+            thread.finished.connect(thread.deleteLater)
             guard_state["thread"] = thread
             thread.start()
 
@@ -493,6 +507,32 @@ class AppWindowMountPageMixin:
             elif result.get("error"):
                 logger.error("Mount limit monitor error: %s", result["error"])
             _update_flip_label(bool(status.get("tracking")) if status else None)
+
+        def _axis_reversed() -> tuple:
+            """Directions the UI itself must reverse. When the driver has the setting it applies it to the
+            motion commands, so reversing here as well would undo it."""
+            if state.get("driver_reversal"):
+                return (False, False)
+            return (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked())
+
+        def _sync_manual_motion(status: dict) -> None:
+            """Mirror the driver's slew rates and axis reversal (the Imaging nudge pad's Speed too)."""
+            from galileo.mount_limits import JOG_RATE_LEVELS
+            jog_levels = [(str(level), rate) for level, rate in JOG_RATE_LEVELS.items()]
+            sync_rate_combo(jog_rate_combo, status, jog_levels, 4)
+            nudge_combo = (getattr(self, "_imaging_ui", None) or {}).get("nudge_rate")
+            if nudge_combo is not None:
+                sync_rate_combo(nudge_combo, status,
+                                [(f"{level} ({rate:g}°/s)", rate) for level, rate in JOG_RATE_LEVELS.items()], 6)
+            state["last_status"] = status
+            driver_reversed = status.get("axis_reversed")
+            state["driver_reversal"] = driver_reversed is not None
+            if driver_reversed is not None:
+                for check, value in zip((primary_reversed_check, secondary_reversed_check), driver_reversed):
+                    if check.isChecked() != bool(value):
+                        check.blockSignals(True)
+                        check.setChecked(bool(value))
+                        check.blockSignals(False)
 
         def _apply_status(status: dict) -> None:
             name_value.setText(status.get("name") or "—")
@@ -523,6 +563,7 @@ class AppWindowMountPageMixin:
             park_status_value.setText("Park status: —" if at_park is None else ("Park status: Parked" if at_park else "Park status: Unparked"))
             park_btn.setEnabled(not at_park)
             unpark_btn.setEnabled(at_park is not False)
+            _sync_manual_motion(status)
             rate = status.get("tracking_rate")
             if tracking is None:
                 tracking_status_value.setText("Tracking: —")
@@ -704,9 +745,25 @@ class AppWindowMountPageMixin:
 
         # Hold a button to move, release to stop (as KStars' mount motion pad does).
         jog_motion = HoldToMove(
-            lambda: state.get("adapter"), lambda: float(jog_rate_combo.currentData()),
-            lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked()), page)
+            lambda: state.get("adapter"), lambda: combo_rate(jog_rate_combo), _axis_reversed, page,
+            get_rate_index=lambda: combo_rate_index(jog_rate_combo))
         state["jog_controller"] = jog_motion
+        jog_rate_combo.currentIndexChanged.connect(lambda _i: jog_motion.rate_combo_changed(jog_rate_combo))
+
+        def _reversed_toggled(axis: int, checked: bool) -> None:
+            """Reversal the driver owns is set in the driver, so every INDI client sees it."""
+            adapter = state.get("adapter")
+            if adapter is None or not state.get("driver_reversal"):
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.set_axis_reversed(axis, checked))
+            except Exception:
+                logger.exception("Could not set the mount's axis %d reversal", axis)
+                self._window.statusBar().showMessage("The mount driver would not change its motion direction — see log.", 6000)
+
+        primary_reversed_check.toggled.connect(lambda checked: _reversed_toggled(0, checked))
+        secondary_reversed_check.toggled.connect(lambda checked: _reversed_toggled(1, checked))
 
         def _jog_failed(message: str) -> None:
             if "parked" in message.lower():
@@ -714,7 +771,7 @@ class AppWindowMountPageMixin:
             else:
                 self._window.statusBar().showMessage(f"The mount would not move: {message}", 8000)
 
-        jog_motion.failed.connect(_jog_failed)
+        jog_motion.failed.connect(_jog_failed, Qt.ConnectionType.QueuedConnection)
         for direction, btn in (("N", north_btn), ("S", south_btn), ("E", east_btn), ("W", west_btn),
                                *diagonal_btns.items()):
             jog_motion.attach(btn, direction)
@@ -788,6 +845,49 @@ class AppWindowMountPageMixin:
 
         unpark_btn.clicked.connect(_unpark_clicked)
 
+        def _set_park_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.set_park_position())
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
+            except Exception:
+                logger.exception("Mount set park position failed")
+                self._window.statusBar().showMessage("Set Park Position failed — see log.", 6000)
+                return
+            logger.info("Mount: park position set to current position")
+            self._window.statusBar().showMessage("Park position set to the current position.", 6000)
+
+        set_park_btn.clicked.connect(_set_park_clicked)
+
+        def _set_home_clicked() -> None:
+            adapter = state.get("adapter")
+            if adapter is None:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+                return
+            if not hasattr(adapter, "set_home_position"):
+                self._window.statusBar().showMessage("This driver can't set a home position.", 6000)
+                return
+            import asyncio
+            try:
+                asyncio.run(adapter.set_home_position())
+            except MountParkedError:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+                return
+            except Exception:
+                logger.exception("Mount set home position failed")
+                self._window.statusBar().showMessage("Set Home Position failed — see log.", 6000)
+                return
+            logger.info("Mount: home position set to current position")
+            self._window.statusBar().showMessage("Home position set to the current position.", 6000)
+
+        set_home_btn.clicked.connect(_set_home_clicked)
+
         def _set_tracking_clicked(enabled: bool) -> None:
             adapter = state.get("adapter")
             if adapter is None:
@@ -833,6 +933,16 @@ class AppWindowMountPageMixin:
         save_btn.setToolTip("Save this device's settings under the selected Observatory and Pier.")
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
+
+        # Every labelled button gets the same size (the square N/S/E/W jog pad keeps its own).
+        text_buttons = [scan_btn, connect_btn, ra_slew_btn, dec_slew_btn, alt_slew_btn, az_slew_btn,
+                        set_rate_btn, tracking_on_btn, tracking_off_btn,
+                        home_btn, set_home_btn, park_btn, unpark_btn, set_park_btn, save_btn]
+        # Extra width because sizeHint can under-measure the longest label under the app stylesheet (clipped text).
+        uniform = QSize(max(b.sizeHint().width() for b in text_buttons) + 24,
+                        max(b.sizeHint().height() for b in text_buttons))
+        for b in text_buttons:
+            b.setFixedSize(uniform)
 
         log_heading = QLabel("Log")
         log_heading.setObjectName("CriteriaHeading")
@@ -948,14 +1058,16 @@ class AppWindowMountPageMixin:
         # page (Imaging, Sessions) is in front, so it is not gated on this page being visible.
         guard_timer = QTimer(page)
         guard_timer.timeout.connect(_guard_tick)
-        guard_timer.start(5000)
+        if not os.environ.get("GALILEO_DISABLE_MOUNT_GUARD"):     # diagnostic switch for crash hunting
+            guard_timer.start(5000)
 
         state["reload"] = reload_page
         state["autoconnect"] = autoconnect_page
         state["disconnect"] = disconnect_page
         state["connected"] = lambda: state.get("adapter") is not None
         # The jog pad's axis reversal, so the Imaging page's nudge pad points the same way.
-        state["axis_reversed"] = lambda: (primary_reversed_check.isChecked(), secondary_reversed_check.isChecked())
+        state["axis_reversed"] = _axis_reversed
+        state["sync_manual_motion"] = lambda: _sync_manual_motion(state.get("last_status") or {})
         state["adapter_for"] = adapters_by_pier.get      # any Pier's mount, by pier_key (multi-Pier sessions)
         self._device_pages["mount"] = state
         reload_page()

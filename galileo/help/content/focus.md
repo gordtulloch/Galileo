@@ -17,6 +17,10 @@ A one-line summary of what the screen is doing: idle, which exposure of the swee
 
 The settings for an automatic focus run, and the live focuser readout. Changes to Step size, Points, Backlash and Exp are remembered and used by sequences too.
 
+## Focuser device
+
+The focuser this screen drives: the one associated with the **Optics** selected in the top bar (set on Equipment › Optics). If that tube has none associated, the Pier's first connected focuser is used. Shows its name and whether it is connected.
+
 ## Focuser position
 
 The focuser's current position, in steps, read live from the device.
@@ -51,7 +55,15 @@ Opens the filter-offset tool. Different filters bring light to focus at slightly
 
 ## Camera
 
-The camera used for the focus exposures: the camera of the optical train selected in the top bar. To use a different one, change the Optics / Camera selectors at the top of the window.
+The camera used for the focus exposures: the one chosen in the top bar's **Camera** selector, shown by its device name and whether it is connected. To use a different one, change the Optics / Camera selectors at the top of the window.
+
+## Gain
+
+The camera gain used for the focus exposures. It starts at the camera's **Default gain** from Equipment › Camera whenever you choose a camera or Pier, and you can change it here; the change applies to this screen's exposures only and is not saved back to the camera. **—** leaves the camera's own setting alone.
+
+## Offset
+
+The camera offset used for the focus exposures. It starts at the camera's **Default offset** from Equipment › Camera and behaves like **Gain**.
 
 ## Exp
 

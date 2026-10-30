@@ -828,9 +828,14 @@ class AppWindowFocuserPageMixin:
             connected = adapters_by_pier.get(key) or {}
             return connected.get("primary") or next(iter(connected.values()), None)
 
+        def adapter_for_slot(slot):
+            # The displayed Pier's connected focuser in *slot* ("primary", "focuser_2", …).
+            from galileo.current_object import pier_key
+            return (adapters_by_pier.get(pier_key(self._current_pier)) or {}).get(slot)
+
         state = {
             "reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter,
-            "adapter_for": adapter_for,
+            "adapter_for": adapter_for, "adapter_for_slot": adapter_for_slot,
             "disconnect": disconnect_page, "connected": lambda: connected_adapter() is not None,
         }
         self._device_pages["focuser"] = state

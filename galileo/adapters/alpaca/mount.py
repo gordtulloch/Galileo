@@ -99,6 +99,11 @@ class AlpacaMountAdapter(AlpacaAdapter):
     async def unpark(self) -> None:
         await self._put("unpark")
 
+    async def set_park_position(self) -> None:
+        """Make the mount's current position its park position (ITelescopeV3.SetPark)."""
+        await self._refuse_if_parked("set_park_position")
+        await self._put("setpark")
+
     async def find_home(self) -> None:
         await self._refuse_if_parked("find_home")
         await self._put("findhome")

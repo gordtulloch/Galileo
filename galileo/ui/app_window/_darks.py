@@ -188,10 +188,11 @@ class AppWindowDarksMixin:
             # must never take a thread that is still returning from run() down with it.
             thread = _DarksThread(svc, exposures, filter_name, count_spin.value(), self._window)
             thread.finished.connect(thread.deleteLater)
-            thread.frame_started.connect(on_frame_started)
-            thread.frame_done.connect(on_frame_done)
-            thread.finished_ok.connect(finished)
-            thread.failed.connect(failed)
+            from PySide6.QtCore import Qt
+            thread.frame_started.connect(on_frame_started, Qt.ConnectionType.QueuedConnection)
+            thread.frame_done.connect(on_frame_done, Qt.ConnectionType.QueuedConnection)
+            thread.finished_ok.connect(finished, Qt.ConnectionType.QueuedConnection)
+            thread.failed.connect(failed, Qt.ConnectionType.QueuedConnection)
             self._darks_threads[key] = thread
             set_running(True)
             status_label.setText("Starting…")

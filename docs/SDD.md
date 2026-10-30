@@ -534,6 +534,57 @@ Design for the VSTarget plugin's two modules is no longer here — see [`docs/pl
 - **Key design:** Pure Python, no Qt, no network. The forum is GitHub Discussions (no hosting, moderation tooling or separate accounts to run; threads convert to issues), chosen over self-hosted Discourse for a solo-maintained project -- the entry points are plain URLs built here, so moving to another forum later is a change to this module. "Report a problem" targets the `bug_report.yml` issue form with `version`, `os`, `python` and `screen` (the help `screen_id`) as query parameters matching the form's field ids; the application only opens the user's browser, so it works offline and adds no telemetry. The repository's `.github/ISSUE_TEMPLATE` and `.github/DISCUSSION_TEMPLATE` hold the forms; the Discussion categories (`q-a`, `ideas`, `show-and-tell`) are created in the repository settings, which cannot be done from a file.
 - **Satisfies:** `SUP-010`–`SUP-030`.
 
+### 4.28 `galileo.connect_link` — Connect Link (including the outreach event facility)
+
+- **Responsibility:** The one authenticated, encrypted listener, pairing-with-approval flow and scoped-permission model through which all node-to-node and node-to-client traffic passes ([NodeConnect PSD §6.2](plugins/nodeconnect/PSD.md)); plugins register handlers and add no transport. Within it, `galileo.connect_link.outreach` is the **outreach event facility (L9)**: the owner-opened, time-limited event in which unregistered devices on a designated network may watch live images of owner-offered Piers.
+- **Status of L1–L8:** specified as outlines (`LINK-010`–`080`); this section designs L9 in full and fixes only the seams L1–L8 must provide for it (below).
+
+**Seams L9 needs from the rest of Connect Link**
+
+| Seam | Used for |
+|---|---|
+| Route registry (`LINK-050`) | Registering/unregistering the facility's enrolment route and each surface's guest routes while an event is open |
+| Principal model (`LINK-020`/`030`) | A `GuestPrincipal` type distinct from `PairedPeer`, carrying only `outreach.view`; the dispatcher routes a guest request to the facility's allowlist before any plugin handler is found |
+| Event stream (`LINK-060`) | Surfaces may deliver guest messages over a guest's stream |
+| Audit log (`LINK-030`) | Aggregate event records |
+| Settings store (`galileo.settings_store`) and OS keychain | Event options; the Wi-Fi passphrase |
+| Core preview service (`galileo.preview`, the PV capability) | `render(frame_ref, size, quality, mode="guest")` |
+| `galileo.bus` | Frame-complete events; relay events for spoke Piers |
+
+**Design decisions (ADR-LINK-001 to 003)**
+
+- **ADR-LINK-001 — The facility owns the event; plugins own surfaces.** The event, secret, subnet guard, tokens, allowlist, limits, audit and guest preview are in core so that the single most security-sensitive door in the system exists once, is reviewed once, and works when only one front-end plugin is installed. A plugin contributes an `OutreachSurface` and nothing that can widen the door.
+- **ADR-LINK-002 — Deny by default, as a principal type.** A guest is a principal with an allowlist of three operations, not a very-low-permission role: a new operation anywhere in the system is invisible to guests unless someone adds it to a three-line allowlist in core.
+- **ADR-LINK-003 — Nothing durable.** The secret and guest tokens exist only in memory; the only persisted outreach data are the owner's options and aggregate audit entries. Restart voids the event by construction.
+
+**Components (`galileo.connect_link.outreach`)**
+
+| Component | Responsibility | Requirements |
+|---|---|---|
+| `OutreachOptions` | Plain data, clamped on load, in the settings store under `connect_link.outreach` (SSID, subnets, default duration, guest cap, guest preview size/quality, offered Piers, enabled surfaces); the passphrase through the OS keychain. `from_dict` rejects non-private subnets | `LINK-110` |
+| `OutreachFacility` | Owns the single optional `Event` (id, opener, start, end, offered Piers, surfaces, salted secret hash). `open(duration)` runs `precondition_check()` over the subnet list and every enabled surface; on success it generates the secret, registers the enrolment route, asks each enabled surface to register, and starts the expiry timer. `close(reason)` (timer, owner, disable, shutdown) unregisters everything, closes all guests, drops secret and tokens and audits. `extend`, `eject_all`, `reissue_secret` complete the owner's controls | `LINK-100`, `120`, `190`, `210` |
+| `SecretVault` | `secrets.token_urlsafe(32)`; keeps the raw secret only until the event display has built its payloads, then only a salted hash; `verify` is constant-time; re-issue invalidates the previous hash | `LINK-120` |
+| `SubnetGuard` | `ipaddress`-based membership check; applied by the dispatcher before any body is read, and re-applied to every guest request and stream message; a guest whose source address leaves the subnets is disconnected | `LINK-140` |
+| `Enrolment` | `enrol(secret, source) → GuestToken | Refusal`, exposed as a Link route for apps (`POST /connect/v1/outreach/enrol`) and as a Python API for surfaces with their own listener (the browser surface calls it). Order: subnet check, rate limit, cap check, secret verify; refusals are indistinguishable from a closed port | `LINK-130` |
+| `GuestRegistry` | In-memory `token → GuestSession(source, surface, viewing_pier, stream, counters)`; counts only; no name or persistent identifier; cleared on `close()` and at start | `LINK-130`, `180`, `210` |
+| `GuestAllowlist` | The three operations `piers()`, `view(pier)`, `switch(pier)`; every other call is refused and counted. Defined here, in core, with no registration hook | `LINK-150` |
+| `LiveImageFeed` | Subscribes (through `galileo.bus`, and the relay for spoke Piers whose node granted `view`) to frame-complete for **offered** Piers only; on each completion asks `GuestPreviewRenderer` for one image per distinct guest size, caches the latest per Pier with its age, and publishes `GuestMessage(image|unavailable|ended)` to the guests viewing that Pier; a joining or switching guest receives the cached latest at once | `LINK-160` |
+| `GuestPreviewRenderer` | Calls the core preview service in **guest mode**: pixel array → downscale to the guest size → JPEG encode → `assert_clean`, which rejects any output carrying EXIF/APP segments beyond the minimum, as a safety net against a renderer change | `LINK-160` |
+| `GuestLimits` | Concurrent-guest cap, per-guest token buckets, and the lowest scheduling class: guest rendering runs at the preview service's lowest priority and is dropped first under session load | `LINK-170` |
+| `OutreachAudit` | Writes open/close/offered/surfaces/peak/total/refusals-by-kind and per-Pier aggregate counts to the Connect Link audit log; never a guest identifier | `LINK-180` |
+| `SurfaceRegistry` / `OutreachSurface` (Protocol) | A plugin registers `OutreachSurface(name, option_key, preconditions() → list[str], qr_payload(info) → str, register(registrar), unregister(), deliver(guest, message))`. The facility passes `info = EventInfo(event_id, secret, host, ssid)` **only** to `qr_payload`; `register` receives a registrar that can add routes or a listener but has no access to `GuestRegistry`, `SecretVault` or `GuestAllowlist`. A surface that raises is isolated and closed | `LINK-200` |
+| `EventDisplay` (`galileo.ui.connect_link.outreach_page`) | The Outreach page: open/extend/end/eject/re-issue, time remaining, guest count, offered Piers; the standard Wi-Fi QR (`WIFI:T:WPA;S:<ssid>;P:<pass>;;`, passphrase omitted if unset) and one enrolment QR per enabled surface, rendered with `segno` (pure Python). Widgets only; no network work on the Qt thread | `LINK-190` |
+
+**Open and close sequence.** Owner presses *Open* → `OutreachFacility.open` → options validated → `SubnetGuard` configured → each enabled surface's `preconditions()` empty? (else the page shows why and no event opens) → secret generated → enrolment route and surface routes registered → `EventDisplay` renders QR codes from each surface's `qr_payload` → timer started. A guest enrols → `Enrolment` → `GuestRegistry` → surface delivers `LiveImageFeed` messages. *End* (or timer) → `close` → routes unregistered → guests closed (`ended`) → secret and tokens dropped → audit written.
+
+**Threading.** The facility runs on the asyncio loop bridged to Qt (`qasync`, §2.3). `galileo.bus` handlers (synchronous on the publishing thread) only copy a frame-complete notice onto the loop; rendering is dispatched with `run_cpu`/`to_thread` under `GuestLimits`; nothing blocks the Qt thread.
+
+**Failure behaviour.** Fail closed: no subnet or an unmet surface precondition means no event; loss of in-memory state closes the event; an exception in a guest's handling closes that guest; an exception in a surface closes that surface; none affects imaging, other guests, paired peers or other plugins.
+
+**Plugin API.** `OutreachSurface` and `PluginContext.register_outreach_surface()` are added to the plugin API surface (§6.3). The three first-party consumers are MobileConnect (app surface, [its SDD §3.14](plugins/mobileconnect/SDD.md)) and WebConnect (browser surface, [its PSD §6.4](plugins/webconnect/PSD.md)).
+
+- **Satisfies:** `LINK-010`–`080` (outline), `LINK-100`–`210`.
+
 ---
 
 ## 5. Data Design
@@ -584,7 +635,7 @@ Both `galileo.adapters.indi` and `galileo.adapters.alpaca` implement every port;
 
 ### 6.3 Plugin API Surface
 
-A plugin depends only on: the device port interfaces (4.1), the `SequencerNode` interface (4.7), and a small `PluginContext` object (logging, config directory, event-bus handle) injected at load time. No plugin imports UI or adapter internals directly.
+A plugin depends only on: the device port interfaces (4.1), the `SequencerNode` interface (4.7), and a small `PluginContext` object (logging, config directory, event-bus handle) injected at load time. No plugin imports UI or adapter internals directly. A plugin that offers an outreach surface additionally registers an `OutreachSurface` through `PluginContext.register_outreach_surface()` (Section 4.28); it never receives the event secret except to build its QR payload, and cannot widen the guest allowlist.
 
 ---
 

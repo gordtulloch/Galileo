@@ -12,6 +12,25 @@ from ._common import Signal, _QThreadBase
 logger = logging.getLogger(__name__)
 
 
+def _run_mount_coro(coro):
+    """Run a mount/wheel coroutine to completion on a private selector event loop.
+
+    ``asyncio.run`` on Windows builds a Proactor (IOCP) loop per call; these short-lived worker
+    threads do that every few seconds, alongside long-lived ones, and the crashes seen in the
+    ``faulthandler`` log all coincide with such loops being alive. Mount adapters only need
+    sockets and threads, which the selector loop provides.
+    """
+    import asyncio
+    loop = asyncio.SelectorEventLoop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_default_executor())
+        finally:
+            loop.close()
+
+
 class _CaptureThread(_QThreadBase):
     """Runs one manual capture (IMG-070) off the Qt UI thread, so the
     Imaging page's countdown/status display (IMG-090) keeps updating while
@@ -255,9 +274,8 @@ class _FilterMoveThread(_QThreadBase):
         self._index = index
 
     def run(self) -> None:
-        import asyncio
         try:
-            asyncio.run(self._wheel.move_to(self._index))
+            _run_mount_coro(self._wheel.move_to(self._index))
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -279,10 +297,9 @@ class _ResumeTrackingThread(_QThreadBase):
         self._target = target
 
     def run(self) -> None:
-        import asyncio
         from galileo.tracking import resume_tracking
         try:
-            rate = asyncio.run(resume_tracking(self._mount, self._target))
+            rate = _run_mount_coro(resume_tracking(self._mount, self._target))
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -301,9 +318,8 @@ class _MountPositionThread(_QThreadBase):
         self._mount = mount
 
     def run(self) -> None:
-        import asyncio
         try:
-            status = asyncio.run(self._mount.get_status()) or {}
+            status = _run_mount_coro(self._mount.get_status()) or {}
         except Exception:
             logger.debug("Could not read the mount position for the Star Atlas", exc_info=True)
             status = None
@@ -345,10 +361,9 @@ class _MountGuardThread(_QThreadBase):
         self._limits = limits
 
     def run(self) -> None:
-        import asyncio
         result: dict = {"status": None, "kind": "", "reasons": (), "error": ""}
         try:
-            asyncio.run(self._guard(result))
+            _run_mount_coro(self._guard(result))
         except Exception as exc:
             logger.exception("Mount limit/flip monitor failed")
             result["error"] = str(exc)

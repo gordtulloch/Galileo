@@ -145,7 +145,7 @@ Stops the mount's tracking; the sky then drifts across the field. Use it for bal
 
 ## Rate
 
-How fast the N/S/E/W buttons move the mount: **Fine**, **Medium** or **Coarse**, shown with the speed in degrees per second. The same speeds are used by the Imaging page's Mount Nudge.
+How fast the N/S/E/W buttons move the mount, from **1** (slowest) to **9** (fastest). On an OnStep mount, level *n* uses OnStep's own slew rate *n*, and 9 is its maximum. Other mounts use the nearest speed they offer. The Imaging page's Mount Nudge has its own Fine / Medium / Coarse speeds.
 
 ## N S E W
 
@@ -157,7 +157,11 @@ Stops all jog movement and abandons any slew in progress.
 
 ## Home
 
-Sends the mount to its home position, if the driver supports finding it.
+Sends the mount to its home position, if the driver supports it. Home is the mount's mechanical reference position and is **not** the park position. Where the driver has a homing sensor this searches for home; on mounts such as LX200 OnStep it slews to the stored home position.
+
+## Set Home Position
+
+Makes wherever the mount is pointing right now its home reference (OnStep: reset home). Use it only when the mount really is at its home position, because the mount's alignment is measured from it. Separate from **Set Park Position**. Unavailable while parked, and only on drivers that offer it.
 
 ## Park
 
@@ -166,6 +170,10 @@ Moves the mount to its park position and, where the driver supports it, stops tr
 ## Unpark
 
 Releases the mount from its parked state so it can slew and track again.
+
+## Set Park Position
+
+Makes wherever the mount is pointing right now its park position, so the next **Park** returns here. Slew the mount to the position you want first. Unavailable while the mount is parked, and only works where the driver supports setting a park position.
 
 ## Park status
 
@@ -178,7 +186,3 @@ Reverses the east/west buttons. Tick this if pressing E moves the image the wron
 ## Secondary reversed
 
 Reverses the north/south buttons, for the same reason as **Primary reversed**.
-
-## Settings
-
-Mount-specific driver settings. None are available for this mount.

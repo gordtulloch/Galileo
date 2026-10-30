@@ -15,7 +15,7 @@ from galileo.adapters.indi._base import IndiAdapter
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
-from galileo.exceptions import MountParkedError
+from galileo.exceptions import DevicePropertyError, MountParkedError
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class IndiMountAdapter(IndiAdapter):
         self.site_lat: float | None = None
         self.site_lon: float | None = None
         self.site_elevation: float | None = None
+        self._explicit_rate = False   # a driver slew rate was chosen with set_slew_rate()
 
     def get_capabilities(self) -> DeviceCapabilities:
         if self._client is None:
@@ -104,28 +105,119 @@ class IndiMountAdapter(IndiAdapter):
         self._log_interaction("unpark")
         self._set_sw("TELESCOPE_PARK", {"PARK": False, "UNPARK": True})
 
+    async def set_park_position(self) -> None:
+        """Make the mount's current position its park position (TELESCOPE_PARK_OPTION)."""
+        self._refuse_if_parked("set_park_position")
+        self._log_interaction("set_park_position")
+        self._select("TELESCOPE_PARK_OPTION", "PARK_CURRENT")
+
     async def find_home(self) -> None:
+        """Send the mount to its home position. Drivers with a homing sensor expose ``FIND`` (search for
+        home); others, such as LX200 OnStep, expose only ``GO`` (slew to the stored home)."""
         self._refuse_if_parked("find_home")
         self._log_interaction("find_home")
-        self._select("TELESCOPE_HOME", "FIND")
+        elements = self._require("TELESCOPE_HOME").elements
+        self._select("TELESCOPE_HOME", "FIND" if "FIND" in elements else "GO")
+
+    async def set_home_position(self) -> None:
+        """Make the mount's current position its home reference (``TELESCOPE_HOME`` ``SET``; OnStep ``:hF#``).
+        Distinct from the park position."""
+        self._refuse_if_parked("set_home_position")
+        self._log_interaction("set_home_position")
+        self._select("TELESCOPE_HOME", "SET")
+
+    @classmethod
+    def _slew_rate_element(cls, rate: float, elements: list[str]) -> str | None:
+        """The ``TELESCOPE_SLEW_RATE`` element to use for *rate* (deg/s). Standard drivers name their elements
+        (``SLEW_GUIDE`` … ``SLEW_MAX``). LX200 OnStep numbers them ``0``…``9`` slowest to fastest, so there the
+        Mount page's jog level (see :data:`JOG_RATE_LEVELS`) nearest to *rate* picks the element of that number."""
+        if not elements:
+            return None
+        tier = next(i for i, (limit, _) in enumerate(cls._SLEW_RATES) if rate <= limit)
+        named = cls._SLEW_RATES[tier][1]
+        if named in elements:
+            return named
+        from galileo.mount_limits import JOG_RATE_LEVELS
+        level = min(JOG_RATE_LEVELS, key=lambda n: abs(math.log(JOG_RATE_LEVELS[n] / rate)))
+        return elements[min(level, len(elements) - 1)]
+
+    def slew_rate_choices(self) -> list[str]:
+        """The driver's own ``TELESCOPE_SLEW_RATE`` labels, slowest first (as KStars' Mount module lists
+        them); empty if the driver defines none."""
+        prop = self._client.get_property(self.device_name, "TELESCOPE_SLEW_RATE") if self._client else None
+        return [el.label or name for name, el in prop.elements.items()] if prop is not None else []
+
+    def slew_rate_index(self) -> int | None:
+        """Index (into :meth:`slew_rate_choices`) of the slew rate the driver has selected."""
+        prop = self._client.get_property(self.device_name, "TELESCOPE_SLEW_RATE") if self._client else None
+        if prop is None:
+            return None
+        return next((i for i, el in enumerate(prop.elements.values()) if el.value), None)
+
+    async def set_slew_rate(self, index: int) -> None:
+        """Select the driver's *index*th slew rate for manual motion. Nothing is sent if it is already
+        selected. Once chosen this way, :meth:`move_axis` leaves the rate alone instead of snapping its
+        deg/s argument to one."""
+        names = list(self._require("TELESCOPE_SLEW_RATE").elements)
+        if not 0 <= index < len(names):
+            raise ValueError(f"Slew rate {index} is out of range (the driver has {len(names)})")
+        self._explicit_rate = True
+        if self.slew_rate_index() == index:
+            return
+        self._log_interaction("set_slew_rate", rate=names[index])
+        self._select("TELESCOPE_SLEW_RATE", names[index])
+
+    def _reverse_element(self, axis: int) -> str | None:
+        """The ``TELESCOPE_REVERSE_MOTION`` element for *axis* (0 = RA / east-west, 1 = Dec / north-south).
+        INDI's own spelling is ``REVERSE_EW``; ``REVERSE_WE`` is accepted too."""
+        prop = self._client.get_property(self.device_name, "TELESCOPE_REVERSE_MOTION") if self._client else None
+        if prop is None:
+            return None
+        wanted = ("REVERSE_EW", "REVERSE_WE") if axis == 0 else ("REVERSE_NS",)
+        return next((name for name in wanted if name in prop.elements), None)
+
+    def axis_reversed(self) -> tuple[bool, bool] | None:
+        """The driver's (primary, secondary) motion reversal, or None if it has no
+        ``TELESCOPE_REVERSE_MOTION`` (the caller then has to reverse directions itself)."""
+        elements = [self._reverse_element(0), self._reverse_element(1)]
+        if not any(elements):
+            return None
+        return tuple(bool(name and self._sw("TELESCOPE_REVERSE_MOTION", name)) for name in elements)  # type: ignore[return-value]
+
+    async def set_axis_reversed(self, axis: int, reverse: bool) -> None:
+        """Reverse (or restore) the manual-motion direction of *axis* in the driver itself, so every INDI
+        client sees the same directions. The other axis keeps its setting."""
+        element = self._reverse_element(axis)
+        if element is None:
+            raise DevicePropertyError(
+                f"INDI device {self.device_name!r} has no reversible motion for axis {axis} — "
+                f"its driver doesn't support this operation.")
+        self._log_interaction("set_axis_reversed", axis=axis, reverse=reverse)
+        values = {name: bool(self._sw("TELESCOPE_REVERSE_MOTION", name))
+                  for name in self._require("TELESCOPE_REVERSE_MOTION").elements}
+        values[element] = reverse
+        self._set_sw("TELESCOPE_REVERSE_MOTION", values)
 
     async def move_axis(self, axis: int, rate: float) -> None:
         """Continuous jog, same contract as the Alpaca adapter's ``MoveAxis``:
         axis 0 is RA (positive = east), axis 1 is Dec (positive = north),
         ``rate`` in deg/s, ``0`` stops that axis. INDI drives jogging with
         direction switches plus a discrete slew-rate selector, so the
-        requested speed is snapped to the nearest slower standard rate.
+        requested speed is snapped to the nearest slower standard rate —
+        unless the caller picked one of the driver's rates with
+        :meth:`set_slew_rate`, in which case only the direction is sent.
         Stopping an axis (``rate=0``) is always allowed."""
         if rate:
             self._refuse_if_parked("move_axis")
-        self._log_interaction("move_axis", axis=axis, rate=rate)
+        self._log_interaction("move_axis", axis=axis, deg_per_s=rate)
         if axis == 0:
             prop, positive, negative = "TELESCOPE_MOTION_WE", "MOTION_EAST", "MOTION_WEST"
         else:
             prop, positive, negative = "TELESCOPE_MOTION_NS", "MOTION_NORTH", "MOTION_SOUTH"
-        if rate and self._has("TELESCOPE_SLEW_RATE"):
-            speed = next(el for limit, el in self._SLEW_RATES if abs(rate) <= limit)
-            if speed in self._require("TELESCOPE_SLEW_RATE").elements:
+        if rate and not self._explicit_rate and self._has("TELESCOPE_SLEW_RATE"):
+            speed = self._slew_rate_element(abs(rate), list(self._require("TELESCOPE_SLEW_RATE").elements))
+            if speed is not None:
+                self._log_interaction("set_slew_rate", rate=speed)
                 self._select("TELESCOPE_SLEW_RATE", speed)
         self._set_sw(prop, {positive: rate > 0, negative: rate < 0})
 
@@ -179,6 +271,10 @@ class IndiMountAdapter(IndiAdapter):
             "at_park": self._sw("TELESCOPE_PARK", "PARK"),
             "tracking_rate": next((n for n, el in self._TRACK_MODES.items() if self._sw("TELESCOPE_TRACK_MODE", el)),
                                   "Custom" if self._sw("TELESCOPE_TRACK_MODE", "TRACK_CUSTOM") else None),
+            # Manual-motion settings the driver owns, for the Mount page to mirror (None = driver has none).
+            "slew_rates": self.slew_rate_choices() or None,
+            "slew_rate_index": self.slew_rate_index(),
+            "axis_reversed": self.axis_reversed(),
         }
         if status["right_ascension"] is not None:
             self.ra = status["right_ascension"] * 15.0

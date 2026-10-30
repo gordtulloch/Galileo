@@ -125,7 +125,7 @@ LIBRARY_ITEMS = [
 # the top bar's Optics selector. Framing is a contextual dialog opened from
 # Imaging (FRAME-070), not its own section, so it isn't listed here — the
 # Optics selector it needs is already visible while Imaging itself is open.
-_OPTICS_SECTIONS = ("imaging", "solve")
+_OPTICS_SECTIONS = ("imaging", "solve", "focus")
 
 # Primary sections that take frames from one of the Pier's cameras, and so show
 # the top bar's Camera selector (when the Pier has more than one).

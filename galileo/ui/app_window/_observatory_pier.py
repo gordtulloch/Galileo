@@ -181,7 +181,7 @@ class AppWindowObservatoryPierMixin:
             lookup_btn.setEnabled(False)
             lookup_status.setText("Looking up...")
             thread = _GeocodeThread(query, dialog)
-            thread.found.connect(apply_lookup)
+            thread.found.connect(apply_lookup, Qt.ConnectionType.QueuedConnection)
             thread.start()
 
         lookup_btn.clicked.connect(look_up)
@@ -816,8 +816,9 @@ class AppWindowObservatoryPierMixin:
             logger.error("Could not start tracking after the slew: %s", message)
             self._window.statusBar().showMessage("Slew finished, but tracking could not be started — see log.", 8000)
 
+        from PySide6.QtCore import Qt
         thread = _ResumeTrackingThread(mount, target, self._window)
-        thread.done.connect(done)
-        thread.failed.connect(failed)
+        thread.done.connect(done, Qt.ConnectionType.QueuedConnection)
+        thread.failed.connect(failed, Qt.ConnectionType.QueuedConnection)
         self._tracking_threads[key] = thread
         thread.start()

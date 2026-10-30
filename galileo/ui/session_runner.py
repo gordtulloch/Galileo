@@ -397,8 +397,9 @@ class SessionRunController(QObject):
             thread.progress.emit(progress)
 
         executor.set_progress_callback(on_progress)
-        thread.progress.connect(lambda p, k=key: self._on_progress(k, p))
-        thread.finished_with.connect(lambda state, k=key: self._on_finished(k, state))
+        from PySide6.QtCore import Qt
+        thread.progress.connect(lambda p, k=key: self._on_progress(k, p), Qt.ConnectionType.QueuedConnection)
+        thread.finished_with.connect(lambda state, k=key: self._on_finished(k, state), Qt.ConnectionType.QueuedConnection)
         self._runs[key] = run
         thread.start()
         self.changed.emit(key)
