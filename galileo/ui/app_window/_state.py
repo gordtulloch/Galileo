@@ -161,6 +161,9 @@ class AppWindowState(Protocol):
     # _aux_page.py
     def _build_aux_page(self) -> QWidget: ...
 
+    # _switch_page.py
+    def _build_switch_page(self, label: str) -> QWidget: ...
+
     # _flat_panel_page.py
     def _build_flat_panel_page(self) -> QWidget: ...
 

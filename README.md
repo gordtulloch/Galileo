@@ -52,7 +52,7 @@ Two things motivate this project:
 | **Framing Assistant** | Field-of-view, rotation and mosaic planning on a survey image. |
 | **Library** | Built-in AstroFiler: image catalog, calibration and master frames, deduplication, cloud backup and command-line tools. |
 | **Dashboard** | Per-Pier activity timeline. |
-| **Plugins** | Install from a ZIP or the marketplace: VSTarget (variable stars), Kasa Switch, Generic Relay, AllSkyCam. |
+| **Plugins** | Install from a ZIP or the marketplace: VSTarget (variable stars), Kasa Switch, Generic Relay, WandererBox (Wanderer Astro power boxes), AllSkyCam. |
 | **Safety & diagnostics** | Dome slaving, crash/hang watchdog, crash reporting and logging. |
 | **Options** | Settings for every area above, stored in the shared database. |
 

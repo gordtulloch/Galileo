@@ -87,17 +87,18 @@ Prerequisites shared with MobileConnect ([MobileConnect SRS §2.6](../mobileconn
 
 | Ref | Prerequisite | Specified in |
 |---|---|---|
-| CL | **Connect Link** L1–L8: encrypted listener, pairing with approval, scopes and audit, discovery, route registration, event stream, chunked transfer, version handshake | NodeConnect SRS |
-| CS | **Control Surface**: registry of operations and observable state, with permission class and lease requirement per operation | Core SRS (new) |
-| LS | **Control lease** per Pier | Core SRS (new) |
-| OE | **Operation results as events** with correlation id | Core SRS (new) |
-| PV | **Server-side preview rendering** | Core SRS (new) |
-| DM | **Deadman semantics** for held manual motion | Core SRS (new) |
-| MF | **Manual focus owned by the focus module** | Core SRS (new) |
-| SK | **Sky-data streaming service** | Core SRS (new) |
+| CL | **Connect Link** L1–L8: encrypted listener, pairing with approval, scopes and audit, discovery, route registration, event stream, chunked transfer, version handshake | Core SRS `LINK-010`–`090`, `240`–`270` |
+| CS | **Control Surface**: registry of operations and observable state, with permission class and lease requirement per operation | Core SRS `CSURF-010`–`250` |
+| LS | **Control lease** per Pier | Core SRS `LEASE-010`–`080` |
+| OE | **Operation results as events** with correlation id | Core SRS `CSURF-070` |
+| PV | **Server-side preview rendering** | Core SRS `PREV-010`–`060` |
+| DM | **Deadman semantics** for held manual motion | Core SRS `CSURF-400`–`420` |
+| MF | **Manual focus owned by the focus module** | Core SRS `FOC-100`–`130` |
+| SK | **Sky-data streaming service** | Core SRS `SKYSTR-010`–`080` |
 | OF | **Outreach event facility** (Connect Link L9) | NodeConnect PSD §6.2 / core SRS (new) |
-| WR | **Master relay** shared with MobileConnect | **This SRS, Section 3.3** |
-| DG | **Delegated identity**: Connect Link lets a trusted service peer present a request on behalf of an approved client of the same plugin, with the audit log recording the client, not the service | Connect Link (new; Section 3.2 note) |
+| WR | **Master relay**, in core and shared with MobileConnect | Core SRS `LINK-220` (consumed here: Section 3.3) |
+| GW | **Request pipeline**, in core and shared with MobileConnect | Core SRS `LINK-230` |
+| DG | **Delegated identity**: Connect Link lets a trusted service peer present a request on behalf of an approved client of the same plugin, with the audit log recording the client, not the service | Core SRS `LINK-090` (Section 3.2 note) |
 
 ---
 
@@ -136,7 +137,7 @@ A browser is an *approved device*, as an app is (PSD D3). The web application ru
 
 ### 3.3 Proxying through the Master (the shared relay, WR)
 
-This section **specifies the Master relay** that MobileConnect also uses (MobileConnect PSD §6.6, SRS `WR`). Its behaviour is identical to `MCON-200`–`240`; it is specified here because WebConnect is the plugin that defines it, and it shall not depend on either plugin's front end.
+The Master relay is a **core service** (core `LINK-220`, decided 2026-10-30) that MobileConnect also uses (MobileConnect PSD §6.6, SRS `WR`). Its behaviour is identical to `MCON-200`–`240`. The requirements below state what WebConnect requires of it and are verified against the core relay; the relay does not depend on either plugin's front end.
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -145,7 +146,7 @@ This section **specifies the Master relay** that MobileConnect also uses (Mobile
 | WCON-220 | The system shall reach a spoke only if the spoke's user has granted the Master the opt-in right to operate it (`control` and `view` scopes, never `config.*`), revocable on the spoke at any time. A spoke without the grant shall appear view-only, or be absent, and the browser shall be told which. | MVP |
 | WCON-230 | The control lease for a spoke's Pier shall be held on that spoke, so its desktop, a MobileConnect client and this plugin contend through one lease. | MVP |
 | WCON-240 | When the Master cannot reach a spoke, the system shall show that spoke's Piers as unreachable (with the time last heard from), refuse operations to them with that reason, and resume without re-pairing when it returns. The spoke's own imaging shall be unaffected. Operations relayed to a spoke shall be audited on both the Master and the owning node. | MVP |
-| WCON-250 | The relay shall be exposed as one interface (`RelayPort`) that MobileConnect and WebConnect consume without knowledge of each other, so that either plugin works with the other absent and neither forks the relay. | MVP |
+| WCON-250 | The relay shall be consumed through the one core interface (`RelayPort`, core `LINK-220`) that MobileConnect and WebConnect both use without knowledge of each other, so that either plugin works with the other absent and neither forks the relay. | MVP |
 
 ### 3.4 State and events
 
@@ -196,7 +197,7 @@ Every operation is a Control Surface entry (needs CS) invoking the same domain s
 | WCON-620 | The system shall allow an Operator to download a full FITS frame as an explicit action, with its size reported beforehand. A Viewer shall not be able to download FITS. | P3 |
 | WCON-630 | The system shall expose preview quality and maximum size as options (`WCON-910`), let the page request a lower quality, and give session work priority over preview rendering. | P2 |
 | WCON-640 | The page shall let the user hold the tiles of two frames at once for blink and side-by-side comparison, as `MCON-670`. | P2 |
-| WCON-650 | The page shall render the sky view locally in the browser from sky data streamed by the Master (needs SK; `MCON-640`, `MCON-660`): the browser shall ship no catalog and compute no ephemeris. On a Master that cannot meet the streaming load it shall report the sky view as reduced or unavailable with a reason, never attempt it, and leave the rest of the page working. | MVP |
+| WCON-650 | The page shall present the sky view from sky data held by the Master (needs SK; `MCON-640`, `MCON-660`): the browser shall ship no catalog and compute no ephemeris. **Delivery order (decided 2026-10-30):** the first release presents a **server-rendered static sky image** (with the mount position, field of view and horizon, refreshed on demand and on a slew); the interactive in-browser canvas rendering from streamed sky data follows the operating screens and is **P2**, not required for the first release. On a Master that cannot meet the streaming load it shall report the sky view as reduced or unavailable with a reason, never attempt it, and leave the rest of the page working. | MVP |
 
 ### 3.7 Safety and failure behaviour
 
@@ -317,17 +318,17 @@ Cross-cutting qualities are verified through the requirements above and the core
 
 | # | Point | Where |
 |---|---|---|
-| O1 | The core prerequisites (Control Surface, lease, operation events, preview, deadman, manual focus, sky streaming) and Connect Link L1–L9 are not yet in the core or NodeConnect SRS. Every "(needs …)" requirement is reserved but unverifiable until they exist; the plugin is developed against stubs. | §2.6 |
-| O2 | **Delegated identity (DG)** is new. Because the web application is a separate process, it presents requests on behalf of an approved browser; Connect Link must support a service peer acting for a named client, with the audit log recording the client. The alternative — one Connect Link peer per browser, its token held server-side by the web process — needs no new facility but spreads credentials across the web process's memory. The SDD proposes delegation (ADR-WCON-002); confirm with the Connect Link SRS. | §3.2, SDD P3 |
-| O3 | **Sign-in without accounts.** With device approval as the only identity (PSD D3), "session expiry" (`WCON-1040`) ends a session but a valid device credential can start another with one click, so expiry limits cookie lifetime rather than guarding against someone at an unattended approved browser. Options: accept; require a per-device PIN set at approval; or require re-approval after a longer period (the per-browser expiry of `WCON-170`). Recommendation: accept for v1 and offer the per-browser expiry. | `WCON-1040` |
+| O1 | The core prerequisites (Control Surface, lease, operation events, preview, deadman, manual focus, sky streaming) and Connect Link L1–L9 are not yet in the core or NodeConnect SRS. Every "(needs …)" requirement is reserved but unverifiable until they exist; the plugin is developed against stubs. **Update 2026-10-30: all are now specified in the core SRS (`LINK`, `CSURF`, `LEASE`, `PREV`, `SKYSTR`, `FOC-100`–`130`) and designed at component level in core SDD §4.28–4.32; none is built.** | §2.6 |
+| O2 | **Delegated identity (DG) — decided: delegation.** Because the web application is a separate process, it presents requests on behalf of an approved browser; Connect Link supports a service peer acting for a named client, with the audit log recording the client (core `LINK-090`). The per-browser-peer alternative is not pursued. | §3.2, SDD P3 |
+| O3 | **Sign-in without accounts.** With device approval as the only identity (PSD D3), "session expiry" (`WCON-1040`) ends a session but a valid device credential can start another with one click, so expiry limits cookie lifetime rather than guarding against someone at an unattended approved browser. Options: accept; require a per-device PIN set at approval; or require re-approval after a longer period (the per-browser expiry of `WCON-170`). Recommendation: accept for v1 and offer the per-browser expiry. **Decided 2026-10-30: accept for MVP; PIN later.** | `WCON-1040` |
 | O4 | **Shared pipeline.** The request pipeline (identify, authorise, validate, lease, confirm, idempotency, dispatch, audit), confirmation tokens, idempotency store and load governor are the same in MobileConnect and WebConnect. `WCON-250` shares the relay; the pipeline should be shared the same way, as a core or shared package, rather than copied (SDD P1). | `WCON-120`, `180`, `740` |
-| O5 | **Pairing code display.** `WCON-100` adds a short confirmation code shown on both the Master and the browser to defeat approving the wrong request; MobileConnect's SRS does not state this explicitly. Confirm it is wanted for both plugins. | `WCON-100` |
+| O5 | **Pairing code display.** `WCON-100` adds a short confirmation code shown on both the Master and the browser to defeat approving the wrong request; MobileConnect's SRS does not state this explicitly. Confirm it is wanted for both plugins. **Decided 2026-10-30: wanted for both plugins; MobileConnect adopts it.** | `WCON-100` |
 | O6 | **Production server.** PSD D1 leaves the choice to a measurement on a Pi. The SDD proposes gevent's WSGI server provisionally (ADR-WCON-004) and a spike to confirm before MVP. | `WCON-030` |
 | O7 | **Held-motion keep-alive transport.** SSE is server-to-browser only, so keep-alives travel as small HTTP requests (SDD P4); the 250 ms beat / 600 ms deadman timings carry over from MobileConnect and need measuring over browser Wi-Fi. | `WCON-730` |
 | O8 | **Source address of outreach guests.** The facility's subnet guard must be told the visitor's address by the trusted outreach application, since the facility never sees the visitor's connection. The facility (OF) must accept an asserted source from a registered surface; WebConnect checks it too (`WCON-1310`). | `WCON-1310` |
 | O9 | **Plain HTTP on the outreach listener.** PSD Q2 recommended an off-by-default option; PSD decision D9 settled on HTTPS only. This SRS follows D9 (`WCON-1290`). | `WCON-1290` |
-| O10 | **Sky view rendering in the browser** (`WCON-650`) is a substantial front-end piece that the PSD does not explicitly mention; it follows from `MCON-440` and the "no catalog in the client" rule. Confirm it is wanted at MVP rather than a static server-rendered sky image first. | `WCON-650` |
-| O11 | A showcase image set for outreach, offered in addition to the live image (MobileConnect PSD Q4), is undecided and not specified here. | §3.11 |
+| O10 | **Sky view rendering in the browser** (`WCON-650`) is a substantial front-end piece that the PSD does not explicitly mention; it follows from `MCON-440` and the "no catalog in the client" rule. Confirm it is wanted at MVP rather than a static server-rendered sky image first. **Decided 2026-10-30: static server-rendered sky image first; canvas view after MVP.** | `WCON-650` |
+| O11 | A showcase image set for outreach, offered in addition to the live image (MobileConnect PSD Q4), is undecided and not specified here. **Decided 2026-10-30: deferred to P2 (see MobileConnect SRS O13).** | §3.11 |
 
 ---
 

@@ -84,16 +84,17 @@ The following are **prerequisites** accepted by PSD decision D8. Until each exis
 
 | Ref | Prerequisite | Specified in | PSD |
 |---|---|---|---|
-| CL | **Connect Link** L1–L8: encrypted listener, pairing with approval, scopes, discovery, route registration, event stream, chunked binary transfer, version handshake | NodeConnect SRS | G4, §6.2 |
-| CS | **Control Surface**: registry of operator-level operations and observable state, with permission class and lease requirement per operation | Core SRS (new) | C1 |
-| LS | **Control lease** per Pier, shared by desktop and remote clients | Core SRS (new) | C2 |
-| OE | **Operation results as events** with correlation id (started / progress / finished) | Core SRS (new) | C3 |
-| PV | **Server-side preview rendering** (stretch, bin, JPEG, tiles) | Core SRS (new) | C4 |
-| DM | **Deadman semantics** for held manual motion | Core SRS (new) | C5 |
-| MF | **Manual focus owned by the focus module**, consumed by the desktop focus screen | Core SRS (new) | C6 |
-| SK | **Sky-data streaming service** | Core SRS (new) | C7 |
-| WR | **Master relay** shared with WebConnect | WebConnect SRS | G10, §6.6 |
-| OF | **Outreach event facility** (Connect Link L9): event lifecycle and timer, per-event secret, subnet guard, guest tokens, caps, aggregate audit, guest previews, event display and QR codes | NodeConnect PSD §6.2 / core SRS (new) | D21 |
+| CL | **Connect Link** L1–L8: encrypted listener, pairing with approval, scopes, discovery, route registration, event stream, chunked binary transfer, version handshake | Core SRS `LINK-010`–`090`, `240`–`270` | G4, §6.2 |
+| CS | **Control Surface**: registry of operator-level operations and observable state, with permission class and lease requirement per operation | Core SRS `CSURF-010`–`250` | C1 |
+| LS | **Control lease** per Pier, shared by desktop and remote clients | Core SRS `LEASE-010`–`080` | C2 |
+| OE | **Operation results as events** with correlation id (started / progress / finished) | Core SRS `CSURF-070` | C3 |
+| PV | **Server-side preview rendering** (stretch, bin, JPEG, tiles) | Core SRS `PREV-010`–`060` | C4 |
+| DM | **Deadman semantics** for held manual motion | Core SRS `CSURF-400`–`420` | C5 |
+| MF | **Manual focus owned by the focus module**, consumed by the desktop focus screen | Core SRS `FOC-100`–`130` | C6 |
+| SK | **Sky-data streaming service** | Core SRS `SKYSTR-010`–`080` | C7 |
+| WR | **Master relay**, in core and shared with WebConnect | Core SRS `LINK-220` | G10, §6.6 |
+| GW | **Request pipeline** (identify → authorise → validate → lease → confirm → idempotency → dispatch → audit), in core and shared with WebConnect | Core SRS `LINK-230` | — |
+| OF | **Outreach event facility** (Connect Link L9): event lifecycle and timer, per-event secret, subnet guard, guest tokens, caps, aggregate audit, guest previews, event display and QR codes | Core SRS `LINK-100`–`210` | D21 |
 
 ---
 
@@ -116,7 +117,7 @@ The following are **prerequisites** accepted by PSD decision D8. Until each exis
 
 | ID | Requirement | Priority |
 |---|---|---|
-| MCON-100 | The system shall accept a pairing request from an app only through Connect Link's pairing flow (needs CL, L2): the request identifies the client (name, platform, app version), is shown on the Master for approval by a person, and a credential is issued only after approval. There shall be no unauthenticated route, no standing anonymous viewing and no guest link, with the single exception of outreach mode (Section 3.11), which is owner-opened, time-limited, confined to a designated network and authenticated by a per-event secret. | MVP |
+| MCON-100 | The system shall accept a pairing request from an app only through Connect Link's pairing flow (needs CL, L2): the request identifies the client (name, platform, app version) and carries a short confirmation code (core `LINK-020`) that the app displays and the Master shows beside the request, so a person approves the request they intend to; the credential is issued only after approval. There shall be no unauthenticated route, no standing anonymous viewing and no guest link, with the single exception of outreach mode (Section 3.11), which is owner-opened, time-limited, confined to a designated network and authenticated by a per-event secret. | MVP |
 | MCON-110 | The system shall assign every paired client one of two roles, **Viewer** (state, events and images only) or **Operator** (Viewer plus operations). A new pairing shall be Viewer; promotion to Operator shall be a deliberate action on the Master and never on the client. | MVP |
 | MCON-120 | The system shall enforce the role on the Master for every request: a Viewer's operation request is refused with a reason and audited; the app's own hiding of controls is a convenience, not the control. | MVP |
 | MCON-130 | The system shall never grant a paired client the `config.*` scope (Connect Link L3) and shall register no route that creates, edits or deletes any item in the configuration list of PSD §5 / §6.4, whatever the client's role. | MVP |
@@ -132,7 +133,7 @@ The following are **prerequisites** accepted by PSD decision D8. Until each exis
 | ID | Requirement | Priority |
 |---|---|---|
 | MCON-200 | The system shall present to a client the Piers of the Master and, through it, those of every paired spoke node in one list, over one connection, one pairing, one lease model and one audit log. The client shall never contact a spoke directly. | MVP |
-| MCON-210 | For a spoke's Pier, the system shall relay operations, state, events and previews over Connect Link (needs WR), sharing the relay implementation with WebConnect. Previews shall be rendered on the owning node, not re-rendered on the Master. | MVP |
+| MCON-210 | For a spoke's Pier, the system shall relay operations, state, events and previews over Connect Link (needs WR, core `LINK-220`), through the core relay shared with WebConnect. Previews shall be rendered on the owning node, not re-rendered on the Master. | MVP |
 | MCON-220 | The system shall reach a spoke only if the spoke's user has granted the Master the opt-in right to operate it (`control` and `view` scopes, never `config.*`), revocable at any time on the spoke. A spoke without the grant shall appear view-only, or be absent, and the client shall be told which. | MVP |
 | MCON-230 | The control lease for a spoke's Pier shall be held on that spoke, so the spoke's desktop, this plugin and WebConnect contend through one lease. | MVP |
 | MCON-240 | When the Master is down or a spoke is detached or unreachable, the system shall show that spoke's Piers as unreachable (with the time last heard from), refuse operations to them with that reason, and resume without re-pairing when the spoke returns. The spoke's own imaging shall be unaffected. Operations relayed to a spoke shall be audited on both the Master and the owning node. | MVP |
@@ -311,18 +312,18 @@ Cross-cutting qualities are verified through the plugin's requirements above and
 
 | # | Point | Where |
 |---|---|---|
-| O1 | The core Control Surface, lease, operation-event, preview, deadman, manual-focus and sky-streaming requirements (PSD C1–C7) do not yet exist in the core SRS. This SRS cites them as prerequisites; they need to be written there before the RTM can reserve test cases for the dependent requirements. | §2.6 |
-| O2 | Which panels the phone layout drops (PSD Q1) — `MCON-810` defers this to tablet wireframes. | `MCON-810` |
+| O1 | The core Control Surface, lease, operation-event, preview, deadman, manual-focus and sky-streaming requirements (PSD C1–C7) do not yet exist in the core SRS. This SRS cites them as prerequisites; they need to be written there before the RTM can reserve test cases for the dependent requirements. **Update 2026-10-30: they now exist in the core SRS (`CSURF`, `LEASE`, `PREV`, `SKYSTR`, `FOC-100`–`130`, `LINK`) with RTM rows; compare this plugin's port stubs against them (SDD P2).** | §2.6 |
+| O2 | Which panels the phone layout drops (PSD Q1) — `MCON-810` defers this to tablet wireframes. **Decided 2026-10-30: not blocking the plugin; settled from tablet wireframes in the app repository.** | `MCON-810` |
 | O3 | `MCON-180` lists the confirmed operations at minimum; the full list should come from the Control Surface's permission classes once defined. | `MCON-180` |
-| O4 | `MCON-740` (idempotency keys) is new in this SRS and not in the PSD; confirm it is wanted as MVP. | `MCON-740` |
-| O5 | `MCON-350` (sequence-numbered replay of missed events) and `MCON-770` (rate limiting) are also additions beyond the PSD. | §3.4, §3.7 |
-| O6 | Background push alerts (PSD D4, Q4 earlier) are excluded from v1; `MCON-340` states alerts arrive while connected. | `MCON-340` |
+| O4 | `MCON-740` (idempotency keys) is new in this SRS and not in the PSD; confirm it is wanted as MVP. **Decided 2026-10-30: keep as MVP.** | `MCON-740` |
+| O5 | `MCON-350` (sequence-numbered replay of missed events) and `MCON-770` (rate limiting) are also additions beyond the PSD. **Decided 2026-10-30: keep both as MVP.** | §3.4, §3.7 |
+| O6 | Background push alerts (PSD D4, Q4 earlier) are excluded from v1; `MCON-340` states alerts arrive while connected. **Decided 2026-10-30: final for v1: no background push alerts.** | `MCON-340` |
 | O7 | The Meta Quest is fully equal to the tablet for v1 (PSD D15), so `MCON-640` moves from P3 to MVP and `MCON-650`–`680` and Section 3.10 are new. Sky streaming (PSD C7) therefore joins the MVP critical path of core prerequisites. | §3.6, §3.10 |
 | O8 | The rendering stack for the immersive scenes (native Android SDK or a game engine) is open in the app PSD (Q6) and is decided in the Quest SDD from a Quest 2 spike; it does not affect this SRS unless it changes the streaming protocol of `MCON-660`. | `MCON-660` |
 | O9 | `MCON-650` says the Master "derives" its concurrent-streaming limit from its capability; the figures (and the exact Pi/PC boundary) need a measurement on real hardware. | `MCON-650`, `MCON-680` |
-| O11 | Outreach (PSD D18) is an exception to Connect Link's rule that nothing answers a caller without a token issued after approval. It needs an amendment to core's Connect Link (L2 event-scoped enrolment, L3 `outreach.view`) — already noted in the NodeConnect PSD §6.2 — before `MCON-1200`–`1330` can be verified. | §3.11 |
+| O11 | Outreach (PSD D18) is an exception to Connect Link's rule that nothing answers a caller without a token issued after approval. It needs an amendment to core's Connect Link (L2 event-scoped enrolment, L3 `outreach.view`) — already noted in the NodeConnect PSD §6.2 — before `MCON-1200`–`1330` can be verified. **Decided 2026-10-30: accepted; the event-scoped enrolment (L2) and `outreach.view` (L3) amendment is written into the Connect Link requirements.** | §3.11 |
 | O12 | `MCON-1230` confines guests by source subnet, which protects against internet reach but not against a visitor's device being on a network that can also reach the observatory's equipment. Isolation of the outreach SSID is the owner's responsibility (PSD R15); the plugin can only document it and refuse to open an event without a subnet. | `MCON-1230` |
-| O13 | Outreach is also offered to browsers through WebConnect (PSD Q3 resolved; WebConnect PSD §6.4), which will specify its own requirements against this event; this SRS stays app-only, but `MCON-1200`/`1300` may need an option to offer an event to apps, browsers or both, and the shared event's home is open (WebConnect PSD Q3). Whether a fixed showcase set may be offered as well as the live image (PSD Q4) is undecided. | PSD Q3, Q4 |
+| O13 | Outreach is also offered to browsers through WebConnect (PSD Q3 resolved; WebConnect PSD §6.4), which will specify its own requirements against this event; this SRS stays app-only, but `MCON-1200`/`1300` may need an option to offer an event to apps, browsers or both, and the shared event's home is open (WebConnect PSD Q3). Whether a fixed showcase set may be offered as well as the live image (PSD Q4) is undecided. **Decided 2026-10-30: an event carries per-surface toggles (apps, browsers) in core L9; a showcase image set is deferred to P2.** | PSD Q3, Q4 |
 | O10 | `MCON-1030` and `MCON-1070` bind the Quest edition, which this SRS cannot verify on the node; they will be tested in the app repository, with the node-side keep-alive behaviour tested here. | §3.10 |
 
 ---

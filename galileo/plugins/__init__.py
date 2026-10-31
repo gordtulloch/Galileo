@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import logging
 import shutil
+import subprocess
 import sys
 import warnings
 import zipfile
@@ -35,6 +36,11 @@ _SCIENCE_LEVELS = ("science", "primary", "secondary")
 # Name of the JSON file written to a plugin's installed directory to record
 # its pending-removal state across restarts.
 _PENDING_REMOVAL_MARKER = ".pending_removal"
+
+# A plugin's own third-party packages live here, inside its install folder, so removing the
+# folder removes them and Galileo's own environment is never touched (PLUG-200).
+_DEPS_DIR = ".deps"
+_PIP_TIMEOUT_S = 600
 
 
 class PluginApiVersionWarning(UserWarning):
@@ -65,6 +71,7 @@ class PluginManifest:
     tier: str                          # "first_party" | "third_party"
     nav_level: str = "secondary"       # "primary" | "secondary"
     entry_point: str = ""              # defaults to galileo.plugins.<name> if empty
+    requires: list[str] = field(default_factory=list)   # PEP 508 specifiers (PLUG-200)
 
     @classmethod
     def from_toml_text(cls, text: str) -> PluginManifest:
@@ -76,6 +83,9 @@ class PluginManifest:
         missing = [k for k in required if k not in data]
         if missing:
             raise PluginInstallError(f"plugin.toml missing required fields: {missing}")
+        requires = data.get("requires", [])
+        if not isinstance(requires, list) or not all(isinstance(r, str) and r.strip() for r in requires):
+            raise PluginInstallError("plugin.toml 'requires' must be a list of PEP 508 requirement strings")
         return cls(
             name=data["name"],
             version=data["version"],
@@ -86,12 +96,43 @@ class PluginManifest:
             tier=data["tier"],
             nav_level=data.get("nav_level", "secondary"),
             entry_point=data.get("entry_point", ""),
+            requires=[r.strip() for r in requires],
         )
 
     @property
     def resolved_entry_point(self) -> str:
         ep = self.entry_point.strip()
         return ep or f"galileo.plugins.{self.name}"
+
+
+def _run_pip(args: list[str]) -> tuple[int, str]:
+    """Run ``pip`` with *args* under the interpreter Galileo runs on; return (exit code, output).
+    Kept as one small function so tests can replace it without a network."""
+    try:
+        proc = subprocess.run(  # noqa: S603 -- our own argv, no shell
+            [sys.executable, "-m", "pip", *args],
+            capture_output=True, text=True, timeout=_PIP_TIMEOUT_S, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+    return proc.returncode, (proc.stdout + proc.stderr)
+
+
+def install_requirements(install_dir: Path, requires: list[str]) -> None:
+    """Install *requires* into ``<install_dir>/.deps`` and nowhere else (PLUG-200).
+
+    Raises :class:`PluginInstallError` if any requirement cannot be resolved (offline included);
+    the caller then removes *install_dir*, which discards any partial install."""
+    if not requires:
+        return
+    target = install_dir / _DEPS_DIR
+    code, output = _run_pip([
+        "install", "--target", str(target), "--disable-pip-version-check",
+        "--no-input", "--no-warn-script-location", *requires,
+    ])
+    if code != 0:
+        tail = " / ".join(output.strip().splitlines()[-5:])
+        raise PluginInstallError(f"Could not install the plugin's dependencies {requires}: {tail}")
 
 
 @dataclass
@@ -280,6 +321,23 @@ class PluginContext:
         """Register a new device backend for *category* (PLUG-010, ARCH-070)."""
         from galileo.core.devices import DeviceBackend
         DeviceBackend.registered_backends[category].append(adapter_cls)
+
+    def register_switch_profile(self, profile) -> bool:
+        """Register a declarative switch profile (PLUG-210, EQP-SW-080): how a driver that does not use INDI's
+        power interface maps onto the Switches page. The plugin holds no INDI connection and writes no device
+        code; core applies the profile. A malformed profile is rejected with a logged reason and ``False``
+        returned — it never raises into the plugin and never affects another profile. While the registering
+        plugin is disabled its profiles are not offered (PLUG-060); unloading it drops them (PLUG-120)."""
+        from galileo.core.switches import SwitchProfileRegistry
+        try:
+            profile.validate()
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.error("Plugin %r: switch profile rejected: %s", self._plugin_name or "unnamed", exc)  # noqa: TRY400 -- an expected, reportable rejection: the reason is the whole story, a traceback would only bury it
+            return False
+        owner, host = self._plugin_name, self._host
+        probe = (lambda: host.is_active(owner)) if host is not None and owner else None
+        SwitchProfileRegistry.register(profile, owner=owner, is_active=probe)
+        return True
 
     def register_instruction_type(self, instruction_cls) -> None:
         """Register a new session block type (PLUG-020, SES-340)."""
@@ -470,6 +528,9 @@ class PluginManager:
         """Import a plugin package, discover its ``PluginBase`` subclasses,
         and activate each one."""
         install_dir = record.install_dir
+        deps_dir = install_dir / _DEPS_DIR
+        if deps_dir.is_dir() and str(deps_dir) not in sys.path:
+            sys.path.insert(0, str(deps_dir))
         if str(install_dir) not in sys.path:
             sys.path.insert(0, str(install_dir))
         try:
@@ -528,8 +589,9 @@ class PluginManager:
                 locations.extend(getattr(mod, "__path__", None) or [])
             if any(loc and self._is_under(Path(loc), root) for loc in locations):
                 del sys.modules[mod_name]
-        with contextlib.suppress(ValueError):
-            sys.path.remove(str(root))
+        for entry in (str(root), str(root / _DEPS_DIR)):
+            with contextlib.suppress(ValueError):
+                sys.path.remove(entry)
         importlib.invalidate_caches()
 
         if record.help_dir is not None:
@@ -598,6 +660,8 @@ class PluginManager:
             except Exception:
                 logger.exception("Plugin %r raised during deactivation", name)
         self._active.pop(name, None)
+        from galileo.core.switches import SwitchProfileRegistry
+        SwitchProfileRegistry.unregister_owner(name)
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
         self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]
@@ -730,6 +794,14 @@ class PluginManager:
                 shutil.rmtree(install_dir, ignore_errors=True)
                 self._restore(previous, replaced_in_place)
                 raise PluginInstallError(f"Extraction failed: {exc}") from exc
+
+            # --- 4a. Dependencies, private to this plugin (PLUG-200) ---
+            try:
+                install_requirements(install_dir, manifest.requires)
+            except PluginInstallError:
+                shutil.rmtree(install_dir, ignore_errors=True)
+                self._restore(previous, replaced_in_place)
+                raise
 
         # --- 5. Load ---
         record = PluginRecord(manifest=manifest, install_dir=install_dir, enabled=True)

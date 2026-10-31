@@ -25,7 +25,7 @@ The single server-side package `mobileconnect`, its ADRs, data design and wire A
 
 ### 1.3 Design status and prerequisites
 
-The plugin is a thin layer over six facilities that **do not exist yet** (SRS Section 2.6): Connect Link (CL), the Control Surface (CS), the control lease (LS), operation-result events (OE), preview rendering (PV), deadman motion (DM), manual focus in the focus module (MF), sky streaming (SK) and the Master relay (WR). The design therefore names them as **ports** (Section 3.0) and codes against the ports; each is built as a stub in the plugin's test suite so the plugin can be developed and tested ahead of core. Where a port's shape is a guess, it is stated in Section 8.
+The plugin is a thin layer over facilities that are **specified in the core SRS/SDD (2026-10-30: `LINK`, `CSURF`, `LEASE`, `PREV`, `SKYSTR`, `FOC-100`–`130`; core SDD §4.28–4.32) but not yet built** (SRS Section 2.6): Connect Link (CL), the Control Surface (CS), the control lease (LS), operation-result events (OE), preview rendering (PV), deadman motion (DM), manual focus in the focus module (MF), sky streaming (SK) and the Master relay (WR). The design therefore names them as **ports** (Section 3.0) and codes against the ports; each is built as a stub in the plugin's test suite so the plugin can be developed and tested ahead of core. Where a port's shape is a guess, it is stated in Section 8.
 
 ### 1.4 References
 
@@ -43,7 +43,7 @@ The plugin is a thin layer over six facilities that **do not exist yet** (SRS Se
 
 ### 2.2 One Pipeline for Every Request (ADR-MCON-002)
 
-**Decision:** every client request, whatever its route or origin (paired client, relayed spoke request, outreach guest), passes through one `Gateway` pipeline of fixed stages: **identify → authorise → validate → lease → confirm → idempotency → dispatch → audit**. No route calls a domain service except through the pipeline's `dispatch` stage.
+**Decision:** every client request, whatever its route or origin (paired client, relayed spoke request, outreach guest), passes through one `Gateway` pipeline of fixed stages: **identify → authorise → validate → lease → confirm → idempotency → dispatch → audit**. No route calls a domain service except through the pipeline's `dispatch` stage. **The pipeline lives in core** (`galileo.connect_link.gateway`, core `LINK-230`, ADR-LINK-005, decided 2026-10-30) and is shared with WebConnect; this plugin consumes it through `GatewayPort` and supplies only its app-facing routes, `Principal` mapping and the app-specific stages' configuration. The stage descriptions in Section 3.2 are the behaviour core implements and this plugin's contract tests verify.
 
 **Rationale:** the safety properties the SRS demands (role enforced on the Master, never the app, `MCON-120`; no config route, `MCON-130`/`570`; the same interlocks as the desktop, `MCON-700`) are all of the form "nothing bypasses X". A single choke point makes each property one test rather than one test per route, and makes a missed check impossible to add by writing a new handler. Stages are small and independently testable; the order is fixed by the pipeline, not by handlers.
 
@@ -63,7 +63,7 @@ The plugin is a thin layer over six facilities that **do not exist yet** (SRS Se
 
 ### 2.5 The Master Relays; Spokes Render (ADR-MCON-005)
 
-**Decision:** for a spoke's Pier the Master forwards the request over Connect Link to the owning node, which runs its own pipeline stages that matter (lease, safety, audit) and returns the result; previews are rendered on the owning node and relayed as bytes. The relay is a **port** (`RelayPort`) whose implementation is shared with WebConnect (SRS `WR`).
+**Decision:** for a spoke's Pier the Master forwards the request over Connect Link to the owning node, which runs its own pipeline stages that matter (lease, safety, audit) and returns the result; previews are rendered on the owning node and relayed as bytes. The relay is a **port** (`RelayPort`) implemented in core (`galileo.connect_link.relay`, `LINK-220`, ADR-LINK-005) and shared with WebConnect (SRS `WR`).
 
 **Rationale:** (PSD §6.6) one connection, one lease model and one audit log for the client, with the lease living on the spoke so its desktop, this plugin and WebConnect contend through one authority (`MCON-230`). Rendering on the owner avoids moving frames to the Master and re-rendering. The cost — relay stops when the Master is down — is accepted by PSD §6.6.
 
@@ -116,7 +116,8 @@ All live in `mobileconnect.ports` as `typing.Protocol` classes. Real implementat
 | `PreviewPort` (PV) | core | `render(frame_ref, params)` → pixel array; `tile(frame_ref, level, x, y, params)` |
 | `HoldPort` (DM) | core | `start_hold(op, args)`, `beat(hold_id)`, `stop(hold_id)`; deadman fires stop |
 | `SkyStreamPort` (SK) | core | `catalog(region, limit_mag, lod, cursor)`, `ephemeris(t | range)`, `site()`, `capability()` |
-| `RelayPort` (WR) | shared with WebConnect | `piers()`, `call(node, request)`, `events(node)`, `preview(node, ref)`, `reachability(node)` |
+| `GatewayPort` (GW) | core Connect Link (`LINK-230`), shared with WebConnect | `handle(request, principal) → Response`; confirmation, idempotency and the load governor are inside it; the plugin supplies the `Principal` mapping and the app routes |
+| `RelayPort` (WR) | core Connect Link (`LINK-220`), shared with WebConnect | `piers()`, `call(node, request)`, `events(node)`, `preview(node, ref)`, `reachability(node)` |
 | `PluginContext` | `galileo.plugins` | `settings()`, `bus`, `site_location()`, panel and Options registration, help registration |
 
 ### 3.1 `mobileconnect.plugin` — Plugin shell and lifecycle
@@ -127,7 +128,9 @@ All live in `mobileconnect.ports` as `typing.Protocol` classes. Real implementat
 - **Threading:** network handling is on the asyncio loop bridged by `qasync` (core SDD §2.3); blocking calls and rendering go to the same executors the desktop uses for that operation via `asyncio.to_thread` / `run_cpu`; nothing runs on the Qt UI thread except widgets (`MCON-070`).
 - **Satisfies:** `MCON-010`, `020`, `030`, `040`, `060`, `070`.
 
-### 3.2 `mobileconnect.gateway` — The request pipeline
+### 3.2 `mobileconnect.gateway` — The request pipeline (core pipeline; this plugin's adapter)
+
+The pipeline is implemented in core as `galileo.connect_link.gateway` (`LINK-230`). This plugin's `mobileconnect.gateway` is the adapter that maps Connect Link principals to `PairedClient`/`Guest`, registers the `/mobileconnect/v1` routes and hands each request to `GatewayPort`; the stage table below is the behaviour required of the core pipeline and the contract this plugin's tests check against both the real pipeline and a stub.
 
 `Gateway.handle(request) → Response` implements ADR-MCON-002. Stages, each a small class with `__call__(ctx)` that may short-circuit with a typed error:
 
@@ -148,6 +151,7 @@ The Gateway never catches `BaseException` and never swallows a safety refusal: a
 
 ### 3.3 `mobileconnect.clients` — Clients, roles and pairing view
 
+- **Pairing code:** the pairing view shows the confirmation code of each pending request next to the client's name and platform (core `LINK-020`; `MCON-100`).
 - **`ClientRegistry`** wraps Connect Link's peer list with the plugin's metadata, kept in the peer's metadata record (so it is deleted with the peer): `role` (`viewer` default, D6), `expiry`, `platform` (`ios`, `ipados`, `android`, `quest`), `device_model`, `app_version`. The pairing request's identity fields are shown on the Master for approval; the platform is for display and diagnosis and is **never read by `Authorise`** (`MCON-1010`).
 - **Role promotion** is a method callable only from the Master's UI controller (`ui.ClientsModel.set_role`), never from a route; there is no wire operation that changes a role (`MCON-110`).
 - **Revocation:** `revoke(peer)` asks Link to invalidate the credential, ends the peer's event stream, releases any lease it holds (Section 3.4), cancels any hold (Section 3.13), and records an audit entry; an expired peer is revoked by a timer in the registry. A revoked client must pair anew (`MCON-170`).
@@ -194,7 +198,7 @@ The Gateway never catches `BaseException` and never swallows a safety refusal: a
 
 - A thin adapter between the Gateway/EventHub and `RelayPort`. `piers()` merges the Master's Piers with each reachable spoke's (as `PierRef(node, pier)`) into the single list a client sees (`MCON-200`); `call` forwards a request including the originating principal's identity so the spoke can audit it; `events(node)` feeds the spoke's state into the EventHub; `preview` returns bytes rendered on the owner.
 - **Grant model:** a spoke appears with `access = control | view | none` according to the opt-in grant it gave the Master; a spoke with `view` only shows its Piers as view-only, with `none` it is absent, and the client is told which (`MCON-220`). Reachability and "last heard" come from `reachability()`; an unreachable spoke's Piers are shown `unreachable(since=…)` and operations to them are refused with that reason; the relay re-attaches when the spoke returns with no re-pairing (`MCON-240`).
-- Because the relay implementation is shared with WebConnect (`WR`), its package is owned jointly; this plugin imports it, does not fork it.
+- The relay implementation is **core** (`LINK-220`) and shared with WebConnect (`WR`); this plugin consumes `RelayPort` and does not fork it.
 - **Satisfies:** `MCON-200`, `210`, `220`, `230`, `240`.
 
 ### 3.10 `mobileconnect.previews` — Preview service
@@ -373,9 +377,9 @@ None of its own: the plugin adds no listener, socket or file. All traffic is Con
 
 | # | Point |
 |---|---|
-| P1 | **Audit storage (ADR-MCON-008).** Assumes Connect Link's audit log (L3) can carry the plugin's fields and a configurable retention. If it cannot, the fallback is a **core-owned** audit table (the decision taken for NodeConnect's sync tables, [NodeConnect SDD](../nodeconnect/SDD.md) §8 P1: core owns plugin-needed tables via its own numbered migrations); a plugin-private file or plugin-shipped migration is not an option. |
-| P2 | **Port shapes (Section 3.0)** are inferred from the SRS; the Control Surface, lease, preview, deadman, sky-stream and relay interfaces are not written in core, and each could change this design's seams. The stubs in the plugin's tests should be reviewed against core's actual SRS when written (SRS O1). |
-| P3 | **Shared relay (`WR`).** Where the Master relay package lives (core, or a shared package distributed with both plugins) and who owns it is undecided; this plugin only consumes `RelayPort`. |
+| P1 | **Audit storage (ADR-MCON-008).** Assumes Connect Link's audit log (L3) can carry the plugin's fields and a configurable retention. If it cannot, the fallback is a **core-owned** audit table (the decision taken for NodeConnect's sync tables, [NodeConnect SDD](../nodeconnect/SDD.md) §8 P1: core owns plugin-needed tables via its own numbered migrations); a plugin-private file or plugin-shipped migration is not an option. **Decided 2026-10-30: Connect Link's audit log must carry plugin fields and configurable retention (a Connect Link requirement); core owns the table either way.** |
+| P2 | **Port shapes (Section 3.0)** were inferred from the SRS. The Control Surface, lease, preview, deadman, sky-stream and relay requirements are now in the core SRS and component designs in core SDD §4.28–4.32, but their interfaces are not yet code; the stubs in the plugin's tests are to be reviewed against them (SRS O1) and re-checked when the code exists. |
+| P3 | **Shared relay (`WR`).** Where the Master relay package lives (core, or a shared package distributed with both plugins) and who owns it is undecided; this plugin only consumes `RelayPort`. **Decided 2026-10-30: the relay lives in core (`galileo.connect_link`); this plugin consumes `RelayPort`.** |
 | P4 | **Hold timing.** 250 ms beat / 600 ms deadman are proposals sized for the one-second bound of `MCON-730` on a LAN; they need measuring on Wi-Fi with a headset and a phone. |
 | P5 | **Sky-stream encoding.** "Delta-coded, quantised binary" is stated, but the concrete format (and compression) belongs to the Quest SDD in the app repository (PSD Q-13) and the core streaming service; the wire route here carries it opaquely. |
 | P6 | **Pi/PC boundary and caps (SRS O9).** The concurrent-stream cap and the criterion for "Pi-class" are to be derived from a measurement, not a platform name; `capability()` is where the number lands. |

@@ -66,14 +66,14 @@ PSD constraints PC1–PC7 apply and are not restated, except where a requirement
 
 | Assumed of core | Detail |
 |---|---|
-| Connect Link (`LINK-*`) | Provides, per PSD 6.2: an authenticated, encrypted listener (L1); pairing with approval that issues a per-peer token and pinned certificate, with no endpoint answering a caller lacking a token (L2); scoped per-peer permissions including `config.read`, `config.write`, `data.push`, and an audit log (L3); LAN discovery and manual address entry (L4); plugin-registered versioned routes (L5); a server-push stream (L6); resumable, chunked, checksummed binary transfer (L7); and a version handshake reporting Galileo version, plugin API version, schema level and protocol version (L8). NodeConnect adds no transport, TLS or token code of its own. |
-| C1 change tracking | Replicable tables carry a modification timestamp, a Master-issued monotonic revision, a `dirty` flag and the `base_rev` an edit started from, with a write hook; deletions leave a tombstone. |
-| C2 replicable-table registry | A model declares itself replicable with its natural key and node-local fields. |
-| C3 settings-changed event | Published on the event bus after a bulk apply. |
-| C4 busy signal | The session executor exposes whether a session is running. |
-| C5 loopback guard | Device and PHD2 addresses may not be `localhost`, `127.0.0.0/8`, `::1` or `0.0.0.0` (only loopback; D10). |
-| C6 sync tables | Core owns, by numbered migration, the tables NodeConnect needs (outbox, inbox, snapshots, run reports, transfer queue, peer state) and offers them to the plugin through a port. |
-| C7 Library location state | `fitsFile` records whether the file is *Local* or *On Master*, with retrieval support, alongside the existing cloud-backed state. |
+| Connect Link (`LINK-*`) | Provides, per PSD 6.2: an authenticated, encrypted listener (L1); pairing with approval that issues a per-peer token and pinned certificate, with no endpoint answering a caller lacking a token (L2); scoped per-peer permissions including `config.read`, `config.write`, `data.push`, and an audit log (L3); LAN discovery and manual address entry (L4); plugin-registered versioned routes (L5); a server-push stream (L6); resumable, chunked, checksummed binary transfer (L7); and a version handshake reporting Galileo version, plugin API version, schema level and protocol version (L8). NodeConnect adds no transport, TLS or token code of its own. **Specified in core SRS `LINK-010`–`090`, `240`–`270` (2026-10-30).** |
+| C1 change tracking | Replicable tables carry a modification timestamp, a Master-issued monotonic revision, a `dirty` flag and the `base_rev` an edit started from, with a write hook; deletions leave a tombstone. **Core SRS `REPL-010`, `020`, `080`.** |
+| C2 replicable-table registry | A model declares itself replicable with its natural key and node-local fields. **Core SRS `REPL-030`, `040`.** |
+| C3 settings-changed event | Published on the event bus after a bulk apply. **Core SRS `REPL-050`.** |
+| C4 busy signal | The session executor exposes whether a session is running. **Core SRS `REPL-060`.** |
+| C5 loopback guard | Device and PHD2 addresses may not be `localhost`, `127.0.0.0/8`, `::1` or `0.0.0.0` (only loopback; D10). **Core SRS `PROF-130`, `GUIDE-100`.** |
+| C6 sync tables | Core owns, by numbered migration, the tables NodeConnect needs (outbox, inbox, snapshots, run reports, transfer queue, peer state) and offers them to the plugin through a port. **Core SRS `REPL-070`.** |
+| C7 Library location state | `fitsFile` records whether the file is *Local* or *On Master*, with retrieval support, alongside the existing cloud-backed state. **Core SRS `LIB-200`–`220`; session-history transfer form `HIST-050`.** |
 | Library ingest (`LIB-*`) | The Master receives transferred frames through the normal Library ingest path. |
 
 ---

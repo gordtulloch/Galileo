@@ -4,6 +4,7 @@
 """PLUG — Plugin Framework (TC-PLUG-010 … TC-PLUG-170)."""
 
 import io
+from pathlib import Path
 import zipfile
 from unittest.mock import MagicMock, patch
 
@@ -1170,3 +1171,194 @@ def test_tc_plug_190_window_gains_and_loses_plugin_ui_live(tmp_path, monkeypatch
             assert not hasattr(win._primary_pages["science"], "_secondary_nav")
     finally:
         win._window.close()
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-210 — switch profile registration
+# ---------------------------------------------------------------------------
+
+def _profile(name="Box", device="Some Box"):
+    from galileo.core.switches import ProfileChannel, SwitchProfile
+    return SwitchProfile(
+        name=name, device_names=(device,), signature=frozenset({("PROP", "switch")}),
+        channels=(ProfileChannel(id="c1", label="C1", group="G", switch=("PROP", "ELEM")),),
+    )
+
+
+@pytest.fixture
+def profile_registry():
+    from galileo.core.switches import SwitchProfileRegistry
+    SwitchProfileRegistry.clear()
+    yield SwitchProfileRegistry
+    SwitchProfileRegistry.clear()
+
+
+def _profile_plugin(plugins, plugin_name, profiles):
+    class ProfilePlugin(plugins.PluginBase):
+        name = plugin_name
+        version = "1.0.0"
+        api_version = "1"
+        results: list = []
+
+        def activate(self, ctx):
+            type(self).results = [ctx.register_switch_profile(p) for p in profiles]
+
+        def deactivate(self): pass
+
+    return ProfilePlugin
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_plugin_registers_a_profile_through_the_context(plugin_manager, profile_registry):
+    """PLUG-210: a plugin registers a declarative switch profile through PluginContext, holding no INDI
+    connection and needing no granted service."""
+    plugins = pytest.importorskip("galileo.plugins")
+    cls = _profile_plugin(plugins, "ProfilePlugin", [_profile()])
+    plugin_manager.load(cls)
+    assert cls.results == [True]
+    assert [p.name for p in profile_registry.profiles()] == ["Box"]
+    assert profile_registry.claimed_device_names() == {"Some Box"}
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_malformed_profile_is_rejected_with_a_reason_and_others_survive(plugin_manager, profile_registry, caplog):
+    """PLUG-210: a malformed profile is refused with a logged reason, never raised into the plugin, and does
+    not affect another profile or the application."""
+    import logging
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.core.switches import SwitchProfile
+    broken = SwitchProfile(name="Broken", device_names=(), signature=frozenset({("P", "switch")}))
+    cls = _profile_plugin(plugins, "MixedPlugin", [broken, _profile("Good"), object()])
+    with caplog.at_level(logging.ERROR):
+        plugin_manager.load(cls)
+    assert cls.results == [False, True, False]                      # the bare object has no validate(): rejected too
+    assert not plugin_manager.is_faulted("MixedPlugin")             # the plugin itself is fine
+    assert [p.name for p in profile_registry.profiles()] == ["Good"]
+    assert "claims no device names" in caplog.text
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_profiles_of_a_disabled_plugin_are_not_offered(plugin_manager, profile_registry):
+    """PLUG-210 / PLUG-060: while its plugin is disabled a profile is not offered; enabling restores it."""
+    plugins = pytest.importorskip("galileo.plugins")
+    plugin_manager.load(_profile_plugin(plugins, "TogglePlugin", [_profile()]))
+    assert profile_registry.claimed_device_names() == {"Some Box"}
+    plugin_manager.disable("TogglePlugin")
+    assert profile_registry.profiles() == [] and profile_registry.claimed_device_names() == set()
+    plugin_manager.enable("TogglePlugin")
+    assert [p.name for p in profile_registry.profiles()] == ["Box"]
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_profiles_of_an_unloaded_plugin_are_dropped_and_others_kept(plugin_manager, profile_registry):
+    """PLUG-210 / PLUG-120: unloading a plugin deregisters its profiles and leaves other plugins' alone."""
+    plugins = pytest.importorskip("galileo.plugins")
+    plugin_manager.load(_profile_plugin(plugins, "PluginA", [_profile("A", "Box A")]))
+    plugin_manager.load(_profile_plugin(plugins, "PluginB", [_profile("B", "Box B")]))
+    assert profile_registry.claimed_device_names() == {"Box A", "Box B"}
+    plugin_manager.unload("PluginA")
+    assert profile_registry.claimed_device_names() == {"Box B"}
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_registering_again_replaces_rather_than_duplicates(plugin_manager, profile_registry):
+    """PLUG-210: a plugin that registers the same profile again (a reload) does not leave a duplicate."""
+    plugins = pytest.importorskip("galileo.plugins")
+    cls = _profile_plugin(plugins, "Reloader", [_profile(), _profile()])
+    plugin_manager.load(cls)
+    assert cls.results == [True, True]
+    assert len(profile_registry.profiles()) == 1
+
+
+# ---------------------------------------------------------------------------
+# TC-PLUG-200
+# ---------------------------------------------------------------------------
+
+def _deps_zip(requires: list[str]) -> bytes:
+    toml = (
+        'name = "depplug"\nversion = "1.0.0"\napi_min = "1"\napi_max = "1"\n'
+        'author = "t"\ndescription = "d"\ntier = "third_party"\n'
+        'entry_point = "depplug"\n'
+        f"requires = {requires!r}\n".replace("'", '"')
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("plugin.toml", toml)
+        zf.writestr("depplug/__init__.py", "")
+    return buf.getvalue()
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_requires_installed_into_the_plugins_private_folder(tmp_path):
+    """PLUG-200: a plugin's declared requirements are installed into a folder private to it, on
+    sys.path while it is loaded, and removed with the plugin; Galileo's environment is untouched."""
+    import sys
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    zip_path = tmp_path / "dep.zip"
+    zip_path.write_bytes(_deps_zip(["somepkg>=1.0"]))
+    calls = []
+
+    def fake_pip(args):
+        calls.append(args)
+        target = args[args.index("--target") + 1]
+        (Path(target) / "somepkg").mkdir(parents=True)
+        return 0, ""
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir), \
+            patch("galileo.plugins._run_pip", fake_pip):
+        mgr = plugins.PluginManager()
+        record = mgr.install(zip_path)
+        deps = record.install_dir / ".deps"
+        assert calls and "somepkg>=1.0" in calls[0] and "--target" in calls[0]
+        assert (deps / "somepkg").is_dir()
+        assert str(deps) in sys.path
+        mgr.remove("depplug")
+
+    assert str(deps) not in sys.path
+    assert not record.install_dir.exists()
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_unresolvable_requirement_fails_install_and_rolls_back(tmp_path):
+    """PLUG-200: if a requirement cannot be resolved (offline included) the install fails and
+    leaves nothing behind."""
+    plugins = pytest.importorskip("galileo.plugins")
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    zip_path = tmp_path / "dep.zip"
+    zip_path.write_bytes(_deps_zip(["nosuchpkg"]))
+
+    with patch("galileo.platform.get_plugins_dir", return_value=plugins_dir), \
+            patch("galileo.plugins._run_pip", lambda args: (1, "no network")):
+        mgr = plugins.PluginManager()
+        with pytest.raises(plugins.PluginInstallError, match="dependencies"):
+            mgr.install(zip_path)
+
+    assert list(plugins_dir.iterdir()) == []
+    assert mgr.installed_version("depplug") == ""
+
+
+@pytest.mark.requirement("TC-PLUG-200")
+@pytest.mark.priority("MVP")
+def test_tc_plug_200_requires_must_be_a_list_of_strings():
+    """PLUG-200: a malformed ``requires`` entry is rejected when the manifest is read; a plugin
+    without one installs nothing."""
+    plugins = pytest.importorskip("galileo.plugins")
+    base = ('name="x"\nversion="1"\napi_min="1"\napi_max="1"\nauthor="a"\n'
+            'description="d"\ntier="third_party"\n')
+    with pytest.raises(plugins.PluginInstallError):
+        plugins.PluginManifest.from_toml_text(base + 'requires = "numpy"\n')
+    assert plugins.PluginManifest.from_toml_text(base).requires == []
+    calls = []
+    with patch("galileo.plugins._run_pip", lambda a: calls.append(a) or (0, "")):
+        plugins.install_requirements(Path("."), [])
+    assert calls == []

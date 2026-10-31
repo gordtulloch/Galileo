@@ -18,7 +18,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 **Verification Method:** `Test` (automated/manual functional test) unless noted otherwise — `Inspection` for pure documentation deliverables, `Demonstration` for installer/build-pipeline artifacts verified by producing and running them rather than a unit/integration test.
 
-**Coverage:** 283 requirements (267 counted in the SRS's own domain-summary total as of that count's last update — see Section 6's own note on rows that have since drifted ahead of it — the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md). `KASA` (5 requirements), `RELAY` (5 requirements), `SBOT` (5 requirements) and `ASC` (9 requirements) are likewise traced in their own plugins' RTMs, not counted here: [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md), [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md), [`docs/plugins/switchbot_bot/RTM.md`](plugins/switchbot_bot/RTM.md), [`docs/plugins/allskycam/RTM.md`](plugins/allskycam/RTM.md).
+**Coverage (2026-10-30 addendum: Section 3 now totals 410 rows (396 before the generic power-device rows `EQP-SW-020`–`EQP-SW-140`, covering INDI and Alpaca, and `PLUG-210` were added), including the `CSURF`, `LEASE`, `PREV`, `SKYSTR` and `REPL` domains and the expanded `LINK` domain added for the Connect plugins; every SRS requirement ID has a row here and every row has an SRS requirement, checked by script):** 283 requirements (267 counted in the SRS's own domain-summary total as of that count's last update — see Section 6's own note on rows that have since drifted ahead of it — the 14 `EXT` external-interface requirements are excluded from that summary by the SRS's own convention but are fully covered here), 100% mapped to an SDD component (0 orphans, verified by cross-check script against SDD Section 4 `Satisfies` lines + Section 7). `VST`/`VST-AN` (19 requirements, including their own `VST-EXT-010`) are the VSTarget plugin's own and are traced separately: [`docs/plugins/vstarget/RTM.md`](../plugins/vstarget/RTM.md). `KASA` (5 requirements), `RELAY` (5 requirements), `SBOT` (5 requirements), `ASC` (9 requirements) and `WBOX` (10 requirements, the Wanderer switch profiles) are likewise traced in their own plugins' RTMs, not counted here: [`docs/plugins/wandererbox/RTM.md`](plugins/wandererbox/RTM.md), [`docs/plugins/kasa_switch/RTM.md`](plugins/kasa_switch/RTM.md), [`docs/plugins/generic_relay/RTM.md`](plugins/generic_relay/RTM.md), [`docs/plugins/switchbot_bot/RTM.md`](plugins/switchbot_bot/RTM.md), [`docs/plugins/allskycam/RTM.md`](plugins/allskycam/RTM.md).
 
 **`EQP-WX-020`/`EQP-SAFE-020` added:** this revision adds per-reading Weather-Station safety configuration (Equipment > Weather screen) and its read-only, trend-graphed surfacing on the Equipment > Safety Monitor screen — tracing to SDD 4.16 `galileo.safety` (the rule model/evaluation) and SDD 4.4b `galileo.ui.app_window` (the two new Equipment pages).
 
@@ -110,6 +110,19 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-SAFE-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SAFE-010` |
 | `EQP-SAFE-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-SAFE-020` |
 | `EQP-AUX-010` | P2 | SDD 4.1 `galileo.core.devices`; SDD 4.2 `galileo.adapters.indi`; SDD 4.3 `galileo.adapters.alpaca`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-AUX-010` |
+| `EQP-SW-020` | P2 | SDD 4.2 `galileo.adapters.indi` (`IndiSwitchAdapter` discovery) | Test | `TC-EQP-SW-020` |
+| `EQP-SW-030` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` (standard mapper) | Test | `TC-EQP-SW-030` |
+| `EQP-SW-040` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` (readings and global controls) | Test | `TC-EQP-SW-040` |
+| `EQP-SW-050` | P2 | SDD 4.2 `galileo.adapters.indi` (`IndiSwitchAdapter` writes); SDD 4.3 `galileo.adapters.alpaca` (`AlpacaSwitchAdapter` writes); SDD 4.2a | Test | `TC-EQP-SW-050` |
+| `EQP-SW-060` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` (scale and clamping) | Test | `TC-EQP-SW-060` |
+| `EQP-SW-070` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` ("Other" group, via the Aux conversion) | Test | `TC-EQP-SW-070` |
+| `EQP-SW-080` | P2 | SDD 4.1 `galileo.core.devices` (`SwitchProfile`); SDD 4.2a (signature resolution) | Test | `TC-EQP-SW-080` |
+| `EQP-SW-090` | P2 | SDD 4.2a Switches page (`galileo.ui.app_window._switch_page`) | Test | `TC-EQP-SW-090` |
+| `EQP-SW-100` | P2 | SDD 4.1 `galileo.core.devices` (`SwitchController`); SDD 4.3 `galileo.adapters.alpaca` | Test | `TC-EQP-SW-100` |
+| `EQP-SW-110` | P2 | SDD 4.2a Switches page (confirmation guard) | Test | `TC-EQP-SW-110` |
+| `EQP-SW-120` | P2 | SDD 4.2 `galileo.adapters.indi`; SDD 4.2a (dynamic properties, degraded panel) | Test | `TC-EQP-SW-120` |
+| `EQP-SW-130` | P2 | SDD 4.3 `galileo.adapters.alpaca` (`AlpacaSwitchAdapter` panel mapping); SDD 4.2a (shared page) | Test | `TC-EQP-SW-130` |
+| `EQP-SW-140` | P2 | SDD 4.1 `galileo.core.devices` (`"value"` channel kind); SDD 4.3 `galileo.adapters.alpaca`; SDD 4.2a (rendering) | Test | `TC-EQP-SW-140` |
 
 ### `PROF` — Equipment Profiles (Piers)
 
@@ -127,6 +140,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PROF-100` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-100` |
 | `PROF-110` | MVP | SDD 4.4 `galileo.equipment.profiles` | Test | `TC-PROF-110` |
 | `PROF-120` | MVP | SDD 4.4 `galileo.equipment.profiles`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PROF-120` |
+| `PROF-130` | MVP | SDD 4.4 `galileo.equipment.profiles`; SDD 4.32 `replication.LoopbackGuard` | Test | `TC-PROF-130` |
 
 ### `OBS` — Multi-Mount Observatory Management (exceeds EKOS, Section 6.6)
 
@@ -322,6 +336,10 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `FOC-070` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-070` |
 | `FOC-080` | P2 | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-080` |
 | `FOC-090` | MVP | SDD 4.11 `galileo.autofocus`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-FOC-090` |
+| `FOC-100` | MVP | SDD 4.11 `galileo.autofocus` | Test | `TC-FOC-100` |
+| `FOC-110` | MVP | SDD 4.11 `galileo.autofocus`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-FOC-110` |
+| `FOC-120` | MVP | SDD 4.11 `galileo.autofocus`; SDD 4.29 `galileo.control_surface` | Test | `TC-FOC-120` |
+| `FOC-130` | MVP | SDD 4.11 `galileo.autofocus`; SDD 4.29 `control_surface.holds` | Test | `TC-FOC-130` |
 
 ### `PLT` — Plate Solving
 
@@ -359,6 +377,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `GUIDE-070` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-070` |
 | `GUIDE-080` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-080` |
 | `GUIDE-090` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-090` |
+| `GUIDE-100` | MVP | SDD 4.14 `galileo.guiding`; SDD 4.32 `replication.LoopbackGuard` | Test | `TC-GUIDE-100` |
 
 ### `DOME` — Dome Control
 
@@ -391,6 +410,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `HIST-020` | P2 | SDD 4.17 `galileo.history` | Test | `TC-HIST-020` |
 | `HIST-030` | P2 | SDD 4.17 `galileo.history` | Test | `TC-HIST-030` |
 | `HIST-040` | P3 | SDD 4.17 `galileo.history` | Test | `TC-HIST-040` |
+| `HIST-050` | MVP | SDD 4.17 `galileo.history` | Test | `TC-HIST-050` |
 
 ### `META` — Image Metadata
 
@@ -435,10 +455,12 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLUG-170` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-170` |
 | `PLUG-180` | P2 | SDD 4.20 `galileo.plugins`; SDD 4.4b `galileo.ui.dashboard` | Test | `TC-PLUG-180` |
 | `PLUG-190` | MVP | SDD 4.20 `galileo.plugins`; `galileo.ui.app_window` | Test | `TC-PLUG-190` |
+| `PLUG-200` | MVP | SDD 4.20 `galileo.plugins` | Test | `TC-PLUG-200` |
+| `PLUG-210` | P2 | SDD 4.20 `galileo.plugins` (profile registration); SDD 4.2a | Test | `TC-PLUG-210` |
 
 ### `LINK` — Connect Link
 
-`LINK-010`–`080` are outline requirements pending Connect Link's own design; `LINK-100`–`210` specify the outreach event facility (L9).
+`LINK-010`–`090` and `LINK-220`–`270` are specified in full (L1–L8, delegation, the shared relay and pipeline, audit, Options, secrets, disable) but their design in SDD 4.28 is at component level; `LINK-100`–`210` specify the outreach event facility (L9).
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
@@ -450,6 +472,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LINK-060` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-060` |
 | `LINK-070` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-070` |
 | `LINK-080` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-080` |
+| `LINK-090` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-090` |
 | `LINK-100` | MVP | SDD 4.28 `outreach.OutreachFacility` | Test | `TC-LINK-100` |
 | `LINK-110` | MVP | SDD 4.28 `outreach.OutreachOptions` | Test | `TC-LINK-110` |
 | `LINK-120` | MVP | SDD 4.28 `outreach.SecretVault` | Test | `TC-LINK-120` |
@@ -462,6 +485,95 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LINK-190` | MVP | SDD 4.28 `outreach.EventDisplay`, `OutreachFacility` | Test | `TC-LINK-190` |
 | `LINK-200` | MVP | SDD 4.28 `outreach.SurfaceRegistry` | Test | `TC-LINK-200` |
 | `LINK-210` | MVP | SDD 4.28 `outreach.OutreachFacility`, `GuestRegistry` | Test | `TC-LINK-210` |
+| `LINK-220` | MVP | SDD 4.28 `galileo.connect_link.relay` | Test | `TC-LINK-220` |
+| `LINK-230` | MVP | SDD 4.28 `galileo.connect_link.gateway` | Test | `TC-LINK-230` |
+| `LINK-240` | MVP | SDD 4.28 `connect_link.audit` | Test | `TC-LINK-240` |
+| `LINK-250` | MVP | SDD 4.28 `galileo.ui.connect_link` | Test | `TC-LINK-250` |
+| `LINK-260` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-260` |
+| `LINK-270` | MVP | SDD 4.28 `galileo.connect_link` | Test | `TC-LINK-270` |
+
+### `CSURF` — Control Surface (with operation events and held motion)
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `CSURF-010` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-010` |
+| `CSURF-020` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-020` |
+| `CSURF-030` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-030` |
+| `CSURF-040` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-040` |
+| `CSURF-050` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-050` |
+| `CSURF-060` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-060` |
+| `CSURF-070` | MVP | SDD 4.29 `control_surface.events` | Test | `TC-CSURF-070` |
+| `CSURF-080` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-080` |
+| `CSURF-100` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-100` |
+| `CSURF-110` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-110` |
+| `CSURF-120` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-120` |
+| `CSURF-130` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-130` |
+| `CSURF-140` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-140` |
+| `CSURF-150` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-150` |
+| `CSURF-160` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-160` |
+| `CSURF-170` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-170` |
+| `CSURF-180` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-180` |
+| `CSURF-190` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-190` |
+| `CSURF-200` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-200` |
+| `CSURF-210` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-210` |
+| `CSURF-220` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-220` |
+| `CSURF-230` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-230` |
+| `CSURF-240` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-240` |
+| `CSURF-250` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-250` |
+| `CSURF-300` | MVP | SDD 4.29 `control_surface.emergency` | Test | `TC-CSURF-300` |
+| `CSURF-400` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-400` |
+| `CSURF-410` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-410` |
+| `CSURF-420` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-420` |
+
+### `LEASE` — Control Lease
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `LEASE-010` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-010` |
+| `LEASE-020` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-020` |
+| `LEASE-030` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-030` |
+| `LEASE-040` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-040` |
+| `LEASE-050` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-050` |
+| `LEASE-060` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-060` |
+| `LEASE-070` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-070` |
+| `LEASE-080` | MVP | SDD 4.29 `control_surface.lease` | Test | `TC-LEASE-080` |
+
+### `PREV` — Preview Service
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `PREV-010` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-010` |
+| `PREV-020` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-020` |
+| `PREV-030` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-030` |
+| `PREV-040` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-040` |
+| `PREV-050` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-050` |
+| `PREV-060` | P2 | SDD 4.30 `galileo.preview` | Test | `TC-PREV-060` |
+
+### `SKYSTR` — Sky Data Streaming
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `SKYSTR-010` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-010` |
+| `SKYSTR-020` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-020` |
+| `SKYSTR-030` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-030` |
+| `SKYSTR-040` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-040` |
+| `SKYSTR-050` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-050` |
+| `SKYSTR-060` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-060` |
+| `SKYSTR-070` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-070` |
+| `SKYSTR-080` | MVP | SDD 4.31 `galileo.skystream` | Test | `TC-SKYSTR-080` |
+
+### `REPL` — Replication Support
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `REPL-010` | MVP | SDD 4.32 `replication.tracking` | Test | `TC-REPL-010` |
+| `REPL-020` | MVP | SDD 4.32 `replication.tracking` | Test | `TC-REPL-020` |
+| `REPL-030` | MVP | SDD 4.32 `replication.registry` | Test | `TC-REPL-030` |
+| `REPL-040` | MVP | SDD 4.32 `replication.registry` | Test | `TC-REPL-040` |
+| `REPL-050` | MVP | SDD 4.32 `replication.events` | Test | `TC-REPL-050` |
+| `REPL-060` | MVP | SDD 4.32 `replication.busy` | Test | `TC-REPL-060` |
+| `REPL-070` | MVP | SDD 4.32 `replication.syncstore` | Test | `TC-REPL-070` |
+| `REPL-080` | MVP | SDD 4.32 `replication.tracking` | Test | `TC-REPL-080` |
 
 ### `UI` — Customization & Theming
 
@@ -520,6 +632,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-170` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-170` |
 | `LIB-180` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-180` |
 | `LIB-190` | P3 | SDD 4.23 `galileo.library` | Test | `TC-LIB-190` |
+| `LIB-200` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-200` |
+| `LIB-210` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-210` |
+| `LIB-220` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-220` |
 
 ### `VST` / `VST-AN` — Moved
 
@@ -603,8 +718,8 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 |---|---|---|---|---|
 | `EXT` | 14 | 9 | 4 | 1 |
 | `ARCH` | 8 | 6 | 2 | 0 |
-| `EQP` | 28 | 19 | 9 | 0 |
-| `PROF` | 12 | 11 | 1 | 0 |
+| `EQP` | 41 | 19 | 22 | 0 |
+| `PROF` | 13 | 12 | 1 | 0 |
 | `OBS` | 9 | 0 | 9 | 0 |
 | `IMG` | 20 | 10 | 10 | 0 |
 | `SES` (formerly `SEQ`/`SEQ-ADV`) | 30 | 17 | 10 | 3 |
@@ -614,20 +729,25 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `SKYMAP` | 9 | 3 | 6 | 0 |
 | `SCHED` | 10 | 8 | 2 | 0 |
 | `CAL` | 6 | 5 | 1 | 0 |
-| `FOC` | 9 | 6 | 3 | 0 |
+| `FOC` | 13 | 10 | 3 | 0 |
 | `PLT` | 7 | 6 | 1 | 0 |
 | `MFLIP` | 4 | 0 | 4 | 0 |
-| `GUIDE` | 9 | 7 | 2 | 0 |
+| `GUIDE` | 10 | 8 | 2 | 0 |
 | `DOME` | 3 | 0 | 3 | 0 |
 | `SAFE` | 10 | 2 | 5 | 3 |
-| `HIST` | 4 | 0 | 3 | 1 |
+| `HIST` | 5 | 1 | 3 | 1 |
 | `META` | 5 | 3 | 1 | 1 |
 | `NOTIF` | 5 | 0 | 1 | 4 |
-| `PLUG` | 16 | 15 | 1 | 0 |
-| `LINK` | 20 | 20 | 0 | 0 |
+| `PLUG` | 21 | 19 | 2 | 0 |
+| `LINK` | 27 | 27 | 0 | 0 |
+| `CSURF` | 28 | 22 | 5 | 1 |
+| `LEASE` | 8 | 8 | 0 | 0 |
+| `PREV` | 6 | 5 | 1 | 0 |
+| `SKYSTR` | 8 | 8 | 0 | 0 |
+| `REPL` | 8 | 8 | 0 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
-| `LIB` | 18 | 11 | 5 | 2 |
+| `LIB` | 21 | 14 | 5 | 2 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
 | `NFR-PORT` | 2 | 2 | 0 | 0 |
@@ -637,4 +757,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **315** | **198** | **101** | **16** |
+| **Total** | **410** | **270** | **122** | **18** |
