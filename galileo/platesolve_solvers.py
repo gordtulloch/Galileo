@@ -9,6 +9,7 @@ import logging
 import asyncio
 import json
 import math
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -272,11 +273,7 @@ class PlateSolver:
                     "-r", f"{self.params.search_radius_deg:g}"]
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            proc = await _start_process(cmd)
         except Exception as exc:
             return SolveResult(success=False, failure_reason=str(exc))
         try:
@@ -326,8 +323,7 @@ class PlateSolver:
                 cmd += ["--ra", f"{hint[0]:.6f}", "--dec", f"{hint[1]:.6f}", "--radius", f"{self.params.search_radius_deg:g}"]
             cmd.append(str(fits_path))
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                proc = await _start_process(cmd)
             except Exception as exc:
                 return SolveResult(success=False, failure_reason=str(exc))
             try:
@@ -506,6 +502,38 @@ def _result_from_wcs(path: Path) -> SolveResult:
                            cd=(cd11, cd12, cd21, cd22) if "CD1_1" in header else None)
     except Exception as exc:
         return SolveResult(success=False, failure_reason=f"Could not read astrometry.net's solution: {exc}")
+
+
+class _ThreadProcess:
+    """The slice of ``asyncio.subprocess.Process`` the solvers use, run with ``subprocess`` and worker
+    threads — for event loops that cannot spawn processes (a selector loop on Windows)."""
+
+    def __init__(self, cmd: list[str]) -> None:
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    @property
+    def returncode(self) -> int | None:
+        return self._proc.returncode
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return await asyncio.to_thread(self._proc.communicate)
+
+    async def wait(self) -> int:
+        return await asyncio.to_thread(self._proc.wait)
+
+    def kill(self) -> None:
+        self._proc.kill()
+
+
+async def _start_process(cmd: list[str]):
+    """Start *cmd* with stdout and stderr piped. Galileo runs its event loops as selector loops on
+    Windows (Proactor loops were crashing the application), and those cannot spawn asyncio
+    subprocesses, so it falls back to :class:`_ThreadProcess`."""
+    try:
+        return await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except NotImplementedError:
+        return _ThreadProcess(cmd)
 
 
 def _read_astap_ini(path: Path) -> dict[str, str]:

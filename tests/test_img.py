@@ -367,11 +367,12 @@ def _wait_for_preview_renders(window):
 
 @pytest.mark.requirement("TC-IMG-110")
 @pytest.mark.priority("MVP")
-def test_tc_img_110_imaging_page_has_no_debayer_switch(window):
-    """IMG-110: colour cameras are debayered automatically, so the Imaging page no longer offers a Debayer checkbox."""
+def test_tc_img_110_imaging_page_has_debayer_override(window):
+    """IMG-110: colour cameras are debayered automatically, and the View group's Debayer checkbox shows that
+    and lets the user override it."""
     from PySide6.QtWidgets import QCheckBox
     texts = {c.text() for c in window._window.findChildren(QCheckBox)}
-    assert "Debayer" not in texts and "Live Stack" in texts
+    assert "Debayer" in texts and "Live Stack" in texts
 
 
 @pytest.mark.requirement("TC-IMG-110")
@@ -2413,3 +2414,55 @@ async def test_tc_img_150_session_frames_are_announced_to_the_imaging_screen():
         get_bus().unsubscribe(FrameCapturedEvent, handler)
     assert [e.pier for e in seen] == ["pier-a", "pier-a"]
     assert all(e.service is session for e in seen)
+
+
+@pytest.mark.requirement("TC-IMG-110")
+@pytest.mark.priority("MVP")
+async def test_tc_img_110_debayer_override_beats_detection(mock_indi_camera, imaging_service):
+    """IMG-110: debayering is automatic from the camera's reported pattern, but the user's Debayer
+    override wins either way; forced on with no reported pattern, the saved pattern is used."""
+    raw = _mosaic_of((1000, 300, 60), "RGGB")
+    mock_indi_camera.get_image_array = AsyncMock(return_value=raw)
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value="RGGB")
+    await imaging_service.capture_and_preview(duration=1.0)
+    assert imaging_service.debayer_enabled and imaging_service.current_preview.shape == (*raw.shape, 3)
+
+    imaging_service.set_debayer_override(False)
+    assert not imaging_service.debayer_enabled and imaging_service.current_preview.shape == raw.shape
+
+    mock_indi_camera.get_bayer_pattern = AsyncMock(return_value=None)         # camera cannot say
+    await imaging_service.capture_and_preview(duration=1.0)
+    assert not imaging_service.debayer_enabled
+    imaging_service.fallback_bayer_pattern = "GBRG"
+    imaging_service.set_debayer_override(True)
+    assert imaging_service.debayer_note == "Debayered (GBRG)."
+
+    imaging_service.set_debayer_override(None)
+    assert not imaging_service.debayer_enabled
+
+
+@pytest.mark.requirement("TC-IMG-050")
+@pytest.mark.priority("P2")
+def test_tc_img_050_status_follows_a_running_session(window):
+    """IMG-050: while a session runs on the displayed Pier the Imaging status line shows its progress
+    rather than Idle, and goes back to the screen's own state when the run ends."""
+    from galileo.current_object import pier_key
+    from galileo.session_exec import RunState, SessionProgress
+    from galileo.ui.session_runner import ActiveRun, get_session_controller
+    controller = get_session_controller(window)
+    ui = window._imaging_ui
+    key = pier_key(window._current_pier)
+    assert ui["status"].text() == "Idle"
+    run = ActiveRun.__new__(ActiveRun)
+    run.region = type("R", (), {"name": "M31 night"})()
+    run.progress = SessionProgress(state=RunState.RUNNING, block_index=2, block_total=5,
+                                   frames_done=3, frames_total=20, message="Exposing")
+    controller._runs[key] = run
+    try:
+        controller.changed.emit(key)
+        text = ui["status"].text()
+        assert "M31 night" in text and "block 2 of 5" in text and "frame 3 of 20" in text and "Exposing" in text
+    finally:
+        controller._runs.pop(key, None)
+    controller.changed.emit(key)
+    assert ui["status"].text() == "Idle"

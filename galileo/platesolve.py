@@ -153,6 +153,9 @@ class SolveWorkflow:
         self.frame_metadata: dict = dict(frame_metadata or {})
         self._work_dir = Path(work_dir) if work_dir is not None else None
         self._log = log or (lambda message: None)
+        # Called as ``(duration_s, label)`` when an exposure starts and ``(None, "")`` when it ends, on the
+        # workflow's thread, so a UI can show that the camera is exposing.
+        self.on_exposure: Callable[[float | None, str], None] | None = None
         # J2000 (ra_deg, dec_deg) the mount should end up at; taken from the mount when a run
         # starts if not already set.
         self.target: tuple[float, float] | None = None
@@ -354,6 +357,18 @@ class SolveWorkflow:
         # treat as the target. Named from the file's OBJECT card when it has one.
         self.slewed_to = (result.ra_deg, result.dec_deg, await asyncio.to_thread(_object_name, source))
 
+    async def _expose(self, duration_s: float, frame_type: str, options: dict, label: str):
+        """One exposure and download, announced through :attr:`on_exposure` for as long as it takes."""
+        notify = self.on_exposure
+        if notify is not None:
+            notify(duration_s, label)
+        try:
+            await self.camera.start_exposure(duration=duration_s, frame_type=frame_type, **options)
+            return await self.camera.get_image_array()
+        finally:
+            if notify is not None:
+                notify(None, "")
+
     async def _capture(self, settings: SolveSettings, attempt: int) -> Path | None:
         if self.camera is None:
             self._log("No camera is connected.")
@@ -374,16 +389,12 @@ class SolveWorkflow:
         if settings.binning > 1:
             options["binning"] = settings.binning
         try:
-            await self.camera.start_exposure(
-                duration=settings.exposure_s, frame_type="Light", **options)
-            data = await self.camera.get_image_array()
+            data = await self._expose(settings.exposure_s, "Light", options, "Exposing")
             if data is None:
                 raise RuntimeError("the camera returned no image")
             if settings.subtract_dark:
                 self._log("Capturing dark…")
-                await self.camera.start_exposure(
-                    duration=settings.exposure_s, frame_type="Dark", **options)
-                dark = await self.camera.get_image_array()
+                dark = await self._expose(settings.exposure_s, "Dark", options, "Exposing dark")
                 if dark is not None:
                     data = _subtract_dark(data, dark)
             frame = self._work_path(self._frame_stem(str(attempt)))

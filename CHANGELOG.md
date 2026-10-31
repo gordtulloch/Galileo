@@ -8,7 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Sessions: Run executes immediately and no longer puts the session on the Schedule.** It used to add the session to the timeline starting now, move an existing entry, and warn about overlaps. Now it runs directly and leaves the Schedule alone. If a scheduler-started session is already running on the Pier, Run stops it (it stays on the Schedule, marked stopped) and starts the new one when it has finished stopping; a Run already in progress still refuses a second. Run still refuses to start while the safety monitor reports unsafe conditions. A completed session is still removed (SES-210). SRS `SCHED-150` reworded to match.
+- **Top bar: the "Session camera" text is gone.** It was pushing the current-target indicator off the screen, and the session's camera is already shown in the dropdowns and on the session card.
+
 ### Added
+
+- **Imaging: the status line follows a running session.** It used to say Idle while a session was imaging; it now shows the session's name, block, frame count and current activity, updating as the run progresses, and returns to normal when the session ends or when you start a capture from the screen yourself.
+
+- **Solve: visible exposure indicator under the Solver Control buttons.** While the camera exposes for Capture & Solve or polar alignment, a labelled progress bar counts through the exposure time and then shows "downloading…" until the frame arrives. `SolveWorkflow` gained an `on_exposure` callback to report this.
+
+- **Imaging: Debayer checkbox back in the View group, automatic with an override.** It is ticked automatically when the camera reports a Bayer pattern, and the user can tick or untick it to force colour on or off. Forcing it on for a camera that reports no pattern (the likely cause of auto-debayer appearing not to work) now debayers using the pattern saved on Equipment › Camera, rather than doing nothing.
+
+- **Solve: portrait layout stacks the error plot above the results table.** In the narrow portrait arrangement the Solution Results tab now puts the bullseye (error plot) on top with the table beneath, rather than squeezing them side by side; landscape is unchanged.
+
+- **Imaging: Rotator group with a Rotation field.** Type an angle (0 – 359.99°) and press **Set** to turn the rotator connected on Equipment › Rotator, without leaving the preview. With no rotator connected, the status bar says to connect one. Inline help entries added (Rotator, Rotation, Rotation Set).
 
 - **Focus screen: Optics / Camera selectors, associated focuser, camera name, and Gain / Offset.** The top bar's Optics and Camera selectors now appear on the Focus screen. The Focuser box shows the focuser associated with the selected Optics (Equipment › Optics) and the screen drives that focuser, falling back to the Pier's first connected focuser when the tube has none. The Camera box shows the camera's device name instead of "Primary Camera", and has editable **Gain** and **Offset** that start at the camera's defaults from Equipment › Camera whenever a camera or Pier is chosen and are applied to the autofocus, Capture/Loop and Filter Offsets exposures (`AutofocusService` gained `gain`/`offset`). Edits are not written back to the camera. Inline help and wiki updated.
 
@@ -19,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **"Set Home Position" button on the Equipment / Mount page** (INDI `TELESCOPE_HOME` `SET`; OnStep `:hF#`), so home and park are two separate, explicitly named positions. Drivers without it show a status message.
 
 ### Fixed
+
+- **Schedule: deleting an entry no longer crashes when the entry is already gone or its session points at a different one.** After stopping sessions, right-click > Remove on a Schedule entry raised `ValueError: list.remove(x): x not in list` (crash report of 2026-10-30 19:58). Removal now takes exactly the entry on screen off the queue and is harmless if it was already reaped.
+
+- **Windows: selector event loops everywhere, to stop access-violation crashes.** `faulthandler.log` showed a native access violation on the UI thread (in a `QThread` constructor from the Mount page's guard timer), the same signature earlier crashes had when Windows Proactor (IOCP) loops from the many `asyncio.run` calls were alive. The application now sets the Windows selector event-loop policy at start-up. Solver subprocesses, which a selector loop cannot spawn, go through a thread-backed fallback (`_ThreadProcess`) so ASTAP and solve-field still work. Not proven to be the cause; if it crashes again, `faulthandler.log` will say.
 
 - **INDI driver messages in the log now say which server sent them, and connection/exposure errors no longer quote another device's message.** Several servers share one log and device names repeat across them (an all-sky `ZWO CCD ASI224MC` on spao-obs, a guide camera of the same name on spao-ntt62), so the all-sky camera's exposure chatter looked like it belonged to the other server. Log lines are now `INDI message host:port [device] text`. Separately, "failed to connect", "exposure failed" and timeout errors quoted the newest message from anywhere on the server — a failed Hydreon RG-11 connect reported "[ZWO CCD ASI224MC] Download complete." — and now use the latest message from the device concerned (or a server-level one), else "no message from driver". Internal logging/diagnostics; no help, wiki or design-doc change needed.
 - **Crash (Windows access violation) while slewing, still happening after the queued-connection fixes — worker threads no longer build a Windows Proactor event loop.** The `faulthandler` log showed the UI thread dying in the constructor of the next mount-polling thread while the resume-tracking thread was inside `asyncio.run`. The mount-position poll, limit monitor, resume-tracking and filter-move threads each called `asyncio.run`, which on Windows creates and tears down an IOCP (Proactor) loop every few seconds. They now run on a private selector loop (`_run_mount_coro`), which mount adapters (sockets and threads only) work fine on. This is a hypothesis fitted to the traces, not a confirmed root cause; if it still crashes, send the new `faulthandler.log`. No help, wiki or design-doc change needed.

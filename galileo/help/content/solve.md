@@ -27,6 +27,10 @@ Stops the solve or the repeating slew-and-solve loop in progress.
 
 A moving bar that shows a solve is running.
 
+## Exposure Progress
+
+Shown under the buttons while the camera is exposing for a solve (including each exposure of a polar-alignment run, and the dark frame when **Subtract dark** is on): a bar filling over the exposure time with the seconds elapsed, then "downloading…" while the frame is read from the camera. Hidden otherwise.
+
 ## Solver Action
 
 What to do once an image has been solved.
@@ -217,7 +221,7 @@ The aiming view that appears once the axis has been measured. The **circle** is 
 
 ## Choose layout manually
 
-By default the screen arranges itself to suit the frame: a portrait frame (taller than it is wide) gets a full-height column on the right, about a third of the screen wide, with everything else beside it. Tick this to pick the arrangement yourself with **Layout**.
+By default the screen arranges itself to suit the frame: a portrait frame (taller than it is wide) gets a full-height column on the right, about a third of the screen wide, with everything else beside it; in that arrangement the Solution Results error plot (the bullseye) sits above the results table. Tick this to pick the arrangement yourself with **Layout**.
 
 ## Layout
 

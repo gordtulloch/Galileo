@@ -749,3 +749,16 @@ def test_schedule_upcoming_panel_lists_timed_jobs_with_target_summary(window):
     page.reload()
     text = page._upcoming_list.toPlainText()
     assert "Slew To: M31" in text and start.strftime("%H:%M") in text
+
+
+@pytest.mark.requirement("TC-SCHED-110")
+@pytest.mark.priority("P2")
+def test_tc_sched_110_removing_an_entry_already_gone_is_not_an_error():
+    """SCHED-110: removing a Schedule entry that was already reaped or removed elsewhere does not raise."""
+    from galileo.scheduler import ObservatoryScheduler, SchedulerJob
+    scheduler = ObservatoryScheduler()
+    job = SchedulerJob(name="gone", pier_name="P")
+    scheduler.add_job(job)
+    scheduler.remove_job(job)
+    scheduler.remove_job(job)
+    assert scheduler.jobs == []

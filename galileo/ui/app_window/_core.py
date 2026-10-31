@@ -275,16 +275,6 @@ class AppWindowCoreMixin:
         self._camera_combo.activated.connect(self._on_camera_activated)
         layout.addWidget(self._camera_combo)
 
-        # The camera of the session running on the selected Pier. Shown on every screen while a
-        # session runs (the session owns its camera; the selectors above don't affect it) and
-        # hidden otherwise. Kept current by ``_refresh_session_camera_label``.
-        self._session_camera_label = QLabel()
-        self._session_camera_label.setObjectName("SessionCameraLabel")
-        self._session_camera_label.setToolTip(
-            "The camera of the session running on this Pier. Every action of the session uses it.")
-        self._session_camera_label.setVisible(False)
-        layout.addWidget(self._session_camera_label)
-
         layout.addStretch(1)
 
         # The selected Pier's current object (IMG-140): whatever was last picked in the Star Atlas.

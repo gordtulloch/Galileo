@@ -523,3 +523,54 @@ def test_tc_ses_040_stopped_manual_run_returns_session_to_editable_draft(window,
 
     assert region in page.sessions_screen.visible_sessions
     assert region.is_scheduled is False and region.is_editable
+
+
+@pytest.mark.requirement("TC-SES-030")
+@pytest.mark.priority("MVP")
+def test_tc_ses_030_run_does_not_put_the_session_on_the_schedule(window, monkeypatch):
+    """SES-030: Run executes the session at once without adding it to the Schedule."""
+    from galileo.ui import session_runner
+    page = _page(window)
+    ctx, frames = make_context(imaging={"delay": 0.2})
+    monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
+    region = page.sessions_screen.add_session_from_context_menu()
+    region._scheduler = page._scheduler_for(region._pier_name)
+    region.insert_block(sessions.ImageBlock(exposure=5.0, count=1))
+
+    problems, conflicts = page._controller.start_region(region)
+    assert problems == [] and conflicts == []
+    assert page._controller.is_running(region)
+    assert not region.is_scheduled and region._scheduler.jobs == []
+    _wait(page._controller)
+    assert len(frames) == 1 and region._scheduler.jobs == []
+
+
+@pytest.mark.requirement("TC-SES-030")
+@pytest.mark.priority("MVP")
+def test_tc_ses_030_run_terminates_a_running_scheduled_session(window, monkeypatch):
+    """SES-030: Run while a scheduled session is running stops that session and then runs this one."""
+    from galileo.ui import session_runner
+    page = _page(window)
+    ctx, frames = make_context(imaging={"delay": 0.5})
+    monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
+    controller = page._controller
+
+    scheduled = page.sessions_screen.add_session_from_context_menu()
+    scheduled._scheduler = page._scheduler_for(scheduled._pier_name)
+    scheduled.insert_block(sessions.ImageBlock(exposure=5.0, count=20))
+    scheduled.run_now()                                    # on the Schedule, due now
+    controller._tick_pier(window._current_pier)
+    assert controller.is_running(scheduled) and not controller.run_for(scheduled).manual
+
+    other = page.sessions_screen.add_session_from_context_menu()
+    other._scheduler = scheduled._scheduler
+    other.insert_block(sessions.ImageBlock(exposure=5.0, count=1))
+    problems, _ = controller.start_region(other)
+    assert problems == []
+    _wait(controller, 20.0)
+    for _ in range(200):                                   # the takeover run starts after the first ends
+        if not controller.is_running():
+            break
+        _wait(controller, 1.0)
+    assert scheduled._job.run_state == "stopped"
+    assert other not in page.sessions_screen.visible_sessions      # it ran to completion and was removed

@@ -227,7 +227,10 @@ class ObservatoryScheduler:
         self.save()
 
     def remove_job(self, job: SchedulerJob) -> None:
-        self.jobs.remove(job)
+        """Take *job* off the queue. Removing one that is already gone (reaped, or removed from another
+        screen) is not an error."""
+        if job in self.jobs:
+            self.jobs.remove(job)
         self.save()
 
     def move_job(self, job: SchedulerJob, new_position: int) -> None:

@@ -617,7 +617,6 @@ class AppWindowObservatoryPierMixin:
             timed("push optics to devices", self._push_context_to_devices, "Sending optics to devices")
             timed("camera combo", self._refresh_camera_combo, "Selecting camera")
             timed("camera imaging defaults", self._apply_camera_imaging_defaults, "Applying camera defaults")
-            timed("session camera label", self._refresh_session_camera_label)
             timed("imaging filters", self._refresh_imaging_filters, "Loading filters")
             timed("current object", self._refresh_current_object, "Restoring current target")
             refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)

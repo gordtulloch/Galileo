@@ -13,7 +13,7 @@ from pathlib import Path
 
 from galileo.core.compute import run_cpu
 from galileo.current_object import safe_file_stem
-from galileo.debayer import BAYER_PATTERNS, debayer
+from galileo.debayer import BAYER_PATTERNS, DEFAULT_PATTERN, debayer
 from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker, MosaicStacker
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,11 @@ class ImagingService:
         # The camera says whether it is a colour one (``bayer_pattern`` is its mosaic layout, or
         # None for mono), and a colour camera's preview is always debayered.
         self.bayer_pattern: str | None = None
+        # The View > Debayer checkbox: None = automatic (follow ``bayer_pattern``); True/False = the
+        # user's override. When forced on for a camera that reports no pattern, ``fallback_bayer_pattern``
+        # (the pattern saved on the camera's Equipment page) is used.
+        self.debayer_override: bool | None = None
+        self.fallback_bayer_pattern: str | None = None
         self.debayer_note: str = ""                # what the last preview did, for the UI to show
         # Auto-stretch strength (IMG-190), set by the slider above the histogram. Preview-only —
         # never affects current_frame, frame_stats, frame_histogram or a saved file.
@@ -669,9 +674,19 @@ class ImagingService:
 
     @property
     def debayer_enabled(self) -> bool:
-        """Whether the preview is debayered: true for a one-shot-colour camera. The raw frame —
-        what statistics, the histogram and Save Frame use — is never changed."""
+        """Whether the preview is debayered: automatically for a one-shot-colour camera, unless the
+        user overrides it either way. The raw frame — what statistics, the histogram and Save Frame
+        use — is never changed."""
+        if self.debayer_override is not None:
+            return self.debayer_override
         return self.bayer_pattern is not None
+
+    def set_debayer_override(self, enabled: bool | None, rebuild: bool = True) -> None:
+        """Force the preview debayered (True) or not (False), or ``None`` to go back to automatic."""
+        self.debayer_override = enabled
+        self._preview_generation += 1
+        if rebuild:
+            self._rebuild_preview()
 
     async def _detect_bayer_pattern(self) -> None:
         """Ask the camera whether it is a colour one, and set :attr:`bayer_pattern` to match."""
@@ -760,9 +775,10 @@ class ImagingService:
         """``(image, note)``: *data* debayered with ``bayer_pattern``, or
         unchanged with a note saying why not. Wrong colours mean the pattern
         set on the camera's Equipment page doesn't match the sensor."""
-        if data.ndim != 2 or self.bayer_pattern is None:
+        if data.ndim != 2:
             return data, "Frame is already colour — not debayered."
-        return debayer(data, self.bayer_pattern), f"Debayered ({self.bayer_pattern})."
+        pattern = self.bayer_pattern or self.fallback_bayer_pattern or DEFAULT_PATTERN
+        return debayer(data, pattern), f"Debayered ({pattern})."
 
     # --- Statistics (IMG-040) --------------------------------------------
 

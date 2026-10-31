@@ -471,10 +471,14 @@ class SchedulePageWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return
-        if job.kind == "session" and job.sequence is not None and hasattr(job.sequence, "deschedule"):
-            job.sequence.deschedule()
+        region = job.sequence if job.kind == "session" else None
+        if region is not None and hasattr(region, "deschedule") and getattr(region, "_job", None) is job:
+            region.deschedule()
         else:
+            # The entry on screen is not (or no longer) the one its session points at: remove exactly this one.
             self._scheduler().remove_job(job)
+            if region is not None and getattr(region, "_job", None) is None:
+                region.is_scheduled = False
         self.reload()
 
     # --- Upcoming sessions ---------------------------------------------------
