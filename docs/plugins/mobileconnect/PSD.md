@@ -5,10 +5,10 @@
 | **Project** | Galileo — MobileConnect Plugin (iOS/Android remote control of a Galileo node) |
 | **Document** | PSD (Project Scope Document), v0.3, draft — revised after first review (Section 12); Meta Quest headsets added as a first-class client (Section 6.7, D15–D17); outreach mode for unregistered image viewers (Section 6.8, D18–D20) |
 | **Status** | Draft — for review |
-| **Date** | 2026-10-27 |
+| **Date** | 2026-10-31 (D22 added; otherwise 2026-10-27) |
 | **Parent project** | [Galileo Core PSD](../../PSD.md) |
 | **Sibling plugins** | [NodeConnect](../nodeconnect/PSD.md) — defines the shared Connect Link facility (its Section 6.2); [WebConnect](../webconnect/PSD.md) — the same control surface from a web browser |
-| **Client apps** | The iOS/iPadOS, Android and **Meta Quest 2/3** apps have their own scope in the [Galileo-MobileConnect](https://github.com/gordtulloch/Galileo-MobileConnect) repository (`docs/PSD.md`); this document specifies the plugin and the operational surface, and that one how the apps present it |
+| **Client apps** | The iOS/iPadOS, Android and **Meta Quest 2/3** apps have their own scope in the separate [Galileo-MobileConnect](https://github.com/gordtulloch/Galileo-MobileConnect) apps repository (`docs/PSD.md`, D22); this document specifies the plugin and the operational surface, and that one how the apps present it |
 | **Downstream documents** | [SRS](SRS.md), [SDD](SDD.md), [RTM](RTM.md) |
 
 ---
@@ -270,6 +270,7 @@ One domain, **`MCON`** (MobileConnect), specified in a future SRS. Provisional s
 | D20 | Outreach guests may **switch between the Piers the owner has offered** and see each one's live image as it is created; nothing else (O4–O6) |
 | D21 | **The outreach event is hosted in core as a Connect Link facility (L9)**, not inside this plugin; the plugin contributes only the app surface. A Master with only WebConnect (or only MobileConnect) installed can still run outreach |
 | D17 | **Sky streaming is a v1 requirement**, not a later addition, and VR streaming needs a PC/Mac-class Master; a Pi-class Master says so through the handshake (H5) |
+| D22 | **The client apps stay in their own repository, [Galileo-MobileConnect](https://github.com/gordtulloch/Galileo-MobileConnect)** (decided 2026-10-31), because that is where the iOS/iPadOS, Android and Quest apps are developed, with their own toolchains, store releases and cycle. The *plugin* (server side, package `mobileconnect`) is built in [Galileo-Plugins](https://github.com/gordtulloch/Galileo-Plugins) `mobileconnect/` and its documents are here. The two meet only at the wire API (`MCON-880`). This differs from WebConnect, which has no separate application repository: its browser front end is part of the plugin and was folded into Galileo and Galileo-Plugins the same day |
 
 ### 12.2 Remaining
 

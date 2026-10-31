@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""WCON — WebConnect plugin (TC-WCON-010 … TC-WCON-1330).
+"""WCON — WebConnect plugin (TC-WCON-010 … TC-WCON-1530).
 
 Covers the ``WCON`` domain of ``docs/plugins/webconnect/SRS.md`` (not a core domain).
 One ``test_tc_wcon_<nnn>_*`` function per row of ``docs/plugins/webconnect/RTM.md``.
@@ -315,7 +315,7 @@ def test_wcon_doc_chain_test_priorities_match_the_srs():
 @pytest.mark.requirement("TC-WCON-010")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_010_be_delivered_as_a_first_party():
-    """WCON-010: The system shall be delivered as a first-party plugin with the manifest identity WCON, distributed as a ZIP from the Galileo Plugins repository and installed through PLUG-090/PLUG-110; it shall not be bundled in the Galileo …"""
+    """WCON-010: The system shall be delivered as a first-party plugin with the manifest identity WCON, distributed as a ZIP from the Galileo Plugins repository and installed through PLUG-090/PLUG-110, and, for the Astroberry profile, as a Debian package …"""
     _pending("TC-WCON-010", "webconnect.plugin")
 
 
@@ -329,7 +329,7 @@ def test_tc_wcon_020_be_enabled_only_on_a_master():
 @pytest.mark.requirement("TC-WCON-030")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_030_while_enabled_the_system_shall_run():
-    """WCON-030: While enabled, the system shall run the operating web application as a Flask application under a production WSGI server (never Flask's development server) in a separate operating-system process that the plugin starts, supervises …"""
+    """WCON-030: While enabled, the system shall run the operating web application as a Flask application under a production WSGI server (never Flask's development server) in a separate operating-system process, started, supervised and stopped with the …"""
     _pending("TC-WCON-030", "webconnect.supervisor")
 
 
@@ -350,7 +350,7 @@ def test_tc_wcon_050_add_a_top_level_webconnect_section():
 @pytest.mark.requirement("TC-WCON-060")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_060_bind_the_operating_web_application_to():
-    """WCON-060: The system shall bind the operating web application to a configurable address and port, defaulting to the Master's LAN interface and not to all interfaces; binding more widely shall require an explicit setting."""
+    """WCON-060: In the self-hosted profile, the system shall bind the operating web application to a configurable address and port, defaulting to the Master's LAN interface and not to all interfaces; binding more widely shall require an explicit setting. …"""
     cfg_mod = pytest.importorskip("webconnect.config")
     cfg = cfg_mod.WebConnectConfig.from_dict({})
     all_interfaces = ("0.0.0.0", "::", "")  # noqa: S104
@@ -361,7 +361,7 @@ def test_tc_wcon_060_bind_the_operating_web_application_to():
 @pytest.mark.requirement("TC-WCON-070")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_070_serve_the_operating_web_application_over():
-    """WCON-070: The system shall serve the operating web application over HTTPS only."""
+    """WCON-070: In the self-hosted profile, the system shall serve the operating web application over HTTPS only. It shall generate a self-signed certificate for the Master on first use, pin it in the web process's Connect Link pairing, and accept a …"""
     _pending("TC-WCON-070", "webconnect.supervisor")
 
 
@@ -994,7 +994,7 @@ def test_tc_wcon_1000_every_state_changing_request_any_method(app, link):
 @pytest.mark.requirement("TC-WCON-1010")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_1010_session_and_device_cookies_shall_be(app, link):
-    """WCON-1010: Session and device cookies shall be HttpOnly, Secure and SameSite=Strict, host-bound (__Host- prefix), and a session identifier shall be regenerated at sign-in, on role change and at sign-out."""
+    """WCON-1010: Session and device cookies shall be HttpOnly, Secure and SameSite=Strict, host-bound (__Host- prefix), and a session identifier shall be regenerated at sign-in, on role change and at sign-out. (In the Astroberry profile the prefix is …"""
     b = anon_browser(app)
     link.devices["dev-tok"] = ("peer-1", "operator")
     link.roles["peer-1"] = "operator"
@@ -1079,7 +1079,7 @@ def test_tc_wcon_1050_every_route_shall_require_an_authenticated(app):
 @pytest.mark.requirement("TC-WCON-1060")
 @pytest.mark.priority("MVP")
 def test_tc_wcon_1060_the_application_shall_reject_a_request(app):
-    """WCON-1060: The application shall reject a request whose Host or Origin is not one of the addresses it is configured to serve, as a defence against DNS rebinding and cross-origin use."""
+    """WCON-1060: The application shall reject a request whose Host or Origin is not one of the addresses it is configured to serve, as a defence against DNS rebinding and cross-origin use. In the Astroberry profile the allowed set shall include the …"""
     b = anon_browser(app, host="evil.test")
     assert b.get("/pair").status_code in (400, 403, 421), "unknown Host must be refused (DNS rebinding)"
     assert anon_browser(app).get("/pair").status_code == 200
@@ -1274,3 +1274,108 @@ def test_tc_wcon_1330_contribute_to_the_facility_s_aggregate():
     """WCON-1330: The system shall contribute to the facility's aggregate audit the number of browser guests per Pier, and shall retain no personal data about visitors: a guest is a random token and a source address held only for the event's …"""
     _pending("TC-WCON-1330", "webconnect.outreach")
 
+
+
+@pytest.mark.requirement("TC-WCON-1400")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1400_support_two_hosting_profiles():
+    """WCON-1400: The system shall support two hosting profiles — Astroberry (the operating web application is a systemd service behind the Astroberry front door) and self-hosted (the plugin supervises it and it serves its own HTTPS listener) — selected at …"""
+    _pending("TC-WCON-1400", "webconnect.hosting")
+
+
+@pytest.mark.requirement("TC-WCON-1410")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1410_run_as_a_systemd_service_in_the_astroberry_profile():
+    """WCON-1410: In the Astroberry profile the system shall run the operating web application as the systemd service galileo-webconnect.service, ordered after Galileo's own service, as an unprivileged service account, restarted on failure with back-off …"""
+    _pending("TC-WCON-1410", "webconnect.hosting")
+
+
+@pytest.mark.requirement("TC-WCON-1420")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1420_listen_only_on_loopback_or_a_unix_socket():
+    """WCON-1420: In the Astroberry profile the operating web application shall listen only on loopback or on a Unix socket, shall open no LAN-facing listener, and shall generate, hold and pin no TLS certificate: TLS is terminated by the Astroberry front …"""
+    _pending("TC-WCON-1420", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1430")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1430_treat_a_request_as_secure_only_via_the_front_door():
+    """WCON-1430: In the Astroberry profile the system shall treat a request as secure only when the front door, as the immediate peer, says it arrived over HTTPS. It shall refuse pairing, sign-in and every state-bearing route otherwise — answering a GET …"""
+    _pending("TC-WCON-1430", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1440")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1440_serve_everything_beneath_a_path_prefix():
+    """WCON-1440: In the Astroberry profile the system shall serve every page, asset, event stream and API route beneath a single configurable path prefix (default /galileo/), shall generate no root-absolute URL to its own resources (a link to Astroberry …"""
+    _pending("TC-WCON-1440", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1450")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1450_install_the_front_door_route_without_buffering_sse():
+    """WCON-1450: The package shall install the front-door route for the prefix by the mechanism the Astroberry layer provides (WCON-1530), evaluated ahead of the front door's catch-all route, and the route shall deliver Server-Sent Events as they are …"""
+    _pending("TC-WCON-1450", "webconnect.hosting")
+
+
+@pytest.mark.requirement("TC-WCON-1460")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1460_use_prefix_scoped_cookies_distinct_from_the_manager():
+    """WCON-1460: In the Astroberry profile the system's cookies shall have names distinct from Astroberry Manager's (session, kyc), shall be scoped by Path to the prefix, shall carry the __Secure- prefix (the __Host- prefix requires path /), and shall …"""
+    _pending("TC-WCON-1460", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1470")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1470_take_the_client_address_from_the_front_door():
+    """WCON-1470: In the Astroberry profile the system shall take a browser's source address, for rate limiting (WCON-1030), the audit log (WCON-190) and the outreach-subnet refusal (WCON-1220), from the front door's forwarded-address header, and only when …"""
+    _pending("TC-WCON-1470", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1480")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1480_not_depend_on_the_manager_s_session():
+    """WCON-1480: The system shall not depend on Astroberry Manager running, shall not accept the Manager's session, cookie or secret as proof of identity, role or approval, and shall operate fully with the Manager stopped."""
+    _pending("TC-WCON-1480", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1481")
+@pytest.mark.priority("P2")
+def test_tc_wcon_1481_approve_browsers_headless_through_a_local_account():
+    """WCON-1481: On a Master with no one at its screen the system shall let a person approve, promote and revoke browsers (WCON-100, 110, 170) from a WebConnect administration page, after authenticating with a local Astroberry account through the …"""
+    _pending("TC-WCON-1481", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1490")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1490_show_a_page_when_the_master_half_is_unreachable():
+    """WCON-1490: When the web application cannot reach the Master half — Galileo stopped, restarting or incompatible (WCON-930) — the system shall answer, instead of a gateway error from the front door, with a plain page that says Galileo is not running …"""
+    _pending("TC-WCON-1490", "webconnect.web.proxy")
+
+
+@pytest.mark.requirement("TC-WCON-1500")
+@pytest.mark.priority("P2")
+def test_tc_wcon_1500_register_a_link_with_astroberry_manager():
+    """WCON-1500: The package shall register a Galileo entry with Astroberry Manager, by the extension the Manager provides (WCON-1530), that opens the application's address as a link and does not embed it in a frame. The application shall link back to the …"""
+    _pending("TC-WCON-1500", "webconnect.hosting")
+
+
+@pytest.mark.requirement("TC-WCON-1510")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1510_keep_outreach_independent_of_the_front_door():
+    """WCON-1510: On Astroberry the outreach application (WCON-1210) shall remain independent of the front door: its own listener bound to the outreach address with the owner's certificate (WCON-1290), no route to it through the front door, and no route to …"""
+    _pending("TC-WCON-1510", "webconnect.outreach_app")
+
+
+@pytest.mark.requirement("TC-WCON-1520")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1520_install_as_debian_packages_on_astroberry():
+    """WCON-1520: The system shall be installable on Astroberry OS as Debian package(s) for arm64 and amd64 on Debian Trixie, in the plugin's own virtual environment, owning only its own unit, authorisation rule, front-door route and Manager entry, and …"""
+    _pending("TC-WCON-1520", "webconnect.hosting")
+
+
+@pytest.mark.requirement("TC-WCON-1530")
+@pytest.mark.priority("MVP")
+def test_tc_wcon_1530_keep_a_register_of_upstream_needs():
+    """WCON-1530: The system shall keep a register of everything it needs from Astroberry — the front-door include, the Manager's application-registration extension, any authorisation rule — with its status (worked around locally, proposed, accepted, …"""
+    _pending("TC-WCON-1530", "webconnect.hosting")

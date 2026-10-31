@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Project** | Galileo — WebConnect Plugin |
-| **Document** | RTM (Requirements Traceability Matrix), v0.1, draft — **seeded from the SRS; SDD components mapped; tests in `tests/test_wcon.py` (30 of 105 written, the rest reserved)** |
+| **Document** | RTM (Requirements Traceability Matrix), v0.2, draft — **seeded from the SRS; SDD components mapped; tests in `tests/test_wcon.py` (30 of 120 written, the rest reserved)**; Astroberry integration rows `WCON-1400`–`1530` added |
 | **Status** | Draft — for review |
-| **Date** | 2026-10-29 |
+| **Date** | 2026-10-31 |
 | **Upstream documents** | [PSD](PSD.md), [SRS](SRS.md), [SDD](SDD.md) |
 | **Parent project** | [Galileo Core RTM](../../RTM.md) |
 
@@ -17,9 +17,9 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 
 **Verification Method:** `Test` (automated) unless stated. `Test (browser matrix)` is the automated suite run across the supported browsers (`WCON-880`); `Test (build check)` is the parity check that fails the build (`WCON-590`); `Inspection` is a documented review (`WCON-1070`).
 
-**Core prerequisite:** the capability a row cannot be verified without, using the reference codes of SRS Section 2.6 (CL Connect Link, CS Control Surface, LS lease, OE operation events, PV preview rendering, DM deadman, MF manual focus, SK sky streaming, OF outreach facility, DG delegated identity). Until that capability exists, the row stays reserved but is verified against a stub. `WR` (the Master relay) is defined by this plugin and so is not a prerequisite here.
+**Core prerequisite:** the capability a row cannot be verified without, using the reference codes of SRS Section 2.6 (CL Connect Link, CS Control Surface, LS lease, OE operation events, PV preview rendering, DM deadman, MF manual focus, SK sky streaming, OF outreach facility, DG delegated identity, AB the Astroberry layer — front-door include, Manager registration extension, unit authorisation, packages). Until that capability exists, the row stays reserved but is verified against a stub. `WR` (the Master relay) is defined by this plugin and so is not a prerequisite here.
 
-**Coverage:** 105 requirements, 100% mapped to an SDD component; 105 test functions in `tests/test_wcon.py`, 30 with bodies (security `WCON-1000`–`1060`, outreach `WCON-1210`–`1310`, role/CSRF/confirmation/idempotency pass-through, SSE resume, configuration) and 75 reserved — they skip until the `webconnect` package exists, then fail until written. The 30 were validated against a throwaway reference implementation, not against the real plugin. Security requirements (`WCON-1000`–`1070`) and outreach confinement (`WCON-1210`, `1220`, `1250`, `1310`) are the highest-priority rows to write tests for first.
+**Coverage:** 120 requirements, 100% mapped to an SDD component; 120 test functions in `tests/test_wcon.py`, 30 with bodies (security `WCON-1000`–`1060`, outreach `WCON-1210`–`1310`, role/CSRF/confirmation/idempotency pass-through, SSE resume, configuration) and 90 reserved (the 15 Astroberry-integration rows are all reserved) — they skip until the `webconnect` package exists, then fail until written. The 30 were validated against a throwaway reference implementation, not against the real plugin. Security requirements (`WCON-1000`–`1070`) and outreach confinement (`WCON-1210`, `1220`, `1250`, `1310`) are the highest-priority rows to write tests for first.
 
 **Shared tests.** Several rows are satisfied by the design shared with MobileConnect (pipeline, confirmation, idempotency, relay: SDD §2.3, §3.9). Their tests run against the shared package's contract suite for both plugins, and a `WCON` test asserts the browser path exercises it.
 
@@ -187,14 +187,34 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 | `WCON-1320` | MVP | provide, and persist in Galileo's database (`PLUG-150`), these browser-outreach… | SDD 3.11 `outreach`; SDD 3.13 `config, ui` | — | Test | `TC-WCON-1320` |
 | `WCON-1330` | P2 | contribute to the facility's aggregate audit the number of browser guests per… | SDD 3.11 `outreach` | OF | Test | `TC-WCON-1330` |
 
+### `WCON` — Astroberry integration
+
+| SRS ID | Priority | Requirement | SDD Component | Core prerequisite | Verification | Test Case |
+|---|---|---|---|---|---|---|
+| `WCON-1400` | MVP | support two hosting profiles — **Astroberry** (the operating web application is… | SDD 3.16 `hosting`; SDD 3.2 `supervisor` | — | Test | `TC-WCON-1400` |
+| `WCON-1410` | MVP | In the Astroberry profile the system shall run the operating web application as… | SDD 3.16 `hosting`; SDD 3.2 `supervisor` | AB | Test | `TC-WCON-1410` |
+| `WCON-1420` | MVP | In the Astroberry profile the operating web application shall listen only on… | SDD 3.15 `web.proxy`; SDD 3.16 `hosting` | — | Test | `TC-WCON-1420` |
+| `WCON-1430` | MVP | In the Astroberry profile the system shall treat a request as secure only when… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1430` |
+| `WCON-1440` | MVP | In the Astroberry profile the system shall serve every page, asset, event… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1440` |
+| `WCON-1450` | MVP | The package shall install the front-door route for the prefix by the mechanism… | SDD 3.16 `hosting` | AB | Test | `TC-WCON-1450` |
+| `WCON-1460` | MVP | In the Astroberry profile the system's cookies shall have names distinct from… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1460` |
+| `WCON-1470` | MVP | In the Astroberry profile the system shall take a browser's source address, for… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1470` |
+| `WCON-1480` | MVP | not depend on Astroberry Manager running, shall not accept the Manager's… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1480` |
+| `WCON-1481` | P2 | On a Master with no one at its screen the system shall let a person approve,… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1481` |
+| `WCON-1490` | MVP | When the web application cannot reach the Master half — Galileo stopped,… | SDD 3.15 `web.proxy` | — | Test | `TC-WCON-1490` |
+| `WCON-1500` | P2 | The package shall register a Galileo entry with Astroberry Manager, by the… | SDD 3.16 `hosting` | AB | Test | `TC-WCON-1500` |
+| `WCON-1510` | MVP | On Astroberry the outreach application (`WCON-1210`) shall remain independent… | SDD 3.12 `outreach_app`; SDD 3.16 `hosting` | — | Test | `TC-WCON-1510` |
+| `WCON-1520` | MVP | be installable on Astroberry OS as Debian package(s) for arm64 and amd64 on… | SDD 3.16 `hosting` | AB | Test | `TC-WCON-1520` |
+| `WCON-1530` | MVP | keep a register of everything it needs from Astroberry — the front-door… | SDD 3.16 `hosting` | AB | Inspection | `TC-WCON-1530` |
+
 ---
 
 ## 3. Summary by Domain
 
 | Domain | Requirements | MVP | P2 | P3 |
 |---|---|---|---|---|
-| `WCON` | 105 | 89 | 14 | 2 |
-| **Total** | **105** | **89** | **14** | **2** |
+| `WCON` | 120 | 102 | 16 | 2 |
+| **Total** | **120** | **102** | **16** | **2** |
 
 ---
 

@@ -18,8 +18,11 @@ from aiohttp import web
 
 from galileo.connect_link.audit import AuditLog
 from galileo.connect_link.certs import CertificateStore
+from galileo.connect_link.handshake import Handshake, Versions, schema_level
 from galileo.connect_link.pairing import PairingError, PairingService, PendingListFull, RateLimited
 from galileo.connect_link.peers import Peer, PeerStore
+from galileo.connect_link.routes import RouteRegistry
+from galileo.connect_link.stream import StreamHub
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,15 @@ def default_bind_host() -> str:
         s.close()
 
 
+def default_versions() -> Versions:
+    """This node's versions for the handshake (LINK-080), read from the running application."""
+    from galileo import __version__
+    from galileo.library.database import get_migration_status
+    from galileo.plugins import _CURRENT_API_VERSION
+    return Versions(__version__, _CURRENT_API_VERSION, schema_level(get_migration_status()["current"]),
+                    PROTOCOL_VERSION)
+
+
 def _unauthorised() -> web.Response:
     return web.json_response({"error": "unauthorised"}, status=401)
 
@@ -49,8 +61,13 @@ def _unauthorised() -> web.Response:
 class LinkServer:
     def __init__(
         self, peers: PeerStore, pairing: PairingService, certs: CertificateStore, audit: AuditLog,
+        routes: RouteRegistry | None = None, handshake: Handshake | None = None,
+        streams: StreamHub | None = None,
     ) -> None:
         self._peers, self._pairing, self._certs, self._audit = peers, pairing, certs, audit
+        self.streams = streams if streams is not None else StreamHub()
+        self.routes = routes if routes is not None else RouteRegistry()
+        self.handshake = handshake if handshake is not None else Handshake(default_versions)
         self._runner: web.AppRunner | None = None
         self.host = ""
         self.port = 0
@@ -66,6 +83,9 @@ class LinkServer:
         app.router.add_post(f"{API}/pair", self._pair)
         app.router.add_get(f"{API}/pair/{{request_id}}", self._pair_poll)
         app.router.add_get(f"{API}/whoami", self._whoami)
+        app.router.add_post(f"{API}/handshake", self._handshake)
+        app.router.add_get(f"{API}/stream", self._stream)
+        app.router.add_route("*", "/{tail:.*}", self._dispatch)       # plugin routes (LINK-050)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         self.host = host or default_bind_host()
@@ -79,7 +99,18 @@ class LinkServer:
         self.port = runner.addresses[0][1] if runner.addresses else port      # the port actually bound
         logger.info("Connect Link listening on %s:%s", self.host, self.port)
 
+    def revoke_peer(self, peer_id: str) -> None:
+        """Revoke a peer and close its event stream at once (LINK-060)."""
+        self._peers.revoke(peer_id)
+        self.streams.close_peer(peer_id)
+
+    def disable_plugin(self, plugin: str) -> None:
+        """A plugin was disabled or removed: drop its routes and close its streams (LINK-050, -060)."""
+        self.routes.unregister_plugin(plugin)
+        self.streams.close_plugin(plugin.strip().lower())
+
     async def stop(self) -> None:
+        self.streams.close_all()
         runner, self._runner = self._runner, None
         if runner is not None:
             await runner.cleanup()
@@ -105,7 +136,8 @@ class LinkServer:
         try:
             response = await handler(request)
         except web.HTTPException as exc:
-            self._audit.write(peer.peer_id, peer.plugin, f"{request.method} {path}", "error", exc.reason or "")
+            outcome = "denied" if exc.status in (401, 403) else "error"
+            self._audit.write(peer.peer_id, peer.plugin, f"{request.method} {path}", outcome, exc.reason or "")
             raise
         self._audit.write(peer.peer_id, peer.plugin, f"{request.method} {path}", "ok")
         return response
@@ -151,4 +183,39 @@ class LinkServer:
         })
 
 
-__all__ = ["API", "DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host"]
+    async def _stream(self, request: web.Request) -> web.StreamResponse:
+        peer: Peer = request[_PEER]
+        return await self.streams.serve(request, peer.peer_id, peer.plugin.strip().lower())
+
+    async def _handshake(self, request: web.Request) -> web.Response:
+        peer: Peer = request[_PEER]
+        try:
+            theirs = await request.json()
+            if not isinstance(theirs, dict):
+                raise TypeError("body")
+        except Exception:
+            return web.json_response({"error": "bad request"}, status=400)
+        return web.json_response(self.handshake.evaluate(peer.plugin, theirs).as_dict())
+
+    async def _dispatch(self, request: web.Request) -> web.StreamResponse:
+        """Plugin routes. The caller is already authenticated; an unknown route is 404 and a missing
+        permission or another plugin's route 403."""
+        peer: Peer = request[_PEER]
+        route = self.routes.find(request.method, request.path)
+        if route is None:
+            raise web.HTTPNotFound(reason="no such route")
+        if route.plugin != peer.plugin or route.permission not in peer.permissions:
+            raise web.HTTPForbidden(reason=f"needs {route.permission}")
+        try:
+            result = await route.handler(peer, request)
+        except web.HTTPException:
+            raise
+        except Exception:
+            logger.exception("Connect Link route %s %s failed", request.method, request.path)
+            raise web.HTTPInternalServerError(reason="handler failed") from None
+        if isinstance(result, web.StreamResponse):
+            return result
+        return web.json_response(result)
+
+
+__all__ = ["API", "DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host", "default_versions"]

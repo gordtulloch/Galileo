@@ -6,11 +6,11 @@ Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{no
 
 | Item | State |
 |---|---|
-| Plugin code | **None.** `Galileo-Plugins/{nodeconnect,mobileconnect}` hold a README only (no `plugin.toml`, so `build_plugins.py` skips them); `Galileo-Plugins/webconnect` is a pointer to `Galileo-WebConnect`, which holds a PSD and README only |
-| Requirements | NCON 45 (41 MVP), MCON 107 (93 MVP), WCON 137 (90 MVP); each has an RTM with reserved `TC-*` IDs |
-| Tests | `tests/test_wcon.py` exists: 6 doc-chain tests pass, 105 requirement tests skip (`importorskip`). **No `test_ncon.py` / `test_mcon.py`** |
+| Plugin code | **None.** `Galileo-Plugins/{nodeconnect,mobileconnect}` hold a README only (no `plugin.toml`, so `build_plugins.py` skips them); `Galileo-Plugins/webconnect` is where WebConnect will be built (README only today; the separate `Galileo-WebConnect` repository is retired, 2026-10-31) |
+| Requirements | NCON 45 (41 MVP), MCON 107 (93 MVP), WCON 120 (102 MVP); each has an RTM with reserved `TC-*` IDs |
+| Tests | `tests/test_wcon.py` exists: 6 doc-chain tests pass, 120 requirement tests skip (`importorskip`). **No `test_ncon.py` / `test_mcon.py`** |
 | Core prerequisites | **Specified, not built (2026-10-30).** Core SRS/RTM/SDD now hold: `LINK-010`–`270` in full, `CSURF`, `LEASE`, `PREV`, `SKYSTR`, `REPL`, `FOC-100`–`130`, `LIB-200`–`220`, `HIST-050`, `PROF-130`, `GUIDE-100`, `PLUG-200`; designed at component level in core SDD §4.11, §4.17, §4.20, §4.23, §4.28–4.32. No code exists, and every `TC-*` is reserved but unwritten |
-| App repo | `Galileo-MobileConnect` is the iOS/Android/Quest *apps* (not the plugin): PSD, SRS, a Quest atlas spike. Out of scope here except for the wire contract (§5) |
+| App repo | `Galileo-MobileConnect` is the iOS/Android/Quest *apps* (not the plugin): PSD, SRS, a Quest atlas spike. **It stays a separate repository (decided 2026-10-31, MobileConnect PSD D22)** because the apps are developed there. Out of scope here except for the wire contract (§5) |
 
 **Consequence:** the plugins are thin layers over core facilities that do not exist. Each design codes against `typing.Protocol` ports with test stubs, so plugin work can start early, but nothing can be verified end to end until core catches up. Build order below follows that.
 
@@ -20,7 +20,7 @@ Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{no
 - [x] **Delegated identity (DG)** (WCON SDD P3): **decided — delegation (option 1).** Connect Link lets a service peer act for a named browser and logs the browser as actor; recorded as core `LINK-090` (outline). Still to do: expand `LINK-090` with Connect Link's design and write `TC-LINK-090`
 - [x] **Audit store** (MCON SDD P1): **decided** — Connect Link's audit log carries plugin fields and configurable retention (a Connect Link requirement); core owns the table either way
 - [x] **Plugin dependencies in the ZIP**: **decided** — declare them in `plugin.toml` and have `PluginManager.install()` resolve them (no vendored wheels: they break across Windows, macOS and Pi ARM). Core work, tracked in §2d; must land before WebConnect
-- [x] **WebConnect repo split**: **decided** — source stays in `Galileo-WebConnect`; `Galileo-Plugins/webconnect` remains a pointer and the marketplace entry references that repo's release; SRS/SDD/RTM stay in core `docs/plugins/webconnect/`
+- [x] **WebConnect repo split**: **decided 2026-10-31 (supersedes the earlier "own repository" decision)** — there is no separate repository. Documents and core facilities live in `Galileo` (`docs/plugins/webconnect/`); the plugin, Flask applications and packaging are built in `Galileo-Plugins/webconnect`; `Galileo-WebConnect` is retired (WebConnect PSD D12)
 - [ ] **Role of NodeConnect for the other two:** none by dependency (they need Connect Link, not NodeConnect), so NodeConnect can ship independently
 - [ ] Review each port stub against core's real SRS once written (MCON SDD P2, SRS O1)
 - [x] **Product decisions** (2026-10-30, recorded in the SRS/SDD open-point tables): sign-in is one-click device-cookie for MVP (PIN later); pairing confirmation code for browsers *and* apps; static server-rendered sky image first, canvas sky view after the operating screens; idempotency keys, event replay and rate limiting stay MVP; no background push alerts in v1; showcase image set deferred to P2; outreach events carry per-surface toggles (apps, browsers); outreach's event-scoped enrolment exception (L2/L3) accepted
@@ -123,14 +123,25 @@ Design: `docs/plugins/webconnect/SDD.md`. Do after Phase B; reuses it wholesale.
 
 - [ ] **Spike first** (P2): Raspberry Pi 5 with 50 idle SSE streams, a running session and preview rendering — decides gevent vs Cheroot and sets `WCON-080` figures
 - [ ] Scaffold; `plugin` (Master only; spoke shows a message, `WCON-020`)
-- [ ] `supervisor`: child `python -I -m webconnect.web`, config handed over stdin only, heartbeat and back-off restart, no listener or process left when disabled, LAN-interface bind not `0.0.0.0`, `CertificateStore` with self-signed cert in the secret store (`WCON-030`, `060`, `070`, `910`)
+- [ ] `supervisor` (self-hosted profile): child `python -I -m webconnect.web`, config handed over stdin only, heartbeat and back-off restart, no listener or process left when disabled, LAN-interface bind not `0.0.0.0`, `CertificateStore` with self-signed cert in the secret store (`WCON-030`, `060`, `070`, `910`)
 - [ ] `delegate` + `BrowserRegistry`: delegated routes, pairing with confirmation code, expiry (`WCON-090`–`190`)
 - [ ] Web half: `session` (`__Host-` device cookie, server-side sessions, CSRF, Origin/Sec-Fetch-Site), `security` (headers, host checks, rate limits, route-audit test that only `PUBLIC_ROUTES` are unauthenticated), `api`, `events` (SSE hub with replay ring), `hold`
 - [ ] `web.ui` screens, tablet first, server-rendered templates + light JS; static server-rendered sky image first, canvas sky view and session/schedule authoring after the operating screens (P8, decided)
 - [ ] Browser outreach: `outreach` (Master half) + `outreach_app` (separate process/listener, owner-supplied certificate required), secret in URL fragment, guest images fetched not streamed (`WCON` §3.11)
 - [ ] `config`/`ui`, help, wire + `parity check` against MobileConnect's catalogue
-- [ ] Fill `tests/test_wcon.py` (106 `TC-WCON-*`; `_pending` makes unwritten ones fail once the package exists)
-- [ ] Add SRS/SDD/RTM to the `Galileo-WebConnect` repo or point to the core docs; docs, wiki, marketplace entry
+- [ ] Fill `tests/test_wcon.py` (120 `TC-WCON-*`; `_pending` makes unwritten ones fail once the package exists)
+- [ ] Docs, wiki, marketplace entry (the SRS/SDD/RTM stay here in core `docs/plugins/webconnect/`; no separate repository)
+
+**Astroberry profile** (PSD §6.5, `WCON-1400`–`1530`; do after the operating screens, in this order):
+
+- [ ] **Decide** PSD Q4–Q11 — hosting profiles, lifecycle owner, how the route reaches Caddy, headless approval, Manager entry, where `debian/` lives, the galileo-astroberry principle conflict, socket vs loopback port
+- [ ] **Spike P10 on the official Astroberry OS image** (Pi 5 and amd64): Caddy → gevent over a Unix socket under `/galileo/`, unbuffered SSE, forwarded headers, `Host` as received, `/api*` not capturing `/galileo/api/…`
+- [ ] `web.proxy`: `PrefixMiddleware`, `TrustedProxy`, `SecureOnly`, `CookiePolicy`, `MasterDownView`; template/module scan for root-absolute URLs (`WCON-1420`–`1470`, `1490`)
+- [ ] `hosting`: `UnitController`, control socket (ADR-WCON-010), unit file, polkit rule for one unit, route file, Manager entry; test that disabling leaves no listener with and without authorisation (`WCON-1410`, `1450`, `1500`; P13)
+- [ ] `AdminView` — PAM approval page, only after P12 shows PAM works from the service account (`WCON-1481`, P2)
+- [ ] Debian package in `Galileo-Plugins/webconnect/debian` (arm64, amd64, Trixie, own venv); install/upgrade/remove/purge tested on stock Astroberry (`WCON-1520`)
+- [ ] **Upstream register** (`WCON-1530`): propose the Caddy include to `astroberry-os-sysmod` and the application-registration extension to the Manager fork; raise front-door authentication on `/websockify*` and `/api*` and the constant `APP_KEY` default with Astroberry (PSD R12)
+- [ ] Reconcile with the galileo-astroberry PSD (principle 1, WEB-02/03) — PSD Q10
 
 ## 7. Per-plugin definition of done (CLAUDE.md)
 

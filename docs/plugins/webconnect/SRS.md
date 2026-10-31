@@ -3,14 +3,15 @@
 | | |
 |---|---|
 | **Project** | Galileo — WebConnect Plugin (browser control of a Galileo node through a Flask web application) |
-| **Document** | SRS (Software Requirements Specification), v0.1, draft |
+| **Document** | SRS (Software Requirements Specification), v0.2, draft — Astroberry integration block `WCON-1400`–`1530` added; hosting requirements made profile-aware |
 | **Status** | Draft — for review |
-| **Date** | 2026-10-29 |
+| **Date** | 2026-10-31 |
 | **Upstream document** | [PSD (Project Scope Document)](PSD.md) |
 | **Downstream documents** | [SDD](SDD.md), [RTM](RTM.md) |
 | **Parent project** | [Galileo Core SRS](../../SRS.md) |
 | **Sibling plugins** | [MobileConnect](../mobileconnect/SRS.md) — defines the operational surface this plugin reuses; [NodeConnect](../nodeconnect/PSD.md) — defines Connect Link (its §6.2) |
-| **Product repository** | [Galileo-WebConnect](https://github.com/gordtulloch/Galileo-WebConnect) holds the Flask application; this SRS is the requirement baseline for it |
+| **Where it is built** | In Galileo (documents, core facilities) and [Galileo-Plugins](https://github.com/gordtulloch/Galileo-Plugins) `webconnect/` (plugin, Flask applications, packaging); the separate `Galileo-WebConnect` repository is retired (PSD D12) |
+| **Deployment counterpart** | [galileo-astroberry PSD](https://github.com/gordtulloch/galileo-astroberry) — packaging and service integration on Astroberry OS |
 
 ---
 
@@ -41,6 +42,7 @@ The `WCON` domain: the plugin that runs on the Master node and the Flask web app
 | 900–940 | Options, help and wire API | 3.9 |
 | 1000–1070 | Web application security | 3.10 |
 | 1200–1330 | Browser outreach | 3.11 |
+| 1400–1530 | Astroberry integration | 3.12 |
 
 ### 1.4 Priority Convention
 
@@ -56,7 +58,9 @@ MVP / P2 / P3, identical to [core SRS Section 1.4](../../SRS.md#14-priority-conv
 
 ### 2.1 Product Perspective
 
-A first-party plugin, distributed as a ZIP from the Galileo Plugins repository and installed through Options > Plugins (`PLUG-090`/`PLUG-110`), independently enabled/disabled (`PLUG-060`), installed on the **Master only**. It has two parts: a plugin component inside Galileo, and one or two **Flask processes** it supervises — the *operating web application* and, only during a browser-enabled outreach event, the *outreach web application*. The Flask processes have no private route into Galileo: they reach it through Connect Link and the Control Surface exactly as the mobile apps do.
+A first-party plugin, distributed as a ZIP from the Galileo Plugins repository and installed through Options > Plugins (`PLUG-090`/`PLUG-110`), and on Astroberry OS also as a Debian package (`WCON-1520`), independently enabled/disabled (`PLUG-060`), installed on the **Master only**. It has two parts: a plugin component inside Galileo, and one or two **Flask processes** — the *operating web application* and, only during a browser-enabled outreach event, the *outreach web application*. The Flask processes have no private route into Galileo: they reach it through Connect Link and the Control Surface exactly as the mobile apps do.
+
+How the operating web application is hosted depends on the **hosting profile** (`WCON-1400`): in the *Astroberry* profile (the primary target, PSD D11) it is a systemd service behind Astroberry's Caddy front door, under a path prefix, sharing the device's address and certificate trust with Astroberry Manager; in the *self-hosted* profile the plugin supervises it and it serves its own HTTPS listener. The outreach application is the same in both.
 
 ### 2.2 Product Functions (Summary)
 
@@ -75,11 +79,11 @@ Register a browser as an approved device (approved on the Master); sign it in; s
 
 ### 2.4 Operating Environment
 
-Node side: identical to core including Raspberry Pi 5-class ARM; the plugin must run beside imaging on a Pi (PSD PC1). Client side: current Chrome/Edge, Firefox, Safari (iOS, iPadOS, macOS) and Chrome on Android, on the same LAN as the Master or on a VPN the user already runs. No internet relay, tunnel, cloud account or CDN is involved.
+Node side: identical to core including Raspberry Pi 5-class ARM, plus Astroberry OS (Debian Trixie, arm64 and amd64) as the primary deployment; the plugin must run beside imaging on a Pi (PSD PC1). Client side: current Chrome/Edge, Firefox, Safari (iOS, iPadOS, macOS) and Chrome on Android, on the same LAN as the Master or on a VPN the user already runs. No internet relay, tunnel, cloud account or CDN is involved.
 
 ### 2.5 Design and Implementation Constraints
 
-Distributed as a ZIP; loaded only through core's plugin extension points; the web application is Flask under a production server, in a process separate from Galileo (PSD PC3); no import of adapter or UI internals; all configuration in the shared database (PSD PC2); HTTPS only (PSD PC4); GPL-3.0-or-later with Flask (BSD-3) and its server dependencies listed in `THIRD_PARTY_NOTICES.md` (PSD PC9); the web application uses only the documented wire API (PSD PC7).
+Distributed as a ZIP (and, on Astroberry OS, a Debian package); loaded only through core's plugin extension points; the web application is Flask under a production server, in a process separate from Galileo (PSD PC3); no import of adapter or UI internals; all configuration in the shared database (PSD PC2); HTTPS only (PSD PC4), terminated by the application in the self-hosted profile and by Astroberry's front door in the Astroberry profile; behind that front door, served beneath a path prefix with its own cookies (PSD PC10); GPL-3.0-or-later with Flask (BSD-3) and its server dependencies listed in `THIRD_PARTY_NOTICES.md` (PSD PC9); the web application uses only the documented wire API (PSD PC7).
 
 ### 2.6 Assumptions and Dependencies
 
@@ -99,6 +103,7 @@ Prerequisites shared with MobileConnect ([MobileConnect SRS §2.6](../mobileconn
 | WR | **Master relay**, in core and shared with MobileConnect | Core SRS `LINK-220` (consumed here: Section 3.3) |
 | GW | **Request pipeline**, in core and shared with MobileConnect | Core SRS `LINK-230` |
 | DG | **Delegated identity**: Connect Link lets a trusted service peer present a request on behalf of an approved client of the same plugin, with the audit log recording the client, not the service | Core SRS `LINK-090` (Section 3.2 note) |
+| AB | **The Astroberry layer**: the front-door include (Caddy), the Manager's application-registration extension, a unit-specific authorisation for starting/stopping the service, and the Debian packages and APT repository. Needed only by the Astroberry profile (Section 3.12) | galileo-astroberry PSD §5; this plugin's PSD §6.5, Q5–Q9; register `WCON-1530` |
 
 ---
 
@@ -108,13 +113,13 @@ Prerequisites shared with MobileConnect ([MobileConnect SRS §2.6](../mobileconn
 
 | ID | Requirement | Priority |
 |---|---|---|
-| WCON-010 | The system shall be delivered as a first-party plugin with the manifest identity `WCON`, distributed as a ZIP from the Galileo Plugins repository and installed through `PLUG-090`/`PLUG-110`; it shall not be bundled in the Galileo installer. | MVP |
+| WCON-010 | The system shall be delivered as a first-party plugin with the manifest identity `WCON`, distributed as a ZIP from the Galileo Plugins repository and installed through `PLUG-090`/`PLUG-110`, and, for the Astroberry profile, as a Debian package (`WCON-1520`); it shall not be bundled in the Galileo installer. | MVP |
 | WCON-020 | The system shall be enabled only on a Master node. On a node that is a spoke it shall report that WebConnect belongs on the Master, start no process and open no listener. | MVP |
-| WCON-030 | While enabled, the system shall run the operating web application as a Flask application under a production WSGI server (never Flask's development server) in a **separate operating-system process** that the plugin starts, supervises and stops with the plugin. A crash of that process shall be detected and the process restarted with back-off, without affecting Galileo, a running session or any device. | MVP |
+| WCON-030 | While enabled, the system shall run the operating web application as a Flask application under a production WSGI server (never Flask's development server) in a **separate operating-system process**, started, supervised and stopped with the plugin as the hosting profile defines — by the plugin in the self-hosted profile, by systemd in the Astroberry profile (`WCON-1410`). A crash of that process shall be detected and the process restarted with back-off, without affecting Galileo, a running session or any device. | MVP |
 | WCON-040 | While disabled, the system shall be fully inert (`PLUG-060`): every web process stopped, every listener closed, every browser session ended, no background activity. Re-enabling shall restore approved browsers and options without re-pairing. | MVP |
 | WCON-050 | The system shall add a top-level **WebConnect** section (`PLUG-130`) showing the address to open, signed-in browsers (name, browser and platform, role, Piers they hold a lease on, sign-in time), pending pairing requests, recent alerts forwarded, and the audit log (`WCON-190`). | MVP |
-| WCON-060 | The system shall bind the operating web application to a configurable address and port, defaulting to the Master's LAN interface and not to all interfaces; binding more widely shall require an explicit setting. | MVP |
-| WCON-070 | The system shall serve the operating web application over HTTPS only. It shall generate a self-signed certificate for the Master on first use, pin it in the web process's Connect Link pairing, and accept a user-supplied certificate in its place. There shall be no plain-HTTP mode other than a loopback-only health check. | MVP |
+| WCON-060 | In the self-hosted profile, the system shall bind the operating web application to a configurable address and port, defaulting to the Master's LAN interface and not to all interfaces; binding more widely shall require an explicit setting. (The Astroberry profile binds loopback or a Unix socket only: `WCON-1420`.) | MVP |
+| WCON-070 | In the self-hosted profile, the system shall serve the operating web application over HTTPS only. It shall generate a self-signed certificate for the Master on first use, pin it in the web process's Connect Link pairing, and accept a user-supplied certificate in its place. There shall be no plain-HTTP mode other than a loopback-only health check. (In the Astroberry profile TLS is the front door's: `WCON-1420`, `WCON-1430`.) | MVP |
 | WCON-080 | The system shall never run network or rendering work on the Qt UI thread, and shall keep serving cost bounded so a Raspberry Pi 5-class Master running a session is not disturbed: previews rendered on demand and cached, state delivered by push with no polling loop, and previews and sky data dropped or delayed before session work is. | MVP |
 | WCON-090 | The web processes shall reach Galileo only through Connect Link, authenticated with their own paired credential (needs CL), and shall use only the documented wire API (PSD PC7). They shall import no Galileo adapter, domain or UI internals. A managed link from a web process to its own Master is not a user-entered address and is outside core's rule against `localhost` in stored equipment addresses. | MVP |
 
@@ -217,7 +222,7 @@ Every operation is a Control Surface entry (needs CS) invoking the same domain s
 
 | ID | Requirement | Priority |
 |---|---|---|
-| WCON-800 | The web application shall be built from server-rendered templates with light JavaScript (PSD D2). A JavaScript framework may be used only for a screen where it is warranted (session and schedule authoring) and confined to that screen, built into static files shipped in the plugin ZIP. Every script, style, font and image the page uses shall be served by the web application itself; nothing is fetched from a third party. | MVP |
+| WCON-800 | The web application shall be built from server-rendered templates with light JavaScript (PSD D2). A JavaScript framework may be used only for a screen where it is warranted (session and schedule authoring) and confined to that screen, built into static files shipped with the plugin. Every script, style, font and image the page uses shall be served by the web application itself; nothing is fetched from a third party. | MVP |
 | WCON-810 | The interface shall be responsive and **tablet-first**: the large layout shows the sky view, image and session list side by side; narrower layouts reduce secondary panels progressively down to a phone; it shall be usable by touch and by mouse and keyboard. | MVP |
 | WCON-820 | The interface shall provide a screen or section for each operational area of Section 3.5, driven by the catalogue; an area the node does not offer shall be hidden or shown unavailable, never broken. | MVP |
 | WCON-830 | The interface shall guide a new browser through pairing (Section 3.2): request, display of the confirmation code, waiting for approval on the Master with a clear refused/expired outcome, and then sign-in. | MVP |
@@ -245,12 +250,12 @@ Because the application can move a telescope, an unauthenticated or forgeable ro
 | ID | Requirement | Priority |
 |---|---|---|
 | WCON-1000 | Every state-changing request (any method other than GET, HEAD, OPTIONS) shall be rejected unless it carries a valid CSRF token bound to the session and comes from the application's own origin. A missing, forged or replayed token shall be refused and counted. | MVP |
-| WCON-1010 | Session and device cookies shall be `HttpOnly`, `Secure` and `SameSite=Strict`, host-bound (`__Host-` prefix), and a session identifier shall be regenerated at sign-in, on role change and at sign-out. | MVP |
+| WCON-1010 | Session and device cookies shall be `HttpOnly`, `Secure` and `SameSite=Strict`, host-bound (`__Host-` prefix), and a session identifier shall be regenerated at sign-in, on role change and at sign-out. (In the Astroberry profile the prefix is `__Secure-` with the cookie scoped to the application's path: `WCON-1460`.) | MVP |
 | WCON-1020 | Every response shall carry a strict `Content-Security-Policy` that permits no inline script, no inline event handler and no third-party origin, and also `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a frame-embedding denial. State and image responses shall be `Cache-Control: no-store`. | MVP |
 | WCON-1030 | Sign-in, pairing requests and any other unauthenticated entry point shall be rate-limited per source, with an increasing delay on repeated failure. | MVP |
 | WCON-1040 | A session shall expire after configurable idle and absolute timeouts, after which the page shall require a new sign-in. The browser shall hold no operational state beyond the page, and the application shall register no service worker and no offline cache. | MVP |
 | WCON-1050 | Every route shall require an authenticated session, a role check and (for state-changing routes) a CSRF check, except those named in a single explicit public-route list. A test shall enumerate every registered route and fail if one is neither authenticated nor on that list. | MVP |
-| WCON-1060 | The application shall reject a request whose `Host` or `Origin` is not one of the addresses it is configured to serve, as a defence against DNS rebinding and cross-origin use. | MVP |
+| WCON-1060 | The application shall reject a request whose `Host` or `Origin` is not one of the addresses it is configured to serve, as a defence against DNS rebinding and cross-origin use. In the Astroberry profile the allowed set shall include the device's host name, its `.local` name and its configured addresses, because the front door accepts any `Host`. | MVP |
 | WCON-1070 | The web application shall undergo a documented security review (CSRF, session handling, header policy, route enumeration, dependency audit) before each release that changes it, with its findings resolved or recorded. | P2 |
 
 ### 3.11 Browser outreach
@@ -274,6 +279,28 @@ Browser outreach is the web counterpart of [MobileConnect outreach](../mobilecon
 | WCON-1320 | The system shall provide, and persist in Galileo's database (`PLUG-150`), these browser-outreach options: the outreach listener address and port, the outreach hostname, the certificate source (its private key held as a secret, never logged or audited), and whether events are offered to browsers by default. Values shall be validated and clamped. The SSID, subnets, duration, guest cap, preview limits and offered Piers are Connect Link's shared outreach options (`MCON-1310`) and shall not be duplicated. | MVP |
 | WCON-1330 | (needs OF) The system shall contribute to the facility's aggregate audit the number of browser guests per Pier, and shall retain no personal data about visitors: a guest is a random token and a source address held only for the event's duration. | P2 |
 
+### 3.12 Astroberry integration
+
+The requirements of the **Astroberry profile** (PSD §6.5, D11): WebConnect on an Astroberry OS controller, behind Astroberry's Caddy front door and beside Astroberry Manager. They state what differs from the self-hosted profile and add nothing to the operational surface. The deployment facts they rest on (PSD §6.5.1) were read from Astroberry's sources on 2026-10-31 and are re-verified on a running system before the SDD relies on them. Those that need the Astroberry layer (AB, Section 2.6) are verified against stubs until it exists.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| WCON-1400 | The system shall support two hosting profiles — **Astroberry** (the operating web application is a systemd service behind the Astroberry front door) and **self-hosted** (the plugin supervises it and it serves its own HTTPS listener) — selected at installation by the package, and shown on the plugin page and in the About view. Every requirement of this SRS that does not name a profile applies identically to both. | MVP |
+| WCON-1410 | In the Astroberry profile the system shall run the operating web application as the systemd service `galileo-webconnect.service`, ordered after Galileo's own service, as an unprivileged service account, restarted on failure with back-off and logging to the journal. Enabling the plugin shall start the service and disabling it shall stop it, through an authorisation limited to that one unit. If the plugin is not authorised to do so, the plugin page shall say so and the web application shall, within a few seconds of the Master half reporting the plugin disabled, close its listener and end every browser session. In either case disabling shall leave no WebConnect listener (`WCON-040`). | MVP |
+| WCON-1420 | In the Astroberry profile the operating web application shall listen only on loopback or on a Unix socket, shall open no LAN-facing listener, and shall generate, hold and pin no TLS certificate: TLS is terminated by the Astroberry front door with its local certificate authority. The only plain-HTTP surface shall be that loopback or socket listener. | MVP |
+| WCON-1430 | In the Astroberry profile the system shall treat a request as secure only when the front door, as the immediate peer, says it arrived over HTTPS. It shall refuse pairing, sign-in and every state-bearing route otherwise — answering a GET under its prefix with a redirect to the HTTPS address — and shall ignore forwarded-scheme, forwarded-host and forwarded-address headers from any peer that is not the front door. | MVP |
+| WCON-1440 | In the Astroberry profile the system shall serve every page, asset, event stream and API route beneath a single configurable path prefix (default `/galileo/`), shall generate no root-absolute URL to its own resources (a link to Astroberry Manager is the one exception), and shall use none of the paths the front door reserves for other applications (`/api`, `/websockify`, `/socket.io`, `/login`, `/logout`, `/welcome`, `/assets`, `/ca.crt`). The browser-facing API and the wire API (`WCON-920`) shall be beneath the prefix. | MVP |
+| WCON-1450 | The package shall install the front-door route for the prefix by the mechanism the Astroberry layer provides (`WCON-1530`), evaluated ahead of the front door's catch-all route, and the route shall deliver Server-Sent Events as they are produced, without buffering them. Removing the package shall remove the route. | MVP |
+| WCON-1460 | In the Astroberry profile the system's cookies shall have names distinct from Astroberry Manager's (`session`, `kyc`), shall be scoped by `Path` to the prefix, shall carry the `__Secure-` prefix (the `__Host-` prefix requires path `/`), and shall otherwise satisfy `WCON-1010`. The system shall neither read nor set any cookie that Astroberry Manager uses. | MVP |
+| WCON-1470 | In the Astroberry profile the system shall take a browser's source address, for rate limiting (`WCON-1030`), the audit log (`WCON-190`) and the outreach-subnet refusal (`WCON-1220`), from the front door's forwarded-address header, and only when the immediate peer is the front door; otherwise from the connection. | MVP |
+| WCON-1480 | The system shall not depend on Astroberry Manager running, shall not accept the Manager's session, cookie or secret as proof of identity, role or approval, and shall operate fully with the Manager stopped. | MVP |
+| WCON-1481 | On a Master with no one at its screen the system shall let a person approve, promote and revoke browsers (`WCON-100`, `110`, `170`) from a WebConnect administration page, after authenticating with a local Astroberry account through the operating system's PAM, in addition to doing so on the Master. That page shall do those three things only, be rate-limited (`WCON-1030`) and CSRF-protected (`WCON-1000`), require membership of the device's administrator group, and record the account in the audit log. (Pending PSD Q7.) | P2 |
+| WCON-1490 | When the web application cannot reach the Master half — Galileo stopped, restarting or incompatible (`WCON-930`) — the system shall answer, instead of a gateway error from the front door, with a plain page that says Galileo is not running (or which versions disagree), offers no operation, keeps retrying, and links to Astroberry Manager. | MVP |
+| WCON-1500 | The package shall register a Galileo entry with Astroberry Manager, by the extension the Manager provides (`WCON-1530`), that opens the application's address as a link and does not embed it in a frame. The application shall link back to the Manager and, for each paired node whose address is known, to that node's Manager. | P2 |
+| WCON-1510 | On Astroberry the outreach application (`WCON-1210`) shall remain independent of the front door: its own listener bound to the outreach address with the owner's certificate (`WCON-1290`), no route to it through the front door, and no route to the operating application through it. The documentation shall state that the front door listens on every interface and that the outreach network must not be able to reach it (PSD R11). | MVP |
+| WCON-1520 | The system shall be installable on Astroberry OS as Debian package(s) for arm64 and amd64 on Debian Trixie, in the plugin's own virtual environment, owning only its own unit, authorisation rule, front-door route and Manager entry, and modifying no file owned by an Astroberry package other than through the mechanism of `WCON-1530`. Removing the package shall restore stock Astroberry behaviour and keep Galileo's data. The package set, repository and meta-package are those of the galileo-astroberry project. | MVP |
+| WCON-1530 | The system shall keep a register of everything it needs from Astroberry — the front-door include, the Manager's application-registration extension, any authorisation rule — with its status (worked around locally, proposed, accepted, merged) and the interim in use, held with the galileo-astroberry upstream list (its `UP-01`). No requirement of this SRS shall depend on an upstream change that has not merged except through a documented interim. | MVP |
+
 ---
 
 ## 4. Non-Functional Requirements
@@ -285,7 +312,8 @@ Cross-cutting qualities are verified through the requirements above and the core
 | Light enough for a Raspberry Pi 5 beside imaging | PSD PC1 | `WCON-080`, `WCON-030`; performance budget measured on a Pi (SDD P2) |
 | Config in database | PSD PC2 | `WCON-910`, `WCON-1320` |
 | UI-thread discipline; web workload cannot stall Galileo | PSD PC3 | `WCON-030`, `WCON-080` |
-| Encrypted by default | PSD PC4 | `WCON-070`, `WCON-1290` |
+| Encrypted by default | PSD PC4 | `WCON-070`, `WCON-1290`, `WCON-1420`, `WCON-1430` |
+| Shared origin and packaging on Astroberry | PSD PC10, PC11 | `WCON-1440`, `WCON-1460`, `WCON-1520` |
 | Browser hardening | PSD PC5 | Section 3.10, `WCON-1280` |
 | Imaging unaffected by the browser | PSD PC6 | `WCON-030`, `WCON-720` |
 | Documented API only | PSD PC7 | `WCON-090`, `WCON-920` |
@@ -310,7 +338,8 @@ Cross-cutting qualities are verified through the requirements above and the core
 | Options, help and wire API (900–940) | 5 | 5 | 0 | 0 |
 | Web application security (1000–1070) | 8 | 7 | 1 | 0 |
 | Browser outreach (1200–1330) | 14 | 13 | 1 | 0 |
-| **Total** | **105** | **89** | **14** | **2** |
+| Astroberry integration (1400–1530) | 15 | 13 | 2 | 0 |
+| **Total** | **120** | **102** | **16** | **2** |
 
 ---
 
@@ -329,6 +358,10 @@ Cross-cutting qualities are verified through the requirements above and the core
 | O9 | **Plain HTTP on the outreach listener.** PSD Q2 recommended an off-by-default option; PSD decision D9 settled on HTTPS only. This SRS follows D9 (`WCON-1290`). | `WCON-1290` |
 | O10 | **Sky view rendering in the browser** (`WCON-650`) is a substantial front-end piece that the PSD does not explicitly mention; it follows from `MCON-440` and the "no catalog in the client" rule. Confirm it is wanted at MVP rather than a static server-rendered sky image first. **Decided 2026-10-30: static server-rendered sky image first; canvas view after MVP.** | `WCON-650` |
 | O11 | A showcase image set for outreach, offered in addition to the live image (MobileConnect PSD Q4), is undecided and not specified here. **Decided 2026-10-30: deferred to P2 (see MobileConnect SRS O13).** | §3.11 |
+| O12 | **Hosting profiles (PSD Q4).** `WCON-060`, `070`, `1010` and the plugin-supervised half of `WCON-030` serve the self-hosted profile only. They stay at MVP while the profile is kept; if PSD Q4 drops or demotes it they are removed or demoted with it. The Astroberry profile is the primary target (PSD D11). | §3.1, §3.12 |
+| O13 | **Lifecycle owner, front-door route, headless approval, Manager entry (PSD Q5–Q8).** Recommendations are written into `WCON-1410`, `1450`, `1481` and `1500`; each is open until reviewed. `WCON-1481` is P2 because the Galileo desktop in Astroberry's remote desktop already approves browsers. | §3.12 |
+| O14 | **The front door is not an access boundary (PSD §6.5.5, R12).** On Astroberry, `/websockify*` and `/api*` are unauthenticated at the front door as read from its sources, so no `WCON` requirement can make the device secure; `WCON-1510` and the documentation say so. Raised upstream through the register of `WCON-1530`. | §3.12 |
+| O15 | `docs/CONNECT_PLUGINS_CHECKLIST.md` stated 137 `WCON` requirements (90 MVP) and 106 test IDs against this SRS's 105. The document-chain tests in `tests/test_wcon.py` enforce that SRS, SDD, RTM and the tests agree, so the checklist was corrected to 120 (102 MVP) on 2026-10-31; why it had differed was not established. | — |
 
 ---
 
