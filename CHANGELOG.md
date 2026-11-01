@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **No more macOS Intel installer.** GitHub retired the Intel macOS runners, so the release workflow no longer builds `macos-x86_64`, the site's download list no longer offers it, and the README and wiki tell Intel Mac users to install from source instead. Apple silicon, Windows, Linux x86_64 and Linux ARM64 installers are unchanged.
+
 ## [0.9.03alpha] - 2026-10-31
 
 Alpha pre-release. User-visible: the Switches page and WandererBox support, plugin dependency installation, and a simpler Sessions Run. The Connect Link listener, pairing, plugin routes and event stream are in the code as foundation only: no Connect plugin (NodeConnect, MobileConnect, WebConnect) exists yet, and the Connect documents are design, not product.

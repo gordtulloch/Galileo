@@ -16,7 +16,7 @@ A cross-platform Python-based astrophotography imaging application for Windows, 
 |---|---|
 | Windows 10/11 x64 | `Galileo-Setup-<version>-win-x64.exe` |
 | macOS, Apple Silicon | `Galileo-<version>-macos-arm64.dmg` |
-| macOS, Intel | `Galileo-<version>-macos-x86_64.dmg` |
+| macOS, Intel | No installer (GitHub retired the Intel build runners); use the source install below |
 | Linux x86_64 | `Galileo-<version>-linux-x86_64.AppImage` |
 | Raspberry Pi 5 / 64-bit ARM Linux | `Galileo-<version>-linux-aarch64.AppImage` |
 
