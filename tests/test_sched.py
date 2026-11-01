@@ -350,6 +350,7 @@ def test_tc_sched_110_pier_op_added_becomes_one_sized_block(window):
     assert op_labels == {"Open Dome", "Close Dome", "Unpark Scope", "Park Scope", "Dome Sync"}
 
     import datetime
+    page._show_past_check.setChecked(True)  # 22:00 today is already past when CI runs late in the day
     start = page.displayed_day_start_local() + datetime.timedelta(hours=22)
     page.add_pier_operation(DomeOpenBlock, "Open Dome", start)
 
@@ -737,7 +738,8 @@ def test_schedule_upcoming_panel_lists_timed_jobs_with_target_summary(window):
     from galileo.ui.sessions import DomeOpenBlock, ImageBlock, SessionRegion, TargetBlock
     _sessions_page(window)
     page = _schedule_page(window)
-    start = page.displayed_day_start_local() + datetime.timedelta(days=1, hours=22)
+    # wall-clock 22:00 tomorrow: aware arithmetic would land an hour off across a DST change
+    start = (page.displayed_day_start_local().replace(tzinfo=None) + datetime.timedelta(days=1, hours=22)).astimezone()
     page.add_pier_operation(DomeOpenBlock, "Open Dome", start)
     region = SessionRegion(name="M31 night")
     region.insert_block(TargetBlock(name="M31"))
