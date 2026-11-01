@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **The macOS Apple silicon installer is now built on the `macos-15` runner.** GitHub is retiring `macos-14` on 2026-11-02 and was already failing its jobs in scheduled brownouts, which cancelled the v0.9.03alpha macOS build.
+- **README no longer lists in-place plugin updates as missing.** They have been implemented since 2026-10-25 (see the entry on installing, updating and removing plugins in place); the line was stale.
 - **No more macOS Intel installer.** GitHub retired the Intel macOS runners, so the release workflow no longer builds `macos-x86_64`, the site's download list no longer offers it, and the README and wiki tell Intel Mac users to install from source instead. Apple silicon, Windows, Linux x86_64 and Linux ARM64 installers are unchanged.
 
 ## [0.9.03alpha] - 2026-10-31

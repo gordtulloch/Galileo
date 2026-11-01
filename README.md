@@ -60,7 +60,7 @@ Every control has built-in help, and the [wiki](https://github.com/gordtulloch/G
 
 ### Not implemented yet
 
-- In-place plugin updates (remove and reinstall instead)
+- The NodeConnect, MobileConnect and WebConnect plugins (designed, not built)
 
 ### Project health
 
