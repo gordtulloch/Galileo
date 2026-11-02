@@ -41,6 +41,7 @@ The `WCON` domain: the plugin that runs on the Master node and the Flask web app
 | 900–940 | Options, help and wire API | 3.9 |
 | 1000–1070 | Web application security | 3.10 |
 | 1200–1330 | Browser outreach | 3.11 |
+| 1400–1680 | Astroberry OS integration | 3.12 |
 
 ### 1.4 Priority Convention
 
@@ -274,6 +275,42 @@ Browser outreach is the web counterpart of [MobileConnect outreach](../mobilecon
 | WCON-1320 | The system shall provide, and persist in Galileo's database (`PLUG-150`), these browser-outreach options: the outreach listener address and port, the outreach hostname, the certificate source (its private key held as a secret, never logged or audited), and whether events are offered to browsers by default. Values shall be validated and clamped. The SSID, subnets, duration, guest cap, preview limits and offered Piers are Connect Link's shared outreach options (`MCON-1310`) and shall not be duplicated. | MVP |
 | WCON-1330 | (needs OF) The system shall contribute to the facility's aggregate audit the number of browser guests per Pier, and shall retain no personal data about visitors: a guest is a random token and a source address held only for the event's duration. | P2 |
 
+### 3.12 Astroberry OS integration
+
+Where WebConnect runs on, or is reached from, an [Astroberry OS](https://astroberry.io/) computer (PSD §6.5; product PSD §7). The placement rule is unchanged: WebConnect runs on a Master only. The Astroberry web manager has no extension point, so Galileo ships its own fork of it, the **Galileo edition**, installed beside the stock manager (`WCON-1640`); that fork is a separate repository (`galileo-astroberry-manager`) specified here and in SDD §3.16. Reference codes in the RTM: NC NodeConnect, others as Section 2.6.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| WCON-1400 | The system shall detect whether it is running on an Astroberry OS computer (by the presence of the Astroberry web manager and its release marker, not by user setting alone) and shall enable the requirements of this section only there; on any other computer none of them applies and no Astroberry route, option or menu text exists. | MVP |
+| WCON-1410 | On an Astroberry-hosted Master (placement A) the operating web application shall listen on the loopback interface only and be reached at `/galileo/` through the Astroberry's web front end, so the browser sees one origin and the certificate it already trusts; the system shall not generate a second certificate there. This is the loopback allowance of `WCON-060`/`WCON-070`. | MVP |
+| WCON-1420 | On Astroberry the WebConnect session cookie shall be `Path=/galileo`, `HttpOnly`, `Secure` and `SameSite=Strict`, and the system shall never read the web manager's cookie, never be sent the manager's cookie by a route, and keep its own CSRF protection; a request from the manager's pages to `/galileo/` shall be treated as cross-site. | MVP |
+| WCON-1430 | The operating screens shall be a separate page under `/galileo/`, not a panel inside the web manager's page, with their own strict `Content-Security-Policy` (no inline script) and a link back to the Astroberry menu. | MVP |
+| WCON-1440 | When hosted on Astroberry the operating screens shall use the Astroberry colours and logo as styling only, and keep the night-vision theme as a switch. | P2 |
+| WCON-1450 | With Galileo not installed, or WebConnect disabled, the Astroberry menu shall show no Galileo entry that fails, and `/galileo/` shall answer nothing while the service is not running; the entry shall be installed and removed with Galileo's Astroberry package. | MVP |
+| WCON-1460 | The Galileo section of the Astroberry menu shall show status before anything operable: whether Galileo is installed and running, Master or node, the Master's address and pairing state, and whether the INDI server of the active profile is running; nothing operable shall be offered until the state allows it. | MVP |
+| WCON-1470 | On an Astroberry computer that is a spoke node (placement B) the menu entry shall open the Master's operating screens with this computer's Pier selected, and WebConnect shall not be installed or run on the spoke. | MVP |
+| WCON-1480 | The system shall accept, on an Astroberry-hosted Master, a request to approve a pending browser from the Astroberry Manager fork, vouching for a Linux-account sign-in, over loopback only and authenticated by a secret readable only by the two services' accounts that is never shared with the manager; this channel shall carry approvals and nothing else, and the manager's session shall never itself be a Galileo credential. | MVP |
+| WCON-1490 | Approval from the Astroberry menu shall let the approver choose Viewer or Operator with Viewer the default and no configuration role; the first browser on a freshly installed headless Master shall be approved the same way, and until a browser is approved nothing operable shall be reachable. | MVP |
+| WCON-1500 | The owner shall be able to turn approval from an Astroberry session off in Galileo's options, after which approval needs the desktop or an approved Operator browser; the option shall exist only on an Astroberry-hosted computer. | MVP |
+| WCON-1510 | Every approval made through the Astroberry menu shall be recorded with the Linux account that approved it and the address of the browser asking. | MVP |
+| WCON-1520 | The Galileo section shall let the user enter a Master's address (a hostname, never `localhost`), send a NodeConnect pairing request, ask in plain words whether the Master may operate this node (default no, revocable there at any time), and unpair or re-pair. | P2 |
+| WCON-1530 | The Galileo section shall show waiting for approval, paired, granted or not granted, Master unreachable and the last synchronisation time without a page refresh. | P2 |
+| WCON-1540 | The system shall never create, edit or delete an INDI profile or driver and shall never start a driver on its own; those remain in the Astroberry web manager. | MVP |
+| WCON-1550 | The equipment screen shall show whether the node's INDI server is running and which profile is active, read server-side through the Astroberry INDI Web Manager on loopback. | MVP |
+| WCON-1560 | An Operator shall be able, with confirmation, to start or stop the profile already configured in the web manager, relayed by Galileo and never by the browser calling an Astroberry route; starting a profile and connecting Galileo's devices shall be one guided step, and a profile with auto-connect shall be respected. | P2 |
+| WCON-1570 | Where the Astroberry computer is a node its devices and PHD2 shall be addressed by its LAN hostname, never `localhost`. | MVP |
+| WCON-1580 | When Galileo has no site of its own, the sky and dashboard screens shall take site and twilight times from the web manager's Location and Almanac, read-only; the manager's Weather shall be a link and never a safety input. | P2 |
+| WCON-1590 | On Astroberry the sky screen shall use the web manager's own d3-celestial files and object search from the same origin, with no copy and no third-party host. | P2 |
+| WCON-1600 | The chart shall overlay the field of view of the selected optical train at the pointed position and rotation (including mosaic panels), the targets of the open session and schedule, the last plate-solved position, the mount's pointing and pier side, the horizon limit and meridian, the Moon and planets, and the target being imaged. | P2 |
+| WCON-1610 | From a clicked or searched object the chart shall offer Go to, Go to and centre, Frame here, Add to session and Add to schedule, each a Control Surface operation that takes the lease, honours the safety monitor and is refused with an explanation when another client holds the lease. | P2 |
+| WCON-1620 | In the Galileo edition of the manager the chart's goto shall be routed through Galileo whenever Galileo is installed and running, and the stock direct goto used only when it is not; the Galileo chart shall show a notice when it sees pointing it did not command. | P2 |
+| WCON-1630 | If the shipped chart catalogue proves too shallow for framing, optional deeper data shall be offered as downloads on the node and never fetched from the internet during use. | P3 |
+| WCON-1640 | The Galileo edition of the web manager shall be installed beside the stock manager, not over it: its own package and isolated Python environment, the stock package never edited, and a systemd drop-in changing only the start command on the same loopback port; removing the package shall remove the drop-in and restore the stock manager. | MVP |
+| WCON-1650 | If the Galileo edition fails to start or keeps failing, the system shall fall back to the stock manager so the Astroberry never loses its web manager, and the Galileo entry shall be absent then. | MVP |
+| WCON-1660 | The Galileo edition shall name and version itself so it is never mistaken for the stock manager, show that in its page footer and `--version`, state the Astroberry OS and upstream versions it was tested against, and say visibly when it runs on a release it does not recognise. | MVP |
+| WCON-1670 | The `/galileo/` route shall carry Server-Sent Events without buffering or truncating a stream, whether provided by the fork's proxy (the default) or a front-end drop-in. | MVP |
+| WCON-1680 | Every WebConnect route shall require an approved device; the browser shall never call an Astroberry route for a Galileo function; and Galileo's own use of the INDI Web Manager shall be server-side on loopback. | MVP |
+
 ---
 
 ## 4. Non-Functional Requirements
@@ -310,7 +347,8 @@ Cross-cutting qualities are verified through the requirements above and the core
 | Options, help and wire API (900–940) | 5 | 5 | 0 | 0 |
 | Web application security (1000–1070) | 8 | 7 | 1 | 0 |
 | Browser outreach (1200–1330) | 14 | 13 | 1 | 0 |
-| **Total** | **105** | **89** | **14** | **2** |
+| Astroberry OS integration (1400–1680) | 29 | 19 | 9 | 1 |
+| **Total** | **134** | **108** | **23** | **3** |
 
 ---
 

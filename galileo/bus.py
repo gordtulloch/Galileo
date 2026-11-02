@@ -103,6 +103,10 @@ class FocusCompleteEvent(Event):
 
 # --- Bus implementation ---------------------------------------------------
 
+class SettingsChangedEvent(Event):
+    """Replicated rows were bulk-applied (REPL-050); ``tables`` names them. Open Options pages reload."""
+
+
 class EventBus:
     """Thread-safe publish/subscribe event bus.
 

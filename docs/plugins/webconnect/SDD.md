@@ -246,6 +246,31 @@ Everything else returns a bare 404 and increments a counter. The allowlist is th
 - **Parity check:** `tests/test_parity.py` loads the Control Surface catalogue (the stub catalogue in unit runs, the real one in integration), the operations MobileConnect exposes, and the routes/screens of the web UI, and fails if an operation is reachable in one and neither reachable nor listed with a reason in the other (`WCON-590`).
 - **Satisfies:** `WCON-090`, `400`, `590`, `920`, `930`.
 
+### 3.15 `webconnect.astroberry` — Astroberry OS integration (Master half)
+
+Present only on an Astroberry-hosted computer; on any other it is never imported and exposes no route, option or text (`WCON-1400`). Product PSD §7 is the scope; this is the design.
+
+- **`AstroberryHost`**: detects hosting at start-up by two facts together — the `astroberry-manager` package is installed and `/etc/astroberry/version` (the release marker the manager itself reads) exists — and caches the result. It also reports the tested Astroberry OS and manager versions for the fork's footer (`WCON-1660`).
+- **`MenuStatus`**: assembles the status shown first in the Galileo menu (`WCON-1460`): Galileo installed/running, Master or node, Master address and pairing state (from NodeConnect), INDI server and active profile (`IndiWebManagerClient`). It is a pure read and is served at `/galileo/status` without the operating session so the menu can show it, exposing only what the page above lists and nothing operable.
+- **Placement**: placement A binds the operating application to loopback and expects `/galileo/` in front of it (`WCON-1410`); the supervisor (3.2) takes a `base_path` and `loopback_only` option from here. Placement B emits only the link to the Master with the Pier selected (`WCON-1470`) and starts nothing.
+- **`ApprovalVouch`**: a loopback-only route `POST /galileo/vouch/approve` on the Master half, protected by a shared secret file readable only by the `galileo` and `astroberry-manager` service accounts (mode 0640, group-owned), compared in constant time. It accepts `{pending_id, role, account, client_addr}` and nothing else; it calls the same `delegate` approval as the desktop and records the account and address in the audit (`WCON-1480`–`1510`). It is registered only when the owner option `astroberry_approval` is on (default on, `WCON-1500`). The manager's cookie is never read; the secret is distinct from any manager key.
+- **`IndiWebManagerClient`**: a server-side HTTP client of the INDI Web Manager on `127.0.0.1:8624`, used for read of server status, active profile and, for an Operator after confirmation, start/stop of the already-configured profile (`WCON-1540`–`1560`). It has no method that creates, edits or deletes a profile or driver, and the browser never calls it directly (`WCON-1680`).
+- **`SiteFallback`**: reads the manager's Location/Almanac only when no Galileo site is configured (`WCON-1580`); never a safety input.
+- **Cookie and CSP**: the application sets `Path=/galileo`, `HttpOnly`, `Secure`, `SameSite=Strict` and its own CSP (`WCON-1420`, `1430`); hostname handling follows `WCON-1570`.
+- **Satisfies:** `WCON-1400`–`1420`, `1430`, `1450`–`1460`, `1470`–`1580`, `1590`, `1680`.
+
+### 3.16 `galileo-astroberry-manager` — the Galileo edition of the web manager (separate repository)
+
+Not part of the plugin ZIP. A fork of the Astroberry Manager (Flask + Flask-SocketIO, GPL-3) carried in `gordtulloch/galileo-astroberry-manager`, branch `galileo`, one commit per feature, rebased on each upstream release; upstream contributions come from a separate repository with no Galileo code (product PSD §7.9, K1–K10).
+
+- **Install and fall back** (`WCON-1640`, `1650`): a Galileo package with its own virtual environment under `/opt/galileo-astroberry-manager`; a systemd drop-in `astroberry-manager.service.d/galileo.conf` changing only `ExecStart` on the same loopback port, plus `OnFailure=astroberry-manager-stock.service` (the stock command) so a failing fork never leaves the Astroberry without its manager. Removal deletes the drop-in.
+- **Identity** (`WCON-1660`): version string `<upstream>+g<N>`, shown in the page footer and `--version`, with the tested Astroberry OS release list and a visible warning on an unrecognised one.
+- **Dock item and status panel** (`WCON-1450`, `1460`): a Galileo dock item in the page's dock, shown only when `/galileo/status` answers; the panel is the status of 3.15 and a button to the operating screens.
+- **`/galileo/` proxy** (`WCON-1410`, `1670`): the fork proxies `/galileo/*` to the Master half's loopback listener, streaming (no buffering, no gzip, no read timeout on `text/event-stream`), preserving `Host`; a Caddy drop-in alternative is not relied on (product PSD Q1).
+- **Vouching** (`WCON-1480`): for a signed-in manager user, the fork posts the approval to `ApprovalVouch` with the shared secret and the PAM account name; no other session data is passed.
+- **Chart goto** (`WCON-1620`): the stock chart's goto handler is replaced by a call to Galileo when Galileo is running, and falls back to the stock direct goto otherwise.
+- **Satisfies:** `WCON-1620`, `1640`–`1670`.
+
 ---
 
 ## 4. Data Design
@@ -350,6 +375,9 @@ Two network listeners, both owned by the web half: the **operating listener** (H
 | `WCON-1200`, `1230`, `1270`, `1330` | 3.11 `outreach` (facility OF in core) |
 | `WCON-1210`, `1240`, `1250`, `1260`, `1280`, `1290`, `1300`, `1310` | 3.12 `outreach_app` (with 3.2 and 3.11) |
 | `WCON-1220` | 3.5 `web.security` and 3.12 `outreach_app` |
+| `WCON-1400`, `1410`, `1420`, `1430`, `1450`, `1460`, `1470`, `1480`, `1490`, `1500`, `1510`, `1520`, `1530`, `1540`, `1550`, `1560`, `1570`, `1580`, `1680` | 3.15 `astroberry` (with 3.2, 3.3, 3.4, 3.6 as the RTM lists) |
+| `WCON-1440`, `1590`, `1600`, `1610`, `1630` | 3.10 `web.ui` (with 3.15 for the same-origin chart files) |
+| `WCON-1620`, `1640`, `1650`, `1660`, `1670` | 3.16 `galileo-astroberry-manager` (separate repository) |
 
 ---
 

@@ -16,17 +16,23 @@ import socket
 
 from aiohttp import web
 
+from galileo.connect_link import handshake
 from galileo.connect_link.audit import AuditLog
 from galileo.connect_link.certs import CertificateStore
+from galileo.connect_link.events import EventHub
 from galileo.connect_link.pairing import PairingError, PairingService, PendingListFull, RateLimited
-from galileo.connect_link.peers import Peer, PeerStore
+from galileo.connect_link.peers import DelegationError, Peer, PeerStore
+from galileo.connect_link.routes import RouteRegistry
+from galileo.connect_link.transfer import TransferError, TransferStore
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = handshake.PROTOCOL_VERSION
 DEFAULT_PORT = 8765
 API = "/connect/v1"
+ACTING_CLIENT_HEADER = "X-Galileo-Acting-Client"
 _PEER = web.RequestKey("link_peer", Peer)
+_ACTOR = web.RequestKey("link_audit_actor", tuple)
 
 
 def default_bind_host() -> str:
@@ -49,8 +55,15 @@ def _unauthorised() -> web.Response:
 class LinkServer:
     def __init__(
         self, peers: PeerStore, pairing: PairingService, certs: CertificateStore, audit: AuditLog,
+        routes: RouteRegistry | None = None, events: EventHub | None = None,
+        transfers: TransferStore | None = None,
     ) -> None:
         self._peers, self._pairing, self._certs, self._audit = peers, pairing, certs, audit
+        self.routes = routes if routes is not None else RouteRegistry()
+        self.handshake_extensions = handshake.HandshakeExtensions()
+        self.events = events if events is not None else EventHub()
+        self.transfers = transfers if transfers is not None else TransferStore()
+        peers.on_peer_ended(self.events.close_peer)              # revoked/deleted: streams close at once
         self._runner: web.AppRunner | None = None
         self.host = ""
         self.port = 0
@@ -66,6 +79,14 @@ class LinkServer:
         app.router.add_post(f"{API}/pair", self._pair)
         app.router.add_get(f"{API}/pair/{{request_id}}", self._pair_poll)
         app.router.add_get(f"{API}/whoami", self._whoami)
+        app.router.add_get(f"{API}/handshake", self._handshake)
+        app.router.add_get(f"{API}/events", self._events)
+        app.router.add_post(f"{API}/transfer", self._transfer_begin)
+        app.router.add_put(f"{API}/transfer/{{tid}}/chunk/{{n}}", self._transfer_chunk)
+        app.router.add_post(f"{API}/transfer/{{tid}}/complete", self._transfer_complete)
+        app.router.add_get(f"{API}/objects/{{sha}}", self._object_info)
+        app.router.add_get(f"{API}/objects/{{sha}}/chunk/{{n}}", self._object_chunk)
+        app.router.add_route("*", "/{tail:.*}", self._plugin_route)       # reached only past the gate
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         self.host = host or default_bind_host()
@@ -81,6 +102,7 @@ class LinkServer:
 
     async def stop(self) -> None:
         runner, self._runner = self._runner, None
+        self.events.close_all()
         if runner is not None:
             await runner.cleanup()
             self.port = 0
@@ -107,7 +129,8 @@ class LinkServer:
         except web.HTTPException as exc:
             self._audit.write(peer.peer_id, peer.plugin, f"{request.method} {path}", "error", exc.reason or "")
             raise
-        self._audit.write(peer.peer_id, peer.plugin, f"{request.method} {path}", "ok")
+        actor, carrier = request.get(_ACTOR, (peer.peer_id, ""))
+        self._audit.write(actor, peer.plugin, f"{request.method} {path}", "ok", carrier=carrier)
         return response
 
     # -- unauthenticated: request and poll pairing ---------------------------------------
@@ -150,5 +173,143 @@ class LinkServer:
             "permissions": sorted(peer.permissions),
         })
 
+    async def _handshake(self, request: web.Request) -> web.Response:
+        """Our versions plus plugin extensions; if the caller sends its own (``?protocol=&schema=``)
+        the verdict is included so a person can be told what to do (LINK-080)."""
+        ours = handshake.local_info()
+        body: dict[str, object] = {**ours, "plugins": self.handshake_extensions.payload()}
+        q = request.query
+        if "protocol" in q or "schema" in q:
+            v = handshake.check(ours, dict(q))
+            body["compatibility"] = {"ok": v.ok, "restricted": v.restricted, "message": v.message}
+        return web.json_response(body)
 
-__all__ = ["API", "DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host"]
+    async def _plugin_route(self, request: web.Request) -> web.StreamResponse:
+        """Plugin routes (LINK-050, LINK-090). The gate has already authenticated the caller."""
+        carrier: Peer = request[_PEER]
+        route = self.routes.find(request.method, request.path)
+        if route is None:
+            return web.json_response({"error": "not found"}, status=404)
+        label = f"{request.method} {request.path}"
+        principal = carrier
+        acting = request.headers.get(ACTING_CLIENT_HEADER, "")
+        if carrier.plugin != route.plugin:
+            return web.json_response({"error": "forbidden"}, status=403)       # never another plugin's route
+        if acting:
+            try:
+                principal = self._peers.resolve_client(carrier, acting)
+            except DelegationError as exc:
+                self._audit.write(acting, route.plugin, label, "denied", str(exc), carrier=carrier.peer_id)
+                return web.json_response({"error": "forbidden"}, status=403)
+        if route.permission not in principal.permissions:
+            self._audit.write(principal.peer_id, route.plugin, label, "denied", f"needs {route.permission}",
+                              carrier=carrier.peer_id if principal is not carrier else "")
+            return web.json_response({"error": "forbidden"}, status=403)
+        if principal is not carrier:
+            request[_ACTOR] = (principal.peer_id, carrier.peer_id)
+        return await route.handler(request, principal)
+
+    def remove_plugin(self, plugin: str) -> None:
+        """A plugin was disabled or removed: its routes, streams and handshake addition go (LINK-050/060)."""
+        self.routes.unregister_plugin(plugin)
+        self.events.close_plugin(plugin)
+        self.handshake_extensions.unregister(plugin)
+
+    # -- event stream (LINK-060) ---------------------------------------------------------
+    async def _events(self, request: web.Request) -> web.StreamResponse:
+        peer: Peer = request[_PEER]
+        try:
+            last = int(request.query["last_id"]) if "last_id" in request.query else None
+        except ValueError:
+            return web.json_response({"error": "bad request"}, status=400)
+        ws = web.WebSocketResponse(heartbeat=20)
+        await ws.prepare(request)
+        sub = self.events.subscribe(peer, last)
+        try:
+            while (msg := await sub.next()) is not None:
+                await ws.send_json(msg)
+        finally:
+            self.events.unsubscribe(sub)
+            if not ws.closed:
+                await ws.close(code=4001 if sub.close_reason in ("peer ended", "plugin disabled") else 1000,
+                               message=sub.close_reason.encode()[:100])
+        return ws
+
+    # -- transfer (LINK-070) -------------------------------------------------------------
+    @staticmethod
+    def _need(request: web.Request, permission: str) -> Peer | None:
+        peer: Peer = request[_PEER]
+        return peer if permission in peer.permissions else None
+
+    @staticmethod
+    def _transfer_error(exc: TransferError) -> web.Response:
+        body: dict[str, object] = {"error": str(exc)}
+        if exc.next_chunk is not None:
+            body["next_chunk"] = exc.next_chunk
+        return web.json_response(body, status=exc.status)
+
+    async def _transfer_begin(self, request: web.Request) -> web.Response:
+        peer = self._need(request, "data.push")
+        if peer is None:
+            return web.json_response({"error": "forbidden"}, status=403)
+        try:
+            b = await request.json()
+            st = self.transfers.begin(peer.peer_id, str(b.get("name", ""))[:200], int(b["size"]),
+                                      str(b["sha256"]).lower(), int(b.get("chunk_size", 1 << 20)))
+        except TransferError as exc:
+            return self._transfer_error(exc)
+        except Exception:
+            return web.json_response({"error": "bad request"}, status=400)
+        return web.json_response({"transfer_id": st.transfer_id, "state": st.state,
+                                  "next_chunk": st.next_chunk, "chunk_size": st.chunk_size})
+
+    async def _transfer_chunk(self, request: web.Request) -> web.Response:
+        peer = self._need(request, "data.push")
+        if peer is None:
+            return web.json_response({"error": "forbidden"}, status=403)
+        try:
+            data = await request.read()
+            nxt = await self.transfers.put_chunk(peer.peer_id, request.match_info["tid"],
+                                                 int(request.match_info["n"]), data,
+                                                 request.headers.get("X-Chunk-SHA256", ""))
+        except TransferError as exc:
+            return self._transfer_error(exc)
+        except ValueError:
+            return web.json_response({"error": "bad request"}, status=400)
+        return web.json_response({"next_chunk": nxt})
+
+    async def _transfer_complete(self, request: web.Request) -> web.Response:
+        peer = self._need(request, "data.push")
+        if peer is None:
+            return web.json_response({"error": "forbidden"}, status=403)
+        try:
+            st = await self.transfers.complete(peer.peer_id, request.match_info["tid"])
+        except TransferError as exc:
+            return self._transfer_error(exc)
+        return web.json_response({"state": st.state, "sha256": st.sha256})
+
+    async def _object_info(self, request: web.Request) -> web.Response:
+        if self._need(request, "data.pull") is None:
+            return web.json_response({"error": "forbidden"}, status=403)
+        try:
+            obj = self.transfers.info(request.match_info["sha"])
+        except TransferError as exc:
+            return self._transfer_error(exc)
+        return web.json_response({"sha256": obj.sha256, "size": obj.size})
+
+    async def _object_chunk(self, request: web.Request) -> web.Response:
+        if self._need(request, "data.pull") is None:
+            return web.json_response({"error": "forbidden"}, status=403)
+        try:
+            data, digest = await self.transfers.read_chunk(
+                request.match_info["sha"], int(request.match_info["n"]),
+                int(request.query.get("chunk_size", 1 << 20)))
+        except TransferError as exc:
+            return self._transfer_error(exc)
+        except ValueError:
+            return web.json_response({"error": "bad request"}, status=400)
+        return web.Response(body=data, content_type="application/octet-stream",
+                            headers={"X-Chunk-SHA256": digest})
+
+
+__all__ = ["ACTING_CLIENT_HEADER", "API","DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host"]

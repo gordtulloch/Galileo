@@ -995,6 +995,42 @@ def test_for_object_dialog_search_adds_and_x_removes(qapp, monkeypatch):
     assert len(block.objects) == 1 and {"name", "ra_deg", "dec_deg"} <= block.objects[0].keys()
 
 
+def test_target_dialog_magnifier_searches_catalog_then_simbad(qapp, monkeypatch):
+    """Target dialog: the magnifier looks the Name text up (catalog, SIMBAD fallback via
+    SkyAtlas.search_online) and fills RA/Dec; no match leaves them alone and says so."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QDialog, QDoubleSpinBox, QLabel, QLineEdit, QToolButton
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    dlg_mod = pytest.importorskip("galileo.ui.session_block_dialogs")
+    block = ui_mod.TargetBlock()
+    region = ui_mod.SessionRegion(name="T")
+    region.insert_block(block)
+    hit = SimpleNamespace(primary_name="NGC 1234", ra_deg=12.5, dec_deg=-33.0)
+
+    class FakeAtlas:
+        async def search_online(self, query):
+            return [hit] if query == "ngc1234" else []
+
+    window = SimpleNamespace(_shared_sky_atlas=lambda: FakeAtlas())
+
+    def fake_exec(self):
+        name = self.findChild(QLineEdit, "name_edit")
+        ra = self.findChild(QDoubleSpinBox, "ra_spin")
+        status = self.findChild(QLabel, "search_status")
+        button = self.findChild(QToolButton, "search_btn")
+        name.setText("nothing")
+        button.click()
+        assert "not found" in status.text() and ra.value() == 0.0
+        name.setText("ngc1234")
+        button.click()
+        assert name.text() == "NGC 1234" and ra.value() == 12.5
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    assert dlg_mod.open_block_parameter_dialog(None, block, region, window=window) is True
+    assert (block.name, block.ra_deg, block.dec_deg) == ("NGC 1234", 12.5, -33.0)
+
+
 def test_palette_omits_dither_and_meridian_flip_but_old_sessions_still_load():
     ui_mod = pytest.importorskip("galileo.ui.sessions")
     assert ui_mod.DitherBlock not in ui_mod._PALETTE_BLOCK_TYPES

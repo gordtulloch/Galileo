@@ -787,7 +787,7 @@ class AppWindowObservatoryPierMixin:
         self._pier_poll_threads[key] = thread
         thread.start()
 
-    def _track_when_slew_finishes(self: AppWindowState, mount, target=None, pier=None) -> None:
+    def _track_when_slew_finishes(self: AppWindowState, mount, target=None, pier=None, then=None) -> None:
         """Once the slew that was just started finishes, track at the rate the target needs
         (EQP-MNT-050) — solar for the Sun, lunar for the Moon, sidereal for everything else.
 
@@ -795,7 +795,9 @@ class AppWindowObservatoryPierMixin:
         given (the Mount page's own coordinate slews, which name nothing) the Pier's current
         object stands in, since that is what the user last said they were working on. *pier*
         identifies which Pier this slew belongs to (defaults to whichever is current when
-        called) so a second Pier's slew doesn't have to wait for this one's tracking-resume."""
+        called) so a second Pier's slew doesn't have to wait for this one's tracking-resume. *then*,
+        if given, is called on the UI thread once the mount has settled and tracking is on (not
+        if it never settled) — Goto and Centre uses it to start the plate solve."""
         from galileo.current_object import pier_key
 
         if mount is None:
@@ -810,6 +812,8 @@ class AppWindowObservatoryPierMixin:
             self._tracking_threads.pop(key, None)
             if rate:
                 self._window.statusBar().showMessage(f"Slew finished — tracking at the {rate} rate.", 5000)
+                if then is not None:
+                    then()
 
         def failed(message: str) -> None:
             self._tracking_threads.pop(key, None)

@@ -3,12 +3,12 @@
 | | |
 |---|---|
 | **Project** | Galileo — WebConnect Plugin (browser control of a Galileo node through a Flask web application) |
-| **Document** | PSD (Project Scope Document), v0.2, draft — browser outreach mode added (Section 6.4, D6–D8) |
+| **Document** | PSD (Project Scope Document), v0.3, draft — Astroberry OS placement added (Section 6.5, D11–D14); v0.2 added browser outreach (Section 6.4, D6–D8) |
 | **Status** | Draft — for review |
 | **Date** | 2026-10-27 |
 | **Parent project** | [Galileo Core PSD](../../PSD.md) |
 | **Sibling plugins** | [MobileConnect](../mobileconnect/PSD.md) — defines the operational surface this plugin reuses (its Section 6.4); [NodeConnect](../nodeconnect/PSD.md) — defines the shared Connect Link facility (its Section 6.2) |
-| **Product repository** | The Flask application (and its plugin shim) is built in [Galileo-WebConnect](https://github.com/gordtulloch/Galileo-WebConnect), whose `docs/PSD.md` is the product scope; this document records the core dependencies and the proxying design |
+| **Product repository** | The Flask application (and its plugin shim) is built in [Galileo-WebConnect](https://github.com/gordtulloch/Galileo-WebConnect), whose `docs/PSD.md` is the product scope (including its §7, the Astroberry OS integration, which is the detailed scope for Section 6.5 below); this document records the core dependencies and the proxying design |
 | **Downstream documents** | [SRS](SRS.md), [SDD](SDD.md), [RTM](RTM.md) — drafted 2026-10-29, for review |
 
 ---
@@ -26,6 +26,10 @@ The operational surface is identical in intent to the mobile one: the node is al
 ## 3. Vision Statement
 
 > A Galileo user opens a web address on any computer, tablet or phone on the observatory's network, signs in with a client that was approved on the Master, and sees and controls the night exactly as they would in the mobile app — with nothing to install, and with no way to reach the node's configuration.
+
+> At a public or club event, the owner opens an outreach session and visitors scan a code on their own phones to watch the live image from the telescope — no app, no sign-in, no account, and nothing they can touch but the picture — on a separate network and for as long as the event lasts.
+
+> On an Astroberry computer, the same operation is one menu away: choose **Galileo** from the Astroberry web menu that starts the INDI equipment, and image, plate solve, guide and run the session from the browser — without ever touching the desktop.
 
 ## 4. Goals and Objectives
 
@@ -107,6 +111,17 @@ Browser outreach is the web counterpart of [MobileConnect's outreach mode](../mo
 | B8 | **The same single scope.** The browser holds a guest token with `outreach.view` and nothing else; the outreach routes are an allowlist and every other route refuses, exactly as for an app guest | R7 |
 
 Consequences accepted: the outreach listener is a second, deliberately tiny network service while an event is open (B3); the owner must supply a certificate for the outreach listener (B9) and an outreach hostname that the visitors' network resolves; and the owner provides the isolated outreach network, as for app outreach (MobileConnect R15).
+
+### 6.5 Placement on Astroberry OS
+
+[Astroberry OS](https://astroberry.io/) users manage INDI equipment through the Astroberry web manager, and the Raspberry Pi at the telescope is commonly headless. WebConnect is therefore also scoped as the way a Galileo on an Astroberry computer is **operated from the Astroberry menu without the desktop**. The detailed scope is the product PSD §7 ([Galileo-WebConnect](https://github.com/gordtulloch/Galileo-WebConnect)); what bears on core is:
+
+- **The placement rule is unchanged** (Section 6.3). An Astroberry computer is either a **Master** — WebConnect runs on it, behind the Astroberry's own web server, at `/galileo/` — or a **spoke**, whose Astroberry menu entry leads to its Master's WebConnect with its Pier selected. WebConnect is not installed on a spoke.
+- **Headless Galileo is needed.** A Master or node with no display must run the domain core, plugins and WebConnect as a service. Core does not specify this today; it is a core addition (product PSD Q4).
+- **Approval on a machine with no screen.** Approving a browser (Connect Link L2) on a headless Master needs a path other than the desktop. The Astroberry web manager's Linux-account sign-in may approve a browser, as an owner-switchable, audited option available only on an Astroberry-hosted Master (product PSD §7.4). The manager's session is never itself a Galileo credential.
+- **Joining a Master** from the Astroberry menu is NodeConnect pairing with the Master-operates-this-node grant (Section 6.3) asked in the same flow (product PSD §7.5). The Master's operator still approves.
+- **INDI profiles stay Astroberry's.** Galileo shows the INDI server and profile state and may start/stop the configured profile (operational, not configuration); it never edits profiles or drivers.
+- **Astroberry-owned files are not modified; Galileo carries a fork of the web manager.** The stock Astroberry Manager has no extension point, so Galileo ships its own fork (the Galileo edition, `gordtulloch/galileo-astroberry-manager`; upstream pull requests come from a separate fork, `gordtulloch/astroberry-manager`, with no Galileo code), installed beside the stock one and switched on by a systemd drop-in, with a fall-back to the stock Manager. The fork's changes are kept minimal and generic parts are offered upstream; the Astroberry maintainer has been told (product PSD §7.9).
 
 ## 7. Requirement Domain
 
@@ -199,6 +214,16 @@ One domain, **`WCON`** (WebConnect), specified in a future SRS. Provisional sub-
 | D8 | **The event secret travels in the QR code's URL fragment**, not its path or query (B2) |
 | D9 | **Browser outreach is HTTPS-only with a certificate the owner supplies** (B9); no plain-HTTP option |
 | D10 | **The outreach event is hosted in core as a Connect Link facility (L9)**, shared with MobileConnect; WebConnect contributes the browser surface only. WebConnect alone is enough to run browser outreach |
+
+### 13.1a Proposed with the Astroberry scope (2026-11-02 — for review)
+
+| # | Decision |
+|---|---|
+| D11 | **Astroberry OS is a supported WebConnect host**, with a Galileo entry in the Astroberry web manager's menu (Section 6.5; product PSD §7) |
+| D12 | **Two placements, one rule:** an Astroberry computer is a Master running WebConnect, or a spoke whose menu entry leads to its Master (D4 stands) |
+| D13 | **A signed-in Astroberry (Linux-account) session may approve a browser on a headless Astroberry Master**; owner-switchable, audited, never a credential in itself |
+| D14 | **Galileo's star chart reuses the Astroberry chart** (d3-celestial) with Galileo overlays and actions, rather than a second chart; Galileo never moves the mount from two controllers (product PSD §7.8) |
+| D15 | **Galileo uses a fork of the Astroberry Manager, installed beside the stock one,** not a patch or overlay of it; minimal diff, rebased on upstream releases, generic changes offered upstream (product PSD §7.9). The `galileo-astroberry` PSD's former "do not fork" principle has been amended to match (2026-11-02) |
 
 ### 13.2 Remaining
 

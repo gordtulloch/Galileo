@@ -523,7 +523,16 @@ def _notifications(painter, r):
     painter.drawArc(QRectF(x + w * 0.4, y + h * 0.78, w * 0.2, h * 0.16), 180 * 16, 180 * 16)
 
 
+def _search(painter, r):
+    from PySide6.QtCore import QPointF, QRectF
+    # A magnifying glass: a lens in the upper left and a handle running to the lower right.
+    x, y, w, h = r.left(), r.top(), r.width(), r.height()
+    painter.drawEllipse(QRectF(x + w * 0.05, y + h * 0.05, w * 0.6, h * 0.6))
+    painter.drawLine(QPointF(x + w * 0.58, y + h * 0.58), QPointF(x + w * 0.95, y + h * 0.95))
+
+
 ICONS: dict[str, DrawFn] = {
+    "search": _search,
     "equipment": _equipment,
     "star_atlas": _star_atlas,
     "sky_atlas": _sky_atlas,

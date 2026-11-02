@@ -66,9 +66,24 @@ def _edit_target_block(parent, block, region, window) -> bool:
 
     name_edit = QLineEdit(block.name)
     name_edit.setObjectName("name_edit")
-    name_edit.setPlaceholderText("Search objects (e.g. M31, NGC 7000, Veil)…")
+    name_edit.setPlaceholderText("Object name (e.g. M31, NGC 7000, Veil), then click the magnifier…")
     name_edit.setClearButtonEnabled(True)
-    form.addRow("Name", name_edit)
+    from galileo.ui.icons import make_icon
+    search_btn = QToolButton()
+    search_btn.setObjectName("search_btn")
+    search_btn.setIcon(make_icon("search", dialog.palette().windowText().color().name(), 20))
+    search_btn.setToolTip("Look this name up and fill in RA and Dec — searches Galileo's catalog first, "
+                          "then SIMBAD if it isn't there")
+    name_row = QHBoxLayout()
+    name_row.addWidget(name_edit, 1)
+    name_row.addWidget(search_btn)
+    form.addRow("Name", name_row)
+
+    search_status = QLabel("")
+    search_status.setObjectName("search_status")
+    search_status.setWordWrap(True)
+    search_status.hide()
+    form.addRow(search_status)
 
     results_list = QListWidget()
     results_list.setObjectName("results_list")
@@ -105,42 +120,58 @@ def _edit_target_block(parent, block, region, window) -> bool:
                 atlas = SkyAtlas()
         return atlas
 
-    picking = False  # True while a picked result is being written back into name_edit
+    def say(message: str) -> None:
+        search_status.setText(message)
+        search_status.setVisible(bool(message))
 
-    def refresh_results(text: str) -> None:
-        results_list.clear()
-        query = text.strip()
-        if picking or not query:
-            results_list.hide()
-            return
-        try:
-            found_objs = get_atlas().search(query)[:_MAX_SEARCH_RESULTS]
-        except Exception:
-            logger.exception("Target lookup failed for %r", query)
-            found_objs = []
-        for found in found_objs:
-            item = QListWidgetItem(found.primary_name)
-            item.setData(Qt.ItemDataRole.UserRole, found)
-            results_list.addItem(item)
-        results_list.setVisible(results_list.count() > 0)
-
-    def pick(item: QListWidgetItem | None) -> None:
-        nonlocal picking
-        if item is None:
-            return
-        found = item.data(Qt.ItemDataRole.UserRole)
-        picking = True
-        try:
-            name_edit.setText(found.primary_name)
-        finally:
-            picking = False
+    def fill(found) -> None:
+        name_edit.setText(found.primary_name)
         ra_spin.setValue(found.ra_deg)
         dec_spin.setValue(found.dec_deg)
         results_list.clear()
         results_list.hide()
 
-    name_edit.textChanged.connect(refresh_results)
-    name_edit.returnPressed.connect(lambda: pick(results_list.currentItem() or results_list.item(0)))
+    def search() -> None:
+        """Look the Name text up: the internal catalog first, SIMBAD if it has no match."""
+        results_list.clear()
+        results_list.hide()
+        query = name_edit.text().strip()
+        if not query:
+            say("Type an object name first.")
+            return
+        import asyncio
+        from PySide6.QtWidgets import QApplication
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            found_objs = asyncio.run(get_atlas().search_online(query))[:_MAX_SEARCH_RESULTS]
+        except Exception:
+            logger.exception("Target lookup failed for %r", query)
+            say(f"The lookup for “{query}” failed — see the log. You can still enter RA and Dec by hand.")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not found_objs:
+            say(f"“{query}” was not found in the catalog or SIMBAD. Check the spelling, "
+                "or enter RA and Dec by hand.")
+        elif len(found_objs) == 1:
+            fill(found_objs[0])
+            say(f"Found {found_objs[0].primary_name}.")
+        else:
+            for found in found_objs:
+                item = QListWidgetItem(found.primary_name)
+                item.setData(Qt.ItemDataRole.UserRole, found)
+                results_list.addItem(item)
+            results_list.show()
+            say(f"{len(found_objs)} matches — pick one.")
+
+    def pick(item: QListWidgetItem | None) -> None:
+        if item is None:
+            return
+        fill(item.data(Qt.ItemDataRole.UserRole))
+        say("")
+
+    search_btn.clicked.connect(search)
+    name_edit.returnPressed.connect(search)
     results_list.itemActivated.connect(pick)
     results_list.itemClicked.connect(pick)
 

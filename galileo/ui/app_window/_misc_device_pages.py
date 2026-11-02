@@ -126,5 +126,6 @@ class AppWindowMiscDevicePagesMixin:
         screen."""
         from galileo.ui.solve import SolvePage
         page = SolvePage(self)
-        self._device_pages["solve"] = {"reload": page.reload, "refresh_target": page.refresh_target}
+        self._device_pages["solve"] = {"reload": page.reload, "refresh_target": page.refresh_target,
+                                          "capture_and_solve": page.capture_and_solve}
         return page

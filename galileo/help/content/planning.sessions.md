@@ -157,7 +157,7 @@ Sends your message to the notification channels you have set up (e.g. email or t
 
 ## Name
 
-The target's name — also a search box. Type part of a name or designation (M31, NGC 7000, Veil) and matching catalog objects are listed below; click one (or press Enter for the first) to fill in the name, RA and Dec. You can still type a name and enter RA/Dec by hand.
+The target's name. Type a name or designation (M31, NGC 7000, Veil) and click the magnifying glass beside it (or press Enter) to look it up: Galileo's own catalog is searched first, and SIMBAD (needs internet) only if the catalog has no match. A single match fills in the name, RA and Dec at once; several matches are listed for you to click one. A message under the field says when nothing was found. You can also just type a name and enter RA/Dec by hand.
 
 ## RA
 

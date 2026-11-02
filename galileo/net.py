@@ -31,3 +31,30 @@ def urlopen_http(req: str | urllib.request.Request, timeout: float | None = None
     """``urllib.request.urlopen`` restricted to http(s) URLs (usable as a context manager)."""
     check_http_url(req if isinstance(req, str) else req.full_url)
     return urllib.request.urlopen(req, data, timeout)  # noqa: S310 - scheme checked above
+
+
+def is_loopback(address: str) -> bool:
+    """True for an address that only ever means "this machine" (PROF-130, GUIDE-100): ``localhost``,
+    ``127.0.0.0/8``, ``::1`` and ``0.0.0.0``. A host name is not resolved -- only literals are judged,
+    so a value copied from another node cannot cause a lookup."""
+    import ipaddress
+    host = address.strip().lower()
+    if "://" in host:
+        host = urlparse(host).hostname or ""
+    elif host.startswith("["):                       # [v6] or [v6]:port
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:                       # host:port (a bare IPv6 literal has several colons)
+        host = host.split(":", 1)[0]
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_unspecified
+
+
+class LoopbackGuard:
+    """Namespace for the check, as named in the design (SDD 4.32)."""
+
+    is_loopback = staticmethod(is_loopback)

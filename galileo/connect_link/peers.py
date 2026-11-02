@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 import uuid
@@ -70,6 +71,18 @@ class PeerStore:
     def __init__(self, clock: Callable[[], float] = time.time) -> None:
         self._clock = clock
         self._declared: dict[str, frozenset[str]] = {}
+        self._on_end: list[Callable[[str], object]] = []
+
+    def on_peer_ended(self, listener: Callable[[str], object]) -> None:
+        """Call *listener(peer_id)* when a peer is revoked or deleted, so its streams close at once."""
+        self._on_end.append(listener)
+
+    def _ended(self, peer_id: str) -> None:
+        for fn in list(self._on_end):
+            try:
+                fn(peer_id)
+            except Exception:                                   # a listener never blocks a revoke
+                logging.getLogger(__name__).exception("peer-ended listener failed")
 
     # -- plugin declarations -------------------------------------------------
     def declare_plugin(self, plugin: str, permissions: Iterable[str]) -> None:
@@ -156,15 +169,23 @@ class PeerStore:
         self._require(peer_id)
         model = self._model()
         model.update(revoked_at=self._clock()).where(model.peer_id == peer_id).execute()
+        self._ended(peer_id)
         return self._require(peer_id)
 
     def delete(self, peer_id: str) -> bool:
         model = self._model()
-        return model.delete().where(model.peer_id == peer_id).execute() > 0
+        gone = model.delete().where(model.peer_id == peer_id).execute() > 0
+        if gone:
+            self._ended(peer_id)
+        return gone
 
     def delete_plugin_peers(self, plugin: str) -> int:
         model = self._model()
-        return model.delete().where(model.plugin == plugin).execute()
+        ids = [r.peer_id for r in model.select(model.peer_id).where(model.plugin == plugin)]
+        n = model.delete().where(model.plugin == plugin).execute()
+        for pid in ids:
+            self._ended(pid)
+        return n
 
     def _require(self, peer_id: str) -> Peer:
         peer = self.get(peer_id)

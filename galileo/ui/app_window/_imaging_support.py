@@ -124,9 +124,11 @@ class AppWindowImagingSupportMixin:
             context["focus_position"] = position
         return {key: value for key, value in context.items() if value not in (None, "")}
 
-    def _mount_to_object(self: AppWindowState, action: str, obj: dict) -> bool:
+    def _mount_to_object(self: AppWindowState, action: str, obj: dict, then_solve: bool = False) -> bool:
         """Point the current Pier's mount at a Star Atlas *obj*: ``"goto"`` slews
-        to it, ``"sync"`` tells the mount it is already pointing there. Uses the
+        to it, ``"sync"`` tells the mount it is already pointing there. With
+        *then_solve*, a goto is followed by a plate solve once the slew has
+        finished (Goto and Centre). Uses the
         connection made on the Equipment > Mount page (which is reset whenever
         the Pier changes) and reports the outcome on the status bar. Returns
         whether the command was sent."""
@@ -173,8 +175,16 @@ class AppWindowImagingSupportMixin:
         self._window.statusBar().showMessage(
             f"Slewing the mount to {obj['name']}." if action == "goto" else f"Mount synced to {obj['name']}.", 4000)
         if action == "goto":
-            self._track_when_slew_finishes(adapter, obj)
+            self._track_when_slew_finishes(adapter, obj, then=self._solve_after_goto if then_solve else None)
         return True
+
+    def _solve_after_goto(self: AppWindowState) -> None:
+        """Start the Solve page's capture-and-solve once a Goto and Centre slew has settled."""
+        start = (self._device_pages.get("solve") or {}).get("capture_and_solve")
+        if start is None:
+            return
+        self._window.statusBar().showMessage("Slew finished — starting plate solve.", 4000)
+        start()
 
     def _connect_device_adapter(
         self: AppWindowState, category, driver: str, server: str, port: int, device_name: str, configure=None,

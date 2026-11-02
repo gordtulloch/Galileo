@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from galileo.replication.busy import tracker as _busy_tracker
+
 logger = logging.getLogger(__name__)
 
 
@@ -397,6 +399,11 @@ class SessionExecutor:
 
     def _set_state(self, state: RunState, message: str = "") -> None:
         self.state = state
+        # REPL-060: a running or paused session makes the node busy for bulk applies of replicated settings
+        if state in (RunState.RUNNING, RunState.PAUSED):
+            _busy_tracker.acquire(self)
+        else:
+            _busy_tracker.release(self)
         if message:
             self._record(message)
         self._emit(message)

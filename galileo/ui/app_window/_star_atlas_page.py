@@ -350,6 +350,10 @@ class AppWindowStarAtlasPageMixin:
             menu = QMenu(view)
             goto = menu.addAction("Goto")
             goto.setToolTip("Slew the current Pier's mount to this object or sky position")
+            goto_centre = menu.addAction("Goto and Centre")
+            goto_centre.setToolTip(
+                "Slew the current Pier's mount to this object or sky position, then plate solve "
+                "(using the Solve screen's settings) to centre it")
             sync = menu.addAction("Sync")
             sync.setToolTip("Tell the current Pier's mount it is pointing at this object")
             menu.addSeparator()
@@ -360,12 +364,13 @@ class AppWindowStarAtlasPageMixin:
             )
             is_satellite = obj is not None and obj.get("type") == "Satellite"
             goto.setEnabled((obj is not None or sky_point is not None) and not is_satellite)
+            goto_centre.setEnabled(goto.isEnabled())
             sync.setEnabled(obj is not None and not is_satellite)
             add_to_session.setEnabled(obj is not None and not is_satellite)
 
-            def do_goto() -> None:
+            def do_goto(then_solve: bool = False) -> None:
                 if obj is not None:
-                    self._mount_to_object("goto", obj)
+                    self._mount_to_object("goto", obj, then_solve=then_solve)
                     return
                 if sky_point is None:
                     return
@@ -379,9 +384,10 @@ class AppWindowStarAtlasPageMixin:
                     "name": name.strip(),
                     "ra_deg": sky_point["ra_deg"], "dec_deg": sky_point["dec_deg"],
                     "alt": sky_point["alt"], "az": sky_point["az"],
-                })
+                }, then_solve=then_solve)
 
-            goto.triggered.connect(do_goto)
+            goto.triggered.connect(lambda: do_goto())
+            goto_centre.triggered.connect(lambda: do_goto(True))
             sync.triggered.connect(lambda: self._mount_to_object("sync", obj))
             add_to_session.triggered.connect(
                 lambda: self._add_to_session(obj["name"], obj["ra_deg"], obj["dec_deg"])

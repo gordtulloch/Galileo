@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Project** | Galileo — WebConnect Plugin |
-| **Document** | RTM (Requirements Traceability Matrix), v0.1, draft — **seeded from the SRS; SDD components mapped; tests in `tests/test_wcon.py` (30 of 105 written, the rest reserved)** |
+| **Document** | RTM (Requirements Traceability Matrix), v0.1, draft — **seeded from the SRS; SDD components mapped; tests in `tests/test_wcon.py` (30 of 134 written, the rest reserved)** |
 | **Status** | Draft — for review |
 | **Date** | 2026-10-29 |
 | **Upstream documents** | [PSD](PSD.md), [SRS](SRS.md), [SDD](SDD.md) |
@@ -19,7 +19,7 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 
 **Core prerequisite:** the capability a row cannot be verified without, using the reference codes of SRS Section 2.6 (CL Connect Link, CS Control Surface, LS lease, OE operation events, PV preview rendering, DM deadman, MF manual focus, SK sky streaming, OF outreach facility, DG delegated identity). Until that capability exists, the row stays reserved but is verified against a stub. `WR` (the Master relay) is defined by this plugin and so is not a prerequisite here.
 
-**Coverage:** 105 requirements, 100% mapped to an SDD component; 105 test functions in `tests/test_wcon.py`, 30 with bodies (security `WCON-1000`–`1060`, outreach `WCON-1210`–`1310`, role/CSRF/confirmation/idempotency pass-through, SSE resume, configuration) and 75 reserved — they skip until the `webconnect` package exists, then fail until written. The 30 were validated against a throwaway reference implementation, not against the real plugin. Security requirements (`WCON-1000`–`1070`) and outreach confinement (`WCON-1210`, `1220`, `1250`, `1310`) are the highest-priority rows to write tests for first.
+**Coverage:** 134 requirements, 100% mapped to an SDD component; 134 test functions in `tests/test_wcon.py`, 30 with bodies (security `WCON-1000`–`1060`, outreach `WCON-1210`–`1310`, role/CSRF/confirmation/idempotency pass-through, SSE resume, configuration) and 75 reserved — they skip until the `webconnect` package exists, then fail until written. The 30 were validated against a throwaway reference implementation, not against the real plugin. Security requirements (`WCON-1000`–`1070`) and outreach confinement (`WCON-1210`, `1220`, `1250`, `1310`) are the highest-priority rows to write tests for first.
 
 **Shared tests.** Several rows are satisfied by the design shared with MobileConnect (pipeline, confirmation, idempotency, relay: SDD §2.3, §3.9). Their tests run against the shared package's contract suite for both plugins, and a `WCON` test asserts the browser path exercises it.
 
@@ -187,14 +187,44 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 | `WCON-1320` | MVP | provide, and persist in Galileo's database (`PLUG-150`), these browser-outreach… | SDD 3.11 `outreach`; SDD 3.13 `config, ui` | — | Test | `TC-WCON-1320` |
 | `WCON-1330` | P2 | contribute to the facility's aggregate audit the number of browser guests per… | SDD 3.11 `outreach` | OF | Test | `TC-WCON-1330` |
 
+| `WCON-1400` | MVP | Detect Astroberry hosting | SDD 3.15 `astroberry` | — | Test | `TC-WCON-1400` |
+| `WCON-1410` | MVP | Be reached at /galileo/ behind the front end | SDD 3.15 `astroberry`; SDD 3.2 `supervisor` | — | Test | `TC-WCON-1410` |
+| `WCON-1420` | MVP | Scope the cookie and routes | SDD 3.15 `astroberry`; SDD 3.4 `web.session` | — | Test | `TC-WCON-1420` |
+| `WCON-1430` | MVP | Use a separate page with its own policy | SDD 3.15 `astroberry`; SDD 3.10 `web.ui` | — | Test | `TC-WCON-1430` |
+| `WCON-1440` | P2 | Match the Astroberry look | SDD 3.10 `web.ui` | — | Test | `TC-WCON-1440` |
+| `WCON-1450` | MVP | Show no entry that fails | SDD 3.15 `astroberry`; SDD 3.2 `supervisor` | — | Test | `TC-WCON-1450` |
+| `WCON-1460` | MVP | Show status first | SDD 3.15 `astroberry` | — | Test | `TC-WCON-1460` |
+| `WCON-1470` | MVP | Lead to the Master from a spoke | SDD 3.15 `astroberry` | NC | Test | `TC-WCON-1470` |
+| `WCON-1480` | MVP | Accept approval vouched by the fork | SDD 3.15 `astroberry`; SDD 3.3 `delegate` | CL | Test | `TC-WCON-1480` |
+| `WCON-1490` | MVP | Choose the role; first browser | SDD 3.15 `astroberry`; SDD 3.3 `delegate` | CL | Test | `TC-WCON-1490` |
+| `WCON-1500` | MVP | Switch Astroberry approval off | SDD 3.15 `astroberry`; SDD 3.13 `config` | — | Test | `TC-WCON-1500` |
+| `WCON-1510` | MVP | Audit the approving account | SDD 3.15 `astroberry`; SDD 3.3 `delegate` | CL | Test | `TC-WCON-1510` |
+| `WCON-1520` | P2 | Join a Master from the menu | SDD 3.15 `astroberry` | NC | Test | `TC-WCON-1520` |
+| `WCON-1530` | P2 | Show pairing status live | SDD 3.15 `astroberry`; SDD 3.7 `web.events` | NC | Test | `TC-WCON-1530` |
+| `WCON-1540` | MVP | Never edit INDI profiles or drivers | SDD 3.15 `astroberry` | — | Test | `TC-WCON-1540` |
+| `WCON-1550` | MVP | Show INDI server and profile state | SDD 3.15 `astroberry`; SDD 3.6 `web.api` | — | Test | `TC-WCON-1550` |
+| `WCON-1560` | P2 | Start and stop the chosen profile | SDD 3.15 `astroberry`; SDD 3.6 `web.api` | CS | Test | `TC-WCON-1560` |
+| `WCON-1570` | MVP | Address devices by hostname | SDD 3.15 `astroberry` | NC | Test | `TC-WCON-1570` |
+| `WCON-1580` | P2 | Use Astroberry location and almanac as a fallback | SDD 3.15 `astroberry`; SDD 3.6 `web.api` | — | Test | `TC-WCON-1580` |
+| `WCON-1590` | P2 | Use the Astroberry star chart | SDD 3.15 `astroberry`; SDD 3.10 `web.ui` | PV | Test | `TC-WCON-1590` |
+| `WCON-1600` | P2 | Draw Galileo overlays on the chart | SDD 3.10 `web.ui` | SK | Test | `TC-WCON-1600` |
+| `WCON-1610` | P2 | Act on a chart object through the Control Surface | SDD 3.10 `web.ui`; SDD 3.6 `web.api` | CS | Test | `TC-WCON-1610` |
+| `WCON-1620` | P2 | Keep one controller of the mount | SDD 3.16 `fork`; SDD 3.10 `web.ui` | LS | Test | `TC-WCON-1620` |
+| `WCON-1630` | P3 | Offer deeper chart data | SDD 3.10 `web.ui` | — | Test | `TC-WCON-1630` |
+| `WCON-1640` | MVP | Install the fork beside the stock manager | SDD 3.16 `fork` | — | Test | `TC-WCON-1640` |
+| `WCON-1650` | MVP | Fall back to the stock manager | SDD 3.16 `fork` | — | Test | `TC-WCON-1650` |
+| `WCON-1660` | MVP | Identify the fork honestly | SDD 3.16 `fork` | — | Test | `TC-WCON-1660` |
+| `WCON-1670` | MVP | Carry events through the /galileo/ route | SDD 3.16 `fork`; SDD 3.15 `astroberry` | — | Test | `TC-WCON-1670` |
+| `WCON-1680` | MVP | Assume no Astroberry route is safe | SDD 3.15 `astroberry`; SDD 3.5 `web.security` | — | Test | `TC-WCON-1680` |
+
 ---
 
 ## 3. Summary by Domain
 
 | Domain | Requirements | MVP | P2 | P3 |
 |---|---|---|---|---|
-| `WCON` | 105 | 89 | 14 | 2 |
-| **Total** | **105** | **89** | **14** | **2** |
+| `WCON` | 134 | 108 | 23 | 3 |
+| **Total** | **134** | **108** | **23** | **3** |
 
 ---
 

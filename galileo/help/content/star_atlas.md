@@ -157,6 +157,10 @@ Its compass direction at the time shown, in degrees from north through east.
 
 Slews the current Pier's mount to the selected object. The mount must be connected and unparked, and the target above any limits set on the Mount page.
 
+## Goto and Centre
+
+Slews the current Pier's mount to the object (or the sky point you right-clicked), and when the slew has finished and tracking is on, starts a capture-and-solve on the Solve screen. The solve uses that screen's settings, so the action chosen there (sync, or slew back to the target until close enough) is what actually centres the object. Needs the same mount conditions as Goto, plus a connected camera; if the mount never settles, no solve is started.
+
 ## Sync
 
 Tells the current Pier's mount that it is pointing at the selected object. Use it after centring the object by eye or plate solve, to correct the mount's pointing model.
