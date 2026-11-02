@@ -55,6 +55,8 @@ def init_db(path: Path | str | None = None) -> None:
     db.init(str(target), pragmas={"journal_mode": "wal", "foreign_keys": 1, "busy_timeout": 5000})
     run_migrations()
     db.connect(reuse_if_open=True)
+    from galileo.replication.tracking import reset_apply_mode
+    reset_apply_mode()                  # a crash mid-apply must not leave local edits untracked (REPL-010)
     logger.info("Database initialised at %s", target)
 
 

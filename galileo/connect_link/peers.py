@@ -76,6 +76,10 @@ class PeerStore:
         """Record the permissions *plugin* may grant (LINK-030); later calls replace earlier ones."""
         self._declared[plugin] = frozenset(permissions)
 
+    def declared(self, plugin: str) -> frozenset[str]:
+        """What *plugin* declared it may grant (empty if it declared nothing)."""
+        return self._declared.get(plugin, frozenset())
+
     def _model(self):
         from galileo.library.models.base import db
         from galileo.library.models.link import LinkPeerRecord

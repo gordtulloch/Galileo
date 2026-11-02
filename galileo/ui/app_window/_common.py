@@ -92,7 +92,8 @@ OPTIONS_SECTION = ("options", "Options", "options")
 # plus a few Options-only entries that aren't primary sections themselves —
 # "plugins" is the in-app Plugin Manager (PLUG-030/PLUG-060).
 OPTIONS_ITEMS = [*PRIMARY_SECTIONS, ("notifications", "Notifications", "notifications"),
-                 ("plugins", "Plugins", "plugins")]
+                 ("connect_link", "Connect Link", "connect_link"),
+                 ("connect_link_outreach", "Outreach", "connect_link"), ("plugins", "Plugins", "plugins")]
 
 # Sections that open onto a secondary menu of their own, like Equipment does:
 # section_id -> [(item_id, label, icon_name)].
@@ -252,6 +253,29 @@ def _format_dms(degrees: float | None) -> str:
     d, rem = divmod(total_seconds, 3600)
     m, s = divmod(rem, 60)
     return f"{sign}{d:02d}° {m:02d}' {s:02d}\""
+
+
+def guard_loopback_edit(edit) -> None:
+    """Refuse a loopback address in a device host field (PROF-130, GUIDE-100). When the user finishes
+    editing, ``localhost``, ``127.x.x.x``, ``::1`` and ``0.0.0.0`` are cleared with a message asking for the
+    machine's real host name or LAN address, so a stored address means the same machine on every node."""
+    from galileo.net import loopback_message
+
+    def check() -> None:
+        message = loopback_message(edit.text())
+        if message:
+            from PySide6.QtWidgets import QMessageBox
+            edit.clear()
+            QMessageBox.warning(edit.window(), "Use the machine's real address", message)
+
+    def flag(text: str) -> None:
+        # A stored (or half-typed) loopback address is marked, not silently changed.
+        message = loopback_message(text)
+        edit.setToolTip(message)
+        edit.setStyleSheet("border: 1px solid #c0392b;" if message else "")
+
+    edit.textChanged.connect(flag)
+    edit.editingFinished.connect(check)
 
 
 def _new_form_layout(parent: QWidget | None = None) -> QFormLayout:

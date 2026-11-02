@@ -13,7 +13,7 @@ import os
 from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
 
 from ._hold_to_move import HoldToMove, combo_rate, combo_rate_index, sync_rate_combo
-from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget
+from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget, guard_loopback_edit
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ class AppWindowMountPageMixin:
         table.setCellWidget(0, 0, driver_combo)
 
         server_edit = QLineEdit()
+        guard_loopback_edit(server_edit)
         server_edit.setPlaceholderText("FQDN or IP, e.g. seestar.local or 192.168.1.50")
         server_edit.setMaxLength(40)
         table.setCellWidget(0, 1, server_edit)

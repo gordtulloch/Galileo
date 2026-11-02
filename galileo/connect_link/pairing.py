@@ -11,7 +11,9 @@ refused when the pending list is full.
 
 from __future__ import annotations
 
+import functools
 import secrets
+import threading
 import time
 import uuid
 from collections import deque
@@ -57,6 +59,16 @@ class PairingRequest:
     peer_id: str = ""
 
 
+def _locked(method):
+    """Run a PairingService method under its lock: the listener's thread polls and creates requests while
+    the Options page approves them from the UI thread."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class PairingService:
     def __init__(
         self, peers: PeerStore, clock: Callable[[], float] = time.time, *, expiry_s: float = DEFAULT_EXPIRY_S,
@@ -69,12 +81,14 @@ class PairingService:
         self._rate = rate_limit
         self._requests: dict[str, PairingRequest] = {}
         self._by_source: dict[str, deque[float]] = {}
+        self._lock = threading.RLock()
 
     def _sweep(self) -> None:
         now = self._clock()
         for rid in [r for r, p in self._requests.items() if now >= p.expires_at]:
             del self._requests[rid]
 
+    @_locked
     def request(self, plugin: str, name: str, kind: str, platform: str, source: str) -> PairingRequest:
         self._sweep()
         now = self._clock()
@@ -95,6 +109,7 @@ class PairingService:
         self._requests[req.request_id] = req
         return req
 
+    @_locked
     def pending(self) -> list[PairingRequest]:
         """What the owner sees beside each confirmation code."""
         self._sweep()
@@ -107,6 +122,7 @@ class PairingService:
             raise UnknownPairing(request_id)
         return req
 
+    @_locked
     def approve(
         self, request_id: str, permissions: Iterable[str], *, cert_fingerprint: str = "",
         expires_at: float | None = None,
@@ -122,9 +138,11 @@ class PairingService:
         req.expires_at = self._clock() + self.expiry_s      # time left to collect the token
         return peer
 
+    @_locked
     def reject(self, request_id: str) -> None:
         self._get(request_id).state = "rejected"
 
+    @_locked
     def poll(self, request_id: str) -> tuple[str, str | None]:
         """What the requesting peer sees: ``(state, token)``. The token is returned once, then gone.
         An unknown or expired request is ``("expired", None)``."""

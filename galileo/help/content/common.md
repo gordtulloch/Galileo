@@ -11,7 +11,7 @@ Changing the driver also resets **Port** to that protocol's usual value.
 
 ## Server
 
-The network name or IP address of the computer running the Alpaca bridge or INDI server, for example `seestar.local` or `192.168.1.50`. Leave it blank (or use `localhost`) when the server runs on this computer.
+The network name or IP address of the computer running the Alpaca bridge or INDI server, for example `seestar.local` or `192.168.1.50`. Use the computer's real name or LAN address even when the server runs on this computer: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` are refused (the field is cleared with a message), because a saved address has to mean the same computer on every Galileo node. A profile saved earlier with one of those addresses is marked in red when it loads; replace it with the real name.
 
 ## Port
 

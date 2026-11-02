@@ -113,6 +113,12 @@ def main() -> None:
     _schedule_library_preload()
 
     exit_code = app.exec()
+    # Close Connect Link's listener and loop if it was ever started (LINK-270); pairings are kept.
+    try:
+        from galileo.connect_link.host import shutdown_host
+        shutdown_host()
+    except Exception:
+        logger.exception("Connect Link did not shut down cleanly")
     # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
     from galileo.core.compute import shutdown_cpu_executor
     shutdown_cpu_executor(wait=False)

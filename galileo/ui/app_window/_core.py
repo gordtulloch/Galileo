@@ -355,6 +355,8 @@ class AppWindowCoreMixin:
         option_builders["guiding"] = self._build_guiding_settings_page
         option_builders["science"] = self._build_science_settings_page
         option_builders["notifications"] = self._build_notifications_settings_page
+        option_builders["connect_link"] = self._build_connect_link_settings_page
+        option_builders["connect_link_outreach"] = self._build_outreach_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
         # Plugins that offer an options page (PLUG-170) get an item after Plugins.
         options_items = list(OPTIONS_ITEMS)

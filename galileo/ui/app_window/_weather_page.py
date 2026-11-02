@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import logging
 import time
 
-from ._common import _when_visible, _DEFAULT_PORTS, QWidget
+from ._common import _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,7 @@ class AppWindowWeatherPageMixin:
         table.setCellWidget(0, 0, driver_combo)
 
         server_edit = QLineEdit()
+        guard_loopback_edit(server_edit)
         server_edit.setPlaceholderText("FQDN or IP, e.g. weather.local or 192.168.1.60")
         server_edit.setMaxLength(40)
         table.setCellWidget(0, 1, server_edit)

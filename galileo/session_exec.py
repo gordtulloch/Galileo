@@ -415,7 +415,13 @@ class SessionExecutor:
 
     async def run(self, blocks: list) -> SessionRunResult:
         """Execute *blocks* start to finish and report how it ended. Never raises for a block
-        failure — that is the result's ``state``/``errors``."""
+        failure — that is the result's ``state``/``errors``. While it runs, the process-wide busy
+        signal is set so a bulk apply of replicated settings can wait for it (REPL-060)."""
+        from galileo.replication.busy import get_session_busy
+        with get_session_busy().running():
+            return await self._run(blocks)
+
+    async def _run(self, blocks: list) -> SessionRunResult:
         self._loop = asyncio.get_running_loop()
         blocks = list(blocks)
         tree = build_tree(blocks)

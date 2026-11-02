@@ -60,7 +60,7 @@ Every control has built-in help, and the [wiki](https://github.com/gordtulloch/G
 
 ### Not implemented yet
 
-- The NodeConnect, MobileConnect and WebConnect plugins (designed, not built)
+- The NodeConnect, MobileConnect and WebConnect plugins. Their shared core is partly built (the Connect Link listener, pairing, transfer, discovery, request pipeline, Master relay, outreach event facility, Control Surface registry and lease, preview and sky streaming services, replication support, and the Library *On Master* state) but has no screen yet and no service registers its operations, so none of it can be used from the application. See [`docs/CONNECT_PLUGINS_CHECKLIST.md`](docs/CONNECT_PLUGINS_CHECKLIST.md).
 
 ### Project health
 

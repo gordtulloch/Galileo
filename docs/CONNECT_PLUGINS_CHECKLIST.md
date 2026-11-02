@@ -9,7 +9,7 @@ Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{no
 | Plugin code | **None.** `Galileo-Plugins/{nodeconnect,mobileconnect}` hold a README only (no `plugin.toml`, so `build_plugins.py` skips them); `Galileo-Plugins/webconnect` is where WebConnect will be built (README only today; the separate `Galileo-WebConnect` repository is retired, 2026-10-31) |
 | Requirements | NCON 45 (41 MVP), MCON 107 (93 MVP), WCON 120 (102 MVP); each has an RTM with reserved `TC-*` IDs |
 | Tests | `tests/test_wcon.py` exists: 6 doc-chain tests pass, 120 requirement tests skip (`importorskip`). **No `test_ncon.py` / `test_mcon.py`** |
-| Core prerequisites | **Specified, not built (2026-10-30).** Core SRS/RTM/SDD now hold: `LINK-010`–`270` in full, `CSURF`, `LEASE`, `PREV`, `SKYSTR`, `REPL`, `FOC-100`–`130`, `LIB-200`–`220`, `HIST-050`, `PROF-130`, `GUIDE-100`, `PLUG-200`; designed at component level in core SDD §4.11, §4.17, §4.20, §4.23, §4.28–4.32. No code exists, and every `TC-*` is reserved but unwritten |
+| Core prerequisites | **Built, tested, not yet wired in (code checked 2026-11-02).** Connect Link L1–L8 and the pipeline: listener, certificates, pairing, permissions/peers/audit, routes, stream, handshake, delegation, transfer (`LINK-070`), discovery (`LINK-040`), `Gateway` (`LINK-230`), Master relay (`LINK-220`), the service with settings/start-stop/disable (`LINK-260`, `LINK-270`) and the outreach facility (`LINK-100`–`210`); the Control Surface registry, state, events, lease, held motion and emergency operations; the preview service; sky streaming; replication support (tracking, tombstones, registry, busy signal, sync tables, revisions); manual focus; the Library *On Master* state with Retrieve; history transfer; the loopback check. **Not built:** a `DeviceAccess` that finds each Pier's connected devices (the catalogue for devices, focus and safety is built and tested but nothing registers it); the other catalogue areas (`CSURF-120`–`210`, `230`, `240`: imaging, sky, solve, guiding, flip, sessions, scheduler, calibration, Library, notifications); any outreach surface; Options > Connect Link (`LINK-250`) and Options > Outreach (`LINK-190`) are built with help; the per-area Control Surface inventory (`CSURF-100`–`240`: no service registers an operation yet); `scheduler_jobs` is the only configuration table not yet replicable; the loopback refusal is applied to every device and PHD2 host field; `HIST-050` is in `SessionHistory` but nothing calls it; `PLUG-200` is done. The Library On Master action is the only part a user can see today. Not measured yet, and not covered by tests: discovery over a real LAN, held-motion timing on Wi-Fi, and sky-streaming/preview speed on a Raspberry Pi 5 |
 | App repo | `Galileo-MobileConnect` is the iOS/Android/Quest *apps* (not the plugin): PSD, SRS, a Quest atlas spike. **It stays a separate repository (decided 2026-10-31, MobileConnect PSD D22)** because the apps are developed there. Out of scope here except for the wire contract (§5) |
 
 **Consequence:** the plugins are thin layers over core facilities that do not exist. Each design codes against `typing.Protocol` ports with test stubs, so plugin work can start early, but nothing can be verified end to end until core catches up. Build order below follows that.
@@ -33,43 +33,46 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 
 | Item | Requirements | Core SDD | Spec status |
 |---|---|---|---|
-| Connect Link L1–L8, delegation, relay, pipeline, audit, Options, secrets, disable | `LINK-010`–`090`, `220`–`270` | §4.28 | [x] Specified; component design written (ADR-LINK-004…007); wire details (route shapes, message formats, OpenAPI) still to be written with the first code |
-| Outreach facility (L9) | `LINK-100`–`210` | §4.28 | [x] Specified and designed |
-| Control Surface, operation events, held motion, emergency | `CSURF-010`–`420` | §4.29 | [x] Specified; component design written; the per-area operation inventory (`CSURF-100`–`250`) is at area level — each service lists its concrete entries when it registers |
-| Control lease | `LEASE-010`–`080` | §4.29 | [x] Specified and designed |
-| Preview service | `PREV-010`–`060` | §4.30 | [x] Specified and designed |
-| Sky streaming | `SKYSTR-010`–`080` | §4.31 | [x] Specified; byte-level encoding to be fixed with the Quest SDD (versioned schema file) |
-| Replication support (C1–C6) | `REPL-010`–`080`, `PROF-130`, `GUIDE-100` | §4.32, §4.4, §4.14 | [x] Specified and designed |
-| Library On Master (C7), history transfer form | `LIB-200`–`220`, `HIST-050` | §4.23, §4.17 | [x] Specified and designed |
-| Manual focus in the focus module | `FOC-100`–`130` | §4.11 | [x] Specified and designed |
+| Connect Link L1–L8, delegation, relay, pipeline, audit, Options, secrets, disable | `LINK-010`–`090`, `220`–`270` | §4.28 | [x] Built and tested, including the Options page (`LINK-250`); wire details (OpenAPI) still to be written |
+| Outreach facility (L9) | `LINK-100`–`210` | §4.28 | [x] Facility built and tested; **no surface and no Outreach page yet** (`LINK-190` screen) |
+| Control Surface, operation events, held motion, emergency | `CSURF-010`–`420` | §4.29 | [x] Registry, schema, events, state, held motion and emergency built and tested; **the per-area inventory `CSURF-100`–`240` is not**: no service registers its operations yet |
+| Control lease | `LEASE-010`–`080` | §4.29 | [x] Built and tested (broker, gateway check, spoke-held via the relay); **the desktop does not yet honour or show it** (`LEASE-060`) |
+| Preview service | `PREV-010`–`060` | §4.30 | [x] Built and tested; nothing calls it yet (no frame sources are registered) |
+| Sky streaming | `SKYSTR-010`–`080` | §4.31 | [x] Built and tested (encoding schema v1 is in code; the Quest SDD must adopt it); nothing calls it yet |
+| Replication support (C1–C6) | `REPL-010`–`080`, `PROF-130`, `GUIDE-100` | §4.32, §4.4, §4.14 | [x] Tracking, tombstones, registry, busy signal, settings-changed event, sync tables and revisions built and tested for `app_settings`; **12 other configuration tables are listed as pending registration**; the loopback check exists but is not applied to the UI |
+| Library On Master (C7), history transfer form | `LIB-200`–`220`, `HIST-050` | §4.23, §4.17 | [x] Built and tested, including the Library > Images Retrieve action and help; moving frames to a Master awaits NodeConnect |
+| Manual focus in the focus module | `FOC-100`–`130` | §4.11 | [x] `ManualFocus` built and tested; the Focus screen uses it; the Control Surface operations for it are not registered yet |
 | Plugin dependencies | `PLUG-200` | §4.20 | [x] Specified; `requires` format to be finalised in code |
 
 ### 2a. Connect Link — unlocks all three plugins
-- [ ] Expand `LINK-010`–`080` from outline to full requirements and write the `galileo.connect_link` design beyond the L9 seams
-- [ ] L1 encrypted listener + pinned certificate; L2 pairing with approval, per-peer tokens; L3 scopes (`config.read/write`, `data.push/pull`, `control`, `view`) + audit log; L4 LAN discovery + manual address; L5 plugin-registered versioned routes; L6 server-push stream; L7 chunked, resumable, checksummed transfer; L8 version handshake with plugin extension
-- [ ] L9 outreach event facility (`LINK-100`–`210`): lifecycle/timer, event secret, subnet guard, guest tokens, caps, aggregate audit, event display and QR codes, surface registration (`mobile`, `browser`)
-- [ ] Delegated identity (`LINK-090`): service credential registered per plugin, client resolved to its own role/scopes/expiry, refusal of revoked/expired/unknown/other-plugin clients, client as audit actor; and asserted source address for the browser surface (WCON SDD P5), per decision above
+- [ ] Expand `LINK-010`–`080` from outline to full requirements (the code now exists; the SRS text still needs updating to match it)
+- [x] **Built (2026-10-31, tested):** L1 encrypted listener + certificate; L2 pairing with approval, per-peer tokens; L3 scopes + audit log; L5 plugin-registered versioned routes; L6 server-push stream; L4 LAN discovery (`discovery.py`, `TC-LINK-040`, 2026-11-02); L7 resumable chunked SHA-256 transfer (`transfer.py`, `TC-LINK-070`, 2026-11-02); L8 version handshake with plugin extension
+- [x] L1–L8 and the shared pipeline are built. Remaining for them: a real-multicast check of discovery on Windows, macOS and Pi (the tests use a fake backend), and a real HTTPS soak with a phone or tablet
+- [x] L9 outreach event facility (`LINK-100`–`210`) built and tested (2026-11-02): lifecycle/timer, event secret, subnet guard, guest tokens, caps, aggregate audit, QR payloads and SVG, surface registration. Still to do: a surface (MobileConnect / WebConnect), and the Outreach page (`LINK-190`)
+- [x] Delegated identity (`LINK-090`): built in `peers.py` with `TC-LINK-090` tests (service credential, client's own scopes/expiry, refusal of revoked/expired/unknown/other-plugin clients)
+- [ ] Still open for `LINK-090`: asserted source address for the browser surface (WCON SDD P5)
 - [x] Outreach amendment (event-scoped enrolment L2, `outreach.view` L3, per-surface toggles `LINK-110`/`200`) was already in core SRS `LINK-020`/`030`/`110`/`200`; audit-log plugin fields and retention added to `LINK-030` (2026-10-30)
 - [x] Pairing confirmation code added to core `LINK-020` and to `MCON-100` / `WCON-100` (2026-10-30)
-- [ ] Design the full Connect Link internals: `LINK-010`–`090`, `220`–`230` are outlines; `Delegation`, `PairingConfirmation`, `Gateway` and `MasterRelay` are sketched in core SDD §4.28 (ADR-LINK-004/005)
-- [ ] Write `TC-LINK-090`, `220`, `230` (reserved in the RTM; no tests yet)
-- [ ] Connect Link Options/Outreach page, inline help (`galileo/help/content/`), wiki article
+- [x] `Delegation`, `PairingConfirmation`, `Gateway`, `MasterRelay` are built (2026-11-02); write the design text in core SDD §4.28 to match the code
+- [x] `TC-LINK-090`, `220`, `230`, `240`, `260`, `270` written (2026-11-02); `TC-LINK-250` is partly covered by the service tests, the page itself is not built
+- [x] Options > Connect Link page, inline help (`options.connect_link.md`) and wiki section (2026-11-02)
+- [x] Options > Outreach page (`LINK-190`) with help, and the live-image feed (`LINK-160`) (2026-11-02). Still to do: a surface to carry it, and a wiki article
 
 ### 2b. NodeConnect prerequisites (C1–C7)
-- [ ] C1 change tracking: `rev`, `modified`, `dirty`, `base_rev`, write hook, tombstones
-- [ ] C2 replicable-table registry with natural keys and node-local/secret fields; registry-coverage test listing models without a natural key
-- [ ] C3 settings-changed event; C4 session busy signal (`is_busy`, `on_idle`); C5 loopback guard
-- [ ] C6 core-owned sync tables via numbered `galileo/library/migrations/` files (outbox, inbox, snapshots, run reports, transfer queue, peer state) + `SyncStorePort`
-- [ ] C7 Library *On Master* location state + Retrieve action + hook for "open/process needs the file" (Library screens, inline help)
+- [x] C1 change tracking for `app_settings` (triggers, tombstones, `apply_mode`; migration 034). Add the same to each table as it is registered
+- [x] C2 registry with natural keys, node-local/secret fields, row filter and dependency order; coverage test with a visible pending list. 11 configuration tables are now registered (migration 037); only `scheduler_jobs` is pending
+- [x] C3 settings-changed event; C4 session busy signal; C5 loopback guard (`is_loopback`). Still to do: Options pages subscribing to reload (C3), calibration runs setting the busy signal (C4), applying the refusal in the device and PHD2 host fields (C5)
+- [x] C6 core-owned sync tables (migration 035) and `SyncStore` / `SyncStorePort`
+- [x] C7 Library *On Master* state, Retrieve action, `ensure_local` hook, inline help (migration 036). Still to do: call `ensure_local` from the remaining pixel-reading Library operations (quality analysis, calibration)
 
 ### 2c. MobileConnect / WebConnect prerequisites
-- [ ] **CS Control Surface** — registry of operator-level operations and observable state, with permission class (read / operate / confirm / emergency; never *config*) and lease requirement. Largest item: every operation in MCON §3.5 must be catalogued
-- [ ] **LS** control lease per Pier, shared with the desktop UI (desktop must honour and surface it)
-- [ ] **OE** operation results as events with correlation id (started/progress/finished)
-- [ ] **PV** server-side preview rendering (stretch, bin, JPEG, tiles)
-- [ ] **DM** deadman semantics for held motion (proposal 250 ms beat / 600 ms deadman; measure on Wi-Fi)
-- [ ] **MF** manual focus moved into the focus module, consumed by the desktop focus screen
-- [ ] **SK** sky-data streaming (`catalog`, `ephemeris`, `site`, `capability`)
+- [x] **CS Control Surface** registry built. the device/focus/safety catalogue is written (`control_surface/catalogue.py`); the other areas and the real `DeviceAccess` remain
+- [x] **LS** control lease built; the desktop UI still has to take, show and honour it (`LEASE-060`)
+- [x] **OE** operation events (started/progress/finished) built
+- [x] **PV** preview service built (stretch, bin, JPEG, tiles, cache, guest mode)
+- [x] **DM** deadman built (250 ms / 600 ms defaults, validated); measure on Wi-Fi with a phone and headset
+- [x] **MF** manual focus moved into the focus module; the desktop screen uses it
+- [x] **SK** sky streaming built (catalog, ephemeris, site, capability, static image)
 
 ### 2d. Plugin loader
 - [x] Specified as core `PLUG-200` (SRS, RTM row, SDD §4.20 install step 4a: `requires` in `plugin.toml`, private `.deps/` directory per plugin, rollback on failure, offline refusal)
