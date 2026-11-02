@@ -94,6 +94,17 @@ class SolveBuildMixin(_MixinBase):
             self._right_layout.addWidget(self._results_box, 2)
         self._image_box.setVisible(True)
         self._results_box.setVisible(True)
+        self._arrange_results(orientation == PORTRAIT)
+
+    def _arrange_results(self, portrait: bool) -> None:
+        """Landscape: the results table left of the error plot. Portrait: the plot on top
+        with the table beneath it, since the column is narrow and tall."""
+        splitter, table_box, plot = self._results_splitter, self._results_table_box, self.error_plot
+        splitter.setOrientation(Qt.Orientation.Vertical if portrait else Qt.Orientation.Horizontal)
+        splitter.insertWidget(0, plot if portrait else table_box)
+        splitter.insertWidget(1, table_box if portrait else plot)
+        splitter.setStretchFactor(0, 2 if portrait else 3)
+        splitter.setStretchFactor(1, 3 if portrait else 2)
 
     def _build_left_column(self) -> QWidget:
         column = QWidget()
@@ -130,6 +141,20 @@ class SolveBuildMixin(_MixinBase):
         self.busy.setFixedSize(46, 12)
         stop_row.addWidget(self.busy)
         layout.addLayout(stop_row)
+        self.exposure_box = QWidget()
+        exposure_layout = QVBoxLayout(self.exposure_box)
+        exposure_layout.setContentsMargins(0, 0, 0, 0)
+        exposure_layout.setSpacing(2)
+        self.exposure_label = QLabel()
+        self.exposure_label.setProperty("helpKey", "exposure progress")
+        self.exposure_bar = QProgressBar()
+        self.exposure_bar.setProperty("helpKey", "exposure progress")
+        self.exposure_bar.setTextVisible(False)
+        self.exposure_bar.setFixedHeight(12)
+        exposure_layout.addWidget(self.exposure_label)
+        exposure_layout.addWidget(self.exposure_bar)
+        self.exposure_box.setVisible(False)
+        layout.addWidget(self.exposure_box)
         box.addWidget(control)
 
         # Solver Action ----------------------------------------------------
@@ -280,7 +305,9 @@ class SolveBuildMixin(_MixinBase):
         layout.addWidget(QLabel("The results of each solve, from Capture & Solve, Load & Slew, or any other part of Galileo, appear below."))
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._results_splitter = splitter
         left = QWidget()
+        self._results_table_box = left
         left_box = QVBoxLayout(left)
         left_box.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(0, 6)

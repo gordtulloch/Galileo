@@ -49,7 +49,9 @@ def verify_integrity() -> list[IntegrityProblem]:
 
     calculator = get_file_hash_calculator()
     problems: list[IntegrityProblem] = []
-    query = fitsFile.select().where(fitsFile.fitsFileHash.is_null(False) & (fitsFile.fitsFileSoftDelete != True))
+    query = fitsFile.select().where(
+        fitsFile.fitsFileHash.is_null(False) & (fitsFile.fitsFileSoftDelete != True)
+        & (fitsFile.fitsFileLocation == 'local'))          # an On Master frame is deliberately not here
     for record in query:
         path = record.fitsFileName
         if not path or not os.path.exists(path):

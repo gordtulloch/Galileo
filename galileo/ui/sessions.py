@@ -337,7 +337,7 @@ class SessionRegion:
         self.is_scheduled = True
 
     def deschedule(self) -> None:
-        if self._scheduler is not None:
+        if self._scheduler is not None and self._job is not None:
             self._scheduler.remove_job(self._job)
         self._job = None
         self.is_scheduled = False
@@ -907,9 +907,8 @@ class _RegionWidget(QFrame):
         self._apply_boundary_style()
 
     def _run_now(self) -> None:
-        """Execute this session immediately (SES-030). The run is also positioned on the
-        Schedule timeline starting now (SCHED-150), so any overlap with other entries is
-        reported — but not resolved — here."""
+        """Execute this session immediately (SES-030). It is not put on the Schedule; if a
+        scheduled session is running on the Pier it is stopped to make way."""
         problems, conflicts = self._controller.start_region(self._region)
         if problems:
             QMessageBox.warning(self, "Can't run session", "\n".join(f"• {p}" for p in problems))
@@ -1063,9 +1062,6 @@ class SessionsPageWidget(QWidget):
     def _on_run_changed(self, _pier_key=None) -> None:
         """A run started, progressed, or finished: update the cards in place, and rebuild once
         no run is left (a completed session is reaped and its card must go — SES-210)."""
-        refresh_label = getattr(self._window, "_refresh_session_camera_label", None)
-        if refresh_label is not None:
-            refresh_label()
         if not self._controller.is_running():
             self.reload()
             return

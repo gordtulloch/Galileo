@@ -68,7 +68,9 @@ from ._framing import AppWindowFramingMixin
 from ._flats import AppWindowFlatsMixin
 from ._darks import AppWindowDarksMixin
 from ._plugins_page import AppWindowPluginsPageMixin
+from ._connect_link_page import AppWindowConnectLinkPageMixin
 from ._notifications_page import AppWindowNotificationsPageMixin
+from ._outreach_page import AppWindowOutreachPageMixin
 from ._options_pages import AppWindowOptionsPagesMixin
 
 # Re-exported for other galileo.ui modules and tests that import them
@@ -124,6 +126,8 @@ class AppWindow(
     AppWindowDarksMixin,
     AppWindowPluginsPageMixin,
     AppWindowNotificationsPageMixin,
+    AppWindowConnectLinkPageMixin,
+    AppWindowOutreachPageMixin,
     AppWindowOptionsPagesMixin,
 ):
     """Main Galileo application window."""

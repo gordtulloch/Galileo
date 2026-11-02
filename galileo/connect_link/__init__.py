@@ -8,6 +8,8 @@ audit log. The listener, pairing, dispatcher and gateway are layered on these.
 """
 
 from galileo.connect_link.audit import AuditEvent, AuditLog
+from galileo.connect_link.discovery import DiscoveredNode, Discovery, DiscoveryError, manual_address
+from galileo.connect_link.handshake import Handshake, HandshakeResult, Versions
 from galileo.connect_link.peers import DelegationError, Peer, PeerError, PeerStore
 from galileo.connect_link.permissions import (
     PAIRED_PERMISSIONS,
@@ -15,8 +17,12 @@ from galileo.connect_link.permissions import (
     GrantError,
     validate_grant,
 )
+from galileo.connect_link.routes import Route, RouteError, RouteRegistry
+from galileo.connect_link.stream import StreamHub
+from galileo.connect_link.transfer import TransferClient, TransferError, TransferService
 
 __all__ = [
-    "PAIRED_PERMISSIONS", "PERMISSION_OUTREACH_VIEW", "AuditEvent", "AuditLog", "DelegationError",
-    "GrantError", "Peer", "PeerError", "PeerStore", "validate_grant",
+    "PAIRED_PERMISSIONS", "PERMISSION_OUTREACH_VIEW", "AuditEvent", "AuditLog", "DelegationError", "DiscoveredNode", "Discovery", "DiscoveryError",
+    "GrantError", "Handshake", "HandshakeResult", "Peer", "PeerError", "PeerStore", "Route", "RouteError",
+    "RouteRegistry", "StreamHub", "TransferClient", "TransferError", "TransferService", "Versions", "manual_address", "validate_grant",
 ]

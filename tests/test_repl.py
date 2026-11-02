@@ -1,355 +1,329 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""REPL — replication support (TC-REPL-010 .. 080) and the loopback guard (TC-PROF-130, TC-GUIDE-100).
+"""REPL — replication support (TC-REPL-*), plus the loopback check it shares with PROF-130 / GUIDE-100
+(TC-PROF-130, TC-GUIDE-100). Real SQLite database, migrated by ``settings_db``."""
 
-Change tracking is done by database triggers (migration 034), so these tests write through every
-path the application uses: the settings store, ``save`` and a bulk ``update``."""
-
-import importlib
-import pkgutil
+import json
 
 import pytest
 
-from galileo import settings_store
-from galileo.net import LoopbackGuard
-from galileo.replication import SyncStore, busy, registry, tracking
-from galileo.session_exec import RunState, SessionExecutor
+from galileo import settings_store as store
+from galileo.bus import EventBus
+from galileo.library.models.base import db
+from galileo.net import is_loopback, loopback_message
+from galileo.replication import (
+    NotMasterError,
+    RegistryError,
+    ReplicableRegistry,
+    ReplicableSpec,
+    RevisionIssuer,
+    SessionBusy,
+    SettingsChanged,
+    SyncStore,
+    apply_mode,
+    publish_settings_changed,
+    register_defaults,
+)
+from galileo.replication import registry as global_registry
+from galileo.replication import tracking
+from galileo.replication.registry import NOT_CONFIGURATION, PENDING_REGISTRATION
 
-KEY = {"namespace": "imaging", "key": "gain", "scope": ""}
+
+def _row(namespace="ns", key="k"):
+    cur = db.execute_sql("SELECT namespace, key, scope, value, modified, rev, dirty, base_rev FROM app_settings "
+                         "WHERE namespace = ? AND key = ?", (namespace, key))
+    r = cur.fetchone()
+    return None if r is None else dict(zip(("namespace", "key", "scope", "value", "modified", "rev", "dirty",
+                                            "base_rev"), r, strict=True))
 
 
-def _row(namespace, key, scope=""):
-    from galileo.library.models.app_setting import AppSettingRecord as R
-    return R.get((R.namespace == namespace) & (R.key == key) & (R.scope == scope))
-
-
-@pytest.fixture(autouse=True)
-def _spoke():
-    tracking.configure(is_master=lambda: False)
-    yield
-    tracking.configure(is_master=lambda: False)
+# ---- REPL-010 / 020 -------------------------------------------------------------------------
+@pytest.mark.requirement("TC-REPL-010")
+@pytest.mark.priority("MVP")
+def test_tc_repl_010_every_ordinary_write_is_tracked(settings_db):
+    """REPL-010: a write sets dirty, stamps modified and keeps the base_rev the edit started from — for the
+    settings store's upserts, which bypass the ORM's save; an identical rewrite is not an edit."""
+    assert store.set_setting("ns", "k", 1)
+    r = _row()
+    assert r["dirty"] == 1 and r["modified"] > 1e9 and r["rev"] == 0 and r["base_rev"] == 0
+    tracking.mark_clean("app_settings", "namespace = ? AND key = ?", ("ns", "k"), rev=7)
+    r = _row()
+    assert (r["dirty"], r["rev"], r["base_rev"]) == (0, 7, 7)
+    store.set_setting("ns", "k", 1)                                  # same value: not a local edit
+    assert _row()["dirty"] == 0
+    store.set_setting("ns", "k", 2)
+    r = _row()
+    assert r["dirty"] == 1 and r["base_rev"] == 7 and json.loads(r["value"]) == 2
+    store.set_setting("ns", "k", 3)                                  # a second edit keeps the original base
+    assert _row()["base_rev"] == 7
+    store.set_namespace("ns2", {"a": 1, "b": 2})
+    assert {_row("ns2", k)["dirty"] for k in "ab"} == {1}
 
 
 @pytest.mark.requirement("TC-REPL-010")
 @pytest.mark.priority("MVP")
-def test_tc_repl_010_every_write_path_marks_the_row_dirty_and_keeps_base_rev(settings_db):
-    """REPL-010: a local write sets dirty and modified through the settings store, save and a bulk
-    update alike; base_rev is the revision the edit started from and survives a second edit."""
-    from galileo.library.models.app_setting import AppSettingRecord as R
-    settings_store.set_setting("imaging", "gain", 100)
-    r = _row("imaging", "gain")
-    assert (r.dirty, r.rev, r.base_rev) == (1, 0, 0) and r.modified > 1e9
-    tracking.configure(is_master=lambda: True)
-    assert tracking.mark_clean("app_settings", KEY, tracking.commit_rev("app_settings"))
-    r = _row("imaging", "gain")
-    assert (r.dirty, r.rev, r.base_rev) == (0, 1, 1)
-    settings_store.set_setting("imaging", "gain", 120)                          # upsert path
-    r = _row("imaging", "gain")
-    assert (r.dirty, r.base_rev) == (1, 1)
-    r.value = "130"
-    r.save()                                                                    # ORM path
-    assert _row("imaging", "gain").base_rev == 1                                # still the original base
-    tracking.mark_clean("app_settings", KEY, 5)
-    R.update(value="140").where(R.key == "gain").execute()                      # bulk update path
-    r = _row("imaging", "gain")
-    assert (r.dirty, r.base_rev) == (1, 5)
-    assert [d["key"] for d in tracking.dirty_rows("app_settings")] == ["gain"]
-    tracking.mark_clean("app_settings", KEY, 6)
-    settings_store.set_setting("imaging", "gain", 140)                          # same value: not a change
-    assert _row("imaging", "gain").dirty == 0
-
-
-@pytest.mark.requirement("TC-REPL-010")
-@pytest.mark.priority("MVP")
-def test_tc_repl_010_applying_received_rows_does_not_mark_them_dirty(settings_db):
-    """REPL-010: rows written inside tracking.applying() (a bulk apply from the Master) stay clean
-    and leave no tombstone, and the suppression ends with the block even on error."""
-    from galileo.library.models.app_setting import AppSettingRecord as R
-    with tracking.applying():
-        R.insert(namespace="guiding", key="aggr", scope="", value="7", rev=9, base_rev=9).execute()
-    r = _row("guiding", "aggr")
-    assert (r.dirty, r.rev) == (0, 9)
-    with pytest.raises(RuntimeError), tracking.applying():
-        R.delete().where(R.key == "aggr").execute()
-        raise RuntimeError
-    assert tracking.tombstones("app_settings") == []
-    settings_store.set_setting("guiding", "other", 1)                           # tracking is back on
-    assert _row("guiding", "other").dirty == 1
+def test_tc_repl_010_applying_replicated_rows_is_not_a_local_edit_and_failure_rolls_back(settings_db):
+    """REPL-010: while the sync engine applies rows, tracking is suspended; if the apply fails the whole
+    bulk and the suspension are rolled back."""
+    with apply_mode():
+        store.set_setting("ns", "from_master", "x")
+    assert _row("ns", "from_master")["dirty"] == 0
+    store.set_setting("ns", "local", "y")
+    assert _row("ns", "local")["dirty"] == 1
+    with pytest.raises(RuntimeError), apply_mode():
+        store.set_setting("ns", "half", "z")
+        raise RuntimeError("apply failed")
+    assert _row("ns", "half") is None
+    store.set_setting("ns", "after", "w")
+    assert _row("ns", "after")["dirty"] == 1                         # tracking is back on
+    db.execute_sql("UPDATE repl_state SET apply_mode = 1")           # as if the process died mid-apply
+    tracking.reset_apply_mode()
+    store.set_setting("ns", "after2", "w")
+    assert _row("ns", "after2")["dirty"] == 1
 
 
 @pytest.mark.requirement("TC-REPL-020")
 @pytest.mark.priority("MVP")
-def test_tc_repl_020_deletion_leaves_a_tombstone_until_released(settings_db):
-    """REPL-020: deleting a row records table, natural key, revision and time; it is kept until released."""
-    settings_store.set_setting("planning", "min_alt", 20, scope="pier1")
-    tracking.configure(is_master=lambda: True)
-    tracking.mark_clean("app_settings", {"namespace": "planning", "key": "min_alt", "scope": "pier1"},
-                        tracking.commit_rev("app_settings"))
-    assert settings_store.delete_setting("planning", "min_alt", scope="pier1")
-    (t,) = tracking.tombstones("app_settings")
-    assert t["natural_key"] == ["planning", "min_alt", "pier1"] and t["rev"] == 1 and t["deleted_at"] > 1e9
-    assert tracking.tombstones("app_settings", after_id=t["id"]) == []
-    assert tracking.release_tombstones("app_settings", t["id"]) == 1 and tracking.tombstones("app_settings") == []
+def test_tc_repl_020_a_delete_leaves_a_tombstone_until_released(settings_db):
+    """REPL-020: deleting a row leaves a tombstone (table, natural key, revision, time) until the sync owner
+    releases it; a delete applied from a peer leaves none."""
+    store.set_setting("ns", "gone", 1, scope="pier1")
+    tracking.mark_clean("app_settings", "key = ?", ("gone",), rev=4)
+    store.delete_setting("ns", "gone", scope="pier1")
+    (t,) = tracking.tombstones()
+    assert (t["table"], t["key"], t["rev"]) == ("app_settings", ["ns", "gone", "pier1"], 4) and t["deleted_at"] > 1e9
+    with apply_mode():
+        store.set_setting("ns", "remote", 1)
+        store.delete_setting("ns", "remote")
+    assert len(tracking.tombstones()) == 1
+    assert tracking.tombstones("other") == [] and tracking.tombstones(since_id=t["id"]) == []
+    assert SyncStore().release_tombstones("app_settings", t["id"]) == 1 and tracking.tombstones() == []
 
 
-def _spec(name, deps=(), key=("id",)):
-    def ident(row):
-        return row
-    return registry.ReplicableSpec(name, key, ident, ident, depends_on=deps)
+# ---- REPL-030 / 040 -------------------------------------------------------------------------
+@pytest.mark.requirement("TC-REPL-030")
+@pytest.mark.priority("MVP")
+def test_tc_repl_030_registry_orders_by_dependency_and_applies_declared_filters():
+    """REPL-030: specs() returns tables after the ones they depend on; node-local and secret fields are
+    withheld from the wire form; a later (plugin) table is picked up with no change to the consumer."""
+    reg = ReplicableRegistry()
+    reg.register(ReplicableSpec("piers", ("name",), depends_on=("observatories",)))
+    reg.register(ReplicableSpec("observatories", ("name",)))
+    reg.register(ReplicableSpec("device_x", ("pier", "slot"), depends_on=("piers",),
+                                node_local_fields=frozenset({"serial_port"}), secret_fields=frozenset({"password"}),
+                                to_wire=lambda r: {**r, "converted": True}))
+    assert [s.table for s in reg.specs()] == ["observatories", "piers", "device_x"]
+    spec = reg.get("device_x")
+    row = {"id": 5, "pier": "p1", "slot": 2, "serial_port": "COM3", "password": "hunter2", "dirty": 1,
+           "base_rev": 0, "rev": 3}
+    assert spec.wire(row) == {"pier": "p1", "slot": 2, "rev": 3, "converted": True}
+    assert "password" in spec.wire(row, include_secrets=True) and spec.key_of(row) == '["p1", 2]'
+    reg.register(ReplicableSpec("plugin_table", ("k",)))
+    assert "plugin_table" in [s.table for s in reg.specs()]
+    for bad in (ReplicableSpec("x", ()), ReplicableSpec("fitsfile", ("id",)), ReplicableSpec("piers", ("n",))):
+        with pytest.raises(RegistryError):
+            reg.register(bad)
+    reg.register(ReplicableSpec("orphan", ("k",), depends_on=("missing",)))
+    with pytest.raises(RegistryError):
+        reg.specs()
 
 
 @pytest.mark.requirement("TC-REPL-030")
 @pytest.mark.priority("MVP")
-def test_tc_repl_030_registry_orders_by_dependency_and_takes_later_tables():
-    """REPL-030: specs() returns dependencies first; a table registered later (a plugin's) is included;
-    a table without a natural key, a duplicate, a cycle and a missing dependency are refused."""
-    try:
-        registry.register(_spec("zz_child", ("zz_parent",)))
-        registry.register(_spec("zz_parent"))
-        names = [s.table for s in registry.specs()]
-        assert names.index("zz_parent") < names.index("zz_child") and "app_settings" in names
-        with pytest.raises(registry.RegistryError):
-            registry.register(_spec("zz_parent"))
-        with pytest.raises(registry.RegistryError):
-            registry.register(_spec("zz_bad", key=()))
-        registry.register(_spec("zz_a", ("zz_b",)))
-        registry.register(_spec("zz_b", ("zz_a",)))
-        with pytest.raises(registry.RegistryError, match="cycle"):
-            registry.specs()
-        registry.unregister("zz_a")
-        registry.unregister("zz_b")
-        registry.register(_spec("zz_orphan", ("zz_missing",)))
-        with pytest.raises(registry.RegistryError, match="not registered"):
-            registry.specs()
-    finally:
-        for n in ("zz_child", "zz_parent", "zz_a", "zz_b", "zz_orphan", "zz_bad"):
-            registry.unregister(n)
+def test_tc_repl_030_dependency_cycles_are_refused():
+    """REPL-030: a dependency cycle is an error, not a hang."""
+    reg = ReplicableRegistry()
+    reg.register(ReplicableSpec("a", ("k",), depends_on=("b",)))
+    reg.register(ReplicableSpec("b", ("k",), depends_on=("a",)))
+    with pytest.raises(RegistryError):
+        reg.specs()
 
 
 @pytest.mark.requirement("TC-REPL-030")
 @pytest.mark.priority("MVP")
-def test_tc_repl_030_settings_wire_round_trip_and_node_local_rows_are_excluded(settings_db):
-    """REPL-030: app_settings converts to and from the wire; the link's own settings never replicate."""
-    settings_store.set_setting("imaging", "bin", {"x": 2})
-    spec = registry.get("app_settings")
-    wire = spec.to_wire(tracking.dirty_rows("app_settings")[0])
-    assert wire["value"] == {"x": 2} and spec.from_wire(wire)["value"] == '{"x": 2}'
-    assert spec.key_of(spec.from_wire(wire)) == {"namespace": "imaging", "key": "bin", "scope": ""}
-    assert spec.exclude_row({"namespace": "connect_link"}) and not spec.exclude_row({"namespace": "imaging"})
+def test_tc_repl_030_app_settings_is_registered_and_node_local_namespaces_stay_home():
+    """REPL-030: core registers app_settings with its natural key; a node's own namespaces never replicate."""
+    reg = ReplicableRegistry()
+    register_defaults(reg)
+    spec = reg.get("app_settings")
+    assert spec.natural_key == ("namespace", "key", "scope")
+    assert spec.replicates({"namespace": "autofocus"}) and spec.replicates({"namespace": "plugin.kasa"})
+    assert not spec.replicates({"namespace": "connect_link"})
+    assert not spec.replicates({"namespace": "plugin.NodeConnect"})
 
 
 @pytest.mark.requirement("TC-REPL-040")
 @pytest.mark.priority("MVP")
-def test_tc_repl_040_every_table_is_registered_or_declared():
-    """REPL-040: a table that is neither replicable nor declared not-configuration (nor, visibly,
-    pending registration) fails here, so adding a configuration table forces a decision."""
-    import galileo.library.models as models
-    from galileo.library.models.base import BaseModel
-    for m in pkgutil.iter_modules(models.__path__):
-        importlib.import_module("galileo.library.models." + m.name)
-
-    def walk(c):
-        for s in c.__subclasses__():
-            yield s
-            yield from walk(s)
-    tables = {c._meta.table_name for c in walk(BaseModel)}
-    assert registry.unregistered_configuration_tables(tables) == set()
-    assert registry.unregistered_configuration_tables(tables | {"brand_new_settings"}) == {"brand_new_settings"}
-    assert {s.table for s in registry.specs()} <= tables    # every spec names a real table
-    assert {"piers", "device_configs", "solver_settings"} <= {s.table for s in registry.specs()}
+def test_tc_repl_040_every_table_is_registered_not_configuration_or_visibly_pending(settings_db):
+    """REPL-040: the database holds no table that is none of registered, not-configuration or pending
+    registration, so "complete" stays true as Galileo grows; the pending list is the visible to-do."""
+    register_defaults()
+    tables = db.get_tables()
+    assert global_registry.unclassified_tables(tables) == [], \
+        "a new table must be registered for replication or added to NOT_CONFIGURATION in galileo/replication/registry.py"
+    assert global_registry.unclassified_tables(["brand_new_settings"]) == ["brand_new_settings"]
+    assert not (PENDING_REGISTRATION & NOT_CONFIGURATION)
+    assert "app_settings" not in PENDING_REGISTRATION
+    assert "app_settings" in {s.table for s in global_registry.specs()}
+    assert set(global_registry.pending(tables)) == set(PENDING_REGISTRATION) & set(tables)
 
 
+@pytest.mark.requirement("TC-REPL-040")
+@pytest.mark.priority("MVP")
+def test_tc_repl_040_tracking_columns_exist_for_every_registered_table(settings_db):
+    """REPL-040 / REPL-010: every registered table carries the tracking columns and triggers."""
+    register_defaults()
+    for spec in global_registry.specs():
+        cols = {c.name for c in db.get_columns(spec.table)}
+        assert set(tracking.TRACKED_COLUMNS) <= cols, spec.table
+        trig = {r[0] for r in db.execute_sql("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()}
+        assert {f"repl_{spec.table}_{s}" for s in ("ins", "upd", "del")} <= trig
+
+
+# ---- REPL-050 / 060 -------------------------------------------------------------------------
 @pytest.mark.requirement("TC-REPL-050")
 @pytest.mark.priority("MVP")
-def test_tc_repl_050_settings_changed_event_reaches_subscribers():
-    """REPL-050: SettingsChangedEvent names the tables and is delivered on the bus."""
-    from galileo.bus import EventBus, SettingsChangedEvent
+def test_tc_repl_050_settings_changed_names_the_tables():
+    """REPL-050: a bulk apply publishes settings-changed naming the tables, once each."""
     bus, seen = EventBus(), []
-    bus.subscribe(SettingsChangedEvent, lambda e: seen.append(e.tables))
-    bus.publish(SettingsChangedEvent("replication", tables=["app_settings"]))
-    assert seen == [["app_settings"]]
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e.tables))
+    publish_settings_changed(["piers", "app_settings", "piers"], bus)
+    assert seen == [["app_settings", "piers"]]
 
 
 @pytest.mark.requirement("TC-REPL-060")
 @pytest.mark.priority("MVP")
-def test_tc_repl_060_busy_while_a_session_runs_and_on_idle_fires_once():
-    """REPL-060: is_busy() is true from the start of a session until it ends and on_idle waits for it."""
-    ex = SessionExecutor.__new__(SessionExecutor)
-    ex.log, ex.errors, ex.name, ex._on_progress = [], [], "t", None
-    fired = []
+def test_tc_repl_060_busy_signal_and_on_idle():
+    """REPL-060: is_busy() is true while a session runs; on_idle runs once, when the last one ends — or at
+    once if nothing is running; a failing callback does not break the session."""
+    busy, calls = SessionBusy(), []
     assert not busy.is_busy()
-    busy.on_idle(lambda: fired.append("now"))                    # idle: immediately
-    ex._set_state(RunState.RUNNING)
-    assert busy.is_busy()
-    busy.on_idle(lambda: fired.append("later"))
-    ex._set_state(RunState.PAUSED)
-    assert busy.is_busy() and fired == ["now"]
-    ex._set_state(RunState.COMPLETED)
-    assert not busy.is_busy() and fired == ["now", "later"]
-    busy.tracker.acquire("calibration")                           # a calibration run counts too
-    assert busy.is_busy()
-    busy.tracker.release("calibration")
-    ex._set_state(RunState.STOPPED)
-    assert fired == ["now", "later"]                               # one-shot
+    busy.on_idle(lambda: calls.append("now"))
+    assert calls == ["now"]
+    with busy.running():
+        with busy.running():
+            assert busy.is_busy()
+            busy.on_idle(lambda: calls.append("later"))
+            busy.on_idle(lambda: 1 / 0)
+        assert calls == ["now"]
+    assert not busy.is_busy() and calls == ["now", "later"]
+
+
+@pytest.mark.requirement("TC-REPL-060")
+@pytest.mark.priority("MVP")
+async def test_tc_repl_060_a_running_session_sets_the_busy_signal(monkeypatch):
+    """REPL-060: the session executor reports busy for exactly the time it runs."""
+    from galileo.replication.busy import get_session_busy
+    from galileo.session_exec import SessionExecutor
+
+    seen = []
+
+    async def fake_run(self, blocks):
+        seen.append(get_session_busy().is_busy())
+        return "result"
+
+    monkeypatch.setattr(SessionExecutor, "_run", fake_run)
+    ex = SessionExecutor.__new__(SessionExecutor)
+    assert await ex.run([]) == "result" and seen == [True] and not get_session_busy().is_busy()
+
+
+# ---- REPL-070 -------------------------------------------------------------------------------
+@pytest.mark.requirement("TC-REPL-070")
+@pytest.mark.priority("MVP")
+def test_tc_repl_070_outbox_claims_are_redelivered_until_acknowledged(settings_db):
+    """REPL-070: queued changes are claimed oldest first and offered again until acknowledged; inbox items
+    are applied once."""
+    s = SyncStore(clock=lambda: 100.0)
+    a = s.outbox_add("peer1", "app_settings", '["ns","a",""]', {"value": 1}, rev=3)
+    b = s.outbox_add("peer1", "app_settings", '["ns","b",""]', {"value": 2}, op="delete")
+    s.outbox_add("peer2", "app_settings", '["ns","c",""]', {"value": 3})
+    first = s.outbox_claim("peer1")
+    assert [r["id"] for r in first] == [a, b] and first[0]["payload"] == {"value": 1} and first[1]["op"] == "delete"
+    assert [r["id"] for r in s.outbox_claim("peer1")] == [a, b]            # not acked: offered again
+    s.outbox_ack([a])
+    assert [r["id"] for r in s.outbox_claim("peer1")] == [b]
+    i = s.inbox_add("peer1", "app_settings", '["ns","x",""]', {"value": 9}, rev=5)
+    assert [r["id"] for r in s.inbox_pending("peer1")] == [i]
+    s.inbox_mark([i], "applied")
+    assert s.inbox_pending("peer1") == []
 
 
 @pytest.mark.requirement("TC-REPL-070")
 @pytest.mark.priority("MVP")
-def test_tc_repl_070_sync_store_queues_snapshots_reports_transfers_and_state(settings_db):
-    """REPL-070: the core-owned sync tables are reachable through one interface."""
-    s = SyncStore(clock=lambda: 1000.0)
-    a = s.outbox_add("n1", "app_settings", ["a", "b", ""], "upsert", {"v": 1}, rev=3)
-    s.outbox_add("n2", "app_settings", ["x", "y", ""], "delete", None)
-    claimed = s.outbox_claim("n1")
-    assert [c["id"] for c in claimed] == [a] and claimed[0]["natural_key"] == ["a", "b", ""]
-    assert s.outbox_claim("n1") == []                                  # claimed once
-    assert s.outbox_release("n1") == 1 and len(s.outbox_claim("n1")) == 1
-    assert s.outbox_ack([a]) == 1 and s.outbox_claim("n1") == []
-    i = s.inbox_add("n1", "app_settings", ["a", "b", ""], "upsert", {"v": 2})
-    assert [r["id"] for r in s.inbox_pending()] == [i]
-    s.inbox_mark([i], "applied")
-    assert s.inbox_pending() == []
-    s.snapshot_save("run1", {"rows": [1]}, "before")
-    assert s.snapshot_get("run1")[0]["data"] == {"rows": [1]} and s.snapshot_delete("run1") == 1
-    s.report_start("run1", "n1")
-    s.report_finish("run1", "ok", {"applied": 3})
-    assert s.reports()[0]["summary"] == {"applied": 3} and s.reports()[0]["outcome"] == "ok"
-    assert s.transfer_add("n1", "ab" * 32, "pull", "f.fits", 10, priority=1)
-    assert not s.transfer_add("n1", "ab" * 32, "pull")                 # once per hash
-    s.transfer_add("n1", "cd" * 32, "pull", priority=5)
-    nxt = s.transfer_next("n1", "pull")
-    assert nxt["sha256"] == "cd" * 32
-    s.transfer_set(nxt["id"], "done")
-    assert s.transfer_next("n1", "pull")["sha256"] == "ab" * 32
-    s.peer_set("n1", "last_rev", 42)
-    assert s.peer_get("n1", "last_rev") == 42 and s.peer_get("n1", "nope", "d") == "d"
-    s.peer_set("n1", "last_rev", 43)
-    s.peer_forget("n1")
-    assert s.peer_get("n1", "last_rev") is None and s.transfer_next("n1", "pull") is None
+def test_tc_repl_070_snapshots_reports_transfers_and_peer_state(settings_db):
+    """REPL-070: snapshots come back newest first for undo; reports are kept; the transfer queue holds an
+    object once and serves the highest priority first; peer state round-trips."""
+    t = [0.0]
+
+    def clock():
+        t[0] += 1
+        return t[0]
+
+    s = SyncStore(clock)
+    s.snapshot_save("run1", "app_settings", "k1", None)
+    s.snapshot_save("run1", "app_settings", "k2", {"value": 5})
+    s.snapshot_save("run2", "app_settings", "k3", {"value": 6})
+    assert [(r["natural_key"], r["before"]) for r in s.snapshot_rows("run1")] == [("k2", {"value": 5}), ("k1", None)]
+    s.report_append("run1", "peer1", "ok", {"applied": 2})
+    s.report_append("run2", "peer1", "partial", {"applied": 1, "errors": ["x"]})
+    assert [r["run_id"] for r in s.reports()] == ["run2", "run1"] and s.reports()[0]["summary"]["errors"] == ["x"]
+    low = s.transfer_enqueue("peer1", "up", "a" * 64, 100, priority=9)
+    high = s.transfer_enqueue("peer1", "up", "b" * 64, 50, priority=1)
+    assert s.transfer_enqueue("peer1", "up", "a" * 64, 100) == low                 # queued once
+    claimed = s.transfer_claim()
+    assert claimed["id"] == high and claimed["state"] == "active" and claimed["attempts"] == 1
+    s.transfer_update(high, "done")
+    assert s.transfer_claim("peer1")["id"] == low and s.transfer_claim("peer1") is None
+    s.transfer_update(low, "retry")
+    assert s.transfer_claim()["attempts"] == 2
+    assert s.peer_state_get("peer1", "cursor", 0) == 0
+    s.peer_state_set("peer1", "cursor", {"app_settings": 12})
+    s.peer_state_set("peer1", "cursor", {"app_settings": 13})
+    assert s.peer_state_get("peer1", "cursor") == {"app_settings": 13}
 
 
+@pytest.mark.requirement("TC-REPL-070")
+@pytest.mark.priority("MVP")
+def test_tc_repl_070_sync_tables_belong_to_core_and_survive_a_migration_replay(settings_db):
+    """REPL-070: the sync tables come from numbered core migrations, so a plugin ships none, and replaying
+    the migrations (a fake replay) does not fail."""
+    from galileo.library.database import run_migrations
+    tables = set(db.get_tables())
+    assert {"sync_outbox", "sync_inbox", "sync_snapshots", "sync_run_reports", "sync_transfer_queue",
+            "sync_peer_state", "repl_tombstones", "repl_revisions", "repl_state"} <= tables
+    db.execute_sql("DELETE FROM migratehistory WHERE name IN ('034_add_replication_tracking', '035_add_sync_tables')")
+    run_migrations()                                                   # re-applies over the existing objects
+    store.set_setting("ns", "still", 1)
+    assert _row("ns", "still")["dirty"] == 1
+
+
+# ---- REPL-080 -------------------------------------------------------------------------------
 @pytest.mark.requirement("TC-REPL-080")
 @pytest.mark.priority("MVP")
-def test_tc_repl_080_only_the_master_issues_revisions_serially(settings_db):
-    """REPL-080: revisions are issued per table in sequence, and a spoke refuses."""
-    with pytest.raises(tracking.NotMasterError):
-        tracking.commit_rev("app_settings")
-    tracking.configure(is_master=lambda: True)
-    assert [tracking.commit_rev("app_settings") for _ in range(3)] == [1, 2, 3]
-    assert tracking.commit_rev("other_table") == 1 and tracking.current_rev("app_settings") == 3
-    with pytest.raises(ValueError):
-        tracking.commit_rev("x; DROP TABLE app_settings")
+def test_tc_repl_080_only_the_master_issues_revisions_serially_per_table(settings_db):
+    """REPL-080: a revision is a total order within a table; each table has its own sequence; a spoke
+    never issues one."""
+    master = RevisionIssuer(lambda: True)
+    assert [master.commit_rev("app_settings") for _ in range(3)] == [1, 2, 3]
+    assert master.commit_rev("piers") == 1 and master.current("app_settings") == 3 and master.current("none") == 0
+    with pytest.raises(NotMasterError):
+        RevisionIssuer(lambda: False).commit_rev("app_settings")
+    assert master.current("app_settings") == 3
 
 
+# ---- loopback guard -------------------------------------------------------------------------
 @pytest.mark.requirement("TC-PROF-130")
 @pytest.mark.priority("MVP")
-@pytest.mark.parametrize("address,expected", [
-    ("localhost", True), ("LOCALHOST:7624", True), ("127.0.0.1", True), ("127.1.2.3", True),
-    ("::1", True), ("[::1]:4400", True), ("0.0.0.0", True), ("http://localhost:11111/", True),  # noqa: S104
-    ("pi.localhost", True),
-    ("192.168.1.20", False), ("stellarmate.local", False), ("10.0.0.5:7624", False),
-    ("http://192.168.1.2:11111", False), ("", False),
-])
-def test_tc_prof_130_loopback_guard(address, expected):
-    """PROF-130 / GUIDE-100: only addresses that mean this machine are refused; names are not resolved."""
-    assert LoopbackGuard.is_loopback(address) is expected
-
-
-# -- the equipment tables (linked by database ids) ---------------------------------------------
-def _equipment():
-    from galileo.library.models import (
-        DeviceConfigRecord, ObservatoryRecord, PierRecord, SolverSettingsRecord,
-    )
-    obs = ObservatoryRecord.create(name="Home")
-    pier = PierRecord.create(observatory=obs, name="Pier 1")
-    dev = DeviceConfigRecord.create(pier=pier, category="camera", slot="primary", driver="d", server="s", port=7624)
-    return obs, pier, dev, SolverSettingsRecord.create(pier=pier, executable="C:/astap.exe", nova_api_key="SECRET")
-
-
-def _clean_all():
-    with tracking.applying():
-        for t in ("observatories", "piers", "device_configs", "solver_settings"):
-            from galileo.library.models.base import db
-            db.execute_sql(f"UPDATE {t} SET dirty = 0")  # noqa: S608 - identifiers are constants or validated
-
-
-@pytest.mark.requirement("TC-REPL-010")
-@pytest.mark.priority("MVP")
-def test_tc_repl_010_equipment_rows_are_tracked_but_runtime_focuser_position_is_not(settings_db):
-    """REPL-010: equipment rows are marked dirty by ORM writes; a focuser's moving position is runtime
-    state and does not mark the device row dirty, a real setting change does."""
-    _, _, dev, _ = _equipment()
-    assert {d["name"] for d in tracking.dirty_rows("piers")} == {"Pier 1"}
-    _clean_all()
-    dev.focuser_position = 12345
-    dev.save()
-    assert tracking.dirty_rows("device_configs") == []
-    dev.port = 7625
-    dev.save()
-    assert [d["port"] for d in tracking.dirty_rows("device_configs")] == [7625]
-
-
-@pytest.mark.requirement("TC-REPL-030")
-@pytest.mark.priority("MVP")
-def test_tc_repl_030_equipment_keys_are_names_not_ids_and_local_fields_stay_home(settings_db):
-    """REPL-030: a device row is keyed by observatory, pier, category and slot; node-local paths and
-    secrets are not on the wire; the key round-trips to the local row; a missing parent is refused."""
-    _, pier, dev, _ = _equipment()
-    spec = registry.get("device_configs")
-    row = tracking.dirty_rows("device_configs")[0]
-    wire = spec.to_wire(row)
-    assert wire["key"] == ["Home", "Pier 1", "camera", "primary"] and "pier_id" not in wire["fields"]
-    assert "focuser_position" not in wire["fields"] and wire["fields"]["driver"] == "d"
-    assert spec.key_of(row) == {"observatory": "Home", "pier": "Pier 1", "category": "camera", "slot": "primary"}
-    assert spec.find_local(wire["key"])["id"] == dev.id
-    assert spec.from_wire(wire)["pier_id"] == pier.id
-    sw = registry.get("solver_settings").to_wire(tracking.dirty_rows("solver_settings")[0])
-    assert "executable" not in sw["fields"] and "nova_api_key" not in sw["fields"] and "backend" in sw["fields"]
-    elsewhere = {**wire, "key": ["Other", "Pier 1", "camera", "primary"]}
-    with pytest.raises(registry.RegistryError):
-        spec.from_wire(elsewhere)
-    assert spec.find_local(["Other", "Pier 1", "camera", "primary"]) is None
-    order = [s.table for s in registry.specs()]
-    assert order.index("observatories") < order.index("piers") < order.index("device_configs")
-
-
-@pytest.mark.requirement("TC-REPL-020")
-@pytest.mark.priority("MVP")
-def test_tc_repl_020_equipment_tombstones_carry_names_and_a_cascade_leaves_only_the_parents(settings_db):
-    """REPL-020: deleting a device leaves a name-keyed tombstone; deleting its pier leaves the pier's
-    tombstone and none for the rows removed with it."""
-    _, pier, dev, _ = _equipment()
-    dev.delete_instance()
-    assert [t["natural_key"] for t in tracking.tombstones("device_configs")] == [["Home", "Pier 1", "camera", "primary"]]
-    from galileo.library.models import DeviceConfigRecord
-    DeviceConfigRecord.create(pier=pier, category="mount", slot="primary", driver="d", server="s", port=1)
-    pier.delete_instance(recursive=False)
-    assert [t["natural_key"] for t in tracking.tombstones("piers")] == [["Home", "Pier 1"]]
-    assert len(tracking.tombstones("device_configs")) == 1                       # the cascade added none
-
-
-@pytest.mark.requirement("TC-REPL-080")
-@pytest.mark.priority("MVP")
-def test_tc_repl_080_deletions_get_revisions_and_are_released_only_when_acknowledged(settings_db):
-    """REPL-020 / REPL-080: on the Master a tombstone is committed with a revision from the table's
-    counter, is offered to spokes asking for changes since an earlier revision, can be recorded for a
-    deletion arbitrated from a node, and is released only up to the acknowledged revision."""
-    settings_store.set_setting("a", "k", 1)
-    tracking.configure(is_master=lambda: True)
-    tracking.mark_clean("app_settings", {"namespace": "a", "key": "k", "scope": ""}, tracking.commit_rev("app_settings"))
-    settings_store.delete_setting("a", "k")
-    assert tracking.tombstones("app_settings", committed_after_rev=0) == []            # not committed yet
-    assert tracking.commit_tombstones("app_settings") == 1
-    (t,) = tracking.tombstones("app_settings", committed_after_rev=0)
-    assert t["rev"] == 2 and t["committed"] == 1
-    assert tracking.tombstones("app_settings", committed_after_rev=2) == []            # a spoke at 2 has seen it
-    tracking.record_tombstone("app_settings", ["a", "z", ""], tracking.commit_rev("app_settings"))
-    assert len(tracking.tombstones("app_settings", committed_after_rev=0)) == 2
-    assert tracking.release_committed("app_settings", 2) == 1 and len(tracking.tombstones("app_settings")) == 1
-    assert tracking.drop_tombstone(tracking.tombstones("app_settings")[0]["id"]) and tracking.tombstones("app_settings") == []
-    tracking.configure(is_master=lambda: False)
-    with pytest.raises(tracking.NotMasterError):
-        tracking.commit_tombstones("app_settings")
-    with pytest.raises(tracking.NotMasterError):
-        tracking.record_tombstone("app_settings", ["x"], 1)
+def test_tc_prof_130_guide_100_one_loopback_check_serves_every_caller():
+    """PROF-130 / GUIDE-100: localhost, 127.0.0.0/8, ::1 and 0.0.0.0 are refused in every form an address is
+    typed (with a port, in brackets, as a URL); real host names and LAN addresses are fine; the message asks
+    for the real name."""
+    for bad in ("localhost", "LocalHost:7624", "127.0.0.1", "127.9.9.9:11111", "::1", "[::1]:80",
+                "0.0.0.0",  # noqa: S104
+                "http://localhost:8080/api", "::ffff:127.0.0.1", "observatory.localhost"):
+        assert is_loopback(bad), bad
+        assert "real host name" in loopback_message(bad)
+    for good in ("scope.local", "192.168.1.5", "10.0.0.1:7624", "indi.example.org", "fe80::1", "", "::"):
+        assert not is_loopback(good), good
+        assert loopback_message(good) == ""

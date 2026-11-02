@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Project** | Galileo — WebConnect Plugin |
-| **Document** | SDD (Software Design Description), v0.1, draft |
+| **Document** | SDD (Software Design Description), v0.2, draft — Astroberry profile added (ADR-WCON-009/010, §3.15, §3.16) |
 | **Status** | Draft — for review |
-| **Date** | 2026-10-29 |
+| **Date** | 2026-10-31 |
 | **Upstream documents** | [PSD](PSD.md), [SRS](SRS.md) |
 | **Downstream document** | RTM ([RTM.md](RTM.md)) |
 | **Parent project** | [Galileo Core SDD](../../SDD.md) |
@@ -83,6 +83,20 @@ Like MobileConnect, WebConnect is a thin layer over facilities that are specifie
 
 **Rationale:** SSE is text-only; inlining a JPEG as Base64 costs a third more and bloats every event. A fetched image is cacheable by the browser's decoder, can be served from one shared in-memory copy to all visitors (so a crowd costs the Master one render per frame, not one per visitor), and keeps the event channel tiny.
 
+### 2.9 On Astroberry the Web Half Is a Service Behind the Front Door (ADR-WCON-009)
+
+**Decision:** in the **Astroberry profile** the operating web application is the systemd service `galileo-webconnect.service`. It listens on a Unix socket (or, failing that, a loopback port — P11) and is reached only through Astroberry's Caddy front door, which terminates TLS and forwards the path prefix `/galileo/` (default) to it. It is a sibling of Astroberry Manager, not a part of it: it has its own process, its own cookies and its own sign-in. The **self-hosted profile** is the design of §2.1–§3.14 unchanged (plugin-supervised, own HTTPS listener). The two differ in `Supervisor`, TLS, binding and cookie attributes (§3.2, §3.15, §3.16) and nowhere else.
+
+**Rationale:** Astroberry already runs every web application this way — the Manager is a systemd service on 127.0.0.1:8080, restarted on failure, behind Caddy, with a certificate authority the user is walked through trusting and a name advertised over mDNS. Following that gets the address, the trust and the discovery for free; running our own TLS listener on another port would give a second certificate warning and a second port for the user to learn. The front door routes by path and sends everything else to the Manager, so a prefix is not a choice but a requirement. Making the service independent of Galileo's own process also lets the address say "Galileo is not running" (`WCON-1490`) instead of Caddy's bare gateway error.
+
+**Consequences accepted:** the application shares a web origin with the Manager (PSD R10), so a script injected into the Manager reaches it — mitigated by cookie separation and CSP, not removed; it depends on one upstream change to add the route (PSD Q6, R13); and there are two lifecycles to keep in step (ADR-WCON-010, PSD R14).
+
+### 2.10 Settings and the Credential Reach a Service-Started Web Half Over a Local Socket (ADR-WCON-010)
+
+**Decision:** the one-shot message of §3.2 (settings and the web half's **service credential**) is delivered, in both profiles, with the same content and schema. The self-hosted profile sends it on the child's standard input. The Astroberry profile cannot — systemd, not the plugin, starts the process — so the web half **connects to a Unix control socket** served by the Master half (under the service runtime directory, mode `0600`, peer-credential checked) and receives the message there. The connection then stays open as the heartbeat and as the channel on which the Master half sends `disable`, `settings-changed` and `shutdown`. The credential is minted per connection and never written to a file, the command line or the environment.
+
+**Rationale:** systemd's credential facilities would put the secret on disk; a socket is a run-time object that exists only while Galileo does, which is also the property wanted — a web half that cannot reach the Master half cannot operate, so it shows the page of `WCON-1490` and retries. `disable` over the socket is also what lets the web half close itself when the plugin is not authorised to stop the unit (`WCON-1410`).
+
 ---
 
 ## 3. Module / Component Design
@@ -106,6 +120,8 @@ Like MobileConnect, WebConnect is a thin layer over facilities that are specifie
 - **Satisfies:** `WCON-010`, `020`, `040`, `080`.
 
 ### 3.2 `webconnect.supervisor` — Process supervision, TLS and hand-off
+
+**Profiles.** `Supervisor` is one interface with two implementations: `ChildProcessSupervisor` (the **self-hosted** profile, described here) and `UnitController` (the **Astroberry** profile, §3.16). The bullets below that concern the child process, TLS material and binding are the self-hosted profile's; the hand-off message, heartbeat and graceful stop are common to both (ADR-WCON-010).
 
 - **`Supervisor`** starts the operating web application (`python -I -m webconnect.web`) and, during a browser-enabled event, the outreach application (`python -I -m webconnect.outreach_app`), under the plugin's own interpreter. Each runs as an unprivileged child with no inherited handles other than its control pipe.
 - **Configuration hand-off:** the child's settings (bind address, port, timeouts, certificate paths, offered options) and its **service credential** are written to its standard input as a one-shot message and never appear on the command line, in the environment or in a file; nothing about the web half is configured from files (`WCON-910`).
@@ -246,30 +262,46 @@ Everything else returns a bare 404 and increments a counter. The allowlist is th
 - **Parity check:** `tests/test_parity.py` loads the Control Surface catalogue (the stub catalogue in unit runs, the real one in integration), the operations MobileConnect exposes, and the routes/screens of the web UI, and fails if an operation is reachable in one and neither reachable nor listed with a reason in the other (`WCON-590`).
 - **Satisfies:** `WCON-090`, `400`, `590`, `920`, `930`.
 
-### 3.15 `webconnect.astroberry` — Astroberry OS integration (Master half)
+### 3.15 `webconnect.web.proxy` — Front-door awareness and the Master-down page (web half, Astroberry profile)
 
-Present only on an Astroberry-hosted computer; on any other it is never imported and exposes no route, option or text (`WCON-1400`). Product PSD §7 is the scope; this is the design.
+Everything here sits in the web half's outermost layer, beside `SecurityMiddleware` (§3.5), and is inert in the self-hosted profile.
 
-- **`AstroberryHost`**: detects hosting at start-up by two facts together — the `astroberry-manager` package is installed and `/etc/astroberry/version` (the release marker the manager itself reads) exists — and caches the result. It also reports the tested Astroberry OS and manager versions for the fork's footer (`WCON-1660`).
-- **`MenuStatus`**: assembles the status shown first in the Galileo menu (`WCON-1460`): Galileo installed/running, Master or node, Master address and pairing state (from NodeConnect), INDI server and active profile (`IndiWebManagerClient`). It is a pure read and is served at `/galileo/status` without the operating session so the menu can show it, exposing only what the page above lists and nothing operable.
-- **Placement**: placement A binds the operating application to loopback and expects `/galileo/` in front of it (`WCON-1410`); the supervisor (3.2) takes a `base_path` and `loopback_only` option from here. Placement B emits only the link to the Master with the Pier selected (`WCON-1470`) and starts nothing.
-- **`ApprovalVouch`**: a loopback-only route `POST /galileo/vouch/approve` on the Master half, protected by a shared secret file readable only by the `galileo` and `astroberry-manager` service accounts (mode 0640, group-owned), compared in constant time. It accepts `{pending_id, role, account, client_addr}` and nothing else; it calls the same `delegate` approval as the desktop and records the account and address in the audit (`WCON-1480`–`1510`). It is registered only when the owner option `astroberry_approval` is on (default on, `WCON-1500`). The manager's cookie is never read; the secret is distinct from any manager key.
-- **`IndiWebManagerClient`**: a server-side HTTP client of the INDI Web Manager on `127.0.0.1:8624`, used for read of server status, active profile and, for an Operator after confirmation, start/stop of the already-configured profile (`WCON-1540`–`1560`). It has no method that creates, edits or deletes a profile or driver, and the browser never calls it directly (`WCON-1680`).
-- **`SiteFallback`**: reads the manager's Location/Almanac only when no Galileo site is configured (`WCON-1580`); never a safety input.
-- **Cookie and CSP**: the application sets `Path=/galileo`, `HttpOnly`, `Secure`, `SameSite=Strict` and its own CSP (`WCON-1420`, `1430`); hostname handling follows `WCON-1570`.
-- **Satisfies:** `WCON-1400`–`1420`, `1430`, `1450`–`1460`, `1470`–`1580`, `1590`, `1680`.
+- **`PrefixMiddleware`** mounts the application at the configured prefix (default `/galileo/`) so `url_for` and redirects carry it. Templates and the ES modules take the base from a `<meta name="base">` element and build URLs relative to it; no template or module contains a root-absolute path to its own resources, and no route lies on a path the front door reserves for another application (`/api`, `/websockify`, `/socket.io`, `/login`, `/logout`, `/welcome`, `/assets`, `/ca.crt`). The browser API (`/api/v1/…`) and the wire API (`/webconnect/v1/…`) are *beneath* the prefix, so the front door's `/api*` route never sees them. A test renders every page and scans templates and modules for root-absolute URLs, with the Manager link as the one allowed (`WCON-1440`).
+- **`TrustedProxy`** reads the forwarded scheme, host and address only when the immediate peer is the front door — by construction on a Unix socket, by socket group permission rather than by address where a loopback port is used (P11) — and ignores them from anyone else. The client address it derives feeds `RateLimiter` (§3.5), the audit record and the outreach-subnet refusal (`WCON-1470`, `1220`).
+- **`SecureOnly`** refuses `pair`, `signin` and every session route unless `TrustedProxy` reports HTTPS; a GET under the prefix is answered with a redirect to the HTTPS address, built from an allow-listed host, never from the request's own `Host` (`WCON-1430`, `1060`). Cookies are also `Secure`, so a browser would not return them over HTTP in any case.
+- **`CookiePolicy`** chooses names and attributes per profile: `__Host-wc_*` with path `/` (self-hosted) or `__Secure-wc_*` with `Path` set to the prefix (Astroberry), never `session` or `kyc`, and never reads a cookie it did not set (`WCON-1460`, `1010`).
+- **`MasterDownView`** answers every route except `/static` when `LinkClientPort` cannot connect or the handshake fails (§3.14): a static page that says Galileo is not running (or names the mismatched versions), offers nothing to operate, refreshes itself by a meta element (no script), and links to Astroberry Manager at `/`. It has no dependency on the Master half, so it still renders when the Master half is the thing that is down (`WCON-1490`, `930`).
+- **`AdminView`** (P2, `WCON-1481`): a page, reachable only through `SecureOnly`, that signs in with a local account through PAM and lists pending approvals and approved browsers with *approve*, *promote* and *revoke* and nothing else. It requires the account to be in the device's administrator group, is rate-limited and CSRF-protected like any state-changing route, and passes the account name to the Master half so the audit log records who acted. It is an authentication of a person, not a session shared with the Manager (`WCON-1480`). Whether PAM can be used this way from an unprivileged service account is to be proved before the design is relied on (P12).
+- **Independence:** nothing in this component reads the Manager's cookies, secret or process state; the Manager can be stopped without effect (`WCON-1480`).
+- **Satisfies:** `WCON-1420` (with §3.16), `1430`, `1440`, `1460`, `1470`, `1480`, `1481`, `1490`.
 
-### 3.16 `galileo-astroberry-manager` — the Galileo edition of the web manager (separate repository)
+### 3.16 `webconnect.hosting` and the Astroberry package — Unit control, route and registration (Master half and package)
 
-Not part of the plugin ZIP. A fork of the Astroberry Manager (Flask + Flask-SocketIO, GPL-3) carried in `gordtulloch/galileo-astroberry-manager`, branch `galileo`, one commit per feature, rebased on each upstream release; upstream contributions come from a separate repository with no Galileo code (product PSD §7.9, K1–K10).
+- **`UnitController`** (Master half) is the Astroberry implementation of `Supervisor`. `start`/`stop`/`status` operate `galileo-webconnect.service` through systemd's D-Bus interface, authorised by a polkit rule that the package ships **as its own file** and that names this one unit and Galileo's service account — not by widening Astroberry's rules. It also serves the control socket of ADR-WCON-010: it hands the web half its settings and a fresh service credential, listens for the heartbeat, and sends `disable`, `settings-changed` and `shutdown`. `authorised` is reported to the plugin page; when it is false, enabling and disabling use the socket alone and the web half closes itself on `disable` (`WCON-1410`, `040`).
+- **The unit** (`galileo-webconnect.service`): `After=` Galileo's service, `Restart=on-failure` with back-off, an unprivileged account that is not `astroberry` and holds no device-group access, a runtime directory for the listening socket, and the usual confinement directives (no new privileges, read-only system, private temporary directory). It writes to the journal. It runs `python -I -m webconnect.web` from the plugin's own virtual environment (`WCON-1410`, `1520`).
+- **The front-door route** is one Caddy `handle` for the prefix, written before the catch-all, forwarding to the service's socket with response buffering disabled so event streams pass through as produced (`WCON-1450`). It is delivered as a file for the include directory that PSD Q6 proposes for Astroberry; until that exists the interim is galileo-astroberry's. Illustratively:
 
-- **Install and fall back** (`WCON-1640`, `1650`): a Galileo package with its own virtual environment under `/opt/galileo-astroberry-manager`; a systemd drop-in `astroberry-manager.service.d/galileo.conf` changing only `ExecStart` on the same loopback port, plus `OnFailure=astroberry-manager-stock.service` (the stock command) so a failing fork never leaves the Astroberry without its manager. Removal deletes the drop-in.
-- **Identity** (`WCON-1660`): version string `<upstream>+g<N>`, shown in the page footer and `--version`, with the tested Astroberry OS release list and a visible warning on an unrecognised one.
-- **Dock item and status panel** (`WCON-1450`, `1460`): a Galileo dock item in the page's dock, shown only when `/galileo/status` answers; the panel is the status of 3.15 and a button to the operating screens.
-- **`/galileo/` proxy** (`WCON-1410`, `1670`): the fork proxies `/galileo/*` to the Master half's loopback listener, streaming (no buffering, no gzip, no read timeout on `text/event-stream`), preserving `Host`; a Caddy drop-in alternative is not relied on (product PSD Q1).
-- **Vouching** (`WCON-1480`): for a signed-in manager user, the fork posts the approval to `ApprovalVouch` with the shared secret and the PAM account name; no other session data is passed.
-- **Chart goto** (`WCON-1620`): the stock chart's goto handler is replaced by a call to Galileo when Galileo is running, and falls back to the stock direct goto otherwise.
-- **Satisfies:** `WCON-1620`, `1640`–`1670`.
+  ```
+  handle /galileo* {
+      reverse_proxy unix//run/galileo/webconnect.sock {
+          flush_interval -1
+      }
+  }
+  ```
+
+  `handle`, not `handle_path`, so the prefix reaches the application. Whether Caddy needs the explicit flush setting for Server-Sent Events on the version Astroberry ships is part of spike P10.
+- **The Manager entry** is a registration of name, icon and address with the Manager's application-registration extension (PSD Q8), a link and not a frame (`WCON-1500`, `1020`).
+- **Package** (Q9): `debian/` in `Galileo-Plugins/webconnect`, building `galileo-webconnect` for arm64 and amd64 on Trixie into `/usr/lib/galileo-webconnect/venv`; owning the unit, the polkit rule, the route file and the Manager entry; depending on the Astroberry package names and version ranges that galileo-astroberry sets; removing it removes the route and the entry and leaves Galileo's data (`WCON-1520`).
+- **Register of needs** (`WCON-1530`), as of this revision:
+
+  | Need | For | Status |
+  |---|---|---|
+  | An include directory in the Caddy site block of `Caddyfile.astroberry` (`astroberry-os-sysmod`, not forked) | `WCON-1450` | Not yet proposed |
+  | A generic application-registration extension in Astroberry Manager (the fork) | `WCON-1500` | Not yet proposed |
+  | A polkit rule limited to one unit | `WCON-1410` | Ours; no upstream change |
+  | Authentication at the front door for `/websockify*` and `/api*`; a per-device `APP_KEY` for the Manager | PSD R12 | Not yet raised |
+
+- **Satisfies:** `WCON-1400`, `1410`, `1420` (with §3.15), `1450`, `1500`, `1510` (with §3.12), `1520`, `1530`.
 
 ---
 
@@ -285,7 +317,9 @@ Not part of the plugin ZIP. A fork of the Astroberry Manager (Flask + Flask-Sock
 | Browser sessions, CSRF secrets, SSE replay rings, rate-limit buckets, preview cache, hold registry | Python objects | **Web process memory** | Process |
 | Confirmation tokens, idempotency results, lease timers | Python objects | Master process memory (pipeline) | Process |
 | Outreach event secret (hash), guest tokens, latest guest images | Python objects | **Memory only** (the facility; the outreach process) | Event |
+| Control-socket message: settings and the web half's service credential (Astroberry profile; stdin message in the self-hosted profile) | JSON message | **Memory only** — a Unix socket under the runtime directory | Connection |
 | Wire schemas | `openapi.yaml`, `events.schema.json` | Package files, generated | Release |
+| Front-door route file, unit file, polkit rule, Manager entry (Astroberry package) | Text | Package files owned by `galileo-webconnect`; contain no secret and no Galileo configuration | Package |
 | Browser-side | Session/device/guest cookies; UI preferences (theme, layout) in `localStorage` | Browser | Per cookie/preference |
 
 The plugin adds **no table and no migration**, reusing Connect Link's audit and peer stores as MobileConnect does (ADR-MCON-008); if they prove insufficient the fallback is a core-owned table, never a plugin-private file (PSD PC2). The plugin writes no configuration file; the web processes receive their settings over a pipe (Section 3.2).
@@ -327,7 +361,7 @@ There is no browser route for the audit log (it is on the Master's UI only) and 
 
 ### 5.4 External interfaces added
 
-Two network listeners, both owned by the web half: the **operating listener** (HTTPS, LAN address) while the plugin is enabled, and the **outreach listener** (HTTPS, outreach address) only during a browser-enabled event. The Master half adds no listener; the web half reaches it over Connect Link's encrypted, authenticated transport.
+Two network listeners, both owned by the web half: the **operating listener** while the plugin is enabled — HTTPS on the LAN address in the self-hosted profile, and in the Astroberry profile *no network listener at all*, only a Unix socket (or loopback port) that the front door forwards to — and the **outreach listener** (HTTPS, outreach address) only during a browser-enabled event, in both. The Master half adds one local-only listener, the control socket of ADR-WCON-010, in the Astroberry profile; the web half reaches the rest of the Master half over Connect Link's encrypted, authenticated transport.
 
 ---
 
@@ -351,8 +385,13 @@ Two network listeners, both owned by the web half: the **operating listener** (H
 | Crowd of visitors loads the Master | Guest cap, shared image copy, lowest priority, small previews (`WCON-1280`, ADR-WCON-008) |
 | Event secret leaks from a photographed QR | Fragment transport, no logging of the secret, subnet confinement, per-event and re-issuable (`WCON-1230`, `1310`) |
 | Operating app reached from the public listener | Separate process, listener and credential; operating app refuses outreach-subnet sources (`WCON-1210`, `1220`) |
+| Script injected into Astroberry Manager reaches WebConnect (shared origin; PSD R10) | Distinct cookie names scoped to the prefix, strict CSP and CSRF on WebConnect, no reading of Manager cookies (`WCON-1460`, `1480`, `1020`, `1000`). **Reduced, not removed**: same-origin script can still send requests as the signed-in user |
+| Session cookie sent over plain HTTP (Caddy serves port 80) | `SecureOnly` refuses and redirects; `Secure` cookies are not returned over HTTP (`WCON-1430`) |
+| Forged forwarded scheme or address | Honoured only from the front door: by construction on a Unix socket, by socket permission otherwise (`WCON-1430`, `1470`; P11) |
+| Visitor on the outreach network reaches the front door (Manager login, desktop bridge) | **Not defended by WebConnect.** Owner obligation, stated in the documentation; the operating app refuses outreach-subnet sources, the outreach app is a separate listener (`WCON-1220`, `1510`; PSD R11) |
+| Compromised web half abusing the control socket | Socket mode `0600` with peer-credential check, credential minted per connection, narrow scopes, unprivileged unit with confinement (§3.16; ADR-WCON-002, 010) |
 
-- **Not defended:** a visitor device that is simultaneously on a network reaching the observatory's equipment (the owner's isolated outreach network); a person with the physical, unlocked approved browser until it is revoked or expires; an internet-facing deployment, which is out of scope and unsupported (PSD R1).
+- **Not defended:** a visitor device that is simultaneously on a network reaching the observatory's equipment (the owner's isolated outreach network); a person with the physical, unlocked approved browser until it is revoked or expires; an internet-facing deployment, which is out of scope and unsupported (PSD R1); and, on Astroberry, **anyone who can reach the front door**, which as read from Astroberry's sources does not authenticate `/websockify*` (a passwordless desktop) or `/api*` (INDI Web Manager) and fronts a Manager whose session key defaults to a constant (PSD §6.5.5, R12). WebConnect's roles, lease and audit are not an access boundary on such a device.
 
 ---
 
@@ -375,9 +414,9 @@ Two network listeners, both owned by the web half: the **operating listener** (H
 | `WCON-1200`, `1230`, `1270`, `1330` | 3.11 `outreach` (facility OF in core) |
 | `WCON-1210`, `1240`, `1250`, `1260`, `1280`, `1290`, `1300`, `1310` | 3.12 `outreach_app` (with 3.2 and 3.11) |
 | `WCON-1220` | 3.5 `web.security` and 3.12 `outreach_app` |
-| `WCON-1400`, `1410`, `1420`, `1430`, `1450`, `1460`, `1470`, `1480`, `1490`, `1500`, `1510`, `1520`, `1530`, `1540`, `1550`, `1560`, `1570`, `1580`, `1680` | 3.15 `astroberry` (with 3.2, 3.3, 3.4, 3.6 as the RTM lists) |
-| `WCON-1440`, `1590`, `1600`, `1610`, `1630` | 3.10 `web.ui` (with 3.15 for the same-origin chart files) |
-| `WCON-1620`, `1640`, `1650`, `1660`, `1670` | 3.16 `galileo-astroberry-manager` (separate repository) |
+| `WCON-1400`, `1410`, `1450`, `1500`, `1520`, `1530` | 3.16 `hosting` (with 3.2 `supervisor`) |
+| `WCON-1420`, `1430`, `1440`, `1460`, `1470`, `1480`, `1481`, `1490` | 3.15 `web.proxy` (with 3.16 for `1420`) |
+| `WCON-1510` | 3.12 `outreach_app` and 3.16 `hosting` |
 
 ---
 
@@ -393,7 +432,11 @@ Two network listeners, both owned by the web half: the **operating listener** (H
 | P6 | **Pairing confirmation code (SRS O5)** is added here for browsers; whether MobileConnect adopts it too is open. **Decided 2026-10-30: the confirmation code is shown for both browsers and apps, so MobileConnect adopts it too.** |
 | P7 | **Session expiry without accounts (SRS O3).** A per-device PIN is the natural strengthening if the one-click sign-in proves too weak; it would live in the device credential check in 3.3/3.4. **Decided 2026-10-30: accept one-click sign-in for MVP (LAN/VPN only); a per-device PIN is a later addition at this seam.** |
 | P8 | **Sky view and authoring front-end effort (SRS O10, PSD R4).** The two heaviest front-end pieces. The design lets both ship after the operating screens without blocking MVP; a server-rendered static sky image is the interim if the canvas view slips. **Decided 2026-10-30: a server-rendered static sky image ships first; the canvas sky view and authoring follow the operating screens.** |
-| P9 | **Self-signed certificate friction.** Browsers warn on the first visit to a self-signed Master. The design documents installing the certificate or a local CA, and supports a user-supplied certificate; it does not weaken HTTPS to avoid the warning. |
+| P9 | **Self-signed certificate friction.** Browsers warn on the first visit to a self-signed Master. The design documents installing the certificate or a local CA, and supports a user-supplied certificate; it does not weaken HTTPS to avoid the warning. **Astroberry profile:** the warning is removed once for the whole device by trusting Astroberry's CA (the Manager serves it at `/ca.crt`); WebConnect has no certificate of its own. The friction remains in the self-hosted profile. |
+| P10 | **Front-door spike on a Raspberry Pi (extends P2).** Caddy → gevent over a Unix socket under a path prefix: Server-Sent Events pass unbuffered (and whether `flush_interval -1` is needed on Astroberry's Caddy), 50 idle streams, forwarded scheme/address headers as sent, `Host` as received, prefix mounting of every route and asset, and the `/api*` route proving not to capture `/galileo/api/…`. Run on the official Astroberry OS image. |
+| P11 | **Unix socket or loopback port between the front door and the web half.** A socket lets only the front door's account connect and makes forwarded headers trustworthy by construction; a loopback port lets any local process connect and forge them. The socket needs Caddy's account to have permission on it. Falls back to a loopback port with the forwarded-header trust narrowed accordingly if Astroberry's Caddy cannot use the socket. |
+| P12 | **PAM from an unprivileged service account (`WCON-1481`).** Whether the web half can verify a local account's password through PAM depends on the host's PAM stack and helper; Astroberry Manager does it as `astroberry`. Prove it for the account the unit runs as before `AdminView` is relied on; the alternative is the Galileo desktop in the remote desktop (PSD Q7 (a)). |
+| P13 | **Two lifecycles (PSD R14).** Test that disabling the plugin leaves no listener whether or not the plugin is authorised to stop the unit, that stopping Galileo leaves the unit serving `WCON-1490`'s page, and that a restart of either side re-attaches without a person. |
 
 ---
 

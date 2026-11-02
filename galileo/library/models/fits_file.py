@@ -38,6 +38,10 @@ class fitsFile(BaseModel):
     fitsFileOriginalFile = pw.TextField(null=True)
     fitsFileOriginalCloudURL = pw.TextField(null=True)
 
+    # Where the pixels live (LIB-200): 'local', or 'on_master' once a Master holds the verified file.
+    fitsFileLocation = pw.TextField(default='local')
+    fitsFileHolderNode = pw.TextField(null=True)
+
     # Quality metrics fields
     fitsFileAvgFWHMArcsec = pw.FloatField(null=True)  # Average FWHM in arcseconds
     fitsFileAvgEccentricity = pw.FloatField(null=True)  # Average star eccentricity (0-1)

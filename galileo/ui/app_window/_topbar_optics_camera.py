@@ -252,28 +252,3 @@ class AppWindowTopbarOpticsCameraMixin:
             ui["gain"].setValue(cfg.default_gain)
         if cfg.default_offset is not None:
             ui["offset"].setValue(cfg.default_offset)
-
-    def _refresh_session_camera_label(self: AppWindowState) -> None:
-        """Show, in the top bar, which camera the session running on the selected Pier belongs to
-        (and hide the label when none is running). A session owns its camera, so while it runs
-        this is the camera every one of its actions uses, regardless of the Camera selector."""
-        from galileo.current_object import pier_key
-        from galileo.observatory import get_device_config
-        label = self._session_camera_label
-        run = None
-        controller = self.__dict__.get("_session_controller")
-        if controller is not None and self._current_pier is not None:
-            run = controller._runs.get(pier_key(self._current_pier))
-        if run is None:
-            label.setVisible(False)
-            return
-        slot = getattr(run.region, "camera_slot", "primary")
-        text = _camera_slot_label(slot)
-        try:
-            cfg = get_device_config(self._current_pier, "camera", slot=slot)
-        except Exception:
-            cfg = None
-        if cfg is not None and cfg.device_name:
-            text = f"{text} — {cfg.device_name}"
-        label.setText(f"Session camera: {text}")
-        label.setVisible(True)

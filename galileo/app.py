@@ -37,6 +37,15 @@ def main() -> None:
         report = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
         sys.exit(run(report))
 
+    # Selector event loops on Windows: every `asyncio.run` otherwise builds a Proactor (IOCP) loop, and
+    # access violations in the faulthandler log coincided with such loops being alive. Solver
+    # subprocesses, which a selector loop cannot spawn, go through platesolve_solvers._ThreadProcess.
+    if sys.platform == "win32":
+        import asyncio
+        policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if policy is not None:
+            asyncio.set_event_loop_policy(policy())
+
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QIcon
@@ -104,6 +113,12 @@ def main() -> None:
     _schedule_library_preload()
 
     exit_code = app.exec()
+    # Close Connect Link's listener and loop if it was ever started (LINK-270); pairings are kept.
+    try:
+        from galileo.connect_link.host import shutdown_host
+        shutdown_host()
+    except Exception:
+        logger.exception("Connect Link did not shut down cleanly")
     # Stop the CPU worker pool (SDD §2.3) now rather than leaving atexit to do it after Qt is gone.
     from galileo.core.compute import shutdown_cpu_executor
     shutdown_cpu_executor(wait=False)

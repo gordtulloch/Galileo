@@ -16,7 +16,7 @@ A cross-platform Python-based astrophotography imaging application for Windows, 
 |---|---|
 | Windows 10/11 x64 | `Galileo-Setup-<version>-win-x64.exe` |
 | macOS, Apple Silicon | `Galileo-<version>-macos-arm64.dmg` |
-| macOS, Intel | `Galileo-<version>-macos-x86_64.dmg` |
+| macOS, Intel | No installer (GitHub retired the Intel build runners); use the source install below |
 | Linux x86_64 | `Galileo-<version>-linux-x86_64.AppImage` |
 | Raspberry Pi 5 / 64-bit ARM Linux | `Galileo-<version>-linux-aarch64.AppImage` |
 
@@ -35,7 +35,7 @@ Two things motivate this project:
 
 ## Status
 
-**Alpha — current pre-release: [v0.9.02alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.02alpha).** Galileo is a runnable PySide6 desktop application, but some screens are still placeholders. Installers are published as GitHub pre-releases. Please try it and report problems, but **do not use it for production imaging yet**.
+**Alpha — current pre-release: [v0.9.03alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.03alpha).** Galileo is a runnable PySide6 desktop application, but some screens are still placeholders. Installers are published as GitHub pre-releases. Please try it and report problems, but **do not use it for production imaging yet**.
 
 ### What works today
 
@@ -60,7 +60,7 @@ Every control has built-in help, and the [wiki](https://github.com/gordtulloch/G
 
 ### Not implemented yet
 
-- In-place plugin updates (remove and reinstall instead)
+- The NodeConnect, MobileConnect and WebConnect plugins. Their shared core is partly built (the Connect Link listener, pairing, transfer, discovery, request pipeline, Master relay, outreach event facility, Control Surface registry and lease, preview and sky streaming services, replication support, and the Library *On Master* state) but has no screen yet and no service registers its operations, so none of it can be used from the application. See [`docs/CONNECT_PLUGINS_CHECKLIST.md`](docs/CONNECT_PLUGINS_CHECKLIST.md).
 
 ### Project health
 

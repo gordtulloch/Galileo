@@ -3,139 +3,166 @@
 
 """The replicable-table registry (REPL-030, REPL-040).
 
-A model declares itself replicable with its natural key (what identifies a row on every node),
-dependency order, node-local and secret fields and wire converters. NodeConnect replicates whatever
-is registered, in dependency order, with no change of its own when a table (including a plugin's)
-is added.
+A model declares itself replicable with its natural key, its dependency order, the fields that stay on
+the node and those that are secret, and the converters to and from the wire form. ``specs()`` returns
+them in dependency order. A table registered later — including one from a plugin — is replicated with
+no change to the consumer.
+
+``unclassified_tables`` backs the test that keeps "complete" true as Galileo grows: every table of the
+database must be registered, on :data:`NOT_CONFIGURATION`, or — visibly, until its spec is written — on
+:data:`PENDING_REGISTRATION`.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+# Tables that hold no configuration: the Library catalog, node-local security data and infrastructure.
+NOT_CONFIGURATION = frozenset({
+    "fitsfile", "fitssession", "mapping", "Masters", "VariableStars",          # the Library catalog
+    "link_peers", "link_audit",                                                # node-local: peers and audit
+    "migratehistory", "sqlite_sequence",                                       # schema bookkeeping
+    "repl_state", "repl_revisions", "repl_tombstones",                         # replication bookkeeping
+    "sync_outbox", "sync_inbox", "sync_snapshots", "sync_run_reports", "sync_transfer_queue",
+    "sync_peer_state",
+})
+
+# Configuration tables whose ReplicableSpec has not been written yet. Replication of these waits for it;
+# removing a name here means registering it (with a numbered migration for its tracking columns).
+PENDING_REGISTRATION = frozenset({"scheduler_jobs"})   # the scheduler is being reworked
+
+Row = dict[str, Any]
+
+# ``app_settings`` namespaces that describe this node rather than the observatory.
+NODE_LOCAL_NAMESPACES = ("node", "connect_link", "plugin.NodeConnect", "plugin.MobileConnect", "plugin.WebConnect")
+
+
+def is_node_local_namespace(namespace: str) -> bool:
+    """A namespace that is node-local, or a dotted sub-namespace of one (``connect_link.x``)."""
+    return any(namespace == n or namespace.startswith(n + ".") for n in NODE_LOCAL_NAMESPACES)
+
 
 class RegistryError(ValueError):
-    pass
+    """A registration the registry refuses."""
+
+
+def _identity(row: Row) -> Row:
+    return dict(row)
 
 
 @dataclass(frozen=True)
 class ReplicableSpec:
     table: str
     natural_key: tuple[str, ...]
-    to_wire: Callable[[dict[str, Any]], dict[str, Any]]
-    from_wire: Callable[[dict[str, Any]], dict[str, Any]]
     depends_on: tuple[str, ...] = ()
     node_local_fields: frozenset[str] = frozenset()
     secret_fields: frozenset[str] = frozenset()
-    exclude_row: Callable[[dict[str, Any]], bool] = field(default=lambda row: False)
-    # The row's key as it is on every node. Defaults to the natural-key columns; a table linked by
-    # database ids supplies names instead, because an id means nothing on another node.
-    wire_key: Callable[[dict[str, Any]], list[Any]] | None = None
-    # The local row for a wire key (``None`` if absent), used by the apply step.
-    find_local: Callable[[list[Any]], dict[str, Any] | None] | None = None
+    to_wire: Callable[[Row], Row] = field(default=_identity, compare=False)
+    from_wire: Callable[[Row], Row] = field(default=_identity, compare=False)
+    # Rows that belong to one node (for example a plugin's own pairing state) and never replicate.
+    row_filter: Callable[[Row], bool] = field(default=lambda row: True, compare=False)
 
-    def key_of(self, row: dict[str, Any]) -> dict[str, Any]:
-        """``{natural_key name: value}`` for *row*, the same on every node."""
-        values = self.wire_key(row) if self.wire_key else [row[c] for c in self.natural_key]
-        return dict(zip(self.natural_key, values, strict=True))
+    def key_of(self, row: Row) -> str:
+        """The natural key of a row as canonical JSON, the same form tombstones use."""
+        return json.dumps([row[c] for c in self.natural_key])
 
+    def replicates(self, row: Row) -> bool:
+        return bool(self.row_filter(row))
 
-# Tables that hold no configuration (REPL-040): the Library catalog, plus Connect Link's and the
-# replication machinery's own state, which is per node by nature.
-NOT_CONFIGURATION = frozenset({
-    "fitsFile", "fitsSession", "Mapping", "Masters", "VariableStars",
-    "link_peers", "link_audit", "scheduler_jobs",
-})
-
-_specs: dict[str, ReplicableSpec] = {}
+    def wire(self, row: Row, include_secrets: bool = False) -> Row:
+        """The row as sent to a peer: node-local and (unless asked) secret fields removed, bookkeeping
+        columns dropped, then the converter applied."""
+        drop = set(self.node_local_fields) | (set() if include_secrets else set(self.secret_fields))
+        drop |= {"id", "dirty", "base_rev"}
+        return self.to_wire({k: v for k, v in row.items() if k not in drop})
 
 
-def register(spec: ReplicableSpec) -> None:
-    if not spec.natural_key:
-        raise RegistryError(f"{spec.table}: a replicable table needs a natural key")
-    if spec.table in _specs:
-        raise RegistryError(f"{spec.table} is already registered")
-    _specs[spec.table] = spec
+class ReplicableRegistry:
+    def __init__(self) -> None:
+        self._specs: dict[str, ReplicableSpec] = {}
+        self._lock = threading.Lock()
+
+    def register(self, spec: ReplicableSpec) -> None:
+        if not spec.natural_key:
+            raise RegistryError(f"{spec.table}: a replicable table needs a natural key")
+        if spec.table in NOT_CONFIGURATION:
+            raise RegistryError(f"{spec.table} is on the not-configuration list")
+        with self._lock:
+            if spec.table in self._specs:
+                raise RegistryError(f"{spec.table} is already registered")
+            self._specs[spec.table] = spec
+
+    def unregister(self, table: str) -> None:
+        with self._lock:
+            self._specs.pop(table, None)
+
+    def get(self, table: str) -> ReplicableSpec | None:
+        return self._specs.get(table)
+
+    def specs(self) -> list[ReplicableSpec]:
+        """Every spec in dependency order (a table after the tables it depends on); ties keep the order
+        of registration. A missing dependency or a cycle is an error."""
+        with self._lock:
+            specs = dict(self._specs)
+        ordered: list[ReplicableSpec] = []
+        done: set[str] = set()
+        visiting: set[str] = set()
+
+        def visit(table: str) -> None:
+            if table in done:
+                return
+            if table in visiting:
+                raise RegistryError(f"dependency cycle through {table}")
+            spec = specs.get(table)
+            if spec is None:
+                raise RegistryError(f"{table} is a dependency but is not registered")
+            visiting.add(table)
+            for dep in spec.depends_on:
+                visit(dep)
+            visiting.discard(table)
+            done.add(table)
+            ordered.append(spec)
+
+        for table in specs:
+            visit(table)
+        return ordered
+
+    def unclassified_tables(self, tables: Iterable[str]) -> list[str]:
+        """Tables that are registered, not configuration, or pending nowhere — the REPL-040 failures."""
+        known = set(self._specs) | NOT_CONFIGURATION | PENDING_REGISTRATION
+        return sorted(t for t in tables if t not in known)
+
+    def pending(self, tables: Iterable[str]) -> list[str]:
+        """Configuration tables present in the database that are not yet replicable."""
+        return sorted(t for t in tables if t in PENDING_REGISTRATION and t not in self._specs)
 
 
-def unregister(table: str) -> None:
-    _specs.pop(table, None)
+registry = ReplicableRegistry()
 
 
-def get(table: str) -> ReplicableSpec | None:
-    return _specs.get(table)
-
-
-def specs() -> list[ReplicableSpec]:
-    """Registered specs, each after the tables it depends on (REPL-030)."""
-    ordered: list[ReplicableSpec] = []
-    done: set[str] = set()
-    visiting: set[str] = set()
-
-    def visit(name: str) -> None:
-        if name in done:
-            return
-        if name in visiting:
-            raise RegistryError(f"dependency cycle at {name}")
-        spec = _specs.get(name)
-        if spec is None:
-            raise RegistryError(f"{name} is depended on but not registered")
-        visiting.add(name)
-        for dep in spec.depends_on:
-            visit(dep)
-        visiting.discard(name)
-        done.add(name)
-        ordered.append(spec)
-
-    for name in sorted(_specs):
-        visit(name)
-    return ordered
-
-
-# -- app_settings, the first replicable table ------------------------------------------------
-# Settings of the link itself and of the replication plugin describe *this* node and never move.
-NODE_LOCAL_NAMESPACES = frozenset({"connect_link", "plugin.NodeConnect", "plugin.MobileConnect",
-                                   "plugin.WebConnect"})
-
-
-def _settings_to_wire(row: dict[str, Any]) -> dict[str, Any]:
-    return {"namespace": row["namespace"], "key": row["key"], "scope": row["scope"],
-            "value": json.loads(row["value"]), "modified": row["modified"],
-            "rev": row["rev"], "base_rev": row["base_rev"]}
-
-
-def _settings_from_wire(wire: dict[str, Any]) -> dict[str, Any]:
-    return {"namespace": wire["namespace"], "key": wire["key"], "scope": wire.get("scope", ""),
-            "value": json.dumps(wire["value"]), "modified": wire.get("modified", 0.0),
-            "rev": wire.get("rev", 0), "base_rev": wire.get("base_rev", 0)}
-
-
-def _settings_find_local(key: list[Any]) -> dict[str, Any] | None:
-    from galileo.library.models.base import db
-    cur = db.execute_sql("SELECT * FROM app_settings WHERE namespace = ? AND key = ? AND scope = ?", tuple(key))
-    found = cur.fetchone()
-    return dict(zip([d[0] for d in cur.description], found, strict=True)) if found else None
-
-
-def register_core() -> None:
-    """Register core's own replicable tables; idempotent."""
-    if "app_settings" not in _specs:
-        register(ReplicableSpec(
-            "app_settings", ("namespace", "key", "scope"), _settings_to_wire, _settings_from_wire,
-            exclude_row=lambda row: row.get("namespace") in NODE_LOCAL_NAMESPACES,
-            wire_key=lambda row: [row["namespace"], row["key"], row["scope"]],
-            find_local=_settings_find_local,
+def register_defaults(target: ReplicableRegistry | None = None) -> None:
+    """Register core's own replicable tables (``app_settings`` first)."""
+    reg = target or registry
+    if reg.get("app_settings") is None:
+        reg.register(ReplicableSpec(
+            "app_settings", ("namespace", "key", "scope"),
+            row_filter=lambda row: not is_node_local_namespace(str(row.get("namespace", ""))),
         ))
-    from galileo.replication.tables import register_equipment
-    register_equipment()
+    from galileo.replication.specs import register_config_specs
+    register_config_specs(reg)
 
 
-def unregistered_configuration_tables(all_tables: set[str]) -> set[str]:
-    """Tables that are neither registered, nor declared not-configuration, nor pending (REPL-040)."""
-    return all_tables - set(_specs) - NOT_CONFIGURATION
-
-
-register_core()
+__all__ = [
+    "NODE_LOCAL_NAMESPACES",
+    "NOT_CONFIGURATION",
+    "PENDING_REGISTRATION",
+    "RegistryError",
+    "ReplicableRegistry",
+    "ReplicableSpec",
+    "register_defaults",
+    "registry",
+]

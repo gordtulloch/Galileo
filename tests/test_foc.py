@@ -311,3 +311,133 @@ def test_tc_foc_070_measure_stars_accepts_non_contiguous_frame():
     assert not f_ordered.flags["C_CONTIGUOUS"]
     _hfr, stars = _measure_stars(f_ordered)
     assert stars >= 3
+
+
+# ---------------------------------------------------------------------------
+# TC-FOC-100 … 130 — manual focus
+# ---------------------------------------------------------------------------
+
+class _Focuser:
+    def __init__(self, position=5000, max_step=10000, temperature=4.5):
+        self.position, self.max_step, self.temperature = position, max_step, temperature
+        self.moves = []
+
+    async def move_to(self, position):
+        self.moves.append(position)
+        self.position = position
+
+
+@pytest.mark.requirement("TC-FOC-100")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_100_manual_moves_halt_and_readings_need_no_screen():
+    """FOC-100: manual focus moves in or out by a step, moves to an absolute position, halts and reads the
+    position and temperature, as functions of the focus module."""
+    from galileo.autofocus import ManualFocus
+    f = _Focuser()
+    mf = ManualFocus(f)
+    assert mf.position() == 5000 and mf.temperature() == 4.5
+    assert await mf.move_by(-120) == 4880 and f.position == 4880
+    assert await mf.move_by(300) == 5180 and await mf.move_to(7000) == 7000 and f.moves[-1] == 7000
+    await mf.halt()
+    assert f.moves[-1] == 7000                                          # no halt of its own: holds where it is
+    stopped = []
+    f.halt = lambda: stopped.append(True)
+    await mf.halt()
+    assert stopped == [True]
+    assert ManualFocus(_Focuser(temperature=None)).temperature() is None
+    assert ManualFocus(object()).position() is None
+    with pytest.raises(ValueError):
+        await ManualFocus(object()).move_by(10)
+
+
+@pytest.mark.requirement("TC-FOC-100")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_100_limits_and_backlash_are_applied_once():
+    """FOC-100 / FOC-110: the focuser's own travel and the user's limits hold every move; with a backlash
+    set the focuser approaches the target from the same side."""
+    from galileo.autofocus import ManualFocus
+    f = _Focuser(position=100, max_step=9000)
+    mf = ManualFocus(f, travel_min=500, travel_max=8000)
+    assert mf.clamp(-5) == 500 and mf.clamp(20000) == 8000 and mf.clamp(4000) == 4000
+    assert await mf.move_to(9500) == 8000 and f.position == 8000
+    assert await mf.move_by(-99999) == 500
+    assert ManualFocus(_Focuser(max_step=6000), travel_max=8000).clamp(7000) == 6000       # the tighter wins
+    f2 = _Focuser(position=3000)
+    await ManualFocus(f2, backlash=150).move_to(3500)
+    assert f2.moves == [3350, 3500]
+    f3 = _Focuser(position=3000)
+    await ManualFocus(f3, backlash=150, travel_min=100).move_to(120)
+    assert f3.moves == [100, 120]                                       # the overshoot is limited too
+
+
+@pytest.mark.requirement("TC-FOC-110")
+@pytest.mark.priority("MVP")
+def test_tc_foc_110_the_focus_screen_uses_the_modules_manual_focus():
+    """FOC-110: the desktop Focus screen consumes ManualFocus instead of driving the focuser itself."""
+    import inspect
+
+    from galileo.ui import focus
+    source = inspect.getsource(focus.FocusPage.manual_move)
+    assert "ManualFocus" in source and "move_to(" in source and ".move_to(position)" not in source.replace(
+        "manual.move_to(position)", "")
+
+
+@pytest.mark.requirement("TC-FOC-120")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_120_control_surface_offers_focus_not_a_generic_focuser_move():
+    """FOC-120: manual focus is published under the focus area, from the module's own ManualFocus; a
+    remote client reaches it through the registry and gets the same limits."""
+    from galileo.autofocus import ManualFocus
+    from galileo.control_surface import Arg, OperationSpec, Registry
+
+    f = _Focuser(position=5000, max_step=6000)
+    mf = ManualFocus(f)
+    reg = Registry()
+    reg.register(OperationSpec("focus.move_to", "operate", (Arg("position", "int", minimum=0),), needs_lease=True),
+                 lambda ctx, a: mf.move_to(a["position"]))
+    reg.register(OperationSpec("focus.move_by", "operate", (Arg("steps", "int"),), needs_lease=True),
+                 lambda ctx, a: mf.move_by(a["steps"]))
+    assert not any(n.startswith("focuser.") for n in reg.names())
+    assert (await reg.invoke("focus.move_to", {"position": 9000}, "p1", "c")).value == 6000        # same limit
+    assert (await reg.invoke("focus.move_by", {"steps": -1000}, "p1", "c")).value == 5000
+
+
+@pytest.mark.requirement("TC-FOC-130")
+@pytest.mark.priority("MVP")
+async def test_tc_foc_130_a_held_move_runs_while_beats_arrive_and_stops_on_the_deadman():
+    """FOC-130: a held move keeps stepping while the keep-alive arrives and halts when it stops, using the
+    deadman semantics of CSURF-400."""
+    import asyncio
+
+    from galileo.autofocus import ManualFocus
+    from galileo.control_surface import HoldManager
+
+    now = [0.0]
+    holds = HoldManager(lambda: now[0], beat_s=0.25, deadman_s=0.6)
+    f = _Focuser(position=1000)
+    halted = []
+    f.halt = lambda: halted.append(f.position)
+    mf = ManualFocus(f, pier_key="p1", step=10)
+    hold_id = mf.start_hold(holds, +1, "client-a")
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert f.position > 1000 and holds.active("p1") == [hold_id]
+    moved = f.position
+    now[0] += 0.3
+    holds.beat(hold_id, "client-a")
+    now[0] += 0.5
+    assert holds.check() == 0                                           # a beat 0.5 s ago is still fresh
+    now[0] += 0.2
+    assert holds.check() == 1
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert halted and holds.active("p1") == []
+    settled = f.position
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert f.position == settled >= moved                                # nothing moves after the stop
+    inward = mf.start_hold(holds, -1, "client-a")
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert f.position < settled
+    assert holds.cancel_pier("p1", "lease changed") == 1 and inward

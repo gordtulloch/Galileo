@@ -78,7 +78,7 @@ ignore_missing_imports = true
 
 [project]
 name = "galileo"
-version = "0.9.2a0"
+version = "0.9.3a0"
 description = "Cross-Platform Astrophotography Imaging Suite"
 requires-python = ">=3.11"
 license = {text = "GPL-3.0-or-later"}
@@ -89,6 +89,7 @@ dependencies = [
     "tzdata",  # IANA zone database for the Observatory timezone list (Windows has none)
     # Device protocols
     "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
+    "segno>=1.6",             # QR codes for the Connect Link outreach event display (LINK-190)
     # Image processing
     "sep>=1.2",               # Source Extractor Python (star detection / HFR)
     "Pillow>=10.0",           # FITS-cutout-to-JPEG thumbnail conversion (SKY-080, ported from Obsy)

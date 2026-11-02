@@ -13,7 +13,7 @@ A scheduled session is outlined in red and read-only until it is descheduled.
 
 ## Camera
 
-The camera this session belongs to, chosen from the Pier's configured cameras. A new session starts on the camera selected in the top bar. Every action of the session — exposures, plate solves, autofocus, flats, cooling — uses this camera, whatever the top bar's Camera selector is set to, so a session cannot silently switch cameras. The choice is saved with the session and is locked while the session is scheduled or running. While it runs, the top bar shows **Session camera** with this camera's name on every screen.
+The camera this session belongs to, chosen from the Pier's configured cameras. A new session starts on the camera selected in the top bar. Every action of the session — exposures, plate solves, autofocus, flats, cooling — uses this camera, whatever the top bar's Camera selector is set to, so a session cannot silently switch cameras. The choice is saved with the session and is locked while the session is scheduled or running.
 
 ## Add Session
 
@@ -49,7 +49,7 @@ Takes the session off the Schedule so it can be edited again.
 
 ## Run
 
-Executes the session now, and places it on the Schedule starting now. If it overlaps something already planned, you are warned (not stopped).
+Executes the session now, without putting it on the Schedule. If a scheduled session is already running on this Pier it is stopped to make way for this one (it is left on the Schedule marked as stopped). Like a scheduled run, it will not start while the safety monitor reports unsafe conditions. A session that completes is removed.
 
 ## Pause
 

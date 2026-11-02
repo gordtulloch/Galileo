@@ -1,26 +1,32 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""LAN discovery by mDNS (LINK-040).
+"""LAN discovery (LINK-040).
 
-While the listener runs the node advertises ``_galileo-link._tcp`` carrying only its display name,
-node id, port, protocol version and role hint — never a secret — and can browse for other nodes.
-``zeroconf`` is imported lazily and every failure is contained: discovery is a convenience, and a
-client can always connect to a manually entered host and port.
+While the listener runs the node advertises ``_galileo-link._tcp`` by mDNS carrying only its display
+name, node id, port, protocol version and role hint — never a secret, and nothing that lets a
+bystander pair (pairing still needs the owner's approval). Other nodes' advertisements can be
+browsed, and a host and port can be entered by hand.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import socket
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
 SERVICE_TYPE = "_galileo-link._tcp.local."
+_HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$|^[0-9A-Fa-f:]+$")
+_MAX_TXT = 200
+
+
+class DiscoveryError(ValueError):
+    """A manual address or advertisement Connect Link will not use."""
 
 
 @dataclass(frozen=True)
@@ -30,113 +36,133 @@ class DiscoveredNode:
     host: str
     port: int
     protocol: int
-    role: str
+    role: str = ""
 
 
-def advert_properties(node_id: str, protocol: int, role: str = "") -> dict[str, str]:
-    """The TXT record: no secret ever goes in it (the display name is the service name)."""
-    return {"node_id": node_id, "protocol": str(protocol), "role": role}
+class DiscoveryBackend(Protocol):
+    """The mDNS operations Discovery needs (``zeroconf`` in production, a fake in tests)."""
+
+    async def register(self, info: Any) -> None: ...
+    async def unregister(self, info: Any) -> None: ...
+    async def browse(self, listen_for: float) -> list[Any]: ...
+    async def close(self) -> None: ...
 
 
-def _label(name: str) -> str:
-    return re.sub(r"[^\w .-]", "", name).strip()[:60] or "Galileo"
+class ZeroconfBackend:
+    def __init__(self) -> None:
+        from zeroconf.asyncio import AsyncZeroconf
+        self._zc = AsyncZeroconf()
+
+    async def register(self, info: Any) -> None:
+        await self._zc.async_register_service(info)
+
+    async def unregister(self, info: Any) -> None:
+        await self._zc.async_unregister_service(info)
+
+    async def browse(self, listen_for: float) -> list[Any]:
+        from zeroconf import ServiceStateChange
+        from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+
+        names: set[str] = set()
+
+        def on_change(*, name: str, state_change: ServiceStateChange, **_: Any) -> None:
+            if state_change is not ServiceStateChange.Removed:
+                names.add(name)
+
+        browser = AsyncServiceBrowser(self._zc.zeroconf, SERVICE_TYPE, handlers=[on_change])
+        try:
+            await asyncio.sleep(listen_for)
+        finally:
+            await browser.async_cancel()
+        found = []
+        for name in sorted(names):
+            info = AsyncServiceInfo(SERVICE_TYPE, name)
+            if await info.async_request(self._zc.zeroconf, 1500):
+                found.append(info)
+        return found
+
+    async def close(self) -> None:
+        await self._zc.async_close()
 
 
-def node_from_service(name: str, addresses: list[str], port: int, props: dict[bytes, bytes | None]) -> DiscoveredNode | None:
-    """A browsed service as a node, or ``None`` if it is not a usable Galileo advertisement."""
-    def get(key: str) -> str:
-        v = props.get(key.encode())
-        return v.decode("utf-8", "replace") if v else ""
-    if not addresses or not port:
-        return None
+def _clean(text: str) -> str:
+    return text.encode("utf-8")[:_MAX_TXT].decode("utf-8", "ignore")
+
+
+def manual_address(host: str, port: int) -> DiscoveredNode:
+    """A node entered by hand: host name or IP and port, validated but not contacted."""
+    host = host.strip()
+    if "://" in host or "/" in host or not _HOST.match(host):
+        raise DiscoveryError("enter a host name or IP address, without a scheme or path")
+    if not 0 < int(port) < 65536:
+        raise DiscoveryError("port must be 1-65535")
+    return DiscoveredNode(name=host, node_id="", host=host, port=int(port), protocol=0)
+
+
+def parse_service(info: Any) -> DiscoveredNode | None:
+    """A browsed service as a node, or None when it is malformed."""
     try:
-        protocol = int(get("protocol"))
-    except ValueError:
+        props = {k.decode() if isinstance(k, bytes) else k: (v or b"").decode("utf-8", "replace")
+                 for k, v in info.properties.items()}
+        addresses = info.parsed_addresses()
+        node_id = props["node"]
+        if not addresses or not node_id or not info.port:
+            return None
+        return DiscoveredNode(props.get("name", node_id), node_id, addresses[0], int(info.port),
+                              int(props.get("proto", "0")), props.get("role", ""))
+    except (KeyError, ValueError, AttributeError):
         return None
-    suffix = "." + SERVICE_TYPE
-    return DiscoveredNode(name.removesuffix(suffix), get("node_id"),
-                          addresses[0], port, protocol, get("role"))
 
 
 class Discovery:
-    def __init__(self, zeroconf_factory: Callable[[], Any] | None = None,
-                 browser_factory: Callable[..., Any] | None = None) -> None:
-        self._factory, self._browser_factory = zeroconf_factory, browser_factory
-        self._zc: Any = None
+    def __init__(self, node_id: str, display_name: str, role_hint: str = "",
+                 backend: DiscoveryBackend | None = None) -> None:
+        self._node_id = node_id
+        self._name = display_name
+        self._role = role_hint
+        self._backend = backend
         self._info: Any = None
-        self._browser: Any = None
-        self.found: dict[str, DiscoveredNode] = {}
 
     @property
     def advertising(self) -> bool:
         return self._info is not None
 
-    def _zeroconf(self) -> Any:
-        if self._zc is None:
-            if self._factory is not None:
-                self._zc = self._factory()
-            else:
-                from zeroconf import Zeroconf
-                self._zc = Zeroconf()
-        return self._zc
+    def _backend_or_default(self) -> DiscoveryBackend:
+        if self._backend is None:
+            self._backend = ZeroconfBackend()
+        return self._backend
 
-    def start(self, display_name: str, node_id: str, host: str, port: int, protocol: int, role: str = "") -> bool:
-        """Advertise the node and start browsing; ``False`` (logged) if mDNS is unavailable."""
+    def _service_info(self, host: str, port: int, protocol: int) -> Any:
+        from zeroconf import ServiceInfo
+        props = {"name": _clean(self._name), "node": _clean(self._node_id), "proto": str(protocol),
+                 "role": _clean(self._role)}
+        return ServiceInfo(
+            SERVICE_TYPE, f"{self._node_id[:60]}.{SERVICE_TYPE}", port=port, properties=props,
+            addresses=[socket.inet_aton(host)])
+
+    async def advertise(self, host: str, port: int, protocol: int) -> None:
         if self._info is not None:
-            return True
-        try:
-            from zeroconf import ServiceBrowser, ServiceInfo
-            zc = self._zeroconf()
-            label = _label(display_name)
-            self._info = ServiceInfo(
-                SERVICE_TYPE, f"{label}.{SERVICE_TYPE}", port=port,
-                addresses=[socket.inet_aton(host)], properties=advert_properties(node_id, protocol, role),
-            )
-            zc.register_service(self._info)
-            self._browser = (self._browser_factory or ServiceBrowser)(zc, SERVICE_TYPE, handlers=[self._on_change])
-            return True
-        except Exception:
-            logger.warning("Connect Link discovery unavailable", exc_info=True)
-            self._info = None
-            self._close_zc()
-            return False
+            return
+        info = self._service_info(host, port, protocol)
+        await self._backend_or_default().register(info)
+        self._info = info
 
-    def _on_change(self, zeroconf: Any, service_type: str, name: str, state_change: Any) -> None:
-        from zeroconf import ServiceStateChange
-        try:
-            if state_change is ServiceStateChange.Removed:
-                self.found.pop(name, None)
-                return
-            info = zeroconf.get_service_info(service_type, name, 2000)
-            if info is None:
-                return
-            node = node_from_service(name, info.parsed_addresses(), info.port or 0, info.properties)
-            if node is not None and node.node_id != (self._info.properties.get(b"node_id", b"").decode() if self._info else ""):
-                self.found[name] = node
-        except Exception:
-            logger.debug("discovery handler failed", exc_info=True)
+    async def withdraw(self) -> None:
+        info, self._info = self._info, None
+        if info is not None:
+            await self._backend_or_default().unregister(info)
 
-    def nodes(self) -> list[DiscoveredNode]:
-        return sorted(self.found.values(), key=lambda n: n.name.lower())
+    async def browse(self, listen_for: float = 3.0) -> list[DiscoveredNode]:
+        """Other nodes currently advertising (this node is left out)."""
+        found = (parse_service(i) for i in await self._backend_or_default().browse(listen_for))
+        return [n for n in found if n is not None and n.node_id != self._node_id]
 
-    def stop(self) -> None:
-        """Withdraw the advertisement and stop browsing (the listener stopped)."""
-        try:
-            if self._browser is not None:
-                self._browser.cancel()
-            if self._zc is not None and self._info is not None:
-                self._zc.unregister_service(self._info)
-        except Exception:
-            logger.debug("discovery stop failed", exc_info=True)
-        finally:
-            self._browser, self._info = None, None
-            self.found.clear()
-            self._close_zc()
+    async def close(self) -> None:
+        await self.withdraw()
+        if self._backend is not None:
+            await self._backend.close()
+            self._backend = None
 
-    def _close_zc(self) -> None:
-        zc, self._zc = self._zc, None
-        if zc is not None:
-            try:
-                zc.close()
-            except Exception:
-                logger.debug("zeroconf close failed", exc_info=True)
+
+__all__ = ["SERVICE_TYPE", "DiscoveredNode", "Discovery", "DiscoveryBackend", "DiscoveryError",
+           "ZeroconfBackend", "manual_address", "parse_service"]

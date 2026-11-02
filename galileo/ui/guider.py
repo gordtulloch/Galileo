@@ -105,7 +105,9 @@ class GuiderPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel("PHD2 host"))
         self.host_edit = QLineEdit(DEFAULT_HOST)
-        self.host_edit.setPlaceholderText("FQDN or IP of the machine running PHD2, e.g. localhost or 192.168.1.50")
+        self.host_edit.setPlaceholderText("Host name or LAN address of the machine running PHD2, e.g. phd2.local or 192.168.1.50")
+        from galileo.ui.app_window._common import guard_loopback_edit
+        guard_loopback_edit(self.host_edit)                               # GUIDE-100
         self.host_edit.setMaxLength(60)
         row.addWidget(self.host_edit, 1)
         row.addWidget(QLabel("Port"))
@@ -367,6 +369,10 @@ class GuiderPage(QWidget):
         if service is not None and service.is_connected:
             host, port = service.host, service.port
         self.host_edit.setText(host)
+        from galileo.net import loopback_message
+        # A stored loopback address means a different machine on every node (GUIDE-100): flag it.
+        self.host_edit.setToolTip(loopback_message(host))
+        self.host_edit.setStyleSheet("border: 1px solid #c0392b;" if loopback_message(host) else "")
         self.port_spin.setValue(port)
         self.refresh_tubes()
         self._force_render()

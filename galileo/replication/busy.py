@@ -1,63 +1,70 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Busy signal (REPL-060): is an imaging session or calibration run executing, and tell me when it ends.
+"""The session busy signal (REPL-060).
 
-The session executor and calibration runs ``acquire`` a token while they work and ``release`` it
-after; a bulk apply of replicated settings asks ``is_busy()`` and otherwise waits with ``on_idle``.
+``is_busy()`` is true while a session or calibration run is executing; ``on_idle(callback)`` calls back
+once when the last one ends (immediately when nothing is running), so a bulk apply can wait for an
+imaging session to finish. The session executor wraps its run in :meth:`SessionBusy.running`.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
 
-class BusyTracker:
+class SessionBusy:
     def __init__(self) -> None:
-        self._active: set[object] = set()
-        self._waiters: list[Callable[[], None]] = []
         self._lock = threading.Lock()
+        self._active = 0
+        self._waiting: list[Callable[[], None]] = []
 
     def is_busy(self) -> bool:
         with self._lock:
-            return bool(self._active)
+            return self._active > 0
 
-    def acquire(self, token: object) -> None:
+    @contextmanager
+    def running(self) -> Iterator[None]:
         with self._lock:
-            self._active.add(token)
-
-    def release(self, token: object) -> None:
-        with self._lock:
-            self._active.discard(token)
-            waiters, self._waiters = ([], self._waiters) if self._active else (self._waiters, [])
-        for fn in waiters:
-            try:
-                fn()
-            except Exception:
-                logger.exception("on_idle callback raised")
-
-    @contextlib.contextmanager
-    def working(self, token: object) -> Iterator[None]:
-        self.acquire(token)
+            self._active += 1
         try:
             yield
         finally:
-            self.release(token)
+            with self._lock:
+                self._active -= 1
+                callbacks = self._waiting if self._active == 0 else []
+                if callbacks:
+                    self._waiting = []
+            for callback in callbacks:
+                self._call(callback)
 
     def on_idle(self, callback: Callable[[], None]) -> None:
-        """Call *callback* once, now if idle, otherwise when the last work ends."""
+        """One-shot: run ``callback`` when no session is running (now, if that is already so)."""
         with self._lock:
-            if self._active:
-                self._waiters.append(callback)
+            if self._active > 0:
+                self._waiting.append(callback)
                 return
-        callback()
+        self._call(callback)
+
+    @staticmethod
+    def _call(callback: Callable[[], None]) -> None:
+        try:
+            callback()
+        except Exception:
+            logger.exception("on_idle callback failed")
 
 
-tracker = BusyTracker()
-is_busy = tracker.is_busy
-on_idle = tracker.on_idle
+_busy = SessionBusy()
+
+
+def get_session_busy() -> SessionBusy:
+    """The process-wide busy signal."""
+    return _busy
+
+
+__all__ = ["SessionBusy", "get_session_busy"]

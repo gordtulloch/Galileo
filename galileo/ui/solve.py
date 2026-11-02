@@ -25,6 +25,7 @@ import asyncio
 import csv
 import logging
 import threading
+import time
 
 import numpy as np
 from PySide6.QtCore import QTimer, Signal
@@ -123,6 +124,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     mount_position = Signal(object, object)
     run_finished = Signal(object)
     polar_progress = Signal(object, object)       # pier key, PolarAlignProgress
+    exposure_changed = Signal(object, object, object)   # pier key, duration_s (None = ended), label
 
     def __init__(self, window) -> None:
         super().__init__()
@@ -143,8 +145,13 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._shown_path: str | None = None
         self._loading_path: str | None = None
         self._mount_busy: dict = {}
+        self._exposures: dict = {}               # pier key -> (monotonic start, duration_s, label) while exposing
         self._displayed_pier = _UNSET            # which Pier the results above belong to
         self.make_solver = self._default_solver  # replaced by tests
+
+        self._exposure_timer = QTimer(self)
+        self._exposure_timer.setInterval(100)
+        self._exposure_timer.timeout.connect(self._tick_exposure)
 
         self._build()
         self._set_running(False)
@@ -159,6 +166,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.mount_position.connect(self._on_mount_position)
         self.run_finished.connect(self._on_run_finished)
         self.polar_progress.connect(self._on_polar_progress)
+        self.exposure_changed.connect(self._on_exposure_changed)
 
         self._mount_timer = QTimer(self)
         self._mount_timer.timeout.connect(self.poll_mount)
@@ -222,6 +230,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.scope_ra.clear()
         self.scope_dec.clear()
         self._set_running(self._running.get(key, False), key)
+        self._tick_exposure()
         self._select_saved_backend()
         self.refresh_filters()
         if self.isVisible():
@@ -494,6 +503,32 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             return None
         return solver
 
+    def _on_exposure_changed(self, key, duration, label) -> None:
+        if duration is None:
+            self._exposures.pop(key, None)
+        else:
+            self._exposures[key] = (time.monotonic(), float(duration), str(label))
+        self._tick_exposure()
+
+    def _tick_exposure(self) -> None:
+        """Show the displayed Pier's exposure under the buttons: a bar filling over the exposure time, then
+        'downloading' once the time is up and the frame is still on its way."""
+        exposure = self._exposures.get(self._pier_key())
+        self.exposure_box.setVisible(exposure is not None)
+        if exposure is None:
+            self._exposure_timer.stop()
+            return
+        started, duration, label = exposure
+        elapsed = time.monotonic() - started
+        self.exposure_bar.setRange(0, 1000)
+        self.exposure_bar.setValue(int(min(elapsed / duration, 1.0) * 1000) if duration > 0 else 1000)
+        if elapsed < duration:
+            self.exposure_label.setText(f"{label}… {elapsed:.1f} / {duration:g} s")
+        else:
+            self.exposure_label.setText(f"{label}: downloading…")
+        if not self._exposure_timer.isActive():
+            self._exposure_timer.start()
+
     def _set_running(self, running: bool, key=None) -> None:
         key = key if key is not None else self._pier_key()
         self._running[key] = running
@@ -504,6 +539,9 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.polar_start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.busy.setVisible(running)
+        if not running:
+            self._exposures.pop(key, None)
+            self._tick_exposure()
 
     def _selected_action(self) -> SolveAction:
         return next(action for action, radio in self.action_radios.items() if radio.isChecked())
@@ -524,6 +562,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         workflow = self._workflows[key] = (make_workflow or SolveWorkflow)(
             solver, camera=self._camera(), mount=self._mount(), log=self._post,
             frame_metadata=self._frame_metadata(), filter_wheel=self._filter_wheel())
+        workflow.on_exposure = lambda duration, label, key=key: self._emit("exposure_changed", key, duration, label)
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
             workflow.set_target(obj.ra_deg, obj.dec_deg, obj.name)

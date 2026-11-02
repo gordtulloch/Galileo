@@ -33,28 +33,45 @@ def urlopen_http(req: str | urllib.request.Request, timeout: float | None = None
     return urllib.request.urlopen(req, data, timeout)  # noqa: S310 - scheme checked above
 
 
+# --- Loopback guard (PROF-130, GUIDE-100) ------------------------------------------------------
+
+def _host_of(address: str) -> str:
+    """The host part of ``host``, ``host:port``, ``[v6]:port`` or a URL."""
+    text = address.strip()
+    if "://" in text:
+        text = urlparse(text).netloc
+    text = text.rsplit("@", 1)[-1]
+    if text.startswith("["):
+        return text[1:].split("]", 1)[0]
+    if text.count(":") == 1:                       # host:port (a bare IPv6 literal has several colons)
+        text = text.split(":", 1)[0]
+    return text.strip().rstrip(".")
+
+
 def is_loopback(address: str) -> bool:
-    """True for an address that only ever means "this machine" (PROF-130, GUIDE-100): ``localhost``,
-    ``127.0.0.0/8``, ``::1`` and ``0.0.0.0``. A host name is not resolved -- only literals are judged,
-    so a value copied from another node cannot cause a lookup."""
+    """Whether *address* names this machine itself — ``localhost``, ``127.0.0.0/8``, ``::1`` or
+    ``0.0.0.0`` (also with a port, in brackets, or as a URL). A stored device address that is loopback
+    means a different machine on every node, so it is refused wherever a user enters one. Only literals
+    and the name ``localhost`` are judged; no name is resolved."""
     import ipaddress
-    host = address.strip().lower()
-    if "://" in host:
-        host = urlparse(host).hostname or ""
-    elif host.startswith("["):                       # [v6] or [v6]:port
-        host = host[1:].split("]", 1)[0]
-    elif host.count(":") == 1:                       # host:port (a bare IPv6 literal has several colons)
-        host = host.split(":", 1)[0]
-    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+    host = _host_of(address).lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
         return True
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_unspecified
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or (ip.is_unspecified and ip.version == 4)
 
 
-class LoopbackGuard:
-    """Namespace for the check, as named in the design (SDD 4.32)."""
+LOOPBACK_MESSAGE = ("This is the address of this machine itself. Enter the machine's real host name or LAN "
+                    "address instead, so the same setting works on every node.")
 
-    is_loopback = staticmethod(is_loopback)
+
+def loopback_message(address: str) -> str:
+    """The refusal text for a loopback *address*, or an empty string when it is acceptable."""
+    return LOOPBACK_MESSAGE if is_loopback(address) else ""

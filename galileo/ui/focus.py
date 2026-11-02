@@ -842,12 +842,12 @@ class FocusPage(QWidget):
         if self._autofocus_busy(key):
             return
         position = self.manual_position_spin.value()
-        from galileo.autofocus import AutofocusService
-        service = AutofocusService(focuser=focuser, backlash_compensation=self.backlash_spin.value(), pier_key=key)
+        from galileo.autofocus import ManualFocus
+        manual = ManualFocus(focuser, backlash=self.backlash_spin.value(), pier_key=key)       # FOC-110
         logger.info("Manual focus: move requested to position %d.", position)
         import asyncio
         try:
-            asyncio.run(service.move_to(position))
+            asyncio.run(manual.move_to(position))
         except Exception:
             logger.exception("Manual focus move failed")
             self.status_label.setText("Move failed — see log.")

@@ -48,3 +48,8 @@ Right-click menu on a frame: opens it in the external viewer, as double-click do
 ## Delete
 
 Right-click menu on a frame: marks the frame as deleted and hides it. The file is kept on disk. You are asked to confirm unless you ticked "Do not ask again".
+
+## Retrieve
+
+Right-click menu on a frame that is stored on the Master (its icon in the "Local" column shows a computer instead of a disk, and the tooltip says "On the Master"): fetches the file back over Connect Link, checks it is exactly the file the catalogue describes, and keeps it on this computer again. Double-clicking such a frame does the same and then opens it. The frame's place in the catalogue, its thumbnail and its quality measurements are there either way; only the pixels are on the other computer. If the Master cannot be reached you are told so and the frame stays where it is.
+

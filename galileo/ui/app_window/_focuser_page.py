@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ._common import _new_form_layout, _when_visible, _DEFAULT_PORTS, QWidget
+from ._common import _new_form_layout, _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
 from galileo.focuser_settings import (
     MODE_ABSOLUTE, MODE_PULSE, MODES, PULSE_MIDDLE, PULSE_RANGE_MAX, FocuserSettings, travel_problem,
 )
@@ -77,6 +77,7 @@ class AppWindowFocuserPageMixin:
         table.setCellWidget(0, 0, driver_combo)
 
         server_edit = QLineEdit()
+        guard_loopback_edit(server_edit)
         server_edit.setPlaceholderText("FQDN or IP, e.g. seestar.local or 192.168.1.50")
         server_edit.setMaxLength(40)
         table.setCellWidget(0, 1, server_edit)

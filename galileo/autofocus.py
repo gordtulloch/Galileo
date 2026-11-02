@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from dataclasses import dataclass
@@ -428,3 +429,117 @@ def _measure_stars(frame) -> tuple[float, int]:
 def _compute_hfr(frame) -> float:
     """Estimate the mean HFR of stars in *frame* using SEP if available."""
     return _measure_stars(frame)[0]
+
+
+# ---------------------------------------------------------------------------
+# Manual focus (FOC-100 … FOC-130)
+# ---------------------------------------------------------------------------
+
+class ManualFocus:
+    """Manual focus as a function of the focus module, independent of any screen.
+
+    Relative and absolute moves, halt, and the position and temperature the focuser reports, with the
+    focuser's limits and backlash applied in one place. The desktop Focus screen and the Control Surface
+    both call this (FOC-110, FOC-120), so there is one implementation and one set of limits. A *held*
+    move — in or out for as long as a button is held — registers with the held-motion manager and so
+    carries its deadman (FOC-130, CSURF-400)."""
+
+    def __init__(self, focuser, *, backlash: int = 0, travel_min: int | None = None, travel_max: int | None = None,
+                 pier_key: str = "", step: int = 50) -> None:
+        self._focuser = focuser
+        self.backlash = max(0, backlash)
+        self.travel_min, self.travel_max = travel_min, travel_max
+        self.pier_key = pier_key
+        self.step = max(1, step)
+        self._held: str | None = None                  # id of the hold currently moving the focuser
+        self._tasks: set[asyncio.Task] = set()         # held-move work, kept referenced until it ends
+
+    # -- readings -------------------------------------------------------------------
+    def position(self) -> int | None:
+        value = getattr(self._focuser, "position", None)
+        return int(value) if isinstance(value, (int, float)) else None
+
+    def temperature(self) -> float | None:
+        """The focuser's temperature, or ``None`` where it does not report one."""
+        value = getattr(self._focuser, "temperature", None)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    # -- limits -----------------------------------------------------------------------
+    def clamp(self, position: int) -> int:
+        """*position* held inside the focuser's travel: its own ``max_step``, then the user's limits."""
+        low = max(0, self.travel_min) if self.travel_min is not None else 0
+        high = self.travel_max
+        own_max = getattr(self._focuser, "max_step", None)
+        if isinstance(own_max, (int, float)) and not isinstance(own_max, bool):
+            high = int(own_max) if high is None else min(high, int(own_max))
+        position = max(low, position)
+        if high is not None:
+            position = min(high, position)
+        if position != low and high is not None and low > high:
+            raise ValueError("the travel limits leave no room to move")
+        return position
+
+    # -- moves ------------------------------------------------------------------------
+    async def move_to(self, position: int) -> int:
+        """Move to an absolute *position* (limited), approaching from the same side when a backlash is
+        set. Returns the position actually requested."""
+        target = self.clamp(int(position))
+        if target != position:
+            logger.warning("Manual focus: %d is outside the travel limits; moving to %d instead.", position, target)
+        if self.backlash > 0:
+            await self._focuser.move_to(self.clamp(target - self.backlash))
+        await self._focuser.move_to(target)
+        return target
+
+    async def move_by(self, steps: int) -> int:
+        """Move in (negative) or out (positive) by *steps* from where the focuser is now."""
+        current = self.position()
+        if current is None:
+            raise ValueError("the focuser does not report its position")
+        return await self.move_to(current + int(steps))
+
+    async def halt(self) -> None:
+        """Stop a move in progress: the focuser's own halt where it has one, otherwise a move to where it is."""
+        for name in ("halt", "abort", "abort_motion"):
+            fn = getattr(self._focuser, name, None)
+            if callable(fn):
+                result = fn()
+                if hasattr(result, "__await__"):
+                    await result
+                return
+        current = self.position()
+        if current is not None:
+            await self._focuser.move_to(current)
+
+    def _spawn(self, loop: asyncio.AbstractEventLoop, coro) -> None:
+        task = loop.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    # -- held moves (FOC-130) ------------------------------------------------------------
+    def start_hold(self, holds, direction: int, holder: str, *, origin: str = "") -> str:
+        """Begin moving in (-1) or out (+1) in small steps until the hold ends. ``holds`` is a
+        ``control_surface.HoldManager``: when its deadman, the holder, the lease or a safety stop ends the
+        hold, the focuser is halted and the loop exits. Returns the hold id the client keeps beating."""
+        loop = asyncio.get_running_loop()
+        sign = 1 if direction >= 0 else -1
+
+        def stop() -> None:
+            self._held = None
+            loop.call_soon_threadsafe(lambda: self._spawn(loop, self.halt()))
+
+        hold_id = holds.start(self.pier_key, holder, stop, origin or "focus")
+        self._held = hold_id
+
+        async def run() -> None:
+            while self._held == hold_id and hold_id in holds.active(self.pier_key):
+                await asyncio.sleep(0)                  # always give the loop (and the watchdog) a turn
+                try:
+                    await self.move_by(sign * self.step)
+                except Exception:
+                    logger.exception("Held focus move failed")
+                    holds.stop(hold_id, holder, "move failed")
+                    return
+
+        self._spawn(loop, run())
+        return hold_id

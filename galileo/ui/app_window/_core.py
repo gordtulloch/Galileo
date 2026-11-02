@@ -275,16 +275,6 @@ class AppWindowCoreMixin:
         self._camera_combo.activated.connect(self._on_camera_activated)
         layout.addWidget(self._camera_combo)
 
-        # The camera of the session running on the selected Pier. Shown on every screen while a
-        # session runs (the session owns its camera; the selectors above don't affect it) and
-        # hidden otherwise. Kept current by ``_refresh_session_camera_label``.
-        self._session_camera_label = QLabel()
-        self._session_camera_label.setObjectName("SessionCameraLabel")
-        self._session_camera_label.setToolTip(
-            "The camera of the session running on this Pier. Every action of the session uses it.")
-        self._session_camera_label.setVisible(False)
-        layout.addWidget(self._session_camera_label)
-
         layout.addStretch(1)
 
         # The selected Pier's current object (IMG-140): whatever was last picked in the Star Atlas.
@@ -365,6 +355,8 @@ class AppWindowCoreMixin:
         option_builders["guiding"] = self._build_guiding_settings_page
         option_builders["science"] = self._build_science_settings_page
         option_builders["notifications"] = self._build_notifications_settings_page
+        option_builders["connect_link"] = self._build_connect_link_settings_page
+        option_builders["connect_link_outreach"] = self._build_outreach_settings_page
         option_builders["plugins"] = self._build_plugins_settings_page
         # Plugins that offer an options page (PLUG-170) get an item after Plugins.
         options_items = list(OPTIONS_ITEMS)

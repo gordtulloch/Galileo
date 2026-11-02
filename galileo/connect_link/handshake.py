@@ -3,85 +3,116 @@
 
 """Version handshake (LINK-080).
 
-Both sides exchange the Galileo version, plugin-API version, schema (migration) level and Connect
-Link protocol version; a plugin may add its own payload (for example capability limits).
+Each side states its Galileo version, plugin-API version, schema (migration) level and Connect Link
+protocol version. A different protocol version is refused; a different schema level *restricts* the
+exchange to what does not depend on the two databases agreeing (``control``, ``view``) — a view
+client has no stake in the other node's schema, but replicating data or configuration across
+different schemas would corrupt it. Either way the message is written for a person. A plugin may add
+its own payload (for example capability limits) and its own verdict.
 """
 
 from __future__ import annotations
 
-import logging
+import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from galileo.connect_link.permissions import PAIRED_PERMISSIONS
 
-PROTOCOL_VERSION = 1
+OK, RESTRICTED, REFUSED = "ok", "restricted", "refused"
+SCHEMA_DEPENDENT = frozenset({"config.read", "config.write", "data.push", "data.pull"})
 
-
-def schema_level() -> int:
-    """Number of the newest applied migration (0 if none or no database)."""
-    try:
-        from galileo.library.database import get_migration_status
-        current = get_migration_status()["current"]
-        return int(str(current).split("_", 1)[0]) if current != "none" else 0
-    except Exception:
-        return 0
-
-
-def local_info() -> dict[str, Any]:
-    from galileo import __version__
-    from galileo.plugins import _CURRENT_API_VERSION
-    return {"galileo": __version__, "plugin_api": _CURRENT_API_VERSION,
-            "schema": schema_level(), "protocol": PROTOCOL_VERSION}
+# ``extension(peer_payload) -> (own_payload, verdict_or_None, message)``
+Extension = Callable[[dict[str, Any]], "ExtensionResult"]
 
 
 @dataclass(frozen=True)
-class Compatibility:
-    ok: bool                 # the exchange may proceed
-    restricted: bool         # ...but not for data that depends on the schema
-    message: str             # readable by a person
+class ExtensionResult:
+    payload: dict[str, Any]
+    verdict: str = OK
+    message: str = ""
 
 
-def check(local: dict[str, Any], remote: dict[str, Any]) -> Compatibility:
-    """Judge a remote's handshake against ours: a protocol mismatch refuses, a schema mismatch
-    restricts (schema-dependent data is not exchanged), anything else is fine."""
-    try:
-        rp, lp = int(remote["protocol"]), int(local["protocol"])
-    except (KeyError, TypeError, ValueError):
-        return Compatibility(False, False, "The other side did not report a Connect Link version.")
-    if rp != lp:
-        newer = "newer" if rp > lp else "older"
-        return Compatibility(False, False, f"The other side runs a {newer} Connect Link protocol "
-                             f"({rp}, this node {lp}); update Galileo on whichever is older.")
-    try:
-        rs, ls = int(remote["schema"]), int(local["schema"])
-    except (KeyError, TypeError, ValueError):
-        return Compatibility(False, False, "The other side did not report its database version.")
-    if rs != ls:
-        return Compatibility(True, True, f"The database versions differ (other {rs}, this node {ls}); "
-                             "settings and data that depend on it will not be exchanged until both match.")
-    return Compatibility(True, False, "Compatible.")
+@dataclass(frozen=True)
+class Versions:
+    galileo: str
+    plugin_api: str
+    schema: int
+    protocol: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"galileo": self.galileo, "plugin_api": self.plugin_api,
+                "schema": self.schema, "protocol": self.protocol}
 
 
-class HandshakeExtensions:
-    """Per-plugin additions to the handshake payload."""
+@dataclass(frozen=True)
+class HandshakeResult:
+    verdict: str
+    message: str
+    allowed: frozenset[str]
+    node: dict[str, Any]
+    plugin: dict[str, Any] = field(default_factory=dict)
 
-    def __init__(self) -> None:
-        self._providers: dict[str, Callable[[], dict[str, Any]]] = {}
+    def as_dict(self) -> dict[str, Any]:
+        return {"verdict": self.verdict, "message": self.message, "allowed": sorted(self.allowed),
+                "node": self.node, "plugin": self.plugin}
 
-    def register(self, plugin: str, provider: Callable[[], dict[str, Any]]) -> None:
-        self._providers[plugin] = provider
 
-    def unregister(self, plugin: str) -> None:
-        self._providers.pop(plugin, None)
+def schema_level(migration_name: str) -> int:
+    """``'033_add_connect_link'`` -> ``33``; ``'none'`` -> ``0``."""
+    m = re.match(r"^(\d+)", migration_name or "")
+    return int(m.group(1)) if m else 0
 
-    def payload(self) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for name, fn in list(self._providers.items()):
-            try:
-                out[name] = fn()
-            except Exception:                                   # a bad extension never breaks the handshake
-                logger.exception("handshake extension %s failed", name)
-                out[name] = {}
-        return out
+
+class Handshake:
+    def __init__(self, versions: Callable[[], Versions]) -> None:
+        self._versions = versions
+        self._extensions: dict[str, Extension] = {}
+
+    def extend(self, plugin: str, extension: Extension) -> None:
+        self._extensions[plugin.strip().lower()] = extension
+
+    def remove_extension(self, plugin: str) -> None:
+        self._extensions.pop(plugin.strip().lower(), None)
+
+    def evaluate(self, plugin: str, theirs: dict[str, Any]) -> HandshakeResult:
+        ours = self._versions()
+        node = ours.as_dict()
+        try:
+            their_protocol, their_schema = int(theirs["protocol"]), int(theirs["schema"])
+        except (KeyError, TypeError, ValueError):
+            return HandshakeResult(
+                REFUSED, "The other side did not say which Connect Link and database versions it uses.",
+                frozenset(), node)
+
+        verdict, messages, allowed = OK, [], set(PAIRED_PERMISSIONS)
+        if their_protocol != ours.protocol:
+            newer = "newer" if their_protocol > ours.protocol else "older"
+            return HandshakeResult(
+                REFUSED, f"The other side uses a {newer} Connect Link protocol ({their_protocol}; this "
+                f"node uses {ours.protocol}). Update Galileo on whichever is older.", frozenset(), node)
+        if their_schema != ours.schema:
+            verdict, allowed = RESTRICTED, allowed - SCHEMA_DEPENDENT
+            newer = "newer" if their_schema > ours.schema else "older"
+            messages.append(
+                f"The other side's database is {newer} (level {their_schema}; this node is {ours.schema}), "
+                "so only control and viewing are available until both are updated to the same version.")
+
+        extra: dict[str, Any] = {}
+        ext = self._extensions.get(plugin.strip().lower())
+        if ext is not None:
+            result = ext(dict(theirs.get("plugin") or {}))
+            extra = result.payload
+            if result.verdict == REFUSED:
+                return HandshakeResult(REFUSED, result.message or "The plugin refused the exchange.",
+                                       frozenset(), node, extra)
+            if result.verdict == RESTRICTED:
+                verdict, allowed = RESTRICTED, allowed - SCHEMA_DEPENDENT
+            if result.message:
+                messages.append(result.message)
+        return HandshakeResult(verdict, " ".join(messages), frozenset(allowed), node, extra)
+
+
+__all__ = ["OK", "REFUSED", "RESTRICTED", "SCHEMA_DEPENDENT", "ExtensionResult", "Handshake",
+           "HandshakeResult", "Versions", "schema_level"]

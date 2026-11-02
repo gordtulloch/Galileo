@@ -1702,3 +1702,35 @@ async def test_tc_plt_080_run_stops_if_the_mount_never_arrives(tmp_path):
     workflow.mount.get_status = AsyncMock(return_value=stuck)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, arrival_timeout_s=0.2))
     assert "did not reach" in seen[-1].message and workflow.camera.start_exposure.await_count == 0
+
+
+@pytest.mark.requirement("TC-PLT-030")
+@pytest.mark.priority("P2")
+async def test_tc_plt_030_exposure_is_announced_while_it_runs():
+    """PLT-030: the solve workflow reports each exposure's start (duration, label) and end, so the UI can show it."""
+    from unittest.mock import AsyncMock, MagicMock
+    from galileo.platesolve import SolveWorkflow
+    camera = MagicMock()
+    camera.start_exposure = AsyncMock()
+    camera.get_image_array = AsyncMock(return_value="frame")
+    workflow = SolveWorkflow(MagicMock(), camera=camera)
+    seen: list = []
+    workflow.on_exposure = lambda duration, label: seen.append((duration, label))
+    assert await workflow._expose(3.0, "Light", {}, "Exposing") == "frame"
+    assert seen == [(3.0, "Exposing"), (None, "")]
+
+
+@pytest.mark.requirement("TC-PLT-030")
+@pytest.mark.priority("P2")
+async def test_tc_plt_030_solver_process_falls_back_when_the_loop_cannot_spawn(monkeypatch):
+    """PLT-030: a loop that cannot spawn asyncio subprocesses (selector loop on Windows) still runs the solver."""
+    import asyncio
+    import sys
+    from galileo import platesolve_solvers as ps
+
+    async def unsupported(*_a, **_k):
+        raise NotImplementedError
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unsupported)
+    proc = await ps._start_process([sys.executable, "-c", "print('ok')"])
+    out, _ = await asyncio.wait_for(proc.communicate(), 30)
+    assert isinstance(proc, ps._ThreadProcess) and out.strip() == b"ok" and proc.returncode == 0

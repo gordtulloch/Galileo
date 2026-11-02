@@ -69,7 +69,11 @@ When ticked (the default), every frame is written to a scratch folder and regist
 
 ## View
 
-How the preview is displayed. None of these change what is saved. A one-shot-colour camera's frames are always shown in colour (debayered automatically, using the pattern the camera reports); statistics, the histogram and **Save Frame** keep the camera's raw data.
+How the preview is displayed. None of these change what is saved. A one-shot-colour camera's frames are shown in colour automatically (see **Debayer**); statistics, the histogram and **Save Frame** keep the camera's raw data.
+
+## Debayer
+
+Shows the preview in colour by debayering the camera's mosaic. It is ticked automatically when the camera reports a Bayer pattern; tick or untick it yourself to override. If the camera reports no pattern but you tick it, the pattern saved on Equipment › Camera is used (wrong colours mean that pattern is wrong). Only the preview changes — statistics, the histogram and **Save Frame** keep the camera's raw data.
 
 ## Live Stack
 
@@ -102,6 +106,18 @@ Stops both axes immediately, in case a button was not released cleanly.
 ## Mount Nudge Speed
 
 How fast the mount moves while a button is held: from **1** (slowest) to **9** (fastest), with the speed in degrees per second. The levels are the same as the Mount page's Rate.
+
+## Rotator
+
+Sets the camera rotation without leaving the preview. Uses the rotator connected on Equipment › Rotator.
+
+## Rotation
+
+The angle, in degrees (0 – 359.99), to turn the rotator to. Nothing moves until you press **Set**.
+
+## Rotation Set
+
+Moves the connected rotator to the **Rotation** angle. If no rotator is connected, the status bar says so.
 
 ## Annotate
 
@@ -137,4 +153,4 @@ The most recent frame, auto-stretched so faint detail is visible. Scroll to zoom
 
 ## Progress
 
-What is happening now — exposing, downloading, frame number of the run — with a bar showing progress through the current exposure.
+What is happening now — exposing, downloading, frame number of the run — with a bar showing progress through the current exposure. While a session is running on the selected Pier it shows the session's progress instead — its name, block number, frame count and what it is doing — and returns to Idle when the session ends.

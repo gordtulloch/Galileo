@@ -266,13 +266,13 @@ def build_session_context(window: Any, pier: Any = None, camera_slot: str | None
 class ActiveRun:
     """One in-flight session on one Pier."""
     region: Any
-    job: Any
+    job: Any                                 # the Schedule entry being run; None for a Run of an unscheduled session
     scheduler: Any
     executor: SessionExecutor
     thread: QThread | None = None
     manual: bool = True                      # started by Run, not by the scheduler's tick
-    prior_start: str | None = None           # the job's timeline start before a manual Run moved it
-    was_scheduled: bool = False
+    prior_start: str | None = None           # unused: a manual Run no longer moves its Schedule entry
+    was_scheduled: bool = False              # a manual Run of a session that is also on the Schedule
     progress: SessionProgress = field(default_factory=SessionProgress)
     result: SessionRunResult | None = None
 
@@ -294,7 +294,13 @@ class _RunThread(QThread):
             return run.result
 
         try:
-            state = asyncio.run(run.scheduler.run_job(run.job, runner))
+            if run.manual:
+                # Run executes at once and stays off the Schedule: no job, no queue, no timeline slot.
+                run.result = asyncio.run(executor.run(run.region.blocks))
+                value = getattr(run.result.state, "value", run.result.state)
+                state = value if value in ("completed", "error") else "stopped"
+            else:
+                state = asyncio.run(run.scheduler.run_job(run.job, runner))
         except Exception:
             logger.exception("Session run thread failed")
             state = "error"
@@ -313,6 +319,7 @@ class SessionRunController(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
         self._timer.timeout.connect(self._tick)
+        self._takeover: dict[Any, Any] = {}         # Pier key -> session whose Run is waiting for a scheduled run to stop
         self._blocked: dict[Any, str] = {}          # Pier key -> why the safety monitor holds its jobs
         self._safety_paused: set[Any] = set()       # runs we paused for unsafe conditions
         self._safety_timer = QTimer(self)
@@ -366,24 +373,32 @@ class SessionRunController(QObject):
         *problems* is non-empty nothing was started; *conflicts* lists other timeline entries
         the run's window overlaps (reported, not resolved — SCHED-150)."""
         key = self._key()
-        if key in self._runs:
-            return ["A session is already running on this Pier."], []
+        running = self._runs.get(key)
+        if running is not None:
+            if running.manual:
+                return ["A session is already running on this Pier."], []
+            # A scheduled session is in progress: Run takes over. Stop it, and start this one as soon
+            # as it has finished stopping (see _on_finished).
+            self._takeover[key] = region
+            running.executor.stop()
+            return [], []
         if not region.blocks:
             return ["This session has no blocks to run."], []
         context = build_session_context(self._window, camera_slot=getattr(region, "camera_slot", None))
         problems = preflight(region.blocks, context)
         if problems:
             return problems, []
-        was_scheduled = region.is_scheduled
-        prior_start = region._job.scheduled_start_utc if (was_scheduled and region._job) else None
-        conflicts = region.run_now()
-        self._launch(region, context, manual=True, was_scheduled=was_scheduled, prior_start=prior_start)
-        return [], conflicts
+        scheduler = region._scheduler
+        reason = scheduler.safety_block_reason() if scheduler is not None else ""
+        if reason:
+            return [f"Conditions are unsafe: {reason}."], []
+        self._launch(region, context, manual=True, was_scheduled=region.is_scheduled)
+        return [], []
 
     def _launch(self, region: Any, context: SessionContext, manual: bool,
                 was_scheduled: bool = False, prior_start: str | None = None, key: Any = None) -> None:
         key = self._key() if key is None else key
-        job = region._job
+        job = region._job if (not manual or region.is_scheduled) else None
         scheduler = region._scheduler
         executor = SessionExecutor(context, name=region.name)
         run = ActiveRun(region=region, job=job, scheduler=scheduler, executor=executor, manual=manual,
@@ -438,16 +453,19 @@ class SessionRunController(QObject):
             run.thread.wait()
         scheduler, job, region = run.scheduler, run.job, run.region
         message = ""
-        if state != "completed" and run.manual:
-            # A manual Run that didn't finish leaves the session as it was before: back on its
-            # earlier timeline slot if it had one, otherwise an editable draft again.
-            if run.was_scheduled:
-                job.scheduled_start_utc = run.prior_start
-                job.run_state = "pending"
+        if run.manual and state == "completed":
+            # A completed session has nothing left to do (SES-210). If it was also on the Schedule,
+            # that entry is satisfied too, and reaped below.
+            if job is not None:
+                job.runs_completed += 1
+                job.run_state = "completed"
+                job._frames_captured += getattr(run.result, "frames_captured", 0) or 0
                 scheduler.save()
             else:
-                region.deschedule()
-        scheduler.reap_completed_jobs()
+                region.delete()
+        # Any other end of a manual Run leaves the session as it was: Run never touched the Schedule.
+        if scheduler is not None:
+            scheduler.reap_completed_jobs()
         result = run.result
         if result is not None and result.errors:
             message = "; ".join(result.errors[-3:])
@@ -459,6 +477,11 @@ class SessionRunController(QObject):
             }.get(state, f"Session {region.name!r} ended with an error — {message or 'see log'}.")
             status.statusBar().showMessage(summary, 10000)
         self.changed.emit(key)
+        waiting = self._takeover.pop(key, None)
+        if waiting is not None:
+            problems, _ = self.start_region(waiting) if key == self._key() else (["its Pier is no longer selected"], [])
+            if problems and status is not None and hasattr(status, "statusBar"):
+                status.statusBar().showMessage(f"Could not run {waiting.name!r}: {'; '.join(problems)}", 10000)
 
     # --- Scheduler tick -----------------------------------------------------------
 

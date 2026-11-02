@@ -194,3 +194,202 @@ async def test_tc_link_020_bad_requests_and_limits_over_the_wire(link):
         async with session.post(base + "/pair", json={"plugin": "webconnect", "name": f"n{i}"}) as r:
             statuses.append(r.status)
     assert statuses[0] == 202 and 429 in statuses
+
+
+async def _paired(pairing, session, base, permissions, plugin="webconnect"):
+    async with session.post(base + "/pair", json={"plugin": plugin, "name": "P"}) as r:
+        rid = (await r.json())["request_id"]
+    pairing.approve(rid, permissions)
+    async with session.get(f"{base}/pair/{rid}") as r:
+        return {"Authorization": f"Bearer {(await r.json())['token']}"}
+
+
+@pytest.mark.requirement("TC-LINK-050")
+@pytest.mark.priority("MVP")
+async def test_tc_link_050_plugin_routes_are_authenticated_permissioned_and_audited(link):
+    """LINK-050: a registered route answers only an authenticated peer of that plugin holding its
+    permission; unauthenticated callers cannot tell it from a missing path; failures are isolated."""
+    server, pairing, session, base, audit = link
+    root = base.removesuffix("/connect/v1")
+
+    async def hello(peer, request):
+        return {"hi": peer.name}
+
+    async def boom(peer, request):
+        raise RuntimeError("secret detail")
+
+    server.routes.register("webconnect", "GET", "/webconnect/v1/hello", "view", hello)
+    server.routes.register("webconnect", "POST", "/webconnect/v1/act", "control", hello)
+    server.routes.register("webconnect", "GET", "/webconnect/v1/boom", "view", boom)
+    async with session.get(root + "/webconnect/v1/hello") as a, session.get(root + "/webconnect/v1/nope") as b:
+        assert a.status == b.status == 401 and await a.text() == await b.text()
+    auth = await _paired(pairing, session, base, ["view"])
+    async with session.get(root + "/webconnect/v1/hello", headers=auth) as r:
+        assert r.status == 200 and await r.json() == {"hi": "P"}
+    async with session.post(root + "/webconnect/v1/act", headers=auth) as r:
+        assert r.status == 403
+    async with session.get(root + "/webconnect/v1/nope", headers=auth) as r:
+        assert r.status == 404
+    async with session.get(root + "/webconnect/v1/boom", headers=auth) as r:
+        assert r.status == 500 and "secret" not in await r.text()
+    assert server.routes.unregister_plugin("webconnect") == 3
+    async with session.get(root + "/webconnect/v1/hello", headers=auth) as r:
+        assert r.status == 404
+    outcomes = {(e.route, e.outcome) for e in audit.query()}
+    assert ("POST /webconnect/v1/act", "denied") in outcomes
+    assert ("GET /webconnect/v1/hello", "ok") in outcomes
+
+
+@pytest.mark.requirement("TC-LINK-050")
+@pytest.mark.priority("MVP")
+def test_tc_link_050_a_plugin_cannot_register_outside_its_own_prefix():
+    """LINK-050: no registering under another plugin's or core's prefix, an unknown permission,
+    a duplicate, or an unclean path."""
+    from galileo.connect_link import RouteError, RouteRegistry
+
+    async def h(peer, request):
+        return {}
+
+    reg = RouteRegistry()
+    reg.register("WebConnect", "get", "/webconnect/v1/a", "view", h)
+    for plugin, path, perm in [("webconnect", "/nodeconnect/v1/a", "view"), ("connect", "/connect/v1/a", "view"),
+                               ("webconnect", "/webconnect/v1/b", "root"), ("webconnect", "/webconnect/v1/a", "view"),
+                               ("webconnect", "/webconnect/v1/../x", "view"), ("webconnect", "/webconnect/a", "view")]:
+        with pytest.raises(RouteError):
+            reg.register(plugin, "GET", path, perm, h)
+    assert len(reg) == 1
+
+
+@pytest.mark.requirement("TC-LINK-080")
+@pytest.mark.priority("MVP")
+def test_tc_link_080_handshake_refuses_protocol_restricts_schema_and_lets_a_plugin_extend():
+    """LINK-080: a different protocol is refused, a different schema restricts to control/view, both
+    with a readable message; a plugin adds its payload and may refuse or restrict."""
+    from galileo.connect_link import Handshake, Versions
+    from galileo.connect_link.handshake import OK, REFUSED, RESTRICTED, ExtensionResult, schema_level
+    assert schema_level("033_add_connect_link") == 33 and schema_level("none") == 0
+    hs = Handshake(lambda: Versions("1.0", "1", 33, 1))
+    same = {"protocol": 1, "schema": 33}
+    r = hs.evaluate("webconnect", same)
+    assert r.verdict == OK and "control" in r.allowed and "data.push" in r.allowed
+    r = hs.evaluate("webconnect", {"protocol": 2, "schema": 33})
+    assert r.verdict == REFUSED and not r.allowed and "newer" in r.message
+    r = hs.evaluate("webconnect", {"protocol": 1, "schema": 30})
+    assert r.verdict == RESTRICTED and r.allowed == {"control", "view"} and "older" in r.message
+    assert hs.evaluate("webconnect", {"protocol": "x"}).verdict == REFUSED
+    hs.extend("WebConnect", lambda p: ExtensionResult({"streams": 8}, RESTRICTED, "Limited."))
+    r = hs.evaluate("webconnect", {**same, "plugin": {}})
+    assert r.plugin == {"streams": 8} and r.verdict == RESTRICTED and r.allowed == {"control", "view"}
+    hs.extend("webconnect", lambda p: ExtensionResult({}, REFUSED, "No."))
+    assert hs.evaluate("webconnect", same).verdict == REFUSED
+    hs.remove_extension("webconnect")
+    assert hs.evaluate("webconnect", same).verdict == OK
+
+
+@pytest.mark.requirement("TC-LINK-080")
+@pytest.mark.priority("MVP")
+async def test_tc_link_080_handshake_over_the_wire(link):
+    """LINK-080: an authenticated peer posts its versions and gets the verdict and this node's."""
+    from galileo.connect_link import Handshake, Versions
+    server, pairing, session, base, _ = link
+    server.handshake = Handshake(lambda: Versions("1.0", "1", 33, 1))
+    auth = await _paired(pairing, session, base, ["view"])
+    async with session.post(base + "/handshake", json={"protocol": 1, "schema": 32}, headers=auth) as r:
+        body = await r.json()
+    assert body["verdict"] == "restricted" and body["allowed"] == ["control", "view"] and body["node"]["schema"] == 33
+    async with session.post(base + "/handshake", data="x", headers=auth) as r:
+        assert r.status == 400
+    async with session.post(base + "/handshake", json={"protocol": 1, "schema": 33}) as r:
+        assert r.status == 401
+
+
+async def _stream(session, base, auth, **query):
+    return await session.ws_connect(base + "/stream", headers=auth, params=query)
+
+
+@pytest.mark.requirement("TC-LINK-060")
+@pytest.mark.priority("MVP")
+async def test_tc_link_060_stream_delivers_sequenced_messages_and_needs_a_token(link):
+    """LINK-060: an authenticated peer receives plugin messages tagged with a per-stream sequence id;
+    an unauthenticated one cannot open the stream."""
+    server, pairing, session, base, _ = link
+    with pytest.raises(aiohttp.WSServerHandshakeError):
+        await session.ws_connect(base + "/stream")
+    auth = await _paired(pairing, session, base, ["view"])
+    ws = await _stream(session, base, auth)
+    hello = await ws.receive_json(timeout=5)
+    assert hello["type"] == "hello" and hello["seq"] == 0
+    peer_id = (await (await session.get(base + "/whoami", headers=auth)).json())["peer_id"]
+    assert server.streams.publish(peer_id, {"n": 1}) == 1
+    assert server.streams.broadcast("webconnect", {"n": 2}) == 1
+    assert server.streams.broadcast("nodeconnect", {"n": 3}) == 0
+    assert await ws.receive_json(timeout=5) == {"seq": 1, "data": {"n": 1}}
+    assert await ws.receive_json(timeout=5) == {"seq": 2, "data": {"n": 2}}
+    await ws.close()
+
+
+@pytest.mark.requirement("TC-LINK-060")
+@pytest.mark.priority("MVP")
+async def test_tc_link_060_reconnect_replays_what_was_missed_or_says_resync(link):
+    """LINK-060: reconnecting with the last id replays the missed messages while they are in the
+    ring; once the ring has moved on, or the epoch differs, the peer is told to resynchronise."""
+    server, pairing, session, base, _ = link
+    server.streams._ring_size = 3
+    auth = await _paired(pairing, session, base, ["view"])
+    ws = await _stream(session, base, auth)
+    epoch = (await ws.receive_json(timeout=5))["epoch"]
+    peer_id = (await (await session.get(base + "/whoami", headers=auth)).json())["peer_id"]
+    server.streams.publish(peer_id, "a")
+    assert (await ws.receive_json(timeout=5))["seq"] == 1
+    await ws.close()
+    for x in "bc":                                   # missed while disconnected
+        server.streams.publish(peer_id, x)
+    ws = await _stream(session, base, auth, last=1, epoch=epoch)
+    assert (await ws.receive_json(timeout=5))["type"] == "hello"
+    assert [await ws.receive_json(timeout=5) for _ in range(2)] == [{"seq": 2, "data": "b"}, {"seq": 3, "data": "c"}]
+    await ws.close()
+    for x in "def":                                  # the ring (3) now starts at 4
+        server.streams.publish(peer_id, x)
+    for q in ({"last": 1, "epoch": epoch}, {"last": 1, "epoch": "other"}, {"last": 99, "epoch": epoch},
+              {"last": "x", "epoch": epoch}):
+        ws = await _stream(session, base, auth, **q)
+        msg = await ws.receive_json(timeout=5)
+        assert msg["type"] == "resync" and msg["seq"] == 6
+        await ws.close()
+    ws = await _stream(session, base, auth, last=6, epoch=epoch)      # fully caught up: nothing to replay
+    assert (await ws.receive_json(timeout=5))["type"] == "hello"
+    await ws.close()
+
+
+@pytest.mark.requirement("TC-LINK-060")
+@pytest.mark.priority("MVP")
+async def test_tc_link_060_revoke_disable_and_slow_peer_close_the_stream(link):
+    """LINK-060: the stream closes at once when the peer is revoked or the plugin disabled, and a peer
+    that cannot keep up is disconnected instead of buffering without bound."""
+    server, pairing, session, base, _ = link
+    auth = await _paired(pairing, session, base, ["view"])
+    peer_id = (await (await session.get(base + "/whoami", headers=auth)).json())["peer_id"]
+    ws = await _stream(session, base, auth)
+    await ws.receive_json(timeout=5)
+    server.revoke_peer(peer_id)
+    assert (await ws.receive(timeout=5)).type == aiohttp.WSMsgType.CLOSE
+    assert not server.streams.connected(peer_id)
+    async with session.get(base + "/whoami", headers=auth) as r:
+        assert r.status == 401
+
+    auth = await _paired(pairing, session, base, ["view"])
+    ws = await _stream(session, base, auth)
+    await ws.receive_json(timeout=5)
+    server.disable_plugin("WebConnect")
+    assert (await ws.receive(timeout=5)).type == aiohttp.WSMsgType.CLOSE
+
+    auth = await _paired(pairing, session, base, ["view"])
+    peer_id = (await (await session.get(base + "/whoami", headers=auth)).json())["peer_id"]
+    ws = await _stream(session, base, auth)
+    await ws.receive_json(timeout=5)
+    stream = server.streams._streams[peer_id]
+    stream.conn.queue = type(stream.conn.queue)(maxsize=1)     # a writer that never drains
+    stream.conn.queue.put_nowait("x")
+    server.streams.publish(peer_id, "y")
+    assert stream.conn is None
+    await ws.close()

@@ -17,11 +17,6 @@ class AppSettingRecord(BaseModel):
     key = pw.TextField()
     scope = pw.TextField(default="")
     value = pw.TextField(default="null")
-    # Replication columns (migration 034), maintained by database triggers (REPL-010).
-    modified = pw.FloatField(default=0)
-    rev = pw.IntegerField(default=0)
-    dirty = pw.IntegerField(default=0)
-    base_rev = pw.IntegerField(default=0)
 
     class Meta:
         table_name = "app_settings"

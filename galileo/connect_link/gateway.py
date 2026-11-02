@@ -1,193 +1,244 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""The request pipeline (LINK-230, ADR-LINK-005).
+"""The request pipeline (LINK-230): the one path from a Connect Link route to a domain service.
 
-Every operation request from a paired client passes the same stages in fixed order — identify,
-authorise, validate, lease, confirm, idempotency, dispatch — and is audited in a ``finally``, so
-MobileConnect and WebConnect cannot differ in the safety-critical steps. The catalogue of operations,
-the lease and the load signal are ports (``Protocol``s) so the pipeline is complete before the
-Control Surface and lease services exist.
+Every operation request — from a paired client, a relayed spoke request or an outreach guest — passes,
+in order: identify, authorise, validate, lease, confirm, idempotency, dispatch (under a load governor)
+and audit. The audit record is written in a ``finally`` so refusals and errors are recorded too. The
+pipeline returns a typed :class:`~galileo.control_surface.Outcome` and never swallows or overrides a
+refusal made by a safety service.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import secrets
+import threading
 import time
-from collections import OrderedDict, defaultdict, deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from galileo.connect_link.audit import AuditLog
-from galileo.connect_link.peers import Peer
+from galileo.core.ratelimit import RateLimiter
+from galileo.control_surface import LeaseBroker, Outcome, Registry
+from galileo.control_surface.registry import CLASSES
 
-OK, REFUSED, INVALID, UNAVAILABLE, BUSY, UNREACHABLE = (
-    "ok", "refused", "invalid", "unavailable", "busy", "unreachable")
+logger = logging.getLogger(__name__)
 
-READ, OPERATE, CONFIRM, EMERGENCY, CONFIG = "read", "operate", "confirm", "emergency", "config"
-_PERMISSION = {READ: "view", OPERATE: "control", CONFIRM: "control", EMERGENCY: "control"}
-
-
-class CatalogueError(ValueError):
-    """An operation the Control Surface catalogue must not hold."""
-
-
-class SafetyRefusal(Exception):
-    """Raised by a domain service that declines for safety; surfaced verbatim, never overridden."""
-
-
-class Unreachable(Exception):
-    """Raised by a relay when the owning node cannot be reached."""
-
-
-class LeasePort(Protocol):
-    def holds(self, client_id: str, pier: str) -> bool: ...
+PERMISSION_GUEST = "outreach.view"
+# Scheduling classes, highest first (LINK-230): emergency, a running session, interactive work,
+# previews and sky data, transfers.
+CLASS_EMERGENCY, CLASS_SESSION, CLASS_INTERACTIVE, CLASS_PREVIEW, CLASS_BULK = range(5)
 
 
 @dataclass(frozen=True)
-class Result:
-    outcome: str
-    reason: str = ""
-    data: Any = None
-
-
-@dataclass(frozen=True)
-class Operation:
+class GatewayRequest:
+    client_id: str                          # the acting client (a browser, an app, a guest slot)
     name: str
-    op_class: str
-    handler: Callable[[Peer, dict[str, Any]], Awaitable[Any]]
-    validate: Callable[[dict[str, Any]], str | None] = lambda args: None      # reason, or None if valid
-    needs_lease: bool | None = None                                            # default: not for read/emergency
-
-
-@dataclass
-class Request:
-    client: Peer
-    op: str
+    pier: str
     args: dict[str, Any] = field(default_factory=dict)
-    pier: str = ""
+    plugin: str = ""
+    kind: str = "peer"                      # "peer" or "guest"
+    permissions: frozenset[str] = frozenset()
+    carrier: str = ""                       # the peer carrying a delegated or relayed request
     idempotency_key: str = ""
     confirm_token: str = ""
+    source: str = ""
+
+    @property
+    def holder(self) -> str:
+        """The identity under which the client holds a lease."""
+        return f"{self.plugin}:{self.client_id}" if self.plugin else self.client_id
 
 
-class Catalogue:
-    def __init__(self) -> None:
-        self._ops: dict[str, Operation] = {}
+class LoadGovernor:
+    """Strict class order under load: a lower class is turned away first. Slots are reserved for the
+    higher classes, so previews and transfers can never take the capacity a session or an emergency needs."""
 
-    def register(self, op: Operation) -> None:
-        if op.op_class == CONFIG or op.op_class not in _PERMISSION:
-            raise CatalogueError(f"{op.name}: class {op.op_class!r} cannot be on a remote surface")
-        self._ops[op.name] = op
+    RESERVE = (0, 1, 2, 4, 6)
 
-    def get(self, name: str) -> Operation | None:
-        return self._ops.get(name)
+    def __init__(self, capacity: int = 8, session_busy: Callable[[], bool] | None = None) -> None:
+        self._capacity = capacity
+        self._busy = session_busy or (lambda: False)
+        self._in_flight = 0
+        self._lock = threading.Lock()
 
+    def admit(self, cls: int) -> str:
+        """Empty string when admitted, else the reason to give the client."""
+        if cls == CLASS_EMERGENCY:
+            with self._lock:
+                self._in_flight += 1
+            return ""
+        if cls >= CLASS_PREVIEW and self._busy():
+            return "yielding to the running session"
+        with self._lock:
+            if self._in_flight >= self._capacity - self.RESERVE[cls]:
+                return "the node is busy with higher-priority work"
+            self._in_flight += 1
+        return ""
 
-class _Confirmations:
-    def __init__(self, clock: Callable[[], float], ttl: float = 30.0) -> None:
-        self._clock, self._ttl = clock, ttl
-        self._tokens: dict[str, tuple[str, float]] = {}
-
-    @staticmethod
-    def _bind(req: Request) -> str:
-        blob = json.dumps([req.client.peer_id, req.op, req.pier, req.args], sort_keys=True, default=str)
-        return hashlib.sha256(blob.encode()).hexdigest()
-
-    def issue(self, req: Request) -> str:
-        now = self._clock()
-        self._tokens = {t: v for t, v in self._tokens.items() if v[1] > now}
-        token = secrets.token_urlsafe(16)
-        self._tokens[token] = (self._bind(req), now + self._ttl)
-        return token
-
-    def redeem(self, req: Request) -> bool:
-        entry = self._tokens.pop(req.confirm_token, None)           # single use
-        return entry is not None and entry[1] > self._clock() and secrets.compare_digest(entry[0], self._bind(req))
+    def done(self) -> None:
+        with self._lock:
+            self._in_flight = max(0, self._in_flight - 1)
 
 
 class Gateway:
     def __init__(
-        self, catalogue: Catalogue, audit: AuditLog, lease: LeasePort, *,
-        clock: Callable[[], float] = time.monotonic, max_inflight: int = 8,
-        rate: tuple[int, float] = (30, 10.0),
-        idempotency_size: int = 512,
+        self, registry: Registry, leases: LeaseBroker, audit: AuditLog, *,
+        clock: Callable[[], float] = time.time, guest_allowlist: Iterable[str] = (),
+        governor: LoadGovernor | None = None, limiter: RateLimiter | None = None,
+        confirm_ttl_s: float = 60.0, idempotency_ttl_s: float = 600.0,
     ) -> None:
-        self._cat, self._audit, self._lease, self._clock = catalogue, audit, lease, clock
-        self._confirm = _Confirmations(clock)
-        self._max_inflight, self._inflight = max_inflight, 0
-        self._rate = rate
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
-        self._done: OrderedDict[tuple[str, str], Result] = OrderedDict()
-        self._done_size = idempotency_size
+        registry.verify()                                       # CSURF-020: no config entry, ever
+        self._registry, self._leases, self._audit, self._clock = registry, leases, audit, clock
+        self._guest = frozenset(guest_allowlist)
+        self._governor = governor or LoadGovernor()
+        self._limiter = limiter or RateLimiter(clock)
+        self._confirm_ttl, self._idem_ttl = confirm_ttl_s, idempotency_ttl_s
+        self._tokens: dict[str, tuple[str, str, float]] = {}    # token -> (client, fingerprint, expiry)
+        self._results: dict[tuple[str, str], tuple[float, str, Outcome]] = {}
+        self._lock = threading.Lock()
 
-    async def handle(self, req: Request) -> Result:
-        result = Result(UNAVAILABLE, "internal error")
+    # -- the pipeline ----------------------------------------------------------------------
+    async def handle(self, req: GatewayRequest) -> Outcome:
+        outcome = Outcome("unavailable", "the request could not be processed")
+        cls = ""
         try:
-            result = await self._run(req)
-            return result
-        finally:                                                     # audit always, including refusal and error
-            self._audit.write(req.client.peer_id, req.client.plugin, f"op:{req.op}", result.outcome,
-                              result.reason, fields={"pier": req.pier})
-
-    def _limited(self, client_id: str) -> bool:
-        n, window = self._rate
-        now, hits = self._clock(), self._hits[client_id]
-        while hits and hits[0] <= now - window:
-            hits.popleft()
-        if len(hits) >= n:
-            return True
-        hits.append(now)
-        return False
-
-    async def _run(self, req: Request) -> Result:
-        # identify
-        client = req.client
-        if client.is_service or not client.active(time.time()):
-            return Result(REFUSED, "unknown or inactive client")
-        op = self._cat.get(req.op)
-        if op is None:
-            return Result(INVALID, "unknown operation")
-        emergency = op.op_class == EMERGENCY
-        # authorise
-        if _PERMISSION[op.op_class] not in client.permissions:
-            return Result(REFUSED, f"requires {_PERMISSION[op.op_class]}")
-        if not emergency and self._limited(client.peer_id):            # emergency is never rate-limited
-            return Result(BUSY, "rate limited")
-        # validate
-        problem = op.validate(req.args)
-        if problem:
-            return Result(INVALID, problem)
-        # lease
-        needs = op.needs_lease if op.needs_lease is not None else op.op_class in (OPERATE, CONFIRM)
-        if needs and not self._lease.holds(client.peer_id, req.pier):
-            return Result(REFUSED, "another controller holds the lease")
-        # confirm
-        if op.op_class == CONFIRM and not self._confirm.redeem(req):
-            return Result(REFUSED, "confirmation required", {"confirm_token": self._confirm.issue(req)})
-        # idempotency
-        key = (client.peer_id, req.idempotency_key)
-        if req.idempotency_key and key in self._done:
-            return self._done[key]
-        # dispatch, under the load governor (an emergency operation is never held back by it)
-        if not emergency and self._inflight >= self._max_inflight:
-            return Result(BUSY, "node is busy")
-        self._inflight += 1
-        try:
-            data = await op.handler(client, req.args)
-            result = Result(OK, "", data)
-        except SafetyRefusal as exc:
-            result = Result(REFUSED, str(exc))                         # verbatim, never overridden
-        except Unreachable as exc:
-            result = Result(UNREACHABLE, str(exc))
-        except Exception as exc:                                       # BaseException is never caught
-            result = Result(UNAVAILABLE, str(exc) or exc.__class__.__name__)
+            outcome, cls = await self._pipeline(req)
+        except Exception:
+            logger.exception("Connect Link gateway failed")
         finally:
-            self._inflight -= 1
-        if req.idempotency_key and result.outcome == OK:
-            self._done[key] = result
-            while len(self._done) > self._done_size:
-                self._done.popitem(last=False)
-        return result
+            self.record(req, outcome, cls)
+        return outcome
+
+    async def _pipeline(self, req: GatewayRequest) -> tuple[Outcome, str]:
+        # 1. identify
+        if not req.client_id or not req.name:
+            return Outcome("refused", "the request does not say who is asking"), ""
+        spec = self._registry.spec(req.name)
+        cls = spec.permission_class if spec else ""
+        if cls != "emergency" and not self._limiter.allow(req.client_id):
+            return Outcome("busy", "too many requests; slow down"), cls
+        # 2. authorise
+        denied = self._authorise(req, cls)
+        if denied:
+            return Outcome("refused", denied), cls
+        # 3. validate against the catalogue (an unknown name is "unavailable")
+        prepared = self._registry.prepare(req.name, req.args, req.pier)
+        if isinstance(prepared, Outcome):
+            return prepared, cls
+        spec = prepared.spec
+        # 4. lease
+        if spec.needs_lease and cls != "emergency":
+            holder = self._leases.holder(req.pier)
+            if holder != req.holder:
+                who = holder or "nobody"
+                return Outcome("refused", f"you do not hold the control lease for this Pier ({who} does)"
+                               if holder else "take the control lease for this Pier first"), cls
+        # 5/6. idempotency lookup precedes the confirm check so a retried confirmed request is not
+        # asked to confirm twice
+        fingerprint = json.dumps([req.name, req.pier, prepared.args], sort_keys=True, default=str)
+        if req.idempotency_key:
+            cached = self._cached(req, fingerprint)
+            if cached is not None:
+                return cached, cls
+        if cls == "confirm":
+            asked = self._confirm(req, fingerprint)
+            if asked is not None:
+                return asked, cls
+        # 7. dispatch under the governor
+        reason = self._governor.admit(self._class_of(spec.name, cls))
+        if reason:
+            return Outcome("busy", reason), cls
+        try:
+            outcome = await self._registry.run(prepared, req.pier, req.holder)
+        finally:
+            self._governor.done()
+        if spec.needs_lease:
+            self._leases.touch(req.pier, req.holder)
+        if req.idempotency_key and outcome.status != "busy":
+            with self._lock:
+                self._results[(req.client_id, req.idempotency_key)] = (
+                    self._clock() + self._idem_ttl, fingerprint, outcome)
+        return outcome, cls
+
+    # -- stages ----------------------------------------------------------------------------
+    def _authorise(self, req: GatewayRequest, cls: str) -> str:
+        if req.kind == "guest":
+            if PERMISSION_GUEST not in req.permissions:
+                return "guests may not use this"
+            if req.name not in self._guest or cls != "read":
+                return "this is not available to guests"
+            return ""
+        if cls not in CLASSES:
+            return ""                                           # unknown name: validate says unavailable
+        need = {"read": ("view", "control")}.get(cls, ("control",))
+        if not req.permissions.intersection(need):
+            return f"this needs the {need[0]} permission"
+        return ""
+
+    @staticmethod
+    def _class_of(name: str, cls: str) -> int:
+        if cls == "emergency":
+            return CLASS_EMERGENCY
+        if name.startswith("session."):
+            return CLASS_SESSION
+        if name.startswith(("preview.", "sky.")):
+            return CLASS_PREVIEW
+        if name.startswith("transfer."):
+            return CLASS_BULK
+        return CLASS_INTERACTIVE
+
+    def _cached(self, req: GatewayRequest, fingerprint: str) -> Outcome | None:
+        now = self._clock()
+        with self._lock:
+            for key in [k for k, v in self._results.items() if v[0] <= now]:
+                del self._results[key]
+            hit = self._results.get((req.client_id, req.idempotency_key))
+        if hit is None:
+            return None
+        if hit[1] != fingerprint:
+            return Outcome("invalid", "this idempotency key was used for a different request",
+                           path="idempotency_key")
+        return hit[2]
+
+    def _confirm(self, req: GatewayRequest, fingerprint: str) -> Outcome | None:
+        """None when the request carries a valid, unused confirmation; otherwise the outcome to return."""
+        now = self._clock()
+        with self._lock:
+            for t in [t for t, v in self._tokens.items() if v[2] <= now]:
+                del self._tokens[t]
+            entry = self._tokens.get(req.confirm_token) if req.confirm_token else None
+            if entry is not None and entry[0] == req.client_id and entry[1] == fingerprint:
+                del self._tokens[req.confirm_token]           # single use; a wrong presenter cannot burn it
+                return None
+            token = secrets.token_urlsafe(16)
+            self._tokens[token] = (req.client_id, fingerprint, now + self._confirm_ttl)
+        reason = "confirmation required" if not req.confirm_token else "that confirmation is not valid; confirm again"
+        return Outcome("refused", reason, confirm_token=token)
+
+    # -- audit -----------------------------------------------------------------------------
+    def record(self, req: GatewayRequest, outcome: Outcome, cls: str) -> None:
+        """Write the audit event for a request (also used by the relay for requests it forwards)."""
+        fields: dict[str, Any] = {"pier": req.pier, "class": cls}
+        if outcome.correlation_id:
+            fields["correlation_id"] = outcome.correlation_id
+        if req.source:
+            fields["source"] = req.source
+        actor = "guest" if req.kind == "guest" else req.client_id        # a guest identifier is never stored
+        self._audit.write(actor, req.plugin, f"op {req.name}", outcome.status, outcome.reason,
+                          carrier=req.carrier, fields=fields)
+
+    def catalogue(self, req: GatewayRequest) -> dict[str, Any]:
+        """The catalogue as this client may use it (a guest sees only the guest allowlist)."""
+        cat = self._registry.catalogue(req.pier)
+        if req.kind == "guest":
+            cat["operations"] = [o for o in cat["operations"] if o["name"] in self._guest]
+        return cat
+
+
+__all__ = ["CLASS_BULK", "CLASS_EMERGENCY", "CLASS_INTERACTIVE", "CLASS_PREVIEW", "CLASS_SESSION",
+           "PERMISSION_GUEST", "Gateway", "GatewayRequest", "LoadGovernor", "RateLimiter"]

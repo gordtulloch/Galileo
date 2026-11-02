@@ -9,7 +9,7 @@ Before you start: run PHD2 (on this computer or another), then enter its address
 
 ## PHD2 host
 
-The name or IP address of the computer running PHD2, for example `localhost` (this computer) or `192.168.1.50`.
+The name or IP address of the computer running PHD2, for example `phd2.local` or `192.168.1.50`. Use the computer's real name or LAN address even if PHD2 runs on this computer: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` are refused, because a saved address has to mean the same computer on every Galileo node. A host saved earlier as one of those is marked in red when it loads.
 
 ## Port
 

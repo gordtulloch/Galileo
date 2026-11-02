@@ -34,8 +34,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from galileo.replication.busy import tracker as _busy_tracker
-
 logger = logging.getLogger(__name__)
 
 
@@ -399,11 +397,6 @@ class SessionExecutor:
 
     def _set_state(self, state: RunState, message: str = "") -> None:
         self.state = state
-        # REPL-060: a running or paused session makes the node busy for bulk applies of replicated settings
-        if state in (RunState.RUNNING, RunState.PAUSED):
-            _busy_tracker.acquire(self)
-        else:
-            _busy_tracker.release(self)
         if message:
             self._record(message)
         self._emit(message)
@@ -422,7 +415,13 @@ class SessionExecutor:
 
     async def run(self, blocks: list) -> SessionRunResult:
         """Execute *blocks* start to finish and report how it ended. Never raises for a block
-        failure — that is the result's ``state``/``errors``."""
+        failure — that is the result's ``state``/``errors``. While it runs, the process-wide busy
+        signal is set so a bulk apply of replicated settings can wait for it (REPL-060)."""
+        from galileo.replication.busy import get_session_busy
+        with get_session_busy().running():
+            return await self._run(blocks)
+
+    async def _run(self, blocks: list) -> SessionRunResult:
         self._loop = asyncio.get_running_loop()
         blocks = list(blocks)
         tree = build_tree(blocks)

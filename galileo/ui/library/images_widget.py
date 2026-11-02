@@ -76,6 +76,8 @@ class ImagesWidget(QWidget):
 
         # Cloud icon - using a network icon as substitute since there's no standard cloud icon
         self.cloud_icon = style.standardIcon(style.StandardPixmap.SP_DriveNetIcon)
+        # The frame is held by the Master and has to be retrieved before its pixels can be used
+        self.master_icon = style.standardIcon(style.StandardPixmap.SP_ComputerIcon)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -261,12 +263,13 @@ class ImagesWidget(QWidget):
         """One query, grouped in Python: ``[(heading, [row, ...]), ...]`` in display order.
 
         A row is a plain tuple ``(object, type, date, exptime, filter, telescope, instrument,
-        ccdtemp, filename, cloud_url)``. (The earlier code ran one query per group.)"""
+        ccdtemp, filename, cloud_url, frame_id, location)``. (The earlier code ran one query per group.)"""
         from peewee import fn
         M = FitsFileModel
         query = cls._files_query(show_deleted, frame_filter, search_term)
         cols = (M.fitsFileObject, M.fitsFileType, M.fitsFileDate, M.fitsFileExpTime, M.fitsFileFilter,
-                M.fitsFileTelescop, M.fitsFileInstrument, M.fitsFileCCDTemp, M.fitsFileName, M.fitsFileCloudURL)
+                M.fitsFileTelescop, M.fitsFileInstrument, M.fitsFileCCDTemp, M.fitsFileName, M.fitsFileCloudURL,
+                M.fitsFileId, M.fitsFileLocation)
         if sort_method == "Date":
             day = fn.DATE(M.fitsFileDate)
             raw = query.select(*cols, day).order_by(day.desc(), M.fitsFileObject).tuples()
@@ -297,7 +300,7 @@ class ImagesWidget(QWidget):
                 font.setBold(True)
                 parent_item.setFont(0, font)
 
-                for obj, ftype, date, exp, filt, scope, instr, temp, filename, cloud in rows:
+                for obj, ftype, date, exp, filt, scope, instr, temp, filename, cloud, frame_id, location in rows:
                     child = QTreeWidgetItem()
                     child.setText(0, "" if sort_method == "Object" else (obj or ""))
                     child.setText(1, ftype or "")
@@ -307,7 +310,13 @@ class ImagesWidget(QWidget):
                     child.setText(5, scope or "")
                     child.setText(6, instr or "")
                     child.setText(7, str(temp) if temp else "")
-                    if filename:
+                    child.setData(0, Qt.ItemDataRole.UserRole, frame_id)
+                    child.setData(8, Qt.ItemDataRole.UserRole, location or "local")
+                    if filename and location == "on_master":              # LIB-220: only the catalog row is here
+                        child.setIcon(8, self.master_icon)
+                        child.setToolTip(8, f"On the Master: {os.path.basename(filename)} (right-click to Retrieve)")
+                        child.setText(10, filename)
+                    elif filename:
                         child.setIcon(8, self.local_icon)
                         child.setToolTip(8, f"Local file: {os.path.basename(filename)}")
                         child.setText(10, filename)
@@ -360,7 +369,13 @@ class ImagesWidget(QWidget):
         # File-specific actions (only for child items)
         view_action = None
         delete_action = None
-        if filename:
+        retrieve_action = None
+        frame_id = item.data(0, Qt.ItemDataRole.UserRole) if item.parent() is not None else None
+        on_master = item.parent() is not None and item.data(8, Qt.ItemDataRole.UserRole) == "on_master"
+        if on_master and frame_id:
+            retrieve_action = context_menu.addAction("Retrieve")
+            retrieve_action.setToolTip("Fetch this frame back from the Master and keep it on this computer")
+        if filename and not on_master:
             # Add View action
             view_action = context_menu.addAction("View")
             view_action.setToolTip("Open file with external viewer")
@@ -381,6 +396,10 @@ class ImagesWidget(QWidget):
             self._add_variable_star(object_name)
             return
 
+        if retrieve_action and action == retrieve_action:
+            self._retrieve_frame(str(frame_id))
+            return
+
         if view_action and action == view_action:
             self._view_file(filename)
             return
@@ -388,6 +407,26 @@ class ImagesWidget(QWidget):
         if delete_action and action == delete_action:
             self._delete_file(filename)
             return
+
+    def _retrieve_frame(self, frame_id: str, view_after: str = "") -> None:
+        """Fetch an On Master frame back (LIB-210) on a worker thread, then refresh the list."""
+        from galileo.library.core.location import LocationError, ensure_local_sync
+
+        def fetch():
+            return str(ensure_local_sync(frame_id))
+
+        def done(path):
+            self.load_fits_data()
+            if view_after:
+                self._view_file(view_after)
+            else:
+                QMessageBox.information(self, "Retrieve", f"The frame is back on this computer:\n{path}")
+
+        def failed(exc):
+            text = str(exc) if isinstance(exc, LocationError) else f"The frame could not be retrieved: {exc}"
+            QMessageBox.warning(self, "Retrieve", text)
+
+        run_in_worker(self, fetch, done, failed)
 
     def _add_variable_star(self, object_name: str) -> None:
         """Add a target name to the VariableStars table."""
@@ -551,7 +590,9 @@ class ImagesWidget(QWidget):
 
         # Get the filename from column 10
         filename = item.text(10)  # Filename is in column 10
-        if filename:
+        if item.data(8, Qt.ItemDataRole.UserRole) == "on_master" and item.data(0, Qt.ItemDataRole.UserRole):
+            self._retrieve_frame(str(item.data(0, Qt.ItemDataRole.UserRole)), view_after=filename)   # LIB-210
+        elif filename:
             self._view_file(filename)
 
     def perform_search(self):

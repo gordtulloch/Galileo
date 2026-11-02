@@ -175,6 +175,14 @@ class AppWindowImagingPageMixin:
             f"use Save Stack for the stacked image.")
         view_form.addRow(live_stack_check)
 
+        debayer_check = QCheckBox("Debayer")
+        debayer_check.setToolTip(
+            "Show the preview in colour by debayering the camera's mosaic (IMG-110). Ticked automatically "
+            "when the camera reports a Bayer pattern; tick or untick it to override. If the camera does not "
+            "report a pattern, the one saved on Equipment > Camera is used. Only the preview changes — "
+            "statistics, the histogram and saved frames keep the raw data.")
+        view_form.addRow(debayer_check)
+
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
             "By default the page lays itself out for the shape of the frame: a portrait frame gets the "
@@ -234,6 +242,24 @@ class AppWindowImagingPageMixin:
             "Uses the mount connected on Equipment > Mount, with the same axis directions as its jog pad."
         )
         settings_layout.addWidget(nudge_group)
+
+        rotator_group = QGroupBox("Rotator")
+        rotator_layout = QVBoxLayout(rotator_group)
+        rotator_row = QHBoxLayout()
+        rotation_spin = QDoubleSpinBox()
+        rotation_spin.setRange(0.0, 359.99)
+        rotation_spin.setDecimals(2)
+        rotation_spin.setSuffix("°")
+        rotation_spin.setToolTip("Target rotation angle for the rotator connected on Equipment > Rotator.")
+        rotation_spin.setProperty("helpKey", "rotation")
+        rotation_set_btn = QPushButton("Set")
+        rotation_set_btn.setObjectName("AccentButton")
+        rotation_set_btn.setProperty("helpKey", "rotation set")
+        rotator_row.addWidget(QLabel("Rotation"))
+        rotator_row.addWidget(rotation_spin, 1)
+        rotator_row.addWidget(rotation_set_btn)
+        rotator_layout.addLayout(rotator_row)
+        settings_layout.addWidget(rotator_group)
 
         settings_layout.addStretch(1)
 
@@ -526,7 +552,34 @@ class AppWindowImagingPageMixin:
 
         _current_service()   # create the initially-selected Pier's service right away, as before
 
+        def _sync_debayer_fallback(service) -> None:
+            """Give the service the Bayer pattern saved on the camera's Equipment page, for when the
+            camera itself does not report one but the user ticks Debayer."""
+            service.fallback_bayer_pattern = None
+            if self._current_pier is None:
+                return
+            from galileo.observatory import get_device_config
+            try:
+                cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
+            except Exception:
+                logger.exception("Could not read the camera's saved Bayer pattern")
+                return
+            service.fallback_bayer_pattern = cfg.bayer_pattern if cfg is not None else None
+
+        def _sync_debayer_check(service) -> None:
+            """Show whether the displayed Pier's preview is debayered: automatic until the user overrides."""
+            debayer_check.blockSignals(True)
+            debayer_check.setChecked(service.debayer_enabled)
+            debayer_check.blockSignals(False)
+
+        def _debayer_toggled(checked: bool) -> None:
+            service = _current_service()
+            _sync_debayer_fallback(service)
+            service.set_debayer_override(checked, rebuild=False)
+            _render_stretch_preview()
+
         def _refresh_preview(service) -> None:
+            _sync_debayer_check(service)
             data = service.display_preview
             if data is None:
                 # This Pier has no frame yet: don't leave the previously shown Pier's on screen.
@@ -636,6 +689,7 @@ class AppWindowImagingPageMixin:
             stretch_render_timer.start()
 
         stretch_slider.valueChanged.connect(_stretch_slider_changed)
+        debayer_check.toggled.connect(_debayer_toggled)
         self._imaging_stretch_slider = stretch_slider
 
         def _orientation_choice_changed(*_args) -> None:
@@ -691,6 +745,28 @@ class AppWindowImagingPageMixin:
 
         nudge_stop_btn.clicked.connect(nudge_motion.stop_all)
 
+        # --- rotator rotation field ----------------------------------------------
+        def _rotator_adapter():
+            return (self._device_pages.get("rotator") or {}).get("adapter")
+
+        def _rotation_set_clicked() -> None:
+            adapter = _rotator_adapter()
+            if adapter is None:
+                self._window.statusBar().showMessage("Connect the rotator on Equipment > Rotator first.", 4000)
+                return
+            import asyncio
+            angle = rotation_spin.value()
+            try:
+                asyncio.run(adapter.move_to_angle(angle))
+            except Exception:
+                logger.exception("Rotator move to %.2f° failed", angle)
+                self._window.statusBar().showMessage("Rotator move failed — see log.", 6000)
+                return
+            logger.info("Imaging: rotator moving to %.2f°", angle)
+            self._window.statusBar().showMessage(f"Rotator moving to {angle:.2f}°.", 4000)
+
+        rotation_set_btn.clicked.connect(_rotation_set_clicked)
+
         self._imaging_ui = {
             "settings_panel": settings_panel, "dock_panel": dock_panel, "log_bar": log_bar,
             "left_column": left_column, "page": page,
@@ -733,6 +809,7 @@ class AppWindowImagingPageMixin:
             _apply_orientation(service)
             save_frame_btn.setEnabled(service.current_frame is not None)
             annotate_btn.setEnabled(service.current_frame is not None)
+            _paint_session_status(key)
 
         session_frames.arrived.connect(_session_frame_arrived, Qt.ConnectionType.QueuedConnection)
 
@@ -766,6 +843,54 @@ class AppWindowImagingPageMixin:
                 text += f" — {service.active_stacker.summary}"
             return text
 
+        session_shown: dict = {}      # Pier key -> the status line is showing its session's progress
+
+        def _session_status(key) -> str | None:
+            """What the session running on this Pier is doing, or ``None`` when no session is running there."""
+            from galileo.session_exec import RunState
+            from galileo.ui.session_runner import get_session_controller
+            entry = get_session_controller(self).progress_snapshot().get(key)
+            if entry is None:
+                return None
+            progress, name = entry
+            bits = ["Session" + (f" '{name}'" if name else ""), "paused" if progress.state == RunState.PAUSED else "running"]
+            if progress.block_total:
+                bits.append(f"block {progress.block_index} of {progress.block_total}")
+            if progress.frames_total:
+                bits.append(f"frame {progress.frames_done} of {progress.frames_total}")
+            text = " · ".join(bits)
+            return f"{text} — {progress.message}" if progress.message else text
+
+        def _paint_session_status(key=None) -> None:
+            """Show the displayed Pier's session progress on the status line, unless a capture started from
+            this screen owns it."""
+            from galileo.current_object import pier_key
+            key = pier_key(self._current_pier) if key is None else key
+            if not _is_displayed(key) or self._imaging_capture_threads.get(key) is not None:
+                return
+            text = _session_status(key)
+            if text is None:
+                if session_shown.pop(key, False):      # the session has ended: back to this screen's own state
+                    _paint_capture_state(_current_service(), key)
+                return
+            session_shown[key] = True
+            status_label.setText(text)
+            status_label.setToolTip(text)
+            service = _current_service()
+            if service.series_total:
+                progress_bar.setValue(int(service.series_done / service.series_total * 1000))
+
+        from galileo.ui.session_runner import get_session_controller
+        _session_controller = get_session_controller(self)
+        _session_controller.changed.connect(_paint_session_status)
+
+        def _forget_session_status(_=None) -> None:
+            import contextlib
+            with contextlib.suppress(RuntimeError, TypeError):      # the controller is already gone
+                _session_controller.changed.disconnect(_paint_session_status)
+
+        page.destroyed.connect(_forget_session_status)
+
         def _paint_capture_state(service, key) -> None:
             """Repaint this page's preview/histogram/buttons from *service*'s own
             stored state — used both when a Pier's live capture-thread signal
@@ -793,6 +918,7 @@ class AppWindowImagingPageMixin:
             else:
                 progress_bar.setValue(1000 if service.series_done else 0)
                 status_label.setText(_series_summary(service) if service.series_done or service.stop_requested else "Idle")
+                _paint_session_status(key)
 
         def _refresh_mosaic_indicator() -> None:
             # IMG-180: makes it visible, before Capture is pressed, that a mosaic is active and
@@ -875,6 +1001,7 @@ class AppWindowImagingPageMixin:
             service.auto_save_to_library = auto_save_check.isChecked()
             service.live_stack_enabled = live_stack_check.isChecked()
             service.frame_context = self._imaging_frame_context()
+            _sync_debayer_fallback(service)
 
             # Everything below is scoped to THIS capture (service/key fixed above) —
             # so a second capture started on a different Pier gets its own countdown,
@@ -1098,7 +1225,7 @@ class AppWindowImagingPageMixin:
 
         save_stack_btn.clicked.connect(save_stack)
         self._imaging_ui.update({
-            "live_stack": live_stack_check, "save_stack_button": save_stack_btn,
+            "live_stack": live_stack_check, "debayer": debayer_check, "save_stack_button": save_stack_btn,
             "save_stack_to_library": save_stack_to_library, "save_stack_to_file": save_stack_to_file,
         })
 
