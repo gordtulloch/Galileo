@@ -46,6 +46,11 @@ def main() -> None:
         if policy is not None:
             asyncio.set_event_loop_policy(policy())
 
+    # `Galileo --engine`: the headless engine (HEAD-010) — no window, no Qt, for a controller with no screen.
+    if "--engine" in sys.argv:
+        from galileo.engine import main as engine_main
+        sys.exit(engine_main([a for a in sys.argv[1:] if a != "--engine"]))
+
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QIcon

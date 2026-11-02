@@ -49,6 +49,10 @@ Makes this the Pier's current object and adds it to the target list.
 
 Immediately slews the connected mount to this object.
 
+## Goto and Centre
+
+Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set.
+
 ## Add to Session
 
 Creates a new session on Planning › Sessions that already contains a Target block for this object.

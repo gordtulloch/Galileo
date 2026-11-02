@@ -181,6 +181,39 @@ async def test_tc_link_270_a_departing_plugin_loses_its_routes_and_streams(make)
     await svc.shutdown()
 
 
+@pytest.mark.requirement("TC-LINK-270")
+@pytest.mark.priority("MVP")
+async def test_tc_link_270_a_plugins_routes_are_installed_on_every_listener_start(make):
+    """LINK-050 / LINK-270: a plugin hands over an install function once; its routes are on the server
+    now if the listener is up, again after the listener restarts, and gone when the plugin leaves. A
+    failing install function does not stop the listener."""
+    svc = make()
+    _enable()
+    calls = []
+
+    async def hello(peer, request):
+        return {"hi": 1}
+
+    def install(server):
+        calls.append(server)
+        server.routes.register("webconnect", "GET", "/webconnect/v1/hello", "view", hello)
+
+    def broken(server):
+        raise RuntimeError("bad routes")
+
+    await svc.acquire("mobileconnect", install=broken)
+    assert svc.running                                                     # the listener survived it
+    await svc.acquire("webconnect", install=install)                       # listener already up: installed now
+    assert [r.path for r in svc.server.routes.routes()] == ["/webconnect/v1/hello"]
+    await svc.set_enabled(False)
+    await svc.set_enabled(True)                                            # a new server: installed again
+    assert len(calls) == 2 and calls[1] is svc.server
+    assert [r.path for r in svc.server.routes.routes()] == ["/webconnect/v1/hello"]
+    await svc.release("webconnect")
+    assert svc.server.routes.routes() == []
+    await svc.shutdown()
+
+
 @pytest.mark.requirement("TC-LINK-250")
 @pytest.mark.priority("MVP")
 async def test_tc_link_250_changed_settings_take_effect_and_restart_the_listener_when_needed(make):

@@ -171,6 +171,9 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._mount_timer = QTimer(self)
         self._mount_timer.timeout.connect(self.poll_mount)
 
+        self._auto_centre_timer = QTimer(self)      # runs whether or not the page is on screen
+        self._auto_centre_timer.timeout.connect(self._auto_centre_tick)
+
         bus = get_bus()
         self._bus_handlers = ((SolveStartedEvent, self._on_bus_started), (SolveCompleteEvent, self._on_bus_complete))
         for event_type, handler in self._bus_handlers:
@@ -226,6 +229,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             # they'd still be showing the previous Pier's solves; start the new Pier clean.
             # (Options > Solve also calls reload() with the Pier unchanged — that keeps them.)
             self._clear_for_pier_switch()
+            self.auto_centre_check.setChecked(False)       # it was centring the previous Pier's mount
         self.refresh_target()
         self.scope_ra.clear()
         self.scope_dec.clear()
@@ -585,15 +589,50 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             QMessageBox.information(self._window._window, "No camera connected",
                                     self._window.camera_not_connected_message())
             return
-        settings = SolveSettings(
-            exposure_s=self.exposure_spin.value(), action=self._selected_action(),
+        self._begin(lambda workflow: workflow.capture_and_solve(self._solve_settings(self._selected_action())),
+                    use_current_object=True)
+
+    def _solve_settings(self, action: SolveAction) -> SolveSettings:
+        return SolveSettings(
+            exposure_s=self.exposure_spin.value(), action=action,
             accuracy_arcsec=float(self.accuracy_spin.value()), settle_s=self.settle_spin.value() / 1000.0,
             scale_hint_arcsec_px=self._scale_hint(), binning=self.bin_combo.currentIndex() + 1,
             gain=self.gain_spin.value(),
             filter_name="" if self.filter_combo.currentIndex() <= 0 else self.filter_combo.currentText(),
             subtract_dark=self.dark_check.isChecked(),
         )
-        self._begin(lambda workflow: workflow.capture_and_solve(settings), use_current_object=True)
+
+    # --- Auto-Centre ------------------------------------------------------
+
+    def _on_auto_centre_toggled(self, on: bool) -> None:
+        if on:
+            self._auto_centre_timer.start(self.auto_centre_cadence.value() * 60000)
+            self._auto_centre_tick()
+        else:
+            self._auto_centre_timer.stop()
+
+    def _on_auto_centre_cadence_changed(self, minutes: int) -> None:
+        if self._auto_centre_timer.isActive():
+            self._auto_centre_timer.start(minutes * 60000)
+
+    def _auto_centre_tick(self) -> None:
+        """Start a capture-and-solve that slews back to the current object, unless one is already
+        running or the equipment isn't there. Nothing here may raise a dialog: it fires unattended."""
+        key = self._pier_key()
+        if self._running.get(key):
+            logger.info("Auto-Centre: previous run still in progress; skipping this one")
+            return
+        if self._camera() is None or self._mount() is None:
+            logger.warning("Auto-Centre skipped: it needs a connected camera and mount")
+            return
+        if self.current_object() is None:
+            logger.warning("Auto-Centre skipped: no current object to centre on (pick one in the Star Atlas)")
+            return
+        logger.info("Auto-Centre: solving and centring on %s", self.current_object().name)
+        self._begin(lambda workflow: workflow.capture_and_solve(self._solve_settings(SolveAction.SLEW_TO_TARGET)),
+                    use_current_object=True)
+        if not self._running.get(key):                    # no usable solver (the user has been told why)
+            self.auto_centre_check.setChecked(False)
 
     def load_and_slew(self) -> None:
         if self._running.get(self._pier_key()):
@@ -676,6 +715,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     def stop(self) -> None:
         # Stops whichever Pier is currently displayed's own run — a different
         # Pier's in-flight solve is untouched.
+        self.auto_centre_check.setChecked(False)          # Stop also ends the repeating solves
         workflow = self._workflows.get(self._pier_key())
         if workflow is not None:
             workflow.stop()

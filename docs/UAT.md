@@ -152,7 +152,7 @@ This section works without any hardware.
 
 | ID | Action | Expected | Result |
 |---|---|---|---|
-| 7.1 ⛔ | In **Star Atlas**, with M13 selected, use the slew action. Alternatively use **Planning > What's Up Tonight** → **Slew To**. | Mount slews, then tracking starts. Mount page RA/Dec converge on M13's coordinates. | |
+| 7.1 ⛔ | In **Star Atlas**, with M13 selected, use the slew action. Alternatively use **Planning > What's Up Tonight** → **Slew To** (or **Goto and Centre**, which also plate-solves and re-centres afterwards). | Mount slews, then tracking starts. Mount page RA/Dec converge on M13's coordinates. | |
 | 7.2 | Try to slew to a point below your horizon limit (e.g. an object at −10° altitude). | The slew is refused with a message; the mount does not move. | |
 | 7.3 | Press **Stop** during a slew to M13. | The mount stops promptly. | |
 | 7.4 | **Imaging > Mount Nudge:** nudge N, S, E, W at each rate. | The mount moves in the matching direction for the chosen duration. | |

@@ -6,7 +6,7 @@ Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{no
 
 | Item | State |
 |---|---|
-| Plugin code | **None.** `Galileo-Plugins/{nodeconnect,mobileconnect}` hold a README only (no `plugin.toml`, so `build_plugins.py` skips them); `Galileo-Plugins/webconnect` is where WebConnect will be built (README only today; the separate `Galileo-WebConnect` repository is retired, 2026-10-31) |
+| Plugin code | **NodeConnect: sync engine and plugin shell built (2026-11-02), no UI yet; uncommitted** — see §3 and its handover notes. `Galileo-Plugins/mobileconnect` holds a README only (no `plugin.toml`, so `build_plugins.py` skips it); `Galileo-Plugins/webconnect` is where WebConnect will be built (README only today; the separate `Galileo-WebConnect` repository is retired, 2026-10-31) |
 | Requirements | NCON 45 (41 MVP), MCON 107 (93 MVP), WCON 120 (102 MVP); each has an RTM with reserved `TC-*` IDs |
 | Tests | `tests/test_wcon.py` exists: 6 doc-chain tests pass, 120 requirement tests skip (`importorskip`). **No `test_ncon.py` / `test_mcon.py`** |
 | Core prerequisites | **Built, tested, not yet wired in (code checked 2026-11-02).** Connect Link L1–L8 and the pipeline: listener, certificates, pairing, permissions/peers/audit, routes, stream, handshake, delegation, transfer (`LINK-070`), discovery (`LINK-040`), `Gateway` (`LINK-230`), Master relay (`LINK-220`), the service with settings/start-stop/disable (`LINK-260`, `LINK-270`) and the outreach facility (`LINK-100`–`210`); the Control Surface registry, state, events, lease, held motion and emergency operations; the preview service; sky streaming; replication support (tracking, tombstones, registry, busy signal, sync tables, revisions); manual focus; the Library *On Master* state with Retrieve; history transfer; the loopback check. **Not built:** a `DeviceAccess` that finds each Pier's connected devices (the catalogue for devices, focus and safety is built and tested but nothing registers it); the other catalogue areas (`CSURF-120`–`210`, `230`, `240`: imaging, sky, solve, guiding, flip, sessions, scheduler, calibration, Library, notifications); any outreach surface; Options > Connect Link (`LINK-250`) and Options > Outreach (`LINK-190`) are built with help; the per-area Control Surface inventory (`CSURF-100`–`240`: no service registers an operation yet); `scheduler_jobs` is the only configuration table not yet replicable; the loopback refusal is applied to every device and PHD2 host field; `HIST-050` is in `SessionHistory` but nothing calls it; `PLUG-200` is done. The Library On Master action is the only part a user can see today. Not measured yet, and not covered by tests: discovery over a real LAN, held-motion timing on Wi-Fi, and sky-streaming/preview speed on a Raspberry Pi 5 |
@@ -74,6 +74,16 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 - [x] **MF** manual focus moved into the focus module; the desktop screen uses it
 - [x] **SK** sky streaming built (catalog, ephemeris, site, capability, static image)
 
+### 2c-bis. Headless engine and the desktop as a client (`HEAD-010`–`180`, core SDD §4.33)
+Specified 2026-11-02 (SRS §4.30, SDD §4.33, RTM, `tests/test_head.py` with 18 reserved tests); **not built**. Needed before WebConnect can run on a controller with no screen. Order (the desktop's own path is touched last):
+- [x] **Step 1 built (2026-11-02):** `engine.main`, `engine.lock`, `engine.service`, `Galileo --engine`, and the test that importing the engine never imports `PySide6` (`HEAD-010`, `020`, `030`; `TC-HEAD-010`/`020`/`030`). `HEAD-160` (safety and watchdog in the engine) waits for step 4
+- [ ] `engine.devices`: the UI-free device service implementing the Control Surface's `DeviceAccess`; the desktop pages move onto it (`HEAD-040`)
+- [ ] `engine.runner`: one asyncio session runner shared with the desktop (`HEAD-050`)
+- [ ] `engine.helpers`: pointing poll, slew-then-track, weather history as engine state (`HEAD-060`)
+- [ ] `engine.channel` + `engine.client`: local channel through the Connect Link pipeline; the desktop attaches to a running engine, holds the lease as `desktop` (`HEAD-070`, `080`, `110`, `120`, `180`)
+- [ ] `engine.embedded`: with no engine running the desktop hosts one in-process, so single-computer users see no change (`HEAD-090`, `100`)
+- [ ] `HEAD-130`/`140` configuration from the database and the stored Observatory; `HEAD-150` systemd unit (Astroberry package); `HEAD-170` `--status`
+
 ### 2d. Plugin loader
 - [x] Specified as core `PLUG-200` (SRS, RTM row, SDD §4.20 install step 4a: `requires` in `plugin.toml`, private `.deps/` directory per plugin, rollback on failure, offline refusal)
 - [x] Implemented 2026-10-30 in `galileo.plugins` (`install_requirements`, `PluginManifest.requires`); `TC-PLUG-200` in `tests/test_plug.py` (3 tests). No control changed, so no inline-help change.
@@ -82,17 +92,41 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 
 Design: `docs/plugins/nodeconnect/SDD.md` §3.1–3.12. Package `nodeconnect`.
 
-- [ ] Scaffold `Galileo-Plugins/nodeconnect/`: `plugin.toml` (hard dependency on Connect Link, `nav_level = "primary"`), `pyproject.toml`, `build_zip.py`, `CHANGELOG.md`, `tests/` per the `kasa_switch` layout; the presence of `plugin.toml` makes `build_plugins.py` pick it up, so add it only when installable
-- [ ] `nodeconnect.ports` Protocols (`LinkPort`, `ChangeTrackingPort`, `RegistryPort`, `SettingsChangedPort`, `SessionBusyPort`, `LoopbackGuardPort`, `SyncStorePort`, `LibraryPort`, `HistoryPort`, `NotifyPort`) + stubs in `tests/`
-- [ ] `plugin` shell: panel, Options page, enable/disable leaves no listener or worker (`NCON-310`), fault isolation (`NCON-530`), version refusal (`NCON-520`)
-- [ ] `roles` + `pairing`: derived exclusive roles, single Master, pairing request/approval/revoke/delete, scopes limited to `config.*`, `data.*` (`NCON-020`–`060`)
-- [ ] `registry` + `codec`: replicable set, node-local/secret `ItemFilter`, 200-row paged codec with field-level merge (`NCON-100`, `110`, `210`)
-- [ ] `sync` engine, `conflict` (later edit wins, loser kept), `tombstones`, `apply` (transactional, session gate, safety checks), `snapshot` + `report` (undo), `compat` (handshake, clock offset) (`NCON-120`–`230`, `300`, `305`, `320`)
-- [ ] `transfer` (durable queue, content-hash identity, resumable, lowest priority for bytes) and `history` (`(origin_node_id, local_key)` upsert) (`NCON-400`–`490`)
-- [ ] `ui`/`config`: status view, Options, notifications; plugin settings in `app_settings` namespace `plugin.NodeConnect` — no JSON files (`NCON-330`, `340`, `500`, `510`)
-- [ ] `wire`: `/nodeconnect/v1` OpenAPI (`NCON-NFR-030`)
-- [ ] `tests/test_ncon.py` (one function per RTM row, 45 `TC-NCON-*`) with doc-chain tests like `test_wcon.py`
-- [ ] Help content, wiki article, `docs/plugins/nodeconnect/` status updates, `plugins.json` entry, release `nodeconnect-v<version>`
+**Status 2026-11-02 — built, all in `C:\Users\gordt\Projects\Galileo-Plugins\nodeconnect`, none of it committed.** 48 tests pass (`tests/test_ncon*.py`), ruff clean, `build_plugins.py nodeconnect` builds the ZIP. Run them with the core venv: `cd Galileo-Plugins/nodeconnect && ..\..\Galileo\.venv\Scripts\python -m pytest tests` (Python 3.11; ruff is `python -m ruff`).
+
+- [x] Scaffold: `plugin.toml` (name `nodeconnect`, 0.1.0, api 1–1, `nav_level = "primary"`, `entry_point = "nodeconnect"`), `build_zip.py`, `CHANGELOG.md`, `tests/conftest.py` (markers, autouse `register_defaults`, `settings_db`). No `ports.py`: the plugin imports core's real services (`galileo.replication`, `galileo.connect_link`) and tests use two real databases, so the planned Protocol stubs were dropped
+- [x] `plugin` shell (`plugin.py`, `runtime.py`): `NodeConnectPlugin` (name must stay `"NodeConnect"` — it is the settings namespace `plugin.NodeConnect`), `Runtime`, `SyncWorker`. A node with a Master designated is a **spoke** (one background thread, 300 s default via setting `sync_interval_s`, jittered back-off after a failure, `sync_now`, no listener); any other node is a **Master/standalone** (`host.acquire("nodeconnect", NODE_PERMISSIONS, install)`). Disable stops the thread and releases the listener (`NCON-310`); an exception in a pass never kills the worker (`NCON-530`); manifest matches the class (`NCON-520`). `build_runtime(ctx)` wires the real core services and is **untested** (needs a live host)
+- [x] `roles` + `pairing` (`NCON-020`–`060`): derived exclusive roles; `PairingDesk`/`PairingClient` wrap core's Connect Link pairing; token in the OS credential store, address and certificate fingerprint in `plugin.NodeConnect` settings; scopes `config.read`, `config.write`, `data.push`, `data.pull`
+- [x] `repl` + `codec` (`NCON-100`, `110`, `210`): ported to core's replication registry; node-local/secret `ItemFilter`, 200-row paged codec, field-level merge
+- [x] `master`, `sync`, `conflict`, `apply`, `compat`, `store`, `wire`, `link` (`NCON-120`–`230`, `300`, `305`, `320`): see ADRs below
+- [~] `snapshot` + `report`: `NodeStore` can save/read snapshots and run reports, but **retention/pruning, the undo action and the report view are not built**
+- [ ] `transfer` (durable queue, content-hash identity, resumable, lowest priority for bytes) and `history` (`(origin_node_id, local_key)` upsert), plus Library *On Master* frame upload (`NCON-400`–`490`)
+- [ ] **`ui`/Options — next step.** Nothing in the app lets a user start a pairing, approve one, designate a Master, see sync status or press "sync now"; the pairing/sync code is tested but unreachable. Needs: Options page (designate Master by address, request pairing, show the confirmation code, approve/revoke on the Master, interval), status view, notifications (`NCON-330`, `340`, `500`, `510`). Look at how `kasa_switch` builds its Options page first; `Runtime.desk` (`PairingDesk`), `Runtime.sync_now()`, `Runtime.role` and `SyncWorker.last` are the hooks. Add `tag_help_screen`, `galileo/help/content/<id>.md` and run `python -m galileo.ui.help --audit`
+- [ ] `wire`: write the `/nodeconnect/v1` OpenAPI document (`NCON-NFR-030`); routes are in `wire.py` (handshake, pull, push, ack)
+- [ ] `tests/test_ncon.py` has far fewer than the 45 reserved `TC-NCON-*` (tests are spread across `test_ncon*.py`); map every RTM row to a test and add doc-chain tests like `test_wcon.py`
+- [ ] Help content, wiki article, `docs/plugins/nodeconnect/` status updates, `plugins.json` entry (**deliberately absent**: `build_plugins.py` adds one pointing at a release that doesn't exist; revert it if it reappears), release `nodeconnect-v<version>` (never dispatch GitHub builds without asking)
+
+**Handover notes (NodeConnect)**
+
+Design decisions already made and implemented — don't revisit without cause:
+- The **Master issues revisions** (`RevisionIssuer(is_master)`); no clock comparison decides what changed. A spoke pushes dirty rows with `base_rev`; a stale base revision is the exact conflict signal. On conflict the later edit (clock-offset corrected) wins, a tie goes to the Master, the loser is saved as a snapshot.
+- Pulled changes go into an **inbox** and are applied only when no session is running (`ApplyGate`, core's `get_session_busy()`); `apply_mode` suppresses change tracking while applying.
+- **Deletions** travel by a per-table tombstone cursor named `"<table>#t"` (the tombstone id). A deletion counts as a change after the row's last revision (the Master arbitrates with `tomb["rev"] + 1`). Tombstones are released by id once every paired node has acknowledged them; tombstones of node-local rows are never sent.
+- Core API quirks: `from galileo.replication import registry` is the registry *object* (it shadows the submodule) — use `from galileo.replication.registry import ...` for module-level names. Route handlers are `handler(peer, request)` and return a dict. Parents are named by natural key on the wire; `UnresolvedParent` is a `LookupError`. Tests that need a Pier must use the `make_pier()` helper (a fake `pier_id=0` raises `UnresolvedParent`).
+- Core change made for the plugin: `ConnectLinkService.acquire` / `LinkHost.acquire` take `install(server)`, which runs on every listener start (the server is rebuilt each time, so routes registered once would be lost). Test `TC-LINK-270` (a); SDD §4.28.
+
+Known gaps and limits:
+- Pull/push database work runs on the event loop. The listener tests use one database, so they cover the network path only; the two-database `World` tests cover the logic.
+- A node pulls its own pushed change back once (harmless).
+- Cascaded-delete tombstones are untested against origin's triggers (child tombstone keys may not resolve).
+- `scheduler_jobs` is not replicated (the one unregistered configuration table).
+- The full core suite has not been re-run since the origin merge (only ~230 related tests plus the plugin's 48). Two outreach tests fail only because `segno` is not installed in `.venv`: `pip install -e ".[test,dev]"`.
+- Not measured: real two-machine sync, discovery over a real LAN.
+
+Uncommitted state to be aware of (commit only when the user asks):
+- Core repo, mine: `galileo/connect_link/service.py`, `galileo/connect_link/host.py`, `tests/test_link_service.py`, `docs/SDD.md` (§4.28 sentence), `CHANGELOG.md`, and this file. Merge commit `e5f68d8` already holds the origin merge.
+- Core repo, **not mine — leave alone**: `docs/RTM.md`, `docs/SRS.md`, `docs/UAT*.md`, `docs/plugins/webconnect/{PSD,SDD,SRS}.md`, `galileo/app.py`, the planning/What's-Up pages and help, `galileo/ui/solve*.py`, `tests/test_wut.py`, untracked `galileo/engine/` and `tests/test_head.py`.
+- `Galileo-Plugins/nodeconnect/` is entirely uncommitted (new).
 
 ## 4. Phase B — shared pipeline + relay (needs 2c, and the §1 home decision)
 

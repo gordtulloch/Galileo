@@ -59,7 +59,7 @@ Runs the search and fills the list. A message shows how many objects were found.
 
 ## Results
 
-One tile per object found. Use the buttons on the right of a tile: **Select**, **Slew To** or **Add to Session**.
+One tile per object found. Use the buttons on the right of a tile: **Select**, **Slew To**, **Goto and Centre** or **Add to Session**.
 
 ## Select
 
@@ -68,6 +68,10 @@ Makes this the Pier's current object: captured frames are named after it and the
 ## Slew To
 
 Immediately slews the connected mount to this object. Needs a connected mount and the Observatory's location set.
+
+## Goto and Centre
+
+Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set.
 
 ## Add to Session
 

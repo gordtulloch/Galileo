@@ -100,8 +100,10 @@ class LinkHost:
             new.save()
             self.service.pairing.expiry_s = new.pairing_expiry_s
 
-    def acquire(self, plugin: str, permissions: tuple[str, ...] = ()) -> None:
-        self.call(self.service.acquire(plugin, permissions))
+    def acquire(self, plugin: str, permissions: tuple[str, ...] = (), install=None) -> None:
+        """A plugin starts using Connect Link; *install(server)* registers its routes on each listener
+        start (see ``ConnectLinkService.acquire``)."""
+        self.call(self.service.acquire(plugin, permissions, install))
 
     def release(self, plugin: str) -> None:
         if self.loop_running:

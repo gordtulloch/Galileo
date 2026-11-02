@@ -51,6 +51,14 @@ Only solves. The mount is not touched.
 
 What Slew to Target will aim at: the current object's name, or where the mount points when the run starts.
 
+## Auto-Centre
+
+Captures, solves and slews back onto the Pier's current object straight away, then repeats every **Auto-Centre Cadence**, to correct drift while you watch or leave it running. Each pass always uses **Slew to Target**, whichever Solver Action is chosen, so it needs a current object (pick one in the Star Atlas), a connected camera and mount, and a working solver. A pass is skipped, and logged, if the previous one is still running or the equipment is missing. It uses the camera, so leave it off while imaging. **Stop**, or switching to another Pier, turns it off.
+
+## Auto-Centre Cadence
+
+Minutes between Auto-Centre passes, from 1 to 720. The default is 2. Changing it while Auto-Centre is on restarts the countdown.
+
 ## Telescope Coordinates (JNow)
 
 Where the mount says it is pointing, in the coordinate system of the date ("JNow").

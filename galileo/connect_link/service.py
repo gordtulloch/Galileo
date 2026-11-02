@@ -107,6 +107,10 @@ class ConnectLinkService:
         self.outreach._render = self.outreach_feed.render
         self.spoke: SpokeEndpoints | None = None
         self._users: set[str] = set()
+        # Plugins hand over a function that puts their routes (and handshake additions) on a LinkServer.
+        # The server is created afresh each time the listener starts, so it is run again for each one.
+        self._installers: dict[str, Callable[[LinkServer], None]] = {}
+        self._installed_on: dict[str, LinkServer] = {}
         self._prune: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
@@ -126,20 +130,40 @@ class ConnectLinkService:
         return self.certs.fingerprint()
 
     # -- plugins that use Connect Link -------------------------------------------------------
-    async def acquire(self, plugin: str, permissions: Iterable[str] = ()) -> None:
+    async def acquire(self, plugin: str, permissions: Iterable[str] = (),
+                      install: Callable[[LinkServer], None] | None = None) -> None:
         """A plugin starts using Connect Link, declaring the permissions it may grant to peers it pairs;
-        the first plugin starts the listener (if enabled)."""
+        the first plugin starts the listener (if enabled). *install*, if given, registers the plugin's
+        routes on the listener's server: now if it is running, and again after every restart (LINK-050)."""
         name = plugin.strip().lower()
         if permissions:
             self.peers.declare_plugin(name, permissions)
+        if install is not None:
+            self._installers[name] = install
         self._users.add(name)
         await self.reconcile()
+        self._install_routes()
+
+    def _install_routes(self) -> None:
+        server = self.server
+        if server is None:
+            return
+        for name, install in list(self._installers.items()):
+            if self._installed_on.get(name) is server or name not in self._users:
+                continue
+            try:
+                install(server)
+            except Exception:                         # one plugin's bad routes never stop the listener
+                logger.exception("Could not register the routes of plugin %s", name)
+            self._installed_on[name] = server
 
     async def release(self, plugin: str) -> None:
         """A plugin stops using it; the route table and streams of that plugin go, and the last one to
         leave stops the listener."""
         name = plugin.strip().lower()
         self._users.discard(name)
+        self._installers.pop(name, None)
+        self._installed_on.pop(name, None)
         if self.server is not None:
             self.server.disable_plugin(name)
         await self.reconcile()
@@ -183,6 +207,7 @@ class ConnectLinkService:
                             discovery=self.discovery if s.advertise else None, spoke=self.spoke)
         await server.start(s.bind_host or None, s.port)
         self.server = server
+        self._install_routes()
         self._prune = asyncio.create_task(self._prune_daily())
         logger.info("Connect Link started for %s", ", ".join(sorted(self._users)) or "no plugin")
 

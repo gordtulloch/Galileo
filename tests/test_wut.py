@@ -379,6 +379,36 @@ def test_tc_wut_060_select_reuses_the_same_entry_point_as_targets(tmp_path, monk
         db.close()
 
 
+@pytest.mark.requirement("TC-WUT-060")
+@pytest.mark.priority("MVP")
+def test_tc_wut_060_goto_and_centre_slews_then_solves(tmp_path, monkeypatch):
+    """WUT-060: a ranked entry's Goto and Centre button reuses AppWindow._mount_to_object
+    with then_solve=True; Slew To uses the same call without it."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", lambda *a, **k: b"")
+
+    win, page = _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, "wut_goto_centre_test.db")
+    try:
+        calls = []
+        monkeypatch.setattr(win, "_mount_to_object",
+                            lambda action, obj, then_solve=False: calls.append((action, then_solve)) or True,
+                            raising=False)
+        next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Rank Tonight").click()
+        results = page.findChildren(QtWidgets.QListWidget)[0]
+        assert results.count() >= 1
+        buttons = {b.text(): b for b in results.itemWidget(results.item(0)).findChildren(QtWidgets.QPushButton)}
+        buttons["Goto and Centre"].click()
+        buttons["Slew To"].click()
+        assert calls == [("goto", True), ("goto", False)]
+    finally:
+        win._window.close()
+        from galileo.library.database import db as _db
+        _db.close()
+
+
 def _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, db_name: str):
     """Shared setup for the two thumbnail-loading tests below: an AppWindow
     with a bare Pier/Observatory, ranking against every synthetic catalog

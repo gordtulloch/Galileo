@@ -195,7 +195,7 @@ No hardware needed.
 
 | ID | Action | Expected | Result |
 |---|---|---|---|
-| 7.1 ⛔ | With your target selected, slew from Star Atlas or What's Up Tonight → **Slew To**. | Mount slews; tracking starts; Mount page RA/Dec converge on the target. | |
+| 7.1 ⛔ | With your target selected, slew from Star Atlas or What's Up Tonight → **Slew To** (or **Goto and Centre**, which also plate-solves and re-centres). | Mount slews; tracking starts; Mount page RA/Dec converge on the target. | |
 | 7.2 | Try to slew to the **wrong-place target** from A2 (below your horizon limit). | Slew refused with a message; mount does not move. | |
 | 7.3 | Press **Stop** during a slew. | Motion stops promptly. | |
 | 7.4 | **Imaging > Mount Nudge:** nudge N, S, E, W at each rate. | Motion matches direction, rate and duration. | |

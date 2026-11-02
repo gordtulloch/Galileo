@@ -352,6 +352,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PLT-050` | MVP | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-050` |
 | `PLT-060` | P2 | SDD 4.12 `galileo.platesolve` | Test | `TC-PLT-060` |
 | `PLT-070` | MVP | SDD 4.12 `galileo.platesolve`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-PLT-070` |
+| `PLT-100` | P2 | SDD 4.12 `galileo.platesolve`; `galileo.ui.solve` | Test | `TC-PLT-100` |
 | `PLT-090` | P2 | SDD 4.12 `galileo.tetra3_db`; `galileo.ui.app_window` | Test | `TC-PLT-090` |
 | `PLT-080` | P2 | SDD 4.12 `galileo.polaralign`; `galileo.ui.solve` | Test | `TC-PLT-080` |
 
@@ -575,6 +576,29 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `REPL-070` | MVP | SDD 4.32 `replication.syncstore` | Test | `TC-REPL-070` |
 | `REPL-080` | MVP | SDD 4.32 `replication.tracking` | Test | `TC-REPL-080` |
 
+### `HEAD` — Headless Engine and the Desktop as a Client
+
+| ID | Priority | SDD component | Verification | Test case |
+|---|---|---|---|---|
+| `HEAD-010` | MVP | SDD 4.33 `engine.main` | Test | `TC-HEAD-010` |
+| `HEAD-020` | MVP | SDD 4.33 `engine.lock` | Test | `TC-HEAD-020` |
+| `HEAD-030` | MVP | SDD 4.33 `engine.service` | Test | `TC-HEAD-030` |
+| `HEAD-040` | MVP | SDD 4.33 `engine.devices` | Test | `TC-HEAD-040` |
+| `HEAD-050` | MVP | SDD 4.33 `engine.runner` | Test | `TC-HEAD-050` |
+| `HEAD-060` | MVP | SDD 4.33 `engine.helpers` | Test | `TC-HEAD-060` |
+| `HEAD-070` | MVP | SDD 4.33 `engine.client` | Test | `TC-HEAD-070` |
+| `HEAD-080` | MVP | SDD 4.33 `engine.channel` | Test | `TC-HEAD-080` |
+| `HEAD-090` | MVP | SDD 4.33 `engine.embedded` | Test | `TC-HEAD-090` |
+| `HEAD-100` | P2 | SDD 4.33 `engine.client` | Test | `TC-HEAD-100` |
+| `HEAD-110` | MVP | SDD 4.33 `engine.client` | Test | `TC-HEAD-110` |
+| `HEAD-120` | MVP | SDD 4.33 `engine.client` | Test | `TC-HEAD-120` |
+| `HEAD-130` | MVP | SDD 4.33 `engine.config` | Test | `TC-HEAD-130` |
+| `HEAD-140` | MVP | SDD 4.33 `engine.config` | Test | `TC-HEAD-140` |
+| `HEAD-150` | P2 | SDD 4.33 `engine.service` | Test | `TC-HEAD-150` |
+| `HEAD-160` | MVP | SDD 4.33 `engine.main` | Test | `TC-HEAD-160` |
+| `HEAD-170` | P2 | SDD 4.33 `engine.main` | Test | `TC-HEAD-170` |
+| `HEAD-180` | MVP | SDD 4.33 `engine.channel` | Test | `TC-HEAD-180` |
+
 ### `UI` — Customization & Theming
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
@@ -745,6 +769,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `PREV` | 6 | 5 | 1 | 0 |
 | `SKYSTR` | 8 | 8 | 0 | 0 |
 | `REPL` | 8 | 8 | 0 | 0 |
+| `HEAD` | 18 | 15 | 3 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
 | `LOG` | 6 | 4 | 2 | 0 |
 | `LIB` | 21 | 14 | 5 | 2 |
@@ -757,4 +782,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **410** | **270** | **122** | **18** |
+| **Total** | **428** | **285** | **125** | **18** |

@@ -32,6 +32,8 @@ The operational surface is identical in intent to the mobile one: the node is al
 
 > A Galileo user opens a web address on any computer, tablet or phone on the observatory's network, signs in with a client that was approved on the Master, and sees and controls the night exactly as they would in the mobile app — with nothing to install, and with no way to reach the node's configuration *through WebConnect*. On an Astroberry controller that starts from the Galileo entry in Astroberry Manager, on the same address and with the same certificate trust as the rest of the device (Section 6.5).
 
+> At a public or club event, the owner opens an outreach session and visitors scan a code on their own phones to watch the live image from the telescope — no app, no sign-in, no account, and nothing they can touch but the picture — on a separate network and for as long as the event lasts.
+
 ## 4. Goals and Objectives
 
 | # | Goal |
@@ -173,6 +175,8 @@ Levels 0 and 1 are in scope for v1; level 2 is a candidate; level 3 is out.
 | Browser cookies | `__Secure-`, scoped to the prefix | `__Host-` |
 
 Everything else — pairing, roles, lease, relay, state, operations, images, safety, outreach — is **identical** in both. Whether the self-hosted profile is kept in v1 is Q4.
+
+**Where the Master half runs: the Galileo engine.** A controller with no screen cannot run the desktop application, so the Master half runs inside Galileo's **headless engine** (core SRS `HEAD`, SDD §4.33): the process that owns the devices, sessions, safety and the control lease, with no display. The desktop application is a *client* of that engine, as a browser is: on an Astroberry controller the Galileo desktop in the remote desktop attaches to the running engine and holds the lease as `desktop`; it does not start a second engine (`HEAD-020`, `HEAD-070`). On a single computer with no engine running, the desktop hosts the engine in its own process (`HEAD-090`), so the self-hosted profile is unchanged for its users. "Runs inside Galileo" in this document means inside the engine, wherever it is hosted.
 
 #### 6.5.5 Security posture of the combined system
 

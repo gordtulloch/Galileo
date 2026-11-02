@@ -177,6 +177,23 @@ class SolveBuildMixin(_MixinBase):
         self.target_label.setProperty("helpKey", "target")
         self.target_label.setWordWrap(True)
         layout.addWidget(self.target_label)
+        self.auto_centre_check = QCheckBox("Auto-Centre")
+        self.auto_centre_check.setToolTip(
+            "Capture, solve and centre on the Pier's current object now, then again every Auto-Centre Cadence, "
+            "whatever Solver Action is chosen above. Uses the camera, so leave it off while imaging.")
+        self.auto_centre_check.toggled.connect(self._on_auto_centre_toggled)
+        layout.addWidget(self.auto_centre_check)
+        cadence_row = QHBoxLayout()
+        cadence_row.addWidget(QLabel("Auto-Centre Cadence:"))
+        self.auto_centre_cadence = QSpinBox()
+        self.auto_centre_cadence.setRange(1, 720)
+        self.auto_centre_cadence.setValue(2)
+        self.auto_centre_cadence.setSuffix(" min")
+        self.auto_centre_cadence.setToolTip("Minutes between Auto-Centre solves.")
+        self.auto_centre_cadence.valueChanged.connect(self._on_auto_centre_cadence_changed)
+        cadence_row.addWidget(self.auto_centre_cadence)
+        cadence_row.addStretch(1)
+        layout.addLayout(cadence_row)
         box.addWidget(action)
 
         # Telescope Coordinates --------------------------------------------

@@ -174,6 +174,12 @@ class AppWindowPlanningPageMixin:
             slew_btn.clicked.connect(lambda _=None, o=obj: _slew_to_result(o))
             button_col.addWidget(slew_btn)
 
+            centre_btn = QPushButton("Goto and Centre")
+            centre_btn.setToolTip("Slew the connected mount to this object, then plate-solve and "
+                                  "re-centre on it.")
+            centre_btn.clicked.connect(lambda _=None, o=obj: _slew_to_result(o, then_solve=True))
+            button_col.addWidget(centre_btn)
+
             session_btn = QPushButton("Add to Session")
             session_btn.setToolTip("Create a new session pre-populated with a Target block for this "
                                    "object (SES-160).")
@@ -182,10 +188,10 @@ class AppWindowPlanningPageMixin:
             button_col.addStretch(1)
 
             # Size every button to fit its own text (a hardcoded fixed width previously clipped
-            # "Add to Session", the longest label) — all three made uniform to the widest one's
+            # "Add to Session", the longest label) — all made uniform to the widest one's
             # actual sizeHint, not a guessed constant, so this stays correct across fonts/platforms.
-            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, session_btn))
-            for b in (select_btn, slew_btn, session_btn):
+            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn))
+            for b in (select_btn, slew_btn, centre_btn, session_btn):
                 b.setFixedWidth(button_width)
 
             row.addLayout(button_col)
@@ -369,7 +375,7 @@ class AppWindowPlanningPageMixin:
                 timezone=getattr(obs, "timezone", None) or "UTC",
             )
 
-        def _slew_to_result(obj) -> None:
+        def _slew_to_result(obj, then_solve: bool = False) -> None:
             """"Slew To" (a result tile's own action button): immediately
             command the connected mount to this object, via the same
             ``_mount_to_object`` the Star Atlas/skymap's own slew-to-clicked-
@@ -390,7 +396,7 @@ class AppWindowPlanningPageMixin:
             alt, _az = sa.equatorial_to_horizontal(ra_of_date, dec_of_date, lst, location.latitude)
             target = obj.as_sequence_target()
             target["alt"] = float(alt)
-            self._mount_to_object("goto", target)
+            self._mount_to_object("goto", target, then_solve=then_solve)
 
         def _add_result_to_new_session(obj) -> None:
             """"Add to Session" (a result tile's own action button, SES-160) —

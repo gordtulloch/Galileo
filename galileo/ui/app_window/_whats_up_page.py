@@ -262,7 +262,7 @@ class AppWindowWhatsUpPageMixin:
                 missing.append("Moon position unavailable")
             return "Reduced confidence — " + "; ".join(missing) if missing else "All inputs available."
 
-        def _slew_to_result(obj) -> None:
+        def _slew_to_result(obj, then_solve: bool = False) -> None:
             """Same technique as the Targets page's own Slew To (SKYMAP-060):
             a fresh below-horizon guard computed for *now*, not for the
             selected planning date — slewing always happens now, regardless
@@ -280,7 +280,7 @@ class AppWindowWhatsUpPageMixin:
             alt, _az = sa.equatorial_to_horizontal(ra_of_date, dec_of_date, lst, location.latitude)
             target = obj.as_sequence_target()
             target["alt"] = float(alt)
-            self._mount_to_object("goto", target)
+            self._mount_to_object("goto", target, then_solve=then_solve)
 
         def _add_result_to_new_session(obj) -> None:
             self._add_to_session(obj.primary_name, obj.ra_deg, obj.dec_deg)
@@ -361,14 +361,20 @@ class AppWindowWhatsUpPageMixin:
             slew_btn.clicked.connect(lambda _=None, o=obj: _slew_to_result(o))
             button_col.addWidget(slew_btn)
 
+            centre_btn = QPushButton("Goto and Centre")
+            centre_btn.setToolTip("Slew the connected mount to this object, then plate-solve and "
+                                  "re-centre on it.")
+            centre_btn.clicked.connect(lambda _=None, o=obj: _slew_to_result(o, then_solve=True))
+            button_col.addWidget(centre_btn)
+
             session_btn = QPushButton("Add to Session")
             session_btn.setToolTip("Create a new session pre-populated with a Target block for this object (SES-160).")
             session_btn.clicked.connect(lambda _=None, o=obj: _add_result_to_new_session(o))
             button_col.addWidget(session_btn)
             button_col.addStretch(1)
 
-            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, session_btn))
-            for b in (select_btn, slew_btn, session_btn):
+            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn))
+            for b in (select_btn, slew_btn, centre_btn, session_btn):
                 b.setFixedWidth(button_width)
             row.addLayout(button_col)
 

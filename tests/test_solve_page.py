@@ -182,7 +182,7 @@ def test_tc_plt_070_solve_is_a_top_level_section(window):
     assert [s[0] for s in PRIMARY_SECTIONS].index("solve") > [s[0] for s in PRIMARY_SECTIONS].index("imaging")
     assert ("solve", "Solve", "solve") in OPTIONS_ITEMS
     assert "solve" in ICONS and not make_icon("solve", "#ffffff").isNull()
-    assert set(window._device_pages["solve"]) == {"reload", "refresh_target"}      # and no auto-connect
+    assert set(window._device_pages["solve"]) == {"reload", "refresh_target", "capture_and_solve"}      # and no auto-connect
 
 
 @pytest.mark.requirement("TC-PLT-060")
@@ -470,6 +470,51 @@ def test_tc_plt_070_the_chosen_action_is_carried_out(window, page):
     assert [c[0] for c in devices.calls] == ["sync"]
     ra, dec = devices.calls[0][1:]         # sent in the mount's own frame: 0.01° east of where it pointed
     assert ra == pytest.approx(MOUNT_JNOW[0] + 0.01, abs=1e-3) and dec == pytest.approx(MOUNT_JNOW[1], abs=1e-3)
+
+
+@pytest.mark.requirement("TC-PLT-100")
+@pytest.mark.priority("P2")
+def test_tc_plt_100_auto_centre_solves_and_centres_now_then_on_the_cadence(window, page):
+    """PLT-100: Ticking Auto-Centre runs a Slew-to-Target pass at once (whatever Solver Action is chosen)
+    and starts a timer at the Auto-Centre Cadence, default 2 minutes."""
+    from galileo.platesolve import SolveAction
+    _open(window)
+    solution = _Devices.near_mount(d_ra_deg=0.0)
+    _Devices(window, page, solution)
+    window._set_current_object({"name": "M13", "ra_deg": solution.ra_deg, "dec_deg": solution.dec_deg,
+                                "kind": "Star Atlas"})                  # already on target: one pass converges
+    page.action_radios[SolveAction.NOTHING].setChecked(True)
+    assert page.auto_centre_cadence.value() == 2 and not page._auto_centre_timer.isActive()
+
+    actions = []
+    real = page._solve_settings
+    page._solve_settings = lambda action: (actions.append(action), real(action))[1]
+    page.auto_centre_check.setChecked(True)
+    assert page._auto_centre_timer.interval() == 2 * 60000
+    assert _pump(window, lambda: page.table.rowCount() == 1 and not page._running.get(page._pier_key()))
+    assert actions == [SolveAction.SLEW_TO_TARGET], "Auto-Centre centres even with Nothing chosen"
+
+    page.auto_centre_cadence.setValue(5)
+    assert page._auto_centre_timer.interval() == 5 * 60000
+    page.auto_centre_check.setChecked(False)
+    assert not page._auto_centre_timer.isActive()
+
+
+@pytest.mark.requirement("TC-PLT-100")
+@pytest.mark.priority("P2")
+def test_tc_plt_100_auto_centre_skips_quietly_and_switches_off_on_stop(window, page, caplog):
+    """PLT-100: A pass with no camera/mount/current object, or while one is running, is skipped with a log
+    line and no dialog; Stop turns Auto-Centre off."""
+    import logging
+    _open(window)
+    with caplog.at_level(logging.INFO):
+        page.auto_centre_check.setChecked(True)           # no camera, mount or object
+    assert not page._running.get(page._pier_key()) and window.boxes == []
+    assert "Auto-Centre skipped" in caplog.text
+    assert page._auto_centre_timer.isActive()
+
+    page.stop()
+    assert not page.auto_centre_check.isChecked() and not page._auto_centre_timer.isActive()
 
 
 def test_tc_plt_070_stop_ends_a_run_in_progress(window, page):
