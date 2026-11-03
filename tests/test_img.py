@@ -385,6 +385,9 @@ def test_tc_img_110_existing_device_configs_table_gains_the_bayer_column(tmp_pat
     init_db(path)
     pier = create_pier(create_observatory("Obs"), "Pier")
     save_device_config(pier, "camera", driver="Alpaca", server="h", port=1)
+    # Change tracking installs triggers that name every replicated column; SQLite refuses to drop a column they use.
+    for (name,) in db.execute_sql("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'device_configs'").fetchall():
+        db.execute_sql(f"DROP TRIGGER {name}")
     db.execute_sql("ALTER TABLE device_configs DROP COLUMN bayer_pattern")
     assert "bayer_pattern" not in {c.name for c in db.get_columns("device_configs")}
     # A database from before migrations owned the schema has no migration history for Galileo's tables.

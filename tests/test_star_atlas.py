@@ -443,13 +443,16 @@ def test_options_has_a_settings_placeholder_for_each_primary_section(window):
     from galileo.ui.app_window import OPTIONS_ITEMS, PRIMARY_SECTIONS
     assert [i[:2] for i in OPTIONS_ITEMS[:len(PRIMARY_SECTIONS)]] == [s[:2] for s in PRIMARY_SECTIONS]
     assert OPTIONS_ITEMS[len(PRIMARY_SECTIONS):] == [
-        ("notifications", "Notifications", "notifications"), ("plugins", "Plugins", "plugins")]
+        ("notifications", "Notifications", "notifications"), ("connect_link", "Connect Link", "connect_link"),
+        ("connect_link_outreach", "Outreach", "connect_link"), ("plugins", "Plugins", "plugins")]
 
     menus = [
         [" ".join(b.text().split()) for b in c.findChildren(QtWidgets.QToolButton)]
         for c in window._nav_columns if c.objectName() == "SecondarySidebar"
     ]
-    assert [s[1] for s in PRIMARY_SECTIONS] + ["Notifications", "Plugins"] in menus
+    expected = [s[1] for s in PRIMARY_SECTIONS] + ["Notifications", "Connect Link", "Outreach", "Plugins"]
+    # An installed plugin may add its own entry after the core ones.
+    assert any(menu[:len(expected)] == expected for menu in menus)
 
     titles = {w.text() for w in window._window.findChildren(QtWidgets.QLabel, "PageTitle")}
     for section_id, label, _icon in PRIMARY_SECTIONS:
@@ -722,7 +725,7 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
 
     menu = captured["menu"]
     actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
-    assert list(actions) == ["Goto", "Sync", "Add to Session"]
+    assert list(actions) == ["Goto", "Goto and Centre", "Sync", "Add to Session"]
     assert actions["Add to Session"].isEnabled()
 
     actions["Add to Session"].trigger()
@@ -973,6 +976,12 @@ def test_slew_guard_is_scoped_per_pier(window, tmp_path, monkeypatch):
     guard_away.check_altaz(50.0, 90.0)       # same direction, but Away has no horizon at all — never blocked
 
 
+def _horizon_table(window):
+    from PySide6.QtWidgets import QTableWidget
+    return next(t for t in window._options_page.findChildren(QTableWidget)
+                if t.horizontalHeaderItem(0) is not None and t.horizontalHeaderItem(0).text().startswith("Azimuth"))
+
+
 def _checkbox(window, text: str):
     from PySide6.QtWidgets import QCheckBox
     return next(box for box in window._window.findChildren(QCheckBox) if box.text() == text)
@@ -982,11 +991,11 @@ def _checkbox(window, text: str):
 @pytest.mark.priority("P2")
 def test_options_star_atlas_uploads_a_horizon_and_the_atlas_shows_it(horizon_env, window, tmp_path, monkeypatch):
     """SKYMAP-070: Options > Star Atlas loads a file into the horizon table, the Star Atlas gets a "Horizon" checkbox that shades it, and a bad file changes nothing."""
-    from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QTableWidget
+    from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton
     from galileo.observatory import create_observatory, list_horizon_points
     window._select_observatory(create_observatory("Home", 40.0, 0.0))
     assert window._star_atlas_set_horizon.__self__.show_horizon is False
-    table = next(t for t in window._options_page.findChildren(QTableWidget))
+    table = _horizon_table(window)
     assert table.rowCount() == 0
 
     good = tmp_path / "horizon.txt"
@@ -1016,10 +1025,10 @@ def test_options_star_atlas_uploads_a_horizon_and_the_atlas_shows_it(horizon_env
 def test_options_star_atlas_edits_horizon_points_directly(horizon_env, window):
     """SKY-040: Options > Star Atlas lets a user add, edit, remove and save horizon
     obstruction points directly in the table, not only by uploading a file."""
-    from PySide6.QtWidgets import QMessageBox, QPushButton, QTableWidget
+    from PySide6.QtWidgets import QMessageBox, QPushButton
     from galileo.observatory import create_observatory, list_horizon_points
     window._select_observatory(create_observatory("Home", 40.0, 0.0))
-    table = next(t for t in window._options_page.findChildren(QTableWidget))
+    table = _horizon_table(window)
 
     def button(text):
         return next(b for b in window._options_page.findChildren(QPushButton) if b.text() == text)
