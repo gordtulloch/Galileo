@@ -363,6 +363,11 @@ class AppWindowObservatoryPierMixin:
     def _select_observatory(self: AppWindowState, observatory) -> None:
         self._current_observatory = observatory
         self._current_pier = None
+        try:                                    # a headless engine starts on the Observatory last used (HEAD-140)
+            from galileo.engine.config import remember_observatory
+            remember_observatory(observatory.name)
+        except Exception:
+            logger.debug("Could not record the last Observatory", exc_info=True)
         self._refresh_pier_combo()
 
     def _refresh_pier_combo(self: AppWindowState) -> None:

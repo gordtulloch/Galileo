@@ -7,14 +7,16 @@
 (``tests/test_head.py`` checks that in a subprocess), so it runs on a controller with no screen.
 
 This is the first step of the engine (SDD §4.33): the composition root, the single-engine lock and the
-service run. Device connections, the session runner, the Pier helpers, safety and the watchdog join it in the
+service run. The device service (HEAD-040) is in; the session runner, the Pier helpers, safety and the watchdog join it in the
 later steps; until then they are still held by the desktop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+import threading
 from collections.abc import Sequence
 from typing import Any
 
@@ -30,6 +32,20 @@ class Engine:
     def __init__(self, lock: EngineLock | None = None) -> None:
         self.lock = lock or EngineLock()
         self.plugin_manager: Any = None
+        self.devices: Any = None
+        self.runner: Any = None
+        self.state: Any = None
+        self.helpers: Any = None
+        self.leases: Any = None
+        self.gateway: Any = None
+        self.channel: Any = None
+        self._channel_loop: asyncio.AbstractEventLoop | None = None
+        self._channel_thread: threading.Thread | None = None
+        self.registry: Any = None
+        self.config: Any = None
+        self.guard: Any = None
+        self.observatory: str | None = None
+        self._connecting: threading.Thread | None = None
         self._started = False
 
     def start(self) -> None:
@@ -46,12 +62,54 @@ class Engine:
         from galileo.plugins import PluginManager
         self.plugin_manager = PluginManager()
         self.plugin_manager.initialize_from_disk()
+
+        self._start_devices()                     # HEAD-040
         self._started = True
+
+    def _start_devices(self) -> None:
+        """The device service and the Control Surface's device operations; auto-connect runs in the background
+        so a device that is slow or missing never delays the engine being ready."""
+        from galileo.control_surface import Registry
+        from galileo.control_surface.catalogue import register_device_operations
+        from galileo.engine.devices import DeviceService
+
+        from galileo.engine.runner import SessionRunner
+
+        self.devices = DeviceService()
+        self.runner = SessionRunner()                       # HEAD-050
+        self.devices.set_default_session_stopper(self.runner.stop)
+        from galileo.engine.config import load_config, resolve_observatory
+        from galileo.observatory import list_observatories
+
+        self.config = load_config()                         # HEAD-130: from the database
+        self.observatory = resolve_observatory(self.config, [o.name for o in list_observatories()])
+        self.devices.load_piers(self.observatory)           # HEAD-140
+        from galileo.control_surface import ObservableState
+        from galileo.engine.helpers import Helpers
+
+        self.state = ObservableState()
+        self.helpers = Helpers(self.devices, self.state)    # HEAD-060
+        self.helpers.start()
+        self.registry = Registry()
+        register_device_operations(self.registry, self.devices)
+        from galileo.engine.guard import Guard, build_watchdog
+
+        self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices))   # HEAD-160
+        self.guard.start()
+        self._start_channel()                                # HEAD-080
+        from galileo.bus import get_bus
+        from galileo.replication import SettingsChanged
+        get_bus().subscribe(SettingsChanged, self._on_settings_changed)    # HEAD-130
+        self._connecting = threading.Thread(
+            target=lambda: asyncio.run(self.devices.connect_startup_piers(
+                self.config.retry_limit, self.config.retry_interval_s)), name="engine-connect", daemon=True)
+        self._connecting.start()
 
     def stop(self) -> None:
         """Stop in the reverse order of ``start``. Each step is isolated so a failure in one never skips the rest."""
         steps = (
             ("Connect Link", self._stop_link),
+            ("devices", self._stop_devices),
             ("CPU workers", self._stop_workers),
         )
         for name, step in steps:
@@ -61,6 +119,69 @@ class Engine:
                 logger.exception("Stopping %s failed", name)
         self._started = False
         self.lock.release()
+
+    def _start_channel(self) -> None:
+        """The lease, the request pipeline and the local channel a desktop attaches to."""
+        from galileo import __version__
+        from galileo.bus import get_bus
+        from galileo.connect_link.audit import AuditLog
+        from galileo.connect_link.gateway import Gateway
+        from galileo.control_surface import LeaseBroker
+        from galileo.engine.channel import EngineChannel
+        from galileo.platform import get_data_dir
+
+        bus = get_bus()
+        self.leases = LeaseBroker(bus=bus)
+        self.gateway = Gateway(self.registry, self.leases, AuditLog())
+        self.channel = EngineChannel(
+            registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state, devices=self.devices,
+            bus=bus, version=__version__, directory=get_data_dir() / "engine", status_extra=self._status_extra)
+        loop = asyncio.new_event_loop()
+        self._channel_loop = loop
+        self._channel_thread = threading.Thread(target=loop.run_forever, name="engine-channel", daemon=True)
+        self._channel_thread.start()
+        info = asyncio.run_coroutine_threadsafe(self.channel.start(), loop).result(30)
+        self.lock.update(channel=info)
+
+    def _on_settings_changed(self, _event: Any) -> None:
+        """An Options change reached the database: read the engine's own settings again. A different Observatory
+        takes effect at the next start, because changing it under a running session would be unsafe."""
+        from galileo.engine.config import load_config
+        self.config = load_config()
+        logger.info("Engine settings reloaded")
+
+    def _status_extra(self) -> dict[str, Any]:
+        runner = self.runner
+        return {"sessions": runner.snapshot() if runner is not None else [], "observatory": self.observatory,
+                "problems": dict(self.devices.problems) if self.devices is not None else {},
+                **(self.guard.status() if self.guard is not None else {})}
+
+    def _stop_channel(self) -> None:
+        loop, self._channel_loop = self._channel_loop, None
+        if loop is None:
+            return
+        if self.channel is not None:
+            asyncio.run_coroutine_threadsafe(self.channel.stop(), loop).result(30)
+        loop.call_soon_threadsafe(loop.stop)
+        if self._channel_thread is not None:
+            self._channel_thread.join(5)
+
+    def _stop_devices(self) -> None:
+        from galileo.bus import get_bus
+        from galileo.replication import SettingsChanged
+        get_bus().unsubscribe(SettingsChanged, self._on_settings_changed)
+        self._stop_channel()
+        if self.guard is not None:
+            self.guard.stop()                         # disarmed first: a normal stop never parks the mount
+        if self.helpers is not None:
+            self.helpers.stop()
+        if self.runner is not None:
+            self.runner.shutdown()                    # sessions end before their devices are disconnected
+        if self.devices is not None:
+            self.devices.cancel_retries()
+            if self._connecting is not None:
+                self._connecting.join(timeout=30)
+            asyncio.run(self.devices.disconnect_all())
 
     @staticmethod
     def _stop_link() -> None:
@@ -83,6 +204,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.getLogger().setLevel(logging.INFO)
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+
+    if "--status" in (argv or ()):
+        from galileo.engine.status import status_main
+        return status_main(json_output="--json" in argv)
 
     from galileo import __version__
     logger.info("Galileo engine %s starting", __version__)

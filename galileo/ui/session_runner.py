@@ -32,6 +32,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from galileo.engine.runner import run_session
 from galileo.history import get_history
 from galileo.session_exec import (
     SessionContext,
@@ -287,20 +288,11 @@ class _RunThread(QThread):
 
     def run(self) -> None:
         run = self._run
-        executor = run.executor
-
-        async def runner(job):
-            run.result = await executor.run(job.sequence.blocks)
-            return run.result
-
+        # The same code path the engine's SessionRunner runs (HEAD-050): a manual Run executes at once and stays
+        # off the Schedule; a scheduled run goes through the scheduler so it behaves the same however it started.
         try:
-            if run.manual:
-                # Run executes at once and stays off the Schedule: no job, no queue, no timeline slot.
-                run.result = asyncio.run(executor.run(run.region.blocks))
-                value = getattr(run.result.state, "value", run.result.state)
-                state = value if value in ("completed", "error") else "stopped"
-            else:
-                state = asyncio.run(run.scheduler.run_job(run.job, runner))
+            state, run.result = asyncio.run(run_session(
+                run.executor, run.region.blocks, scheduler=run.scheduler, job=run.job, manual=run.manual))
         except Exception:
             logger.exception("Session run thread failed")
             state = "error"
