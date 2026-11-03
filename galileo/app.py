@@ -117,7 +117,20 @@ def main() -> None:
     _schedule_registration_ping()
     _schedule_library_preload()
 
+    # With "Hold devices in the device service" on, host the engine in this process (HEAD-090).
+    engine_attachment = None
+    try:
+        from galileo import desktop_devices
+        engine_attachment = desktop_devices.host_engine()
+    except Exception:
+        logger.exception("Could not start the hosted engine")
+
     exit_code = app.exec()
+    if engine_attachment is not None:
+        try:
+            engine_attachment.close(confirmed=True)       # the desktop's own exit prompts already ran
+        except Exception:
+            logger.exception("The hosted engine did not stop cleanly")
     # Close Connect Link's listener and loop if it was ever started (LINK-270); pairings are kept.
     try:
         from galileo.connect_link.host import shutdown_host

@@ -11,9 +11,14 @@ import logging
 
 from ._common import _new_form_layout, _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
 from galileo.focuser_settings import (
-    MODE_ABSOLUTE, MODE_PULSE, MODES, PULSE_MIDDLE, PULSE_RANGE_MAX, FocuserSettings, travel_problem,
+    MODE_ABSOLUTE, MODE_PULSE, MODES, PULSE_MIDDLE, PULSE_RANGE_MAX, FocuserSettings,
 )
 import contextlib
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import FAILED, DeviceOps, scan_devices
+from galileo.focuser_ops import (
+    FocuserOps, clear_travel_limits, describe_status, log_transitions, set_travel_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +113,8 @@ class AppWindowFocuserPageMixin:
         # This Pier's connected focusers, by slot (see _slot_for_index below),
         # persisting across a Pier switch — panel["adapter"] is just "whichever
         # Pier is displayed right now"'s adapter for that slot.
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.FOCUSER, nested=True)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -300,60 +306,33 @@ class AppWindowFocuserPageMixin:
             combo.setCurrentIndex(max(idx, 0))
             combo.blockSignals(False)
 
+        def _ops(panel: dict) -> FocuserOps:
+            return FocuserOps(lambda: panel.get("adapter"))
+
         def _apply_status(panel: dict, status: dict) -> None:
-            def _yes_no(value) -> str:
-                return "—" if value is None else ("Yes" if value else "No")
-
-            panel["is_moving_value"].setText(_yes_no(status.get("is_moving")))
-            panel["is_settling_value"].setText(_yes_no(status.get("is_settling")))
-            max_increment = status.get("max_increment")
-            panel["max_increment_value"].setText("—" if max_increment is None else str(max_increment))
-            max_step = status.get("max_step")
-            panel["max_step_value"].setText("—" if max_step is None else str(max_step))
-            position = status.get("position")
-            panel["position_value"].setText("—" if position is None else str(position))
-            if position is not None and not panel["target_position"].hasFocus():
+            view = describe_status(status)
+            panel["is_moving_value"].setText(view.is_moving)
+            panel["is_settling_value"].setText(view.is_settling)
+            panel["max_increment_value"].setText(view.max_increment)
+            panel["max_step_value"].setText(view.max_step)
+            panel["position_value"].setText(view.position)
+            if view.position_value is not None and not panel["target_position"].hasFocus():
                 panel["target_position"].blockSignals(True)
-                panel["target_position"].setValue(int(position))
+                panel["target_position"].setValue(view.position_value)
                 panel["target_position"].blockSignals(False)
-            temp_comp = status.get("temp_comp")
-            if temp_comp is not None:
+            if view.temp_comp is not None:
                 panel["temp_comp_check"].blockSignals(True)
-                panel["temp_comp_check"].setChecked(bool(temp_comp))
+                panel["temp_comp_check"].setChecked(view.temp_comp)
                 panel["temp_comp_check"].blockSignals(False)
-            temperature = status.get("temperature")
-            panel["temperature_value"].setText("—" if temperature is None else f"{temperature:.1f} °C")
-
-        def _log_status_transitions(panel: dict, status: dict) -> None:
-            """Log is_moving/is_settling *changes* at INFO — the result side
-            of a move transaction — rather than every 2-second poll, which
-            would otherwise flood the log while a move is in progress."""
-            title = panel["title_label"].text()
-            position = status.get("position")
-            was_moving, is_moving = panel["_last_is_moving"], status.get("is_moving")
-            was_settling, is_settling = panel["_last_is_settling"], status.get("is_settling")
-            if is_moving and not was_moving:
-                logger.info("Focuser %s: started moving (target position %s)", title, panel["target_position"].value())
-            elif was_moving and not is_moving:
-                logger.info("Focuser %s: stopped moving at position %s", title, position)
-            if is_settling and not was_settling:
-                logger.info("Focuser %s: settling at position %s", title, position)
-            elif was_settling and not is_settling:
-                logger.info("Focuser %s: finished settling at position %s", title, position)
-            panel["_last_is_moving"] = is_moving
-            panel["_last_is_settling"] = is_settling
+            panel["temperature_value"].setText(view.temperature)
 
         def _refresh_panel_status(panel: dict) -> dict | None:
-            adapter = panel.get("adapter")
-            if adapter is None:
+            status = _ops(panel).status(panel["title_label"].text())
+            if status is None:
                 return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh status for %s", panel["title_label"].text())
-                return None
-            _log_status_transitions(panel, status)
+            panel["_last_is_moving"], panel["_last_is_settling"] = log_transitions(
+                panel["title_label"].text(), status,
+                (panel["_last_is_moving"], panel["_last_is_settling"]), panel["target_position"].value())
             _apply_status(panel, status)
             return status
 
@@ -417,32 +396,25 @@ class AppWindowFocuserPageMixin:
                 _refresh_panel_status(panel)
 
         def _apply_travel_to_adapter(panel: dict) -> None:
-            adapter = panel.get("adapter")
-            if adapter is not None:
-                adapter.travel_min = panel["settings"].travel_min
-                adapter.travel_max = panel["settings"].travel_max
+            _ops(panel).apply_travel(panel["settings"])
 
         def _set_travel_clicked(panel: dict, which: str) -> None:
-            adapter = panel.get("adapter")
-            if adapter is None:
+            if panel.get("adapter") is None:
                 QMessageBox.information(self._window, "Not connected", "Connect this focuser first.")
                 return
             _refresh_panel_status(panel)
-            position = int(adapter.position)
-            settings = panel["settings"]
-            low, high = (position, settings.travel_max) if which == "min" else (settings.travel_min, position)
-            problem = travel_problem(low, high)
+            position = _ops(panel).position()
+            problem = set_travel_limit(panel["settings"], which, position)
             if problem:
                 QMessageBox.warning(self._window, "Travel limits", problem)
                 return
-            settings.travel_min, settings.travel_max = low, high
             logger.info("Focuser %s: %s travel set to %s", panel["title_label"].text(), which, position)
             _apply_travel_to_adapter(panel)
             _show_travel(panel)
             _persist(panel, "Travel limit")
 
         def _clear_travel_clicked(panel: dict) -> None:
-            panel["settings"].travel_min = panel["settings"].travel_max = None
+            clear_travel_limits(panel["settings"])
             logger.info("Focuser %s: travel limits cleared", panel["title_label"].text())
             _apply_travel_to_adapter(panel)
             _show_travel(panel)
@@ -479,7 +451,7 @@ class AppWindowFocuserPageMixin:
             adapter = self._connect_device_adapter(
                 DeviceCategory.FOCUSER, driver_combo.currentText(),
                 server_edit.text().strip() or "localhost", port_spin.value(), device_name,
-                configure=_configure,
+                configure=_configure, slot=slot,
             )
             if adapter is None:
                 self._window.statusBar().showMessage(f"Could not connect to {slot_label} {device_name!r} — see log.", 6000)
@@ -488,11 +460,9 @@ class AppWindowFocuserPageMixin:
             panel["adapter"] = adapter
             adapters_by_pier.setdefault(pier_key(self._current_pier), {})[_slot_for_index(panels.index(panel))] = adapter
             self._window.statusBar().showMessage(f"Connected to {slot_label} {device_name!r}.", 4000)
-            import asyncio
-            try:
-                panel["apply_driver_info"](asyncio.run(adapter.get_driver_info()))
-            except Exception:
-                logger.exception("Could not read driver info from connected %s", slot_label)
+            info = _ops(panel).driver_info()
+            if info is not None:
+                panel["apply_driver_info"](info)
             _refresh_panel_status(panel)
 
         def _lookup_panel_driver_info(panel: dict) -> None:
@@ -510,22 +480,20 @@ class AppWindowFocuserPageMixin:
                 return
             _do_connect(panel, device_name, panel["title_label"].text())
 
+        def _move_reported(panel: dict, target: int) -> bool:
+            outcome = _ops(panel).move_to(target)
+            if outcome.kind == FAILED:
+                self._window.statusBar().showMessage(outcome.message, 6000)
+            return outcome.ok
+
         def _move_clicked(panel: dict) -> None:
-            adapter = panel.get("adapter")
-            if adapter is None:
+            if panel.get("adapter") is None:
                 QMessageBox.information(self._window, "Not connected", "Connect this focuser first.")
                 return
             target = panel["target_position"].value()
-            title = panel["title_label"].text()
-            logger.info("Focuser %s: move requested to position %s", title, target)
-            import asyncio
-            try:
-                asyncio.run(adapter.move_to(target))
-            except Exception:
-                logger.exception("Could not move focuser to %s", target)
-                self._window.statusBar().showMessage("Move failed — see log.", 6000)
-                return
-            _refresh_panel_status(panel)
+            logger.info("Focuser %s: move requested to position %s", panel["title_label"].text(), target)
+            if _move_reported(panel, target):
+                _refresh_panel_status(panel)
 
         def _show_emergency(panel: dict) -> None:
             from galileo.observatory import get_emergency_focus
@@ -548,14 +516,8 @@ class AppWindowFocuserPageMixin:
                 return
             panel["target_position"].setValue(position)
             logger.info("Focuser %s: moving to emergency focus position %s", panel["title_label"].text(), position)
-            import asyncio
-            try:
-                asyncio.run(adapter.move_to(position))
-            except Exception:
-                logger.exception("Could not move focuser to emergency position %s", position)
-                self._window.statusBar().showMessage("Move failed — see log.", 6000)
-                return
-            _refresh_panel_status(panel)
+            if _move_reported(panel, position):
+                _refresh_panel_status(panel)
 
         def _emergency_set_clicked(panel: dict) -> None:
             from galileo.observatory import set_emergency_focus
@@ -575,14 +537,7 @@ class AppWindowFocuserPageMixin:
             _show_emergency(panel)
 
         def _temp_comp_toggled(panel: dict, checked: bool) -> None:
-            adapter = panel.get("adapter")
-            if adapter is None:
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.set_temp_comp(checked))
-            except Exception:
-                logger.exception("Could not set temperature compensation")
+            _ops(panel).set_temp_comp(checked)
 
         def _add_panel() -> dict:
             panel = _build_focuser_panel(removable=len(panels) > 0)
@@ -627,18 +582,8 @@ class AppWindowFocuserPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.FOCUSER)(host=server, port=port)
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.FOCUSER)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.FOCUSER))
-            except Exception:
-                logger.exception("Focuser scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.FOCUSER, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Focuser scan failed — see log.", 6000)
                 _refresh_slot_choices([])
                 return
@@ -811,13 +756,9 @@ class AppWindowFocuserPageMixin:
         def disconnect_page() -> None:
             """Pier-level Disconnect button: tear down every connected focuser panel for this Pier."""
             from galileo.current_object import pier_key
-            import asyncio
             connected = adapters_by_pier.pop(pier_key(self._current_pier), {})
-            for slot, adapter in connected.items():
-                try:
-                    asyncio.run(adapter.disconnect())
-                except Exception:
-                    logger.exception("Could not disconnect focuser slot %s", slot)
+            for adapter in connected.values():
+                DeviceOps(lambda adapter=adapter: adapter).disconnect("focuser")
             for panel in panels:
                 panel["adapter"] = None
                 _apply_status(panel, {})

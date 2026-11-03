@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import apply_filter_focus_offset, _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import disconnect_all, scan_devices
+from galileo.simple_device_ops import FilterWheelOps, describe_filter_wheel
 
 logger = logging.getLogger(__name__)
 
@@ -164,27 +167,31 @@ class AppWindowFilterWheelPageMixin:
         layout.addWidget(QLabel("None"))
 
         state: dict = {"adapter": None}
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.FILTER_WHEEL)
         # The wheel's own last-known actual filter (as opposed to filter_combo's
         # selection, which is the *target* once the user has picked a new one but
         # before Change is pressed) — the "from" side of the focus-offset delta
         # applied on a successful change (FOC-060).
         last_known_filter: dict = {"name": None}
 
+        ops = FilterWheelOps(lambda: state.get("adapter"))
+
         def _apply_status(status: dict) -> None:
-            name_value.setText(status.get("name") or "—")
-            description_value.setText(status.get("description") or "—")
-            driver_info_value.setText(status.get("driver_info") or "—")
-            driver_version_value.setText(status.get("driver_version") or "—")
-            names = status.get("filter_names") or []
-            position = status.get("position")
-            last_known_filter["name"] = names[position] if position is not None and 0 <= position < len(names) else None
+            view = describe_filter_wheel(status)
+            name_value.setText(view.name)
+            description_value.setText(view.description)
+            driver_info_value.setText(view.driver_info)
+            driver_version_value.setText(view.driver_version)
+            names = view.filter_names
+            position = view.position
+            last_known_filter["name"] = view.current_filter
 
             current = filter_combo.currentText()
             filter_combo.blockSignals(True)
             filter_combo.clear()
             filter_combo.addItems(names)
-            if position is not None and 0 <= position < len(names):
+            if position is not None:
                 filter_combo.setCurrentIndex(position)
             elif current and filter_combo.findText(current) >= 0:
                 filter_combo.setCurrentText(current)
@@ -198,14 +205,8 @@ class AppWindowFilterWheelPageMixin:
                     filters_list.setCurrentItem(item)
 
         def _refresh_status() -> dict | None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh filter wheel status")
+            status = ops.status("the filter wheel")
+            if status is None:
                 return None
             _apply_status(status)
             return status
@@ -239,18 +240,8 @@ class AppWindowFilterWheelPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.FILTER_WHEEL)(host=server, port=port)
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.FILTER_WHEEL)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.FILTER_WHEEL))
-            except Exception:
-                logger.exception("Filter wheel scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.FILTER_WHEEL, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Filter wheel scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -285,8 +276,7 @@ class AppWindowFilterWheelPageMixin:
         filters_list.itemClicked.connect(_filters_list_clicked)
 
         def _change_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            if state.get("adapter") is None:
                 QMessageBox.information(self._window, "Not connected", "Connect the filter wheel first.")
                 return
             index = filter_combo.currentIndex()
@@ -294,12 +284,9 @@ class AppWindowFilterWheelPageMixin:
                 return
             filter_name = filter_combo.currentText()
             from_filter = last_known_filter["name"]
-            import asyncio
-            try:
-                asyncio.run(adapter.move_to(index))
-            except Exception:
-                logger.exception("Filter wheel move_to failed (index=%s)", index)
-                self._window.statusBar().showMessage("Filter change failed — see log.", 6000)
+            outcome = ops.move_to(index)
+            if not outcome.ok:
+                self._window.statusBar().showMessage(outcome.message, 6000)
                 return
             logger.info("Filter wheel: changed to %r (#%d)", filter_name, index)
             _refresh_status()
@@ -400,11 +387,7 @@ class AppWindowFilterWheelPageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Filter Wheel")
+            disconnect_all([adapter], "Filter Wheel")
             state["adapter"] = None
             _apply_status({})
             self._window.statusBar().showMessage("Filter wheel disconnected.", 4000)

@@ -14,6 +14,9 @@ from collections.abc import Callable
 import logging
 
 from ._common import _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import NOT_CONNECTED, disconnect_all, scan_devices
+from galileo.simple_device_ops import AuxOps, aux_needs_rebuild
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +129,8 @@ class AppWindowAuxPageMixin:
         layout.addLayout(panel_container, 1)
 
         state: dict[str, Any] = {"adapter": None, "tabs": None, "rows": []}
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.AUX)
 
         def _set_accent(button, active: bool) -> None:
             button.setObjectName("AccentButton" if active else "")
@@ -362,35 +366,23 @@ class AppWindowAuxPageMixin:
             panel_container.addWidget(tabs)
             state["tabs"] = tabs
 
+        ops = AuxOps(lambda: state.get("adapter"))
+
         def _write(prop_name: str, values: dict) -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            outcome = ops.write_property(prop_name, values)
+            if outcome.kind == NOT_CONNECTED:
                 return
-            import asyncio
-            from galileo.core.devices import AuxController
-            try:
-                asyncio.run(AuxController(adapter).write_property(prop_name, values))
-            except Exception:
-                logger.exception("Aux: writing %s failed", prop_name)
-                self._window.statusBar().showMessage(f"Could not set {prop_name} — see log.", 6000)
+            if not outcome.ok:
+                self._window.statusBar().showMessage(outcome.message, 6000)
                 return
-            logger.info("Aux: set %s = %s", prop_name, values)
             _refresh_panel()
 
         def _refresh_panel() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            groups = ops.read_groups()
+            if groups is None:
                 return
-            import asyncio
-            from galileo.core.devices import AuxController
-            try:
-                groups = asyncio.run(AuxController(adapter).get_property_groups())
-            except Exception:
-                logger.exception("Aux: could not refresh control panel")
-                return
-            incoming_names = {p.name for g in groups for p in g.properties}
             current_names = {name for name, _refresh in state["rows"]}
-            if state["tabs"] is None or current_names != incoming_names:
+            if aux_needs_rebuild(current_names, groups, state["tabs"] is not None):
                 _build_group_tabs(groups)
                 return
             by_name = {p.name: p for g in groups for p in g.properties}
@@ -441,17 +433,8 @@ class AppWindowAuxPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.AUX)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.AUX))
-            except Exception:
-                logger.exception("Aux scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.AUX, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Aux scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -574,11 +557,7 @@ class AppWindowAuxPageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Aux device")
+            disconnect_all([adapter], "Aux device")
             state["adapter"] = None
             _build_group_tabs([])
             self._window.statusBar().showMessage("Aux device disconnected.", 4000)

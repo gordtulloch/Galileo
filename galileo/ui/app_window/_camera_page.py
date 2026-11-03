@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _parse_alpaca_device_number, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.device_ops import DeviceOps, scan_devices
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -291,18 +292,8 @@ class AppWindowCameraPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.CAMERA)(host=server, port=port)
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.CAMERA)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.CAMERA))
-            except Exception:
-                logger.exception("Camera scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.CAMERA, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Camera scan failed — see log.", 6000)
                 _refresh_slot_choices([])
                 return
@@ -332,11 +323,9 @@ class AppWindowCameraPageMixin:
             adapter = self._camera_backends.get(slot_label)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                panel["apply_driver_info"](asyncio.run(adapter.get_driver_info()))
-            except Exception:
-                logger.exception("Could not read driver info from connected %s", slot_label)
+            info = DeviceOps(lambda: adapter).driver_info()
+            if info is not None:
+                panel["apply_driver_info"](info)
 
         def _connect_clicked(panel: dict) -> None:
             """Manually connect one camera panel — previously the Camera page
@@ -578,12 +567,8 @@ class AppWindowCameraPageMixin:
 
         def disconnect_page() -> None:
             """Pier-level Disconnect button: tear down every connected camera slot for this Pier."""
-            import asyncio
             for slot_label, adapter in list(self._camera_backends.items()):
-                try:
-                    asyncio.run(adapter.disconnect())
-                except Exception:
-                    logger.exception("Could not disconnect %s", slot_label)
+                DeviceOps(lambda adapter=adapter: adapter).disconnect(slot_label)
                 del self._camera_backends[slot_label]
             reload_page()
             self._refresh_camera_combo()

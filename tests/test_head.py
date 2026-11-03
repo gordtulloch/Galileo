@@ -931,3 +931,154 @@ def test_tc_head_180_engine_channel(tmp_path):
         finally:
             await channel.stop()
     aio.run(go())
+
+
+@pytest.mark.requirement("TC-HEAD-040")
+@pytest.mark.priority("MVP")
+def test_tc_head_040_desktop_holds_devices_in_the_service_when_enabled(fake_settings):
+    """HEAD-040: with the setting on, a screen's Connect builds the device through the device service, which holds it
+    per Pier and slot and announces it; a disconnect releases it; with the setting off (the default) the service is
+    not used at all."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from galileo import desktop_devices
+    from galileo.bus import DeviceConnectedEvent, DeviceDisconnectedEvent, EventBus
+    from galileo.core.devices import DeviceCategory
+    from galileo.device_ops import DeviceOps
+    from galileo.engine.devices import DeviceService
+
+    class Adapter:
+        def __init__(self, *args):
+            self.args = args
+            self.is_connected = False
+            self.configured = False
+            self.disconnected = False
+
+        async def connect(self):
+            self.is_connected = True
+
+        async def disconnect(self):
+            self.disconnected = True
+
+    class Broken(Adapter):
+        async def connect(self):
+            raise RuntimeError("no route")
+
+    bus = EventBus()
+    seen = []
+    bus.subscribe(DeviceConnectedEvent, seen.append)
+    bus.subscribe(DeviceDisconnectedEvent, seen.append)
+    desktop_devices.reset()
+    try:
+        assert desktop_devices.enabled() is False                                      # off by default
+        desktop_devices.forget(object())                                              # no service yet: harmless
+
+        service = DeviceService(bus=bus, factory=lambda *a: Adapter(*a))
+        desktop_devices._service = service
+        pier = SimpleNamespace(id=7, name="East")
+
+        assert desktop_devices.set_enabled(True) and desktop_devices.enabled() is True
+        adapter = desktop_devices.connect(pier, DeviceCategory.FOCUSER, "focuser_2", "INDI", "pi", 7624, "Focuser",
+                                          configure=lambda a: setattr(a, "configured", True))
+        assert adapter.is_connected and adapter.configured
+        assert adapter.args == (DeviceCategory.FOCUSER, "INDI", "pi", 7624, "Focuser")
+        assert service.controller("7", "focuser", "focuser_2") is adapter              # found the way the engine finds it
+        assert service.connected("7") == ["focuser/focuser_2"]
+        assert [type(e).__name__ for e in seen] == ["DeviceConnectedEvent"]
+
+        DeviceOps(lambda: adapter).disconnect("focuser")                               # the screens' own disconnect
+        assert adapter.disconnected and service.controller("7", "focuser", "focuser_2") is None
+        assert [type(e).__name__ for e in seen] == ["DeviceConnectedEvent", "DeviceDisconnectedEvent"]
+
+        service._factory = lambda *a: Broken(*a)
+        assert desktop_devices.connect(pier, DeviceCategory.MOUNT, "primary", "INDI", "pi", 7624, "EQ") is None
+        assert service.controller("7", "mount") is None                                # a failed connect holds nothing
+        assert asyncio.run(service.connect_device("7", "nonsense", "primary", "INDI", "pi", 1, "x")) is None
+    finally:
+        desktop_devices.reset()
+
+
+@pytest.mark.requirement("TC-HEAD-040")
+@pytest.mark.priority("MVP")
+def test_tc_head_040_screens_read_adapters_from_the_service_first():
+    """HEAD-040: a screen's per-Pier adapter store is a plain dictionary until a service holds a device for that Pier,
+    then the service's device wins, so a replaced or released device is never read from a stale copy."""
+    from galileo import desktop_devices
+    from galileo.bus import EventBus
+    from galileo.core.devices import DeviceCategory
+    from galileo.engine.devices import DeviceService
+
+    desktop_devices.reset()
+    try:
+        single = desktop_devices.PierAdapters(DeviceCategory.ROTATOR)
+        multi = desktop_devices.PierAdapters(DeviceCategory.FOCUSER, nested=True)
+        mine, theirs, slot2 = object(), object(), object()
+
+        assert single.get(3) is None and single.get(3, "x") == "x" and multi.get(3) is None
+        single[3] = mine
+        multi.setdefault(3, {})["primary"] = mine
+        assert single.get(3) is mine and multi.get(3) == {"primary": mine}            # no service: a dictionary
+
+        service = DeviceService(bus=EventBus())
+        desktop_devices._service = service
+        assert single.get(3) is mine                                                   # a service holding nothing changes nothing
+        service.adopt("3", "rotator", "primary", theirs)
+        service.adopt("3", "focuser", "focuser_2", slot2)
+        assert single.get(3) is theirs                                                 # the service's device wins
+        assert multi.get(3) == {"primary": mine, "focuser_2": slot2}                   # slots merge, service over local
+        assert single.get(4) is None
+
+        service.release(theirs)
+        assert single.get(3) is mine                                                   # released: back to the local one
+        service.adopt("3", "rotator", "primary", theirs)
+        assert single.pop(3) is theirs and single.get(3) is theirs                     # held by the service still
+        service.release(theirs)
+        assert single.get(3) is None and single.pop(3, "gone") == "gone"
+        assert multi.pop(3) == {"primary": mine, "focuser_2": slot2} and multi.get(3) == {"focuser_2": slot2}
+    finally:
+        desktop_devices.reset()
+
+
+@pytest.mark.requirement("TC-HEAD-090")
+@pytest.mark.priority("MVP")
+def test_tc_head_090_desktop_hosts_a_lean_engine_over_its_own_devices(tmp_path, fake_settings, monkeypatch):
+    """HEAD-090: with the device-service setting on, the desktop hosts an embedded engine that takes the lock, serves the
+    channel over the desktop's own device service, starts no guard, helpers or auto-connect, and leaves the devices
+    connected when it stops; off, it does nothing; a second host finds the lock taken and keeps its own devices."""
+    from galileo import desktop_devices
+
+    monkeypatch.setattr("galileo.platform.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("galileo.observatory.list_observatories", list)
+    desktop_devices.reset()
+    try:
+        assert desktop_devices.host_engine() is None                                   # setting off: nothing happens
+        assert not (tmp_path / "engine").exists()
+
+        fake_settings[("engine", "desktop_uses_device_service")] = True
+        attachment = desktop_devices.host_engine()
+        assert attachment is not None and attachment.hosting
+        engine = attachment.engine
+        assert engine.embedded and engine.devices is desktop_devices.service()        # the desktop's devices, not new ones
+        assert engine.channel is not None and engine.lock.held
+        assert engine.guard is None and engine.helpers is None and engine._connecting is None
+        assert engine.plugin_manager is None                                           # the desktop loaded its own
+
+        class Held:
+            disconnected = False
+            is_connected = True
+
+            async def disconnect(self):
+                Held.disconnected = True
+
+        held = Held()
+        engine.devices.adopt("1", "mount", "primary", held)
+
+        assert desktop_devices.host_engine() is None                                   # a second host: lock taken
+        assert engine.lock.held                                                        # and the first is undisturbed
+
+        assert attachment.close(confirmed=True)
+        assert not engine.lock.held
+        assert Held.disconnected is False and engine.devices.controller("1", "mount") is held   # devices stay the desktop's
+    finally:
+        desktop_devices.reset()

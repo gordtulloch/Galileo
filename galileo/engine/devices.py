@@ -179,6 +179,52 @@ class DeviceService:
         self._bus.publish(DeviceConnectedEvent(source=key[1], pier=pier, slot=key[2]))
         return True
 
+    async def connect_device(self, pier: str, category: str, slot: str, driver: str, server: str, port: int,
+                             device_name: str, configure: Callable[[Any], None] | None = None) -> Any | None:
+        """Build, configure and connect one device from explicit settings (what a screen's Connect button has, as
+        opposed to the saved profile ``connect_pier`` reads), and hold it under (*pier*, *category*, *slot*).
+        Returns the adapter, or ``None`` after publishing the error. A device already held there is
+        disconnected first, so a slot never has two."""
+        cat = self._category_of(category)
+        if cat is None:
+            logger.warning("Pier %s: unknown device category %r", pier, category)
+            return None
+        label = f"{cat.value} {device_name or ''} at {server}:{port}"
+        try:
+            adapter = self._factory(cat, driver, server, int(port), device_name or "")
+            if configure is not None:
+                configure(adapter)
+            await adapter.connect()
+        except Exception as exc:
+            logger.exception("Could not connect %s", label)
+            self._bus.publish(DeviceErrorEvent(source=cat.value.lower(), pier=pier, slot=slot or PRIMARY, error=str(exc)))
+            return None
+        self.adopt(pier, cat.value.lower(), slot, adapter)
+        logger.info("Pier %s: connected %s", pier, label)
+        return adapter
+
+    def adopt(self, pier: str, category: str, slot: str, adapter: Any) -> None:
+        """Hold an adapter some other code connected, so everything that asks the service for it finds it."""
+        key = (pier, category.lower(), slot or PRIMARY)
+        with self._lock:
+            previous = self._adapters.get(key)
+            self._adapters[key] = adapter
+            self._manual.pop(pier, None)
+        if previous is not None and previous is not adapter:
+            logger.warning("Pier %s: %s/%s replaced by a new connection", pier, key[1], key[2])
+        self._bus.publish(DeviceConnectedEvent(source=key[1], pier=pier, slot=key[2]))
+
+    def release(self, adapter: Any) -> bool:
+        """Stop holding *adapter* (it was disconnected elsewhere); ``False`` when the service did not hold it."""
+        with self._lock:
+            keys = [k for k, a in self._adapters.items() if a is adapter]
+            for key in keys:
+                del self._adapters[key]
+                self._manual.pop(key[0], None)
+        for key in keys:
+            self._bus.publish(DeviceDisconnectedEvent(source=key[1], pier=key[0], slot=key[2]))
+        return bool(keys)
+
     @staticmethod
     def _category_of(name: str) -> DeviceCategory | None:
         text = str(name)
@@ -226,6 +272,11 @@ class DeviceService:
         with self._lock:
             return self._adapters.get((pier, category.lower(), slot)) or next(
                 (a for (p, c, _s), a in self._adapters.items() if p == pier and c == category.lower()), None)
+
+    def controllers(self, pier: str, category: str) -> dict[str, Any]:
+        """Every adapter held for *pier* in *category*, by slot."""
+        with self._lock:
+            return {s: a for (p, c, s), a in self._adapters.items() if p == pier and c == category.lower()}
 
     def connected(self, pier: str) -> list[str]:
         with self._lock:

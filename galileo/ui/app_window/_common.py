@@ -229,30 +229,8 @@ def _parse_alpaca_device_number(device_name: str | None) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _format_hms(hours: float | None) -> str:
-    """Format an hour-angle-like value (Right Ascension, Sidereal Time,
-    time-to-meridian) as ``HH:MM:SS`` — the Mount page's status display
-    convention for astronomy software."""
-    if hours is None:
-        return "—"
-    total_seconds = round((hours % 24.0) * 3600.0)
-    h, rem = divmod(total_seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def _format_dms(degrees: float | None) -> str:
-    """Format a degree value (Declination, Altitude, Azimuth, Site
-    Latitude/Longitude) as ``±DD° MM' SS"`` — the Mount page's status
-    display convention, matching how these are conventionally shown in
-    astronomy software."""
-    if degrees is None:
-        return "—"
-    sign = "-" if degrees < 0 else ""
-    total_seconds = round(abs(degrees) * 3600.0)
-    d, rem = divmod(total_seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{sign}{d:02d}° {m:02d}' {s:02d}\""
+from galileo.coordinate_format import format_dms as _format_dms  # noqa: E402,F401  (kept under the old names)
+from galileo.coordinate_format import format_hms as _format_hms  # noqa: E402,F401
 
 
 def guard_loopback_edit(edit) -> None:

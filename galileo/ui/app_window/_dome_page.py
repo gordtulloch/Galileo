@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import NOT_CONNECTED, disconnect_all, scan_devices
+from galileo.dome_ops import DomeOps, describe_status, slave_status_text, slave_step, sync_to_mount
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +279,8 @@ class AppWindowDomePageMixin:
             ready_value.setStyleSheet(f"color: {ready_color};")
 
         state: dict = {"adapter": None}
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.DOME)
         device_controls = (open_btn, close_btn, park_btn, abort_btn)
         services_by_pier: dict = {}
 
@@ -334,17 +338,7 @@ class AppWindowDomePageMixin:
             sync_btn.setEnabled(service is not None)
 
         def _update_slave_status() -> None:
-            service = get_service()
-            if service is None:
-                slave_status.setText("—")
-            elif not service.slaving_enabled:
-                slave_status.setText("Slaving off")
-            elif not service.ready:
-                slave_status.setText("Waiting for a connected mount")
-            elif service.last_slaved_azimuth is None:
-                slave_status.setText("Slaving on — waiting for the mount to track")
-            else:
-                slave_status.setText(f"Slaving on — followed mount to {service.last_slaved_azimuth:.1f}°")
+            slave_status.setText(slave_status_text(get_service()))
 
         def _slave_toggled(checked: bool) -> None:
             service = get_service()
@@ -368,12 +362,9 @@ class AppWindowDomePageMixin:
             if _mount_adapter() is None:
                 QMessageBox.information(self._window, "No mount", "Connect the mount first.")
                 return
-            import asyncio
-            try:
-                asyncio.run(service.sync_to_mount(force=True))
-            except Exception:
-                logger.exception("Dome sync to mount failed")
-                self._window.statusBar().showMessage("Dome sync failed — see log.", 6000)
+            outcome = sync_to_mount(service)
+            if not outcome.ok:
+                self._window.statusBar().showMessage(outcome.message, 6000)
                 return
             _refresh_status()
 
@@ -385,46 +376,37 @@ class AppWindowDomePageMixin:
             service = get_service()
             if service is None or not service.slaving_enabled:
                 return
-            import asyncio
-            try:
-                asyncio.run(service.track_mount())
-            except Exception:
-                logger.exception("Dome slaving step failed")
+            slave_step(service)
             _update_slave_status()
 
         # --- device status / actions --------------------------------------
+        ops = DomeOps(lambda: state.get("adapter"))
+
         def _call(method: str, *args, action: str) -> bool:
-            adapter = state.get("adapter")
-            if adapter is None:
+            outcome = ops.run(method, *args, action=action)
+            if outcome.ok:
+                return True
+            if outcome.kind == NOT_CONNECTED:
                 QMessageBox.information(self._window, "Not connected", "Connect the dome first.")
-                return False
-            import asyncio
-            try:
-                asyncio.run(getattr(adapter, method)(*args))
-            except Exception:
-                logger.exception("Dome %s failed", action)
-                self._window.statusBar().showMessage(f"Dome {action} failed — see log.", 6000)
-                return False
-            return True
+            else:
+                self._window.statusBar().showMessage(outcome.message, 6000)
+            return False
 
         def _apply_status(status: dict) -> None:
-            connected = bool(status)
-            if connected:  # an empty status is "not connected": keep what a device pick looked up
+            view = describe_status(status)
+            if view.connected:  # an empty status is "not connected": keep what a device pick looked up
                 apply_driver_info(status)
             for widget in device_controls:
-                widget.setEnabled(connected)
-            shutter_value.setText(status.get("shutter_state") or "—")
-            azimuth = status.get("azimuth")
-            azimuth_value.setText("—" if azimuth is None else f"{azimuth:.1f}°")
-            at_park = status.get("is_at_park")
-            state["parked"] = bool(at_park)
-            park_btn.setText("Unpark" if at_park else "Park")
-            if at_park is None:
-                park_chip.setText("—")
+                widget.setEnabled(view.connected)
+            shutter_value.setText(view.shutter)
+            azimuth_value.setText(view.azimuth)
+            state["parked"] = view.parked
+            park_btn.setText(view.park_button)
+            park_chip.setText(view.park_chip)
+            if view.at_park is None:
                 park_chip.setStyleSheet("")
             else:
-                park_chip.setText("Parked" if at_park else "Unparked")
-                chip_color = _READY_COLOR if at_park else _NOT_READY_COLOR
+                chip_color = _READY_COLOR if view.at_park else _NOT_READY_COLOR
                 park_chip.setStyleSheet(
                     f"background-color: {chip_color}; color: white; font-weight: bold; "
                     "padding: 3px 10px; border-radius: 3px;"
@@ -434,15 +416,11 @@ class AppWindowDomePageMixin:
             _update_slave_status()
 
         def _refresh_status() -> dict | None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            if state.get("adapter") is None:
                 _refresh_observatory_status()
                 return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh dome status")
+            status = ops.status("the dome")
+            if status is None:
                 return None
             _apply_status(status)
             return status
@@ -513,17 +491,8 @@ class AppWindowDomePageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.DOME)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.DOME))
-            except Exception:
-                logger.exception("Dome scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.DOME, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Dome scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -646,11 +615,7 @@ class AppWindowDomePageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Dome")
+            disconnect_all([adapter], "Dome")
             services_by_pier.pop(pier_key(self._current_pier), None)
             state["adapter"] = None
             _apply_status({})

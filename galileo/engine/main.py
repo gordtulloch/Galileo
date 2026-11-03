@@ -29,8 +29,14 @@ logger = logging.getLogger(__name__)
 class Engine:
     """Owns what the engine starts and stops, in order. Safe to ``stop()`` after a partial ``start()``."""
 
-    def __init__(self, lock: EngineLock | None = None) -> None:
+    def __init__(self, lock: EngineLock | None = None, *, embedded: bool = False, devices: Any = None) -> None:
+        """*embedded* is for a desktop that hosts the engine (HEAD-090): the desktop already opened the database,
+        loaded plugins, installed crash reporting, connects its own devices and runs its own watchdog, so the engine
+        takes the lock, serves the channel and Control Surface over *devices* (the desktop's device service) and
+        starts none of those. It also leaves the devices connected when it stops: they are the desktop's."""
         self.lock = lock or EngineLock()
+        self.embedded = embedded
+        self._shared_devices = devices
         self.plugin_manager: Any = None
         self.devices: Any = None
         self.runner: Any = None
@@ -51,17 +57,18 @@ class Engine:
     def start(self) -> None:
         if self._started:
             return
-        self.lock.acquire(role="engine")          # HEAD-020: before touching the database or any device
+        self.lock.acquire(role="desktop" if self.embedded else "engine")   # HEAD-020: before touching any device
 
-        from galileo.crashreport import install_crash_handlers
-        install_crash_handlers()                  # no dialog: there is no screen
+        if not self.embedded:
+            from galileo.crashreport import install_crash_handlers
+            install_crash_handlers()              # no dialog: there is no screen
 
-        from galileo.library.database import init_db
-        init_db()
+            from galileo.library.database import init_db
+            init_db()
 
-        from galileo.plugins import PluginManager
-        self.plugin_manager = PluginManager()
-        self.plugin_manager.initialize_from_disk()
+            from galileo.plugins import PluginManager
+            self.plugin_manager = PluginManager()
+            self.plugin_manager.initialize_from_disk()
 
         self._start_devices()                     # HEAD-040
         self._started = True
@@ -75,7 +82,7 @@ class Engine:
 
         from galileo.engine.runner import SessionRunner
 
-        self.devices = DeviceService()
+        self.devices = self._shared_devices if self._shared_devices is not None else DeviceService()
         self.runner = SessionRunner()                       # HEAD-050
         self.devices.set_default_session_stopper(self.runner.stop)
         from galileo.engine.config import load_config, resolve_observatory
@@ -88,18 +95,21 @@ class Engine:
         from galileo.engine.helpers import Helpers
 
         self.state = ObservableState()
-        self.helpers = Helpers(self.devices, self.state)    # HEAD-060
-        self.helpers.start()
         self.registry = Registry()
         register_device_operations(self.registry, self.devices)
-        from galileo.engine.guard import Guard, build_watchdog
+        if not self.embedded:                                # the desktop has its own pointing helpers and watchdog
+            self.helpers = Helpers(self.devices, self.state)    # HEAD-060
+            self.helpers.start()
+            from galileo.engine.guard import Guard, build_watchdog
 
-        self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices))   # HEAD-160
-        self.guard.start()
+            self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices))   # HEAD-160
+            self.guard.start()
         self._start_channel()                                # HEAD-080
         from galileo.bus import get_bus
         from galileo.replication import SettingsChanged
         get_bus().subscribe(SettingsChanged, self._on_settings_changed)    # HEAD-130
+        if self.embedded:
+            return                                           # the desktop connects its devices itself
         self._connecting = threading.Thread(
             target=lambda: asyncio.run(self.devices.connect_startup_piers(
                 self.config.retry_limit, self.config.retry_interval_s)), name="engine-connect", daemon=True)
@@ -112,6 +122,8 @@ class Engine:
             ("devices", self._stop_devices),
             ("CPU workers", self._stop_workers),
         )
+        if self.embedded:                         # the desktop shuts those down itself
+            steps = (("devices", self._stop_devices),)
         for name, step in steps:
             try:
                 step()
@@ -181,7 +193,8 @@ class Engine:
             self.devices.cancel_retries()
             if self._connecting is not None:
                 self._connecting.join(timeout=30)
-            asyncio.run(self.devices.disconnect_all())
+            if not self.embedded:
+                asyncio.run(self.devices.disconnect_all())
 
     @staticmethod
     def _stop_link() -> None:

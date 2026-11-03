@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import NOT_CONNECTED, disconnect_all, scan_devices
+from galileo.simple_device_ops import FlatPanelOps, describe_flat_panel
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +189,8 @@ class AppWindowFlatPanelPageMixin:
         layout.addStretch(1)
 
         state: dict = {"adapter": None, "panel_type": "Flat Panel"}
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.FLAT_PANEL)
         device_controls = (
             park_btn, unpark_btn, light_off_btn, light_on_btn,
             brightness_slider, brightness_spin, brightness_set_btn,
@@ -207,50 +211,37 @@ class AppWindowFlatPanelPageMixin:
         _apply_panel_type(panel_type_combo.currentText())
 
         # --- device status / actions --------------------------------------
+        ops = FlatPanelOps(lambda: state.get("adapter"))
+
         def _call(method: str, *args, action: str) -> bool:
-            adapter = state.get("adapter")
-            if adapter is None:
+            outcome = ops.run(method, *args, action=action)
+            if outcome.ok:
+                return True
+            if outcome.kind == NOT_CONNECTED:
                 QMessageBox.information(self._window, "Not connected", "Connect the flat panel first.")
-                return False
-            import asyncio
-            try:
-                asyncio.run(getattr(adapter, method)(*args))
-            except Exception:
-                logger.exception("Flat panel %s failed", action)
-                self._window.statusBar().showMessage(f"Flat panel {action} failed — see log.", 6000)
-                return False
-            return True
+            else:
+                self._window.statusBar().showMessage(outcome.message, 6000)
+            return False
 
         def _apply_status(status: dict) -> None:
-            connected = bool(status)
-            if connected:  # an empty status is "not connected": keep what a device pick looked up
+            view = describe_flat_panel(status)
+            if view.connected:  # an empty status is "not connected": keep what a device pick looked up
                 apply_driver_info(status)
             for widget in device_controls:
-                widget.setEnabled(connected)
-            cover_state = status.get("cover_state")
-            cover_status_value.setText(
-                "Parked" if cover_state == "Closed" else "Unparked" if cover_state == "Open" else "—"
-            )
-            light_on = status.get("is_light_on")
-            light_status_value.setText("On" if light_on else "Off" if light_on is not None else "—")
-            brightness = status.get("brightness")
-            if brightness is not None and not brightness_slider.isSliderDown():
+                widget.setEnabled(view.connected)
+            cover_status_value.setText(view.cover)
+            light_status_value.setText(view.light)
+            if view.brightness is not None and not brightness_slider.isSliderDown():
                 brightness_slider.blockSignals(True)
                 brightness_spin.blockSignals(True)
-                brightness_slider.setValue(int(brightness))
-                brightness_spin.setValue(int(brightness))
+                brightness_slider.setValue(view.brightness)
+                brightness_spin.setValue(view.brightness)
                 brightness_slider.blockSignals(False)
                 brightness_spin.blockSignals(False)
 
         def _refresh_status() -> dict | None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh flat panel status")
+            status = ops.status("the flat panel")
+            if status is None:
                 return None
             _apply_status(status)
             return status
@@ -327,17 +318,8 @@ class AppWindowFlatPanelPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.FLAT_PANEL)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.FLAT_PANEL))
-            except Exception:
-                logger.exception("Flat panel scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.FLAT_PANEL, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Flat panel scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -467,11 +449,7 @@ class AppWindowFlatPanelPageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Flat Panel")
+            disconnect_all([adapter], "Flat Panel")
             state["adapter"] = None
             _apply_status({})
             self._window.statusBar().showMessage("Flat panel disconnected.", 4000)

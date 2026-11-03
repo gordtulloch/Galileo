@@ -15,6 +15,8 @@ import logging
 import time
 
 from ._common import _when_visible, _DEFAULT_PORTS, QWidget, guard_loopback_edit
+from galileo.device_ops import disconnect_all, scan_devices
+from galileo.weather_ops import banner_text, format_value, read_device, run_blocking, violations
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +28,7 @@ if TYPE_CHECKING:
     # actual base stays plain `object`.
     from ._state import AppWindowState
 
-def _run_blocking(make_coro):
-    """Run the coroutine ``make_coro()`` to completion and return its result, from any thread.
-
-    ``asyncio.run`` refuses to run on a thread whose event loop is already running — the UI
-    thread under qasync, which is where the scheduler's safety check and the dome ask for a
-    fresh reading. There the coroutine runs on a short-lived helper thread instead (the caller
-    blocks either way). The coroutine is only created where it will run, so a failure can't
-    leave an un-awaited one behind."""
-    import asyncio
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(make_coro())
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(make_coro())).result()
+_run_blocking = run_blocking      # kept under its old name for existing callers
 
 
 # How long a Pier's weather-reading trend history is kept — capped by count,
@@ -256,28 +243,11 @@ class AppWindowWeatherPageMixin:
         # Pier under the roof, and kept when another Pier is selected.
         adapters_by_observatory: dict = {}
 
-        def _format_value(value, unit: str) -> str:
-            if value is None:
-                return "—"
-            if unit == "bool":
-                return "Yes" if value else "No"
-            try:
-                return f"{float(value):.1f} {unit}".strip()
-            except (TypeError, ValueError):
-                return str(value)
-
         def _apply_readings(readings: dict) -> None:
             state["latest_readings"] = readings
             for parameter, widgets in row_widgets.items():
-                widgets["current"].setText(_format_value(readings.get(parameter), widgets["unit"]))
-            from galileo.safety import evaluate_weather_safety
-            status = evaluate_weather_safety(readings, _current_rules())
-            if not readings:
-                banner.setText("Not connected.")
-            elif status.is_safe:
-                banner.setText(f"{kind_label}: SAFE")
-            else:
-                banner.setText(f"{kind_label}: UNSAFE — " + "; ".join(status.violations))
+                widgets["current"].setText(format_value(readings.get(parameter), widgets["unit"]))
+            banner.setText(banner_text(readings, _current_rules(), kind_label))
 
         def _record_reading(readings: dict) -> None:
             if device_type != "weather":
@@ -287,16 +257,6 @@ class AppWindowWeatherPageMixin:
             if len(history) > _HISTORY_MAX_SAMPLES:
                 del history[: len(history) - _HISTORY_MAX_SAMPLES]
 
-        def _read_adapter(adapter) -> dict:
-            """Poll *adapter* once and return its readings; raises if the device can't be read."""
-            from galileo.core.devices import WeatherController
-            if device_type == "safety_monitor":
-                _run_blocking(adapter.poll)
-                return {"is_safe": 1.0 if adapter.is_safe else 0.0}
-            controller = WeatherController(adapter)
-            _run_blocking(controller.poll)
-            return controller.get_readings()
-
         def _poll_once() -> dict | None:
             """Poll the connected adapter, update this tab's display, and
             record the reading into this Observatory's trend history."""
@@ -304,7 +264,7 @@ class AppWindowWeatherPageMixin:
             if adapter is None:
                 return None
             try:
-                readings = _read_adapter(adapter)
+                readings = read_device(adapter, device_type)
             except Exception:
                 logger.exception("Could not poll %s", kind_label.lower())
                 return None
@@ -318,7 +278,6 @@ class AppWindowWeatherPageMixin:
             than the poll interval. The tab only polls itself while it is on screen, but the
             scheduler and the dome ask at any time, so a stale reading is refreshed here first.
             A connected device that can't be read counts as unsafe."""
-            from galileo.safety import evaluate_weather_safety
             if state.get("adapter") is None:
                 return False, []
             read_at = state.get("read_at")
@@ -328,8 +287,7 @@ class AppWindowWeatherPageMixin:
                 readings = _poll_once()
             if readings is None:
                 return True, [f"{kind_label} could not be read"]
-            rules = [r for r in _current_rules() if r.safety_related]
-            return True, evaluate_weather_safety(readings, rules).violations
+            return True, violations(readings, _current_rules())
 
         def _refresh_display() -> None:
             if state.get("adapter") is not None:
@@ -381,17 +339,8 @@ class AppWindowWeatherPageMixin:
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
             driver = driver_combo.currentText()
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(category_enum)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(category_enum))
-            except Exception:
-                logger.exception("%s scan failed on %s:%s", kind_label, server, port)
+            devices = scan_devices(category_enum, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage(f"{kind_label} scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -540,11 +489,7 @@ class AppWindowWeatherPageMixin:
             adapter = adapters_by_observatory.pop(self._safety_observatory_key(), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect %s", kind_label)
+            disconnect_all([adapter], kind_label)
             state["adapter"] = None
             state["read_at"] = None
             _apply_readings({})
