@@ -3,7 +3,7 @@
 
 The Mount page connects Galileo to your telescope mount and shows where it is pointing, with manual controls for slewing, tracking, jogging, parking and safety limits.
 
-Set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick the mount in **Device**, press **Connect**, then **Save**. Once connected the readouts refresh continuously.
+Set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick the mount in **Device**, press **Connect**, then **Save**. Once connected the readouts refresh continuously. While a device is connected its button reads **Disconnect** (also when it was connected from the top bar or at start-up); press it to disconnect that device.
 
 The left side is status and safety (what the mount reports, meridian flip, limits); the right side is control (coordinates to slew to, tracking, and the N/S/E/W pad).
 

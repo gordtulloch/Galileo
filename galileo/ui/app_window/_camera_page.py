@@ -267,7 +267,8 @@ class AppWindowCameraPageMixin:
             _populate_device_combo(panel["device"], last_scanned_devices)
             if panel["remove_btn"] is not None:
                 panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
-            panel["connect_btn"].clicked.connect(lambda: _connect_clicked(panel))
+            panel["connect_btn"].clicked.connect(lambda: _toggle_clicked(panel))
+            _sync_panel_button(panel)
             panel["download"].clicked.connect(lambda: _download_info(panel))
             panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             return panel
@@ -355,6 +356,37 @@ class AppWindowCameraPageMixin:
                 port_spin.value(), device_name,
             )
             _show_connected_driver_info(panel, slot_label)
+
+        def _slot_label_for(panel: dict) -> str:
+            index = panels.index(panel)
+            return "primary camera" if index == 0 else f"camera {index + 1}"
+
+        def _sync_panel_button(panel: dict) -> None:
+            panel["connect_btn"].setText("Disconnect" if _slot_label_for(panel) in self._camera_backends else "Connect")
+
+        def _sync_connect_buttons() -> None:
+            for panel in panels:
+                _sync_panel_button(panel)
+
+        def _disconnect_panel(panel: dict) -> None:
+            import asyncio
+            slot_label = _slot_label_for(panel)
+            adapter = self._camera_backends.pop(slot_label, None)
+            if adapter is None:
+                return
+            try:
+                asyncio.run(adapter.disconnect())
+            except Exception:
+                logger.exception("Could not disconnect %s", slot_label)
+            self._refresh_camera_combo()
+            self._window.statusBar().showMessage(f"Disconnected {slot_label}.", 4000)
+
+        def _toggle_clicked(panel: dict) -> None:
+            if _slot_label_for(panel) in self._camera_backends:
+                _disconnect_panel(panel)
+            else:
+                _connect_clicked(panel)
+            _sync_panel_button(panel)
 
         def _download_info(panel: dict) -> None:
             device_name = panel["device"].currentText().strip()
@@ -591,7 +623,7 @@ class AppWindowCameraPageMixin:
 
         state = {
             "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
-            "connected": lambda: bool(self._camera_backends),
+            "connected": lambda: bool(self._camera_backends), "sync_connect": _sync_connect_buttons,
         }
         self._device_pages["camera"] = state
         reload_page()

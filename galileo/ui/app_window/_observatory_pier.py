@@ -512,10 +512,19 @@ class AppWindowObservatoryPierMixin:
     def _connect_all_pier_devices(self: AppWindowState) -> None:
         """Top bar Connect button: attempt every registered Equipment page's
         auto-connect for the current Pier (skips any slot already connected,
-        same as a Pier switch)."""
-        for state in self._device_pages.values():
-            connect = state.get("autoconnect")
-            if connect is not None:
+        same as a Pier switch). Shows the same progress splash as a Pier switch,
+        since each device connection blocks the UI."""
+        from galileo.ui import startup_progress
+
+        pier_name = self._current_pier.name if self._current_pier is not None else None
+        window_shown = bool(getattr(self._window, "isVisible", lambda: False)())
+        connectors = [(page_id, state["autoconnect"]) for page_id, state in self._device_pages.items()
+                      if state.get("autoconnect") is not None]
+        progress = startup_progress.transient_progress(len(connectors) + 1) if window_shown else nullcontext(False)
+        with progress:
+            startup_progress.report(f"Connecting Pier {pier_name}" if pier_name else "Connecting Pier")
+            for page_id, connect in connectors:
+                startup_progress.report(f"Connecting {page_id} devices")
                 connect()
         self._refresh_pier_connect_controls()
 
@@ -541,6 +550,11 @@ class AppWindowObservatoryPierMixin:
         check.setChecked(bool(getattr(pier, "connect_on_startup", True)))
         check.blockSignals(False)
         check.setEnabled(pier is not None)
+
+        for state in self._device_pages.values():
+            sync = state.get("sync_connect")
+            if sync is not None:
+                sync()
 
         btn = self._pier_connect_btn
         btn.setEnabled(pier is not None)

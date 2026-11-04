@@ -5,7 +5,7 @@ The Camera page connects Galileo to the camera (or cameras) that take your image
 
 The first row (Driver, Server, Port, Scan) is shared by every camera panel. Below it each camera has its own panel with its own Device and Connect button. A one-shot-colour camera, a mono guide camera, or a telescope with two cameras (such as a Seestar's wide and tele cameras) each get a panel.
 
-Typical set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick the camera in **Device**, press **Connect**, check the sensor details below, then **Save**.
+Typical set-up: choose the **Driver**, enter the **Server**, press **Scan**, pick the camera in **Device**, press **Connect**, check the sensor details below, then **Save**. While a device is connected its button reads **Disconnect** (also when it was connected from the top bar or at start-up); press it to disconnect that device.
 
 ## Pixel size
 

@@ -35,7 +35,7 @@ Two things motivate this project:
 
 ## Status
 
-**Alpha — current pre-release: [v0.9.03alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.03alpha).** Galileo is a runnable PySide6 desktop application, but some screens are still placeholders. Installers are published as GitHub pre-releases. Please try it and report problems, but **do not use it for production imaging yet**.
+**Alpha — current pre-release: [v0.9.04alpha](https://github.com/gordtulloch/Galileo/releases/tag/v0.9.04alpha).** Galileo is a runnable PySide6 desktop application, but some screens are still placeholders. Installers are published as GitHub pre-releases. Please try it and report problems, but **do not use it for production imaging yet**.
 
 ### What works today
 

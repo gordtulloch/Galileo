@@ -496,7 +496,12 @@ class AppWindowDomePageMixin:
                 return
             _do_connect(device_name)
 
-        connect_btn.clicked.connect(_connect_clicked)
+        from ._connect_toggle import install_connect_toggle
+        from galileo.current_object import pier_key as _pier_key
+        state["sync_connect"] = install_connect_toggle(
+            connect_btn, lambda: adapters_by_pier.get(_pier_key(self._current_pier)) is not None,
+            _connect_clicked, lambda: state["disconnect"](),
+        )
 
         def _device_picked() -> None:
             """Show the driver of the device just picked, without connecting it."""

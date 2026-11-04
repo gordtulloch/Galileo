@@ -510,6 +510,37 @@ class AppWindowFocuserPageMixin:
                 return
             _do_connect(panel, device_name, panel["title_label"].text())
 
+        def _sync_panel_button(panel: dict) -> None:
+            panel["connect_btn"].setText("Disconnect" if panel.get("adapter") is not None else "Connect")
+
+        def _sync_connect_buttons() -> None:
+            from galileo.current_object import pier_key
+            connected = adapters_by_pier.get(pier_key(self._current_pier), {})
+            for i, panel in enumerate(panels):
+                panel["connect_btn"].setText("Disconnect" if connected.get(_slot_for_index(i)) is not None else "Connect")
+
+        def _disconnect_panel(panel: dict) -> None:
+            from galileo.current_object import pier_key
+            import asyncio
+            slot = _slot_for_index(panels.index(panel))
+            adapter = adapters_by_pier.get(pier_key(self._current_pier), {}).pop(slot, None)
+            if adapter is not None:
+                try:
+                    asyncio.run(adapter.disconnect())
+                except Exception:
+                    logger.exception("Could not disconnect focuser slot %s", slot)
+            panel["adapter"] = None
+            _apply_status(panel, {})
+            panel["apply_driver_info"](None)
+            self._window.statusBar().showMessage(f"{panel['title_label'].text()} disconnected.", 4000)
+
+        def _toggle_clicked(panel: dict) -> None:
+            if panel.get("adapter") is not None:
+                _disconnect_panel(panel)
+            else:
+                _connect_clicked(panel)
+            _sync_panel_button(panel)
+
         def _move_clicked(panel: dict) -> None:
             adapter = panel.get("adapter")
             if adapter is None:
@@ -592,7 +623,8 @@ class AppWindowFocuserPageMixin:
             _populate_device_combo(panel["device"], last_scanned_devices)
             if panel["remove_btn"] is not None:
                 panel["remove_btn"].clicked.connect(lambda: _remove_panel(panel))
-            panel["connect_btn"].clicked.connect(lambda: _connect_clicked(panel))
+            panel["connect_btn"].clicked.connect(lambda: _toggle_clicked(panel))
+            _sync_panel_button(panel)
             panel["device"].activated.connect(lambda _index: _lookup_panel_driver_info(panel))
             panel["move_btn"].clicked.connect(lambda: _move_clicked(panel))
             panel["emergency_btn"].clicked.connect(lambda: _emergency_clicked(panel))
@@ -838,6 +870,7 @@ class AppWindowFocuserPageMixin:
             "reload": reload_page, "autoconnect": autoconnect_page, "get_adapter": connected_adapter,
             "adapter_for": adapter_for, "adapter_for_slot": adapter_for_slot,
             "disconnect": disconnect_page, "connected": lambda: connected_adapter() is not None,
+            "sync_connect": _sync_connect_buttons,
         }
         self._device_pages["focuser"] = state
         reload_page()
