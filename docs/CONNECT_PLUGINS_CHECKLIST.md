@@ -2,17 +2,42 @@
 
 Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{nodeconnect,mobileconnect,webconnect}/{PSD,SRS,SDD,RTM}.md` (design drafts v0.2, 2026-10-29), core SRS §4.24 (`LINK`), core SDD §4.28 (`galileo.connect_link`).
 
-## 0. Where things stand (verified 2026-10-30)
+## 0. Where things stand (verified 2026-11-04)
 
 | Item | State |
 |---|---|
-| Plugin code | **NodeConnect: sync engine and plugin shell built (2026-11-02), no UI yet; uncommitted** — see §3 and its handover notes. `Galileo-Plugins/mobileconnect` holds a README only (no `plugin.toml`, so `build_plugins.py` skips it); `Galileo-Plugins/webconnect` is where WebConnect will be built (README only today; the separate `Galileo-WebConnect` repository is retired, 2026-10-31) |
-| Requirements | NCON 45 (41 MVP), MCON 107 (93 MVP), WCON 120 (102 MVP); each has an RTM with reserved `TC-*` IDs |
-| Tests | `tests/test_wcon.py` exists: 6 doc-chain tests pass, 120 requirement tests skip (`importorskip`). **No `test_ncon.py` / `test_mcon.py`** |
-| Core prerequisites | **Built, tested, not yet wired in (code checked 2026-11-02).** Connect Link L1–L8 and the pipeline: listener, certificates, pairing, permissions/peers/audit, routes, stream, handshake, delegation, transfer (`LINK-070`), discovery (`LINK-040`), `Gateway` (`LINK-230`), Master relay (`LINK-220`), the service with settings/start-stop/disable (`LINK-260`, `LINK-270`) and the outreach facility (`LINK-100`–`210`); the Control Surface registry, state, events, lease, held motion and emergency operations; the preview service; sky streaming; replication support (tracking, tombstones, registry, busy signal, sync tables, revisions); manual focus; the Library *On Master* state with Retrieve; history transfer; the loopback check. **Not built:** a `DeviceAccess` that finds each Pier's connected devices (the catalogue for devices, focus and safety is built and tested but nothing registers it); the other catalogue areas (`CSURF-120`–`210`, `230`, `240`: imaging, sky, solve, guiding, flip, sessions, scheduler, calibration, Library, notifications); any outreach surface; Options > Connect Link (`LINK-250`) and Options > Outreach (`LINK-190`) are built with help; the per-area Control Surface inventory (`CSURF-100`–`240`: no service registers an operation yet); `scheduler_jobs` is the only configuration table not yet replicable; the loopback refusal is applied to every device and PHD2 host field; `HIST-050` is in `SessionHistory` but nothing calls it; `PLUG-200` is done. The Library On Master action is the only part a user can see today. Not measured yet, and not covered by tests: discovery over a real LAN, held-motion timing on Wi-Fi, and sky-streaming/preview speed on a Raspberry Pi 5 |
-| App repo | `Galileo-MobileConnect` is the iOS/Android/Quest *apps* (not the plugin): PSD, SRS, a Quest atlas spike. **It stays a separate repository (decided 2026-10-31, MobileConnect PSD D22)** because the apps are developed there. Out of scope here except for the wire contract (§5) |
+| NodeConnect | **Built and committed** (`Galileo-Plugins/nodeconnect`): pairing, roles, sync with conflict handling and undo, push hints, frame and history transfer, Master-side ingest, notifications, status view, Options page with inline help, OpenAPI document, wiki article. 80 tests, ruff clean, **all 44 `TC-NCON-*` rows have a test**. Left: the Raspberry Pi 5 figure for `NCON-NFR-010`, a real two-machine run, and cutting a release (`nodeconnect-v<version>`, only when you say so). |
+| WebConnect | **Started 2026-11-04** (`Galileo-Plugins/webconnect`, uncommitted): the Master half (browser pairing, roles, delegated operations through the engine's shared pipeline, revocation) and the web half (sessions, CSRF, headers, own TLS process, pairing/sign-in page, Options page, live events over SSE, and a first Pier screen with live state, lease bar and catalogue-built operations). 47 tests, including a real `python -I` child over HTTPS and the pinned client against a real Connect Link listener. See section 6 for what remains. |
+| MobileConnect plugin | README only. Not started. |
+| Core prerequisites | **Built and tested**, and now reachable by plugins: Connect Link L1-L9, delegation, relay, `Gateway`; Control Surface registry, state, events, lease, held motion, emergency; preview, sky streaming, replication, Library *On Master*; **the headless engine (`HEAD-010` to `180`, all built)**; and **`galileo.control_surface.service` (2026-11-04), which publishes the engine's registry, lease, pipeline and state to plugins**. The engine registers the device, session, Pier, imaging, flip and safety catalogues. **Registered by the engine:** device, session, Pier, imaging, flip, safety, history, scheduler (read), guiding, solve, and sky and framing catalogues. **Not registered yet:** session authoring (`190`), scheduler editing, calibration (`210`), Library thumbnails and FITS download, notifications (`240`). The desktop does not yet honour or show the lease (`LEASE-060`). |
+| Not measured | Discovery over a real LAN, held-motion timing on Wi-Fi, sky-streaming and preview speed on a Raspberry Pi 5, gevent with 50 idle streams on a Pi 5. |
+| Known unrelated failure | `tests/test_sky.py::test_tc_sky_020_...` fails (fixed date `2026-09-16`, empty result); not touched by any Connect work. |
+| App repo | `Galileo-MobileConnect` is the iOS/Android/Quest *apps* and stays a separate repository (MobileConnect PSD D22). Out of scope here except for the wire contract (section 5). |
 
-**Consequence:** the plugins are thin layers over core facilities that do not exist. Each design codes against `typing.Protocol` ports with test stubs, so plugin work can start early, but nothing can be verified end to end until core catches up. Build order below follows that.
+**Consequence:** the front ends are thin layers over core facilities that now exist. The build order below follows that.
+
+## 0a. Resume here (written 2026-11-04, end of session)
+
+**Everything below is uncommitted in both repositories** (`Galileo`: 37 changed or new files; `Galileo-Plugins`: the whole `webconnect/` tree). Nothing was committed, pushed, tagged or built on GitHub. Commit when you are ready; the plugin repo's `webconnect/CHANGELOG.md` and the core `CHANGELOG.md` `[Unreleased]` section list what each change was.
+
+**Built this session (core `Galileo`):** the event feed (`CSURF-260`) and, as Control Surface catalogue areas with engine adapters: history and scheduler reads (`CSURF-230`, `200`), guiding (`160`), plate solving (`140`), sky and framing (`130`). Tests: `tests/test_csurf.py` (`TC-CSURF-130/140/160/200/230/260`), 68 pass across csurf, head and help.
+**Built this session (`Galileo-Plugins/webconnect`):** the live event stream, a gevent fix, and the first operating screen (`static/pier.js`). 47 tests pass, ruff clean.
+
+**Never run for real:** guiding against a real PHD2; plate solving against a real camera, mount and solver; the browser screen in an actual browser or on a tablet. All are tested only against fakes or Flask's test client.
+
+**Known, unrelated, not fixed:** 5 failures in `tests/test_sky.py` against the already-modified `galileo/planning/*` files from before this session; about 40 ruff findings and about 86 mypy errors elsewhere in `galileo/`. The full core suite was not re-run after the catalogue work.
+
+**Next, in the order I would take it:**
+1. Run Galileo with WebConnect, pair a browser, open a Pier and walk through the screen (ideally on a tablet). Fix what the tests could not show.
+2. With a PHD2 simulator and simulator camera and mount, try `guiding.*` and `solve.*` for real.
+3. Purpose-built panels over the same catalogue: guiding (star cut-out, error trace), sky (search, framing preview).
+4. Held motion and previews (`WCON-600` to `640`, `720`, `730`), then the page marking state stale on stream loss (`WCON-780`) and the first all-Pier snapshot (`WCON-300`).
+5. Remaining catalogue areas: calibration (`210`), notifications (`240`), scheduler editing, Library thumbnails and FITS download.
+6. MobileConnect plugin server side (section 5), not started.
+7. Core: the desktop honouring the lease (`LEASE-060`); SRS/SDD/RTM text for `LINK-010` to `080`.
+8. Hardware: Raspberry Pi 5 and Astroberry spikes, NodeConnect two-machine run. Releases only when you say so.
+
+**Tooling notes:** use the project venv (`.venv/Scripts/python`); bare `python` is the Windows Store stub. The Bash tool mangles backslashes and complex heredocs, so write scripts to a file or use the edit tools.
 
 ## 1. Decisions to close before coding
 
@@ -74,80 +99,32 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 - [x] **MF** manual focus moved into the focus module; the desktop screen uses it
 - [x] **SK** sky streaming built (catalog, ephemeris, site, capability, static image)
 
-### 2c-bis. Headless engine and the desktop as a client (`HEAD-010`–`180`, core SDD §4.33)
-Specified 2026-11-02 (SRS §4.30, SDD §4.33, RTM, `tests/test_head.py` with 18 reserved tests); **not built**. Needed before WebConnect can run on a controller with no screen. Order (the desktop's own path is touched last):
-- [x] **Step 1 built (2026-11-02):** `engine.main`, `engine.lock`, `engine.service`, `Galileo --engine`, and the test that importing the engine never imports `PySide6` (`HEAD-010`, `020`, `030`; `TC-HEAD-010`/`020`/`030`). `HEAD-160` (safety and watchdog in the engine) waits for step 4
-- [~] `engine.devices` **built (2026-11-02, `TC-HEAD-040`):** UI-free `DeviceService` (connect/auto-connect per Pier, bus events, time/site push, `DeviceAccess`), started by the engine. **Still to do:** the desktop pages move onto it (they keep their own connections and adapter factory), and a real-hardware check
-- [~] `engine.runner` **built (2026-11-02, `TC-HEAD-050`):** `run_session` (shared; the desktop's `_RunThread` now calls it) and `SessionRunner` (asyncio loop, per-Pier runs, bus events, stop/pause/resume, shutdown). **Still to do:** the scheduler tick and safety pause move out of the Qt controller; the engine builds a `SessionContext` from `DeviceService` (today only `ui/session_runner.build_session_context` does, from the desktop's pages), so the engine cannot yet start a session itself
-- [~] `engine.helpers` **built (2026-11-02, `TC-HEAD-060`):** pointing poll, weather history, `slew_then_track`, published as `mount.position` / `mount.tracking` / `weather.readings`. **Still to do:** a test of the slew-then-track happy path; the desktop adopts these values (it keeps its own copies until it is the engine's client)
-- [~] `engine.channel` + `engine.client` **built (2026-11-02, `TC-HEAD-070/080/110/120/180`):** local channel through `Gateway` (token-authenticated; Unix socket on POSIX, loopback on Windows), lease as `desktop`, version check, event stream, stale/retry. **Still to do:** run the Unix-socket path on Linux/macOS/Pi; the desktop actually uses `EngineClient`; session/scheduler/imaging operations are not in the catalogue yet so the channel cannot start a session
-- [~] Mount page extraction (2026-11-03): commands, status text, targets, scan in `galileo.mount_ops`; page 1078 -> ~900 lines. First of the pages to be moved onto `DeviceService`/`EngineClient`; connect, the guard thread and the jog pad are still in the page
-- [~] Focuser page extraction (2026-11-03): commands, status text, travel limits in `galileo.focuser_ops`; scan/connect/outcome shared with the mount page in `galileo.device_ops`. Page connect still goes through `_connect_device_adapter` (it pushes time/site context); position-retention and persistence stay in the page
-- [~] Remaining device pages extracted (2026-11-03): rotator, weather/safety, dome, switches, filter wheel, flat panel, aux (camera: scan/driver-info/disconnect only; its connect, imaging and per-slot backends stay) into `galileo.*_ops` over a shared `galileo.device_ops`. Not done: every page still builds its adapter through `_connect_device_adapter`; no page uses `DeviceService`/`EngineClient` yet
-- [~] Desktop device-service switch (2026-11-03): `galileo.desktop_devices` + Options > Equipment checkbox (off by default); `DeviceService.connect_device/adopt/release`; every screen connect routes through it when on. Pages read from the service first (`PierAdapters`) and the desktop hosts a lean embedded engine at start-up when the option is on; still no attach to a *separate* engine (the desktop keeps its own devices if one is running) and no hardware test
-- [~] `engine.embedded` **built (2026-11-03)**: `attach_or_host` hosts an engine or returns a client, with the close rules (`HEAD-090`, `100`). Not yet called from `galileo/app.py`: the desktop still connects its own devices, so wiring it in waits for the desktop to move onto `DeviceService`
-- [x] `HEAD-130`/`140` built (2026-11-03, `TC-HEAD-130`/`140`): `engine.config`, last-used Observatory, retry within limit, problems in `--status`. **Still to do:** an Options page for the engine settings
-- [~] `HEAD-160` safety + watchdog in the engine **built (2026-11-03, `TC-HEAD-160`)**. **Still to do:** the trip notification (e-mail/SMS) and weather-rule evaluation in the engine; the desktop still runs its own copy of both
-- [~] `HEAD-150` unit file written (2026-11-03, `TC-HEAD-150`) in galileo-astroberry `packaging/systemd/`. **Still to do:** run it on an Astroberry image, confirm `User=` and the INDI unit names, package it (enable/disable with the package)
-- [x] `HEAD-170` `Galileo --engine --status` (2026-11-03, `TC-HEAD-170`); exit codes 0/3/1, `--json`
+### 2c-bis. Headless engine and the desktop as a client (`HEAD-010` to `180`, core SDD section 4.33)
+**Built** (verified 2026-11-04; `tests/test_head.py`, 29 tests): lock and `--engine` start-up, device service, session runner, Pier helpers, local channel and client, embedded mode, configuration from the database, systemd unit, `--status`, safety guard. Left: decide whether the desktop should attach to the engine by default (the Options toggle "Hold devices in the device service" is off by default), and measure on a real Astroberry controller.
+- [x] **Plugins can reach the engine's Control Surface (2026-11-04):** `galileo.control_surface.service` (`get_control_surface()`), published by the engine when its channel starts. Test `TC-CSURF-250`.
 
 ### 2d. Plugin loader
 - [x] Specified as core `PLUG-200` (SRS, RTM row, SDD §4.20 install step 4a: `requires` in `plugin.toml`, private `.deps/` directory per plugin, rollback on failure, offline refusal)
 - [x] Implemented 2026-10-30 in `galileo.plugins` (`install_requirements`, `PluginManifest.requires`); `TC-PLUG-200` in `tests/test_plug.py` (3 tests). No control changed, so no inline-help change.
 
-## 3. Phase A — NodeConnect (needs 2a L1–L8 and 2b only)
+## 3. Phase A: NodeConnect (built)
 
-Design: `docs/plugins/nodeconnect/SDD.md` §3.1–3.12. Package `nodeconnect`.
+Design: `docs/plugins/nodeconnect/SDD.md`. Package `nodeconnect`, in `Galileo-Plugins/nodeconnect` (committed). Its `CHANGELOG.md` has the full list and the design decisions; the handover notes that used to be here live there.
 
-**Status 2026-11-02 — built, all in `C:\Users\gordt\Projects\Galileo-Plugins\nodeconnect`, none of it committed.** 59 tests pass (`tests/test_ncon*.py`), ruff clean, `build_plugins.py nodeconnect` builds the ZIP. Run them with the core venv: `cd Galileo-Plugins/nodeconnect && ..\..\Galileo\.venv\Scripts\python -m pytest tests` (Python 3.11; ruff is `python -m ruff`).
+Remaining, none of it blocking:
+- [ ] Measure `NCON-NFR-010` on a Raspberry Pi 5, and run a real two-machine sync (the two-process TLS test already passes on one machine).
+- [ ] Confirm in CI that `segno` is installed so the two outreach tests pass (installed in the local venv 2026-11-04).
+- [ ] Cascaded-delete tombstones are untested against core's triggers; `scheduler_jobs` is the one configuration table not replicated.
+- [ ] Release `nodeconnect-v<version>` and a `plugins.json` entry (**never dispatch GitHub builds without asking**; `build_plugins.py` adds an entry pointing at a release that does not exist, so revert it if it reappears).
 
-- [x] Scaffold: `plugin.toml` (name `nodeconnect`, 0.1.0, api 1–1, `nav_level = "primary"`, `entry_point = "nodeconnect"`), `build_zip.py`, `CHANGELOG.md`, `tests/conftest.py` (markers, autouse `register_defaults`, `settings_db`). No `ports.py`: the plugin imports core's real services (`galileo.replication`, `galileo.connect_link`) and tests use two real databases, so the planned Protocol stubs were dropped
-- [x] `plugin` shell (`plugin.py`, `runtime.py`): `NodeConnectPlugin` (name must stay `"NodeConnect"` — it is the settings namespace `plugin.NodeConnect`), `Runtime`, `SyncWorker`. A node with a Master designated is a **spoke** (one background thread, 300 s default via setting `sync_interval_s`, jittered back-off after a failure, `sync_now`, no listener); any other node is a **Master/standalone** (`host.acquire("nodeconnect", NODE_PERMISSIONS, install)`). Disable stops the thread and releases the listener (`NCON-310`); an exception in a pass never kills the worker (`NCON-530`); manifest matches the class (`NCON-520`). `build_runtime(ctx)` wires the real core services and is **untested** (needs a live host)
-- [x] `roles` + `pairing` (`NCON-020`–`060`): derived exclusive roles; `PairingDesk`/`PairingClient` wrap core's Connect Link pairing; token in the OS credential store, address and certificate fingerprint in `plugin.NodeConnect` settings; scopes `config.read`, `config.write`, `data.push`, `data.pull`
-- [x] `repl` + `codec` (`NCON-100`, `110`, `210`): ported to core's replication registry; node-local/secret `ItemFilter`, 200-row paged codec, field-level merge
-- [x] `master`, `sync`, `conflict`, `apply`, `compat`, `store`, `wire`, `link` (`NCON-120`–`230`, `300`, `305`, `320`): see ADRs below
-- [x] `snapshot` + `report` (2026-11-03): retention/pruning, the undo action and the run-report view (*Recent syncs* on the Options page) built in `nodeconnect.reports`; `TC-NCON-320`
-- [x] `transfer` + `history` built (2026-11-02, `TC-NCON-400`–`460`, 59 tests): scan, durable queue by hash, worker, limits, remove-after-receipt, Master-side ingest through the Library (`ingest.py`), history push/upsert (`history.py`), retriever for On Master frames, window/removal controls and help. **Done since (2026-11-03):** frames are queued soon after capture (`nodeconnect.frames`, a pause in `FrameCapturedEvent`s starts a pass), and a Master in its own process over real TLS is tested (`tests/test_ncon_two_nodes.py`, `integration`). **Still to do:** a real two-machine run, and the Master keeping a second copy (transfer store + Library) of each frame
-- [~] **`ui`/Options built (2026-11-02):** `nodeconnect.ui.NodeConnectOptions` (pairing with confirmation code, approve/reject/revoke/remove, sync now, interval, status) via `build_options_page`, help `help/plugin.NodeConnect.md`, `TC-NCON-330` (59 tests pass). **Done since (2026-11-03):** notifications (`NCON-340`, `nodeconnect.alerts`, switches on the Options page), Master push (`NCON-150`, `nodeconnect.push`: pull hints over the event stream). **Done since (2026-11-03):** the status view (`NCON-330`, `nodeconnect.status`: connection, last success, revision, pending changes, queue, last problem, nodes) is on the Options page. **Left:** a wiki article. Not tried in the running app or against a real Master yet
-- [x] `wire`: the `/nodeconnect/v1` OpenAPI document is generated from the served routes (`nodeconnect.openapi`, `api/nodeconnect-v1.openapi.json`) and checked by a test (`NCON-NFR-030`, 2026-11-03)
-- [x] Every reserved `TC-NCON-*` (44) has a test and a document-chain test (`tests/test_ncon_spec.py`) fails if the SRS, RTM and tests disagree (2026-11-03); 77 tests pass. `NCON-NFR-010` is a development-machine figure only
-- [~] Help content (done), wiki article `17.-NodeConnect.md` + Home link (done 2026-11-03), SDD notes (done). **Still to do:** `plugins.json` entry (**deliberately absent**: `build_plugins.py` adds one pointing at a release that doesn't exist; revert it if it reappears), release `nodeconnect-v<version>` (never dispatch GitHub builds without asking)
+## 4. Phase B: shared pipeline and relay (mostly in core)
 
-**Handover notes (NodeConnect)**
+Decided: the pipeline and relay live in core (`galileo.connect_link.gateway`, `.relay`), so neither plugin forks them. Built: `Gateway` (identify, authorise, validate, lease, confirm, idempotency, dispatch under a load governor, audit in a `finally`), `LoadGovernor`, confirmation tokens, idempotency, guest allowlist, `MasterRelay`, lease broker, `HoldManager`, emergency operations, observable state with sequence numbers. WebConnect uses them through `get_control_surface()`.
 
-Design decisions already made and implemented — don't revisit without cause:
-- The **Master issues revisions** (`RevisionIssuer(is_master)`); no clock comparison decides what changed. A spoke pushes dirty rows with `base_rev`; a stale base revision is the exact conflict signal. On conflict the later edit (clock-offset corrected) wins, a tie goes to the Master, the loser is saved as a snapshot.
-- Pulled changes go into an **inbox** and are applied only when no session is running (`ApplyGate`, core's `get_session_busy()`); `apply_mode` suppresses change tracking while applying.
-- **Deletions** travel by a per-table tombstone cursor named `"<table>#t"` (the tombstone id). A deletion counts as a change after the row's last revision (the Master arbitrates with `tomb["rev"] + 1`). Tombstones are released by id once every paired node has acknowledged them; tombstones of node-local rows are never sent.
-- Core API quirks: `from galileo.replication import registry` is the registry *object* (it shadows the submodule) — use `from galileo.replication.registry import ...` for module-level names. Route handlers are `handler(peer, request)` and return a dict. Parents are named by natural key on the wire; `UnresolvedParent` is a `LookupError`. Tests that need a Pier must use the `make_pier()` helper (a fake `pier_id=0` raises `UnresolvedParent`).
-- Core change made for the plugin: `ConnectLinkService.acquire` / `LinkHost.acquire` take `install(server)`, which runs on every listener start (the server is rebuilt each time, so routes registered once would be lost). Test `TC-LINK-270` (a); SDD §4.28.
-
-Known gaps and limits:
-- Pull/push database work runs on the event loop. The listener tests use one database, so they cover the network path only; the two-database `World` tests cover the logic.
-- A node pulls its own pushed change back once (harmless).
-- Cascaded-delete tombstones are untested against origin's triggers (child tombstone keys may not resolve).
-- `scheduler_jobs` is not replicated (the one unregistered configuration table).
-- The full core suite has not been re-run since the origin merge (only ~230 related tests plus the plugin's 48). Two outreach tests fail only because `segno` is not installed in `.venv`: `pip install -e ".[test,dev]"`.
-- Not measured: real two-machine sync, discovery over a real LAN.
-
-Uncommitted state to be aware of (commit only when the user asks):
-- Core repo, mine: `galileo/connect_link/service.py`, `galileo/connect_link/host.py`, `tests/test_link_service.py`, `docs/SDD.md` (§4.28 sentence), `CHANGELOG.md`, and this file. Merge commit `e5f68d8` already holds the origin merge.
-- Core repo, **not mine — leave alone**: `docs/RTM.md`, `docs/SRS.md`, `docs/UAT*.md`, `docs/plugins/webconnect/{PSD,SDD,SRS}.md`, `galileo/app.py`, the planning/What's-Up pages and help, `galileo/ui/solve*.py`, `tests/test_wut.py`, untracked `galileo/engine/` and `tests/test_head.py`.
-- `Galileo-Plugins/nodeconnect/` is entirely uncommitted (new).
-
-## 4. Phase B — shared pipeline + relay (needs 2c, and the §1 home decision)
-
-**Checked 2026-11-03: this phase was built in core while the other work went on; these boxes were stale.** What is really left is the per-area operation inventory (`CSURF-100`–`240`, §2 table: the device/focus/safety catalogue and session status/pause/resume/stop (2026-11-03) are registered; session run/templates built the same day on a Qt-free `galileo.session_context`; skip-step, a guider in the engine and the full FITS header context remain), the desktop honouring the lease, frame sources for previews, and the contract tests, which need a plugin to run against.
-
-Design: MCON SDD §3.2–3.13; WCON SDD §3.9. Do this once, before either front end.
-
-- [x] (built in core `galileo.connect_link.gateway`, `TC-LINK-230`) `Gateway` stages: Identify → Authorise → Validate → Lease → Confirm → Idempotency → Dispatch → Audit (audit in a `finally`); typed results `ok/refused/invalid/unavailable/busy/unreachable`; never swallow a safety refusal (`MCON-700`)
-- [x] (core `galileo.control_surface.registry`/`catalogue`; start-up rejection tested) `catalogue` registry that rejects any *config*-class entry at startup (`MCON-1000`, `570`, `580`); `dispatch` to `ControlSurfacePort.invoke` or `RelayPort.call`
-- [x] (core gateway, `TC-LINK-230`) Guest deny-by-default allowlist (ADR-MCON-003); `confirm` two-step tokens; `idempotency`; `LoadGovernor` with strict priority order (`MCON-750`)
-- [x] (core `galileo.control_surface.lease`/`holds`/`emergency`; the desktop does not yet honour the lease, `LEASE-060`) `lease` broker, `hold` + `emergency` (lease-free, Operator-only, single request)
-- [~] (core `control_surface.state`/`events` and the stream's per-stream sequence ids and `hello` resync are built; the snapshot-then-delta contract is not yet tested end to end) `state` + `events` hub: snapshot then delta with sequence numbers (ADR-MCON-004)
-- [x] (core `galileo.connect_link.relay`, `LINK-220`) `RelayPort` master relay to paired spokes, opt-in per node, spokes render previews (ADR-MCON-005)
-- [ ] **Only item left:** contract tests run against both plugins' stubs
+- [ ] Wire `MasterRelay` to paired spokes in the engine (nothing constructs one yet), including the spoke-side grant prompt (`WCON-220`)
+- [~] Register the missing catalogue areas (section 0). **Done (2026-11-04), read-only:** session history (`history.*`, `CSURF-230`) and the scheduler queue (`scheduler.jobs`, `CSURF-200`). **Guiding `CSURF-160` also done (2026-11-04):** `guiding.*` over a per-Pier PHD2 connection in the engine, shared with engine-run sessions; never run against a real PHD2. **Plate solving `CSURF-140` also done (2026-11-04):** `solve.capture`/`sync`/`centre`/`stop`/`status` over the Solve screen's own workflow; never run on real hardware; solving a file already on disk and polar alignment are left. **Sky and framing `CSURF-130` also done (2026-11-04):** `sky.search`/`object`/`framing`, read-only, offline catalogue; go-to is `mount.slew`. **Still missing, and why:** calibration `CSURF-210`, scheduler *editing* (the engine does not own a live scheduler), Library thumbnails and FITS download (need a binary route), and notifications `CSURF-240` (nothing keeps a list of recent alerts to read)
+- [x] A state/event feed a plugin can read (2026-11-04): `get_control_surface().feed.read(after, timeout)` returns state, lease, device and operation events in order with ids, waits for news, and flags a gap so the reader re-reads state (`galileo.control_surface.feed`, `CSURF-260`). WebConnect serves it to browsers as Server-Sent Events (section 6)
+- [ ] Contract tests run against both plugins
 
 ## 5. Phase C — MobileConnect plugin (server side only)
 
@@ -163,20 +140,25 @@ Design: `docs/plugins/mobileconnect/SDD.md`. Package `mobileconnect`; the apps l
 - [ ] Docs, wiki, `plugins.json`, release
 - [ ] Measure: hold timing on Wi-Fi with phone and headset; concurrent-stream cap and Pi-class criterion (P4, P6)
 
-## 6. Phase D — WebConnect plugin (Master half + Flask web half)
+## 6. Phase D: WebConnect plugin (Master half and Flask web half)
 
-Design: `docs/plugins/webconnect/SDD.md`. Do after Phase B; reuses it wholesale.
+Design: `docs/plugins/webconnect/SDD.md`. Built 2026-11-04 in `Galileo-Plugins/webconnect` (uncommitted); its `CHANGELOG.md` lists exactly what is and is not done.
 
-- [ ] **Spike first** (P2): Raspberry Pi 5 with 50 idle SSE streams, a running session and preview rendering — decides gevent vs Cheroot and sets `WCON-080` figures
-- [ ] Scaffold; `plugin` (Master only; spoke shows a message, `WCON-020`)
-- [ ] `supervisor` (self-hosted profile): child `python -I -m webconnect.web`, config handed over stdin only, heartbeat and back-off restart, no listener or process left when disabled, LAN-interface bind not `0.0.0.0`, `CertificateStore` with self-signed cert in the secret store (`WCON-030`, `060`, `070`, `910`)
-- [ ] `delegate` + `BrowserRegistry`: delegated routes, pairing with confirmation code, expiry (`WCON-090`–`190`)
-- [ ] Web half: `session` (`__Host-` device cookie, server-side sessions, CSRF, Origin/Sec-Fetch-Site), `security` (headers, host checks, rate limits, route-audit test that only `PUBLIC_ROUTES` are unauthenticated), `api`, `events` (SSE hub with replay ring), `hold`
-- [ ] `web.ui` screens, tablet first, server-rendered templates + light JS; static server-rendered sky image first, canvas sky view and session/schedule authoring after the operating screens (P8, decided)
-- [ ] Browser outreach: `outreach` (Master half) + `outreach_app` (separate process/listener, owner-supplied certificate required), secret in URL fragment, guest images fetched not streamed (`WCON` §3.11)
-- [ ] `config`/`ui`, help, wire + `parity check` against MobileConnect's catalogue
-- [ ] Fill `tests/test_wcon.py` (120 `TC-WCON-*`; `_pending` makes unwritten ones fail once the package exists)
-- [ ] Docs, wiki, marketplace entry (the SRS/SDD/RTM stay here in core `docs/plugins/webconnect/`; no separate repository)
+- [x] Scaffold; `plugin` (Master only; a spoke starts nothing, `WCON-020`)
+- [x] `supervisor` (self-hosted): child `python -I`, config over stdin only, heartbeat and back-off restart, no listener or process left when stopped, LAN-interface bind (never `0.0.0.0` unless allowed), own certificate with the key in the secret store (`WCON-030`, `040`, `060`, `070`, `910`)
+- [x] `delegate` and `BrowserRegistry`: delegated routes, pairing with a confirmation code, roles, expiry, revocation (part of `WCON-090` to `190`)
+- [x] Web half: `session` (`__Host-` cookies, server-side sessions, CSRF, Origin/Sec-Fetch-Site), `security` (headers, host check, rate limits, route registry and audit), `api` (one operations route, typed results), pairing and sign-in page, Master-down page
+- [x] `HttpLinkClient` verified against a real Connect Link listener
+- [x] **Options page on the Master** (`WCON-050`, `900`): approve, reject, promote, demote, revoke, remove, expiry, address, start/stop, options, recent activity; inline help written and audited (`help/plugin.WebConnect.md`). Left: list signed-in browsers with the Piers they hold
+- [~] `web.events`: **server side done (2026-11-04)**: Master route `events` and browser `GET /api/v1/events` (hello, ids, `Last-Event-ID` resume, `resync` on a gap, `down`, `signed-out`, four streams per sign-in, idle sign-out not defeated by an open stream; `WCON-300`, `310`, `350`). Also fixed: the web process did not patch gevent sockets, so one slow Master call stalled every browser. **Left:** the page marking state stale and disabling Pier-affecting operations while the stream is down (`WCON-780`), a first snapshot of every Pier on connect (`WCON-300`), and the event schema in the OpenAPI document
+- [ ] `web.hold` held motion (`WCON-720`, `730`); previews, tiles and FITS (`WCON-600` to `640`)
+- [~] `web.ui` operating screens, tablet first. **First screen done (2026-11-04):** Pier list, live state, lease bar and a catalogue-built operations panel; untried in a real browser; static sky image first (`WCON-400` to `560`, `650`, `810` to `890`)
+- [ ] Relay to spoke Piers (`WCON-200` to `250`); needs section 4
+- [ ] **Spike first** (P2): Raspberry Pi 5 with 50 idle SSE streams, a running session and preview rendering; decides gevent vs Cheroot and sets the `WCON-080` figures. *Needs hardware.*
+- [ ] Browser outreach: `outreach` (Master half) and `outreach_app` (separate process and listener, owner-supplied certificate required), secret in the URL fragment (`WCON` section 3.11)
+- [ ] `wire` OpenAPI and events schema generated from the models, and the `parity check` against MobileConnect's catalogue (`WCON-590`, `920`)
+- [ ] Map every `TC-WCON-*` row (120) to a test; `tests/test_wcon.py` in core still skips them
+- [ ] Docs, wiki article, marketplace entry (SRS/SDD/RTM stay in core `docs/plugins/webconnect/`)
 
 **Astroberry profile** (PSD §6.5, `WCON-1400`–`1530`; do after the operating screens, in this order):
 

@@ -181,7 +181,9 @@ def altitude_chart(
     Returns a dict with keys ``times`` (list of UTC ISO strings),
     ``altitudes`` (list of float degrees), ``sun_altitudes`` (the Sun's altitude at
     each sample, for night-window/twilight shading; may be empty), and optionally
-    ``above_horizon`` (list of bool when a horizon profile is provided).
+    ``above_horizon`` (list of bool when a horizon profile is provided) and
+    ``horizon_altitudes`` (the profile's obstruction altitude at the target's
+    azimuth at each sample, for drawing the horizon on the chart).
     """
     try:
         from astropy.coordinates import SkyCoord, EarthLocation, AltAz
@@ -220,6 +222,8 @@ def altitude_chart(
                 alt >= eff_horizon.min_altitude_at(az)
                 for alt, az in zip(alt_list, az_list, strict=True)
             ]
+            if eff_horizon.points:
+                result["horizon_altitudes"] = eff_horizon.min_altitudes(az_list).tolist()
 
         return result
 
@@ -237,6 +241,7 @@ def altitude_charts_batch(
     location: ObservingLocation,
     date_str: str | None = None,
     resolution_min: int = 30,
+    horizon: HorizonProfile | None = None,
 ) -> list[dict]:
     """:func:`altitude_chart` for many *targets* (a list of ``(ra_deg,
     dec_deg)`` pairs) at once, via a single vectorized astropy transform
@@ -246,9 +251,8 @@ def altitude_charts_batch(
     (measured: ~10s individually vs. ~0.6s batched) — used by the Sky Atlas
     page's per-result cards (SKY-020/030), where up to 200 results each
     needing their own chart made the individual-call cost genuinely
-    UI-blocking. No horizon-obstruction support (unlike :func:`altitude_chart`
-    itself) — the per-result cards this feeds don't need it, only the plain
-    altitude curve. Returns one ``{"times": [...], "altitudes": [...]}`` dict
+    UI-blocking. Includes ``horizon_altitudes`` per chart when *horizon* (or
+    the location's own) has points. Returns one ``{"times": [...], "altitudes": [...]}`` dict
     per target, same order as *targets*; an all-empty list of dicts on any
     failure (astropy unavailable, ...), matching :func:`altitude_chart`'s own
     "never raises" contract."""
@@ -282,8 +286,14 @@ def altitude_charts_batch(
         alt_array = altaz.alt.deg
 
         sun_altitudes = _sun_altitudes_on_grid(times, loc)
-        return [{"times": time_list, "altitudes": alt_array[i].tolist(), "sun_altitudes": sun_altitudes}
-                for i in range(len(targets))]
+        eff_horizon = horizon or getattr(location, "_horizon", None)
+        horizon_array = eff_horizon.min_altitudes(altaz.az.deg) if eff_horizon is not None and eff_horizon.points else None
+        charts = [{"times": time_list, "altitudes": alt_array[i].tolist(), "sun_altitudes": sun_altitudes}
+                  for i in range(len(targets))]
+        if horizon_array is not None:
+            for i, chart in enumerate(charts):
+                chart["horizon_altitudes"] = horizon_array[i].tolist()
+        return charts
     except Exception:
         logger.debug("Could not compute batched altitude charts", exc_info=True)
         return [{"times": [], "altitudes": []} for _ in targets]
@@ -481,9 +491,11 @@ def sun_altitude_track(
     location: ObservingLocation,
     date_str: str | None = None,
     resolution_min: int = 1,
+    start_hour: int = 0,
 ) -> dict:
-    """The Sun's altitude across one local calendar day at *location*, from local
-    midnight to the next local midnight (unlike :func:`altitude_chart`'s UTC
+    """The Sun's altitude across 24 h at *location*, from local *start_hour* (0 =
+    local midnight, a calendar day; 12 = local noon, an observing night centred on
+    local night) to the same time next day (unlike :func:`altitude_chart`'s UTC
     noon-to-noon "one observing night" window) — the day/night band on the
     What's Up Tonight screen (WUT-110) is keyed to the wall-clock day the user
     picked, not to a night that straddles two calendar dates. Sampled every
@@ -513,7 +525,7 @@ def sun_altitude_track(
         if date_str is None:
             date_str = datetime.datetime.now().astimezone().date().isoformat()
         year, month, day = (int(p) for p in date_str.split("-"))
-        local_midnight = datetime.datetime(year, month, day).astimezone()
+        local_midnight = datetime.datetime(year, month, day, start_hour).astimezone()
 
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
@@ -563,7 +575,8 @@ def day_night_bands(
     resolution_min: int = 1,
 ) -> dict:
     """The day/night band for the What's Up Tonight screen's top graphic
-    (WUT-110) — one local calendar day (local midnight to local midnight, via
+    (WUT-110) — one observing night, centred on night (local noon of the date to
+    local noon the next day, via
     :func:`sun_altitude_track`) split into contiguous Night / Astronomical
     Twilight / Nautical Twilight / Civil Twilight / Daylight segments by the
     Sun's altitude, each boundary crossing linearly interpolated between the
@@ -585,7 +598,7 @@ def day_night_bands(
     All fields are empty/``None`` when the underlying track can't be
     computed (astropy unavailable) — never raises, matching this module's
     existing never-block-the-screen convention."""
-    track = sun_altitude_track(location, date_str, resolution_min)
+    track = sun_altitude_track(location, date_str, resolution_min, start_hour=12)
     times_iso, altitudes = track["times"], track["altitudes"]
     if not times_iso:
         return {"segments": [], "totals_hours": {}, "solar_noon": None, "solar_midnight": None}

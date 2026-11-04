@@ -108,13 +108,13 @@ def assemble_context(
         service._current_position = int(getattr(focuser, "position", 0) or 0)
         await service.apply_filter_offset(from_filter, to_filter)
 
-    def make_solve_workflow():
+    def make_solve_workflow(log=None):
         from galileo.observatory import make_pier_solver
         from galileo.platesolve import SolveWorkflow
         solver = make_pier_solver(pier, pier_key=key)
         if not solver.is_available():
             raise RuntimeError(f"the plate solver is not set up — {solver.missing_message()}")
-        return SolveWorkflow(solver, camera=camera, mount=mount, log=logger.info,
+        return SolveWorkflow(solver, camera=camera, mount=mount, log=log or logger.info,
                              frame_metadata=dict(frame_context))
 
     def make_calibration():

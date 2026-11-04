@@ -12,6 +12,7 @@ manager uses one to stop the previous holder's motion).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -50,6 +51,10 @@ class LeaseBroker:
 
     def add_listener(self, listener: ChangeListener) -> None:
         self._listeners.append(listener)
+
+    def remove_listener(self, listener: ChangeListener) -> None:
+        with contextlib.suppress(ValueError):
+            self._listeners.remove(listener)
 
     # -- queries -------------------------------------------------------------------------
     def holder(self, pier: str) -> str:

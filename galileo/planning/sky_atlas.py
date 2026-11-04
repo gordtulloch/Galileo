@@ -778,9 +778,10 @@ class SkyAtlas:
         """:meth:`altitude_chart` for many *objs* at once, ~16x faster than
         calling it per object (one vectorized astropy transform instead of
         many) — see :func:`galileo.planning.visibility.altitude_charts_batch`.
-        No horizon-obstruction support, unlike :meth:`altitude_chart` itself."""
+        Each chart carries the location's horizon (``horizon_altitudes``) when set."""
         from galileo.planning.visibility import altitude_charts_batch
-        return altitude_charts_batch([(o.ra_deg, o.dec_deg) for o in objs], location, date)
+        return altitude_charts_batch([(o.ra_deg, o.dec_deg) for o in objs], location, date,
+                                     horizon=getattr(location, "_horizon", None))
 
     def rise_transit_set(
         self,

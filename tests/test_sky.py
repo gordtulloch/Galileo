@@ -471,40 +471,102 @@ async def test_tc_sky_080_fetch_thumbnail_size_px_is_a_separate_cache_entry(sky_
     mock_unused.assert_not_called()
 
 
+def _fake_catalog(n):
+    class _Obj:
+        def __init__(self, i):
+            self.primary_name = f"Obj{i}"
+            self.ra_deg, self.dec_deg, self.size_arcmin = 10.0 + i, -5.0, 0.0
+    return [_Obj(i) for i in range(n)]
+
+
 @pytest.mark.requirement("TC-SKY-080")
 @pytest.mark.priority("P2")
-def test_tc_sky_080_options_planning_bulk_caches_all_catalog_thumbnails(tmp_path, monkeypatch):
-    """SKY-080: Options > Planning's "Cache All Catalog Thumbnails" button bulk-fetches a thumbnail
-    for every catalog object (via the same disk-cached SkyAtlas._fetch_thumbnail path a search's
-    result tiles use) off the Qt UI thread, so a later search doesn't pay the fetch cost per result."""
+def test_tc_sky_080_pack_builder_reuses_cache_and_install_unpacks_it(tmp_path, monkeypatch):
+    """SKY-080: the thumbnail-pack builder uses images already in the local cache (no request),
+    fetches only the missing ones, and writes them all into one ZIP; installing that ZIP into an
+    empty cache restores every thumbnail, and leaves existing files and non-thumbnail entries alone."""
+    import zipfile
+
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    from galileo.planning import thumbnail_pack as pack
+
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path / "cache")
+    (tmp_path / "cache").mkdir()
+    catalog = _fake_catalog(4)
+    field = sky_mod._thumbnail_field_arcmin(0.0)
+    sky_mod._cache_thumbnail(catalog[0].ra_deg, catalog[0].dec_deg, field, field, b"cached-0")
+
+    fetched = []
+
+    def fake_fetch(ra, dec, w, h, size_px=150):
+        fetched.append(ra)
+        return b"fetched" if ra != catalog[3].ra_deg else b""    # the last object has no image
+
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", fake_fetch)
+
+    out = tmp_path / "pack.zip"
+    included, failed, from_cache = pack.build_pack(out, catalog, workers=2)
+    assert (included, failed, from_cache) == (3, 1, 1)
+    assert catalog[0].ra_deg not in fetched, "an image already in the cache must not be fetched again"
+
+    with zipfile.ZipFile(out, "a") as z:
+        z.writestr("../evil.jpg", b"x")
+        z.writestr("notes.txt", b"x")
+    assert pack.MANIFEST_NAME in zipfile.ZipFile(out).namelist()
+
+    dest = tmp_path / "fresh"
+    dest.mkdir()
+    existing = sky_mod._thumbnail_cache_path(catalog[1].ra_deg, catalog[1].dec_deg, field, field).name
+    (dest / existing).write_bytes(b"mine")
+    added = pack.install_pack(out, dest)
+    assert added == 2, "the file already present is kept, not counted"
+    assert (dest / existing).read_bytes() == b"mine"
+    assert sorted(f.name for f in dest.iterdir()).count(existing) == 1
+    assert len(list(dest.iterdir())) == 3
+    assert not (tmp_path / "evil.jpg").exists()
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_install_pack_rejects_a_non_zip(tmp_path):
+    """SKY-080: a downloaded file that is not a ZIP is reported, not unpacked."""
+    from galileo.planning import thumbnail_pack as pack
+
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"<html>not found</html>")
+    with pytest.raises(pack.PackError):
+        pack.install_pack(bad, tmp_path)
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
+def test_tc_sky_080_options_star_atlas_downloads_and_unpacks_the_pack(tmp_path, monkeypatch):
+    """SKY-080: Options > Planning's "Download Catalog Images" button downloads the thumbnail pack
+    (one ZIP) and unpacks it into the thumbnail cache off the Qt UI thread."""
     import os
+    import zipfile
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     from galileo.library.database import db, init_db
-    init_db(tmp_path / "thumbnail_cache_test.db")
+    init_db(tmp_path / "thumbnail_pack_test.db")
     from galileo.observatory import create_observatory, create_pier
+    from galileo.planning import thumbnail_pack as pack
     from galileo.ui.app_window import AppWindow
 
-    class _FakeObj:
-        def __init__(self, name):
-            self.primary_name = name
-            self.ra_deg, self.dec_deg = 10.0, 10.0
-            self.size_arcmin = 0.0
+    name = "skythumb_10.0000_-5.0000_15.00x15.00.jpg"
+    zip_bytes_path = tmp_path / "served.zip"
+    with zipfile.ZipFile(zip_bytes_path, "w") as z:
+        z.writestr(name, b"jpeg-bytes")
 
-    fetched_names = []
+    def fake_download(dest, url=pack.PACK_URL, progress=None, should_stop=None):
+        dest.write_bytes(zip_bytes_path.read_bytes())
+        return True
 
-    class _FakeSkyAtlas:
-        def __init__(self, *a, **k):
-            self._catalog = [_FakeObj(f"Obj{i}") for i in range(5)]
-
-        async def _fetch_thumbnail(self, obj):
-            fetched_names.append(obj.primary_name)
-            return b"data"
-
-    monkeypatch.setattr(sky_mod, "SkyAtlas", _FakeSkyAtlas)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Yes))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(pack, "download_pack", fake_download)
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: cache)
 
     win = AppWindow()
     try:
@@ -513,21 +575,20 @@ def test_tc_sky_080_options_planning_bulk_caches_all_catalog_thumbnails(tmp_path
         win._current_pier = win.pier
 
         page = win._build_planning_settings_page()
-        cache_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if "Cache All" in b.text())
-
-        cache_btn.click()
-        assert win._thumbnail_cache_worker is not None, "the confirmation dialog should not have blocked starting it"
+        btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Download Catalog Images")
+        btn.click()
+        assert win._thumbnail_pack_worker is not None
 
         import time
         for _ in range(300):
             app.processEvents()
-            if win._thumbnail_cache_worker is None:
+            if win._thumbnail_pack_worker is None:
                 break
             time.sleep(0.01)
 
-        assert win._thumbnail_cache_worker is None, "worker did not finish in time"
-        assert sorted(fetched_names) == [f"Obj{i}" for i in range(5)]
-        assert "complete" in win._window.statusBar().currentMessage().lower()
+        assert win._thumbnail_pack_worker is None, "worker did not finish in time"
+        assert (cache / name).read_bytes() == b"jpeg-bytes"
+        assert "1 new image" in win._window.statusBar().currentMessage()
     finally:
         win._window.close()
         db.close()

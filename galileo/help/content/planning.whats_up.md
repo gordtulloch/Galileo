@@ -27,7 +27,7 @@ Works out the ranking and shows the top results as tiles.
 
 ## Day night band
 
-A strip showing the hours of the chosen date as day, civil, nautical and astronomical twilight, and night, with the start, end and total of each, and the times of solar noon and solar midnight. Imaging deep-sky objects is best in the dark "Night" segment.
+A strip running from local noon on the chosen date to local noon the next day, so the night sits in the middle, showing the hours as day, civil, nautical and astronomical twilight, and night, with the start, end and total of each, and the times of solar noon and solar midnight. Imaging deep-sky objects is best in the dark "Night" segment.
 
 ## Field of view fit
 
@@ -36,6 +36,10 @@ Which optical train's field of view the ranking used. Objects too large or too s
 ## Advisories
 
 Tonight's forecast: weather (cloud, wind, temperature), aurora activity (Kp index) and smoke (air-quality index). Poor values lower the confidence of the ranking.
+
+## Image note
+
+States how many result thumbnails were loaded. What's Up Tonight never downloads images (that made it slow to open); it only shows thumbnails already cached on this computer. To load them all in one go, use **Download Catalog Images** in Options > Planning, or browse the objects on the Targets page.
 
 ## Results
 

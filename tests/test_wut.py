@@ -338,10 +338,7 @@ def test_tc_wut_060_select_reuses_the_same_entry_point_as_targets(tmp_path, monk
     from galileo.observatory import create_observatory, create_pier
     from galileo.ui.app_window import AppWindow
 
-    # No live network dependency: with no thumbnails cached, ranking now fetches
-    # thumbnails for the uncached results (bounded at _MAX_AUTO_THUMBNAILS) via a
-    # real hips2fits request unless this is stubbed out, same as other UI tests
-    # in this suite that exercise a real ranking/search run.
+    # Ranking never downloads thumbnails; the stub is a guard in case that regresses.
     monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", lambda *a, **k: b"fake-thumbnail-bytes")
 
     win = AppWindow()
@@ -439,9 +436,7 @@ def _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, db_name: str):
 @pytest.mark.priority("MVP")
 def test_tc_wut_060_every_cached_thumbnail_loads_regardless_of_position(tmp_path, monkeypatch):
     """A tile's thumbnail loads from the on-disk cache (SKY-080) whenever one exists, for
-    every shown tile — not only the first _MAX_AUTO_THUMBNAILS — since a cache hit is a
-    plain file read, never a network request, so bounding it buys nothing and would only
-    leave an already-thumbnailed object blank purely because of where it landed."""
+    every shown tile, and the on-screen note says so. A cache hit is a plain file read."""
     import io
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -463,14 +458,13 @@ def test_tc_wut_060_every_cached_thumbnail_loads_regardless_of_position(tmp_path
 
     win, page = _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, "wut_thumb_all_cached_test.db")
     try:
-        from galileo.ui.app_window._whats_up_page import _MAX_AUTO_THUMBNAILS as _max_auto
         rank_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Rank Tonight")
         rank_btn.click()
 
         results = page.findChildren(QtWidgets.QListWidget)[0]
-        assert results.count() > _max_auto, (
-            "test needs more shown tiles than _MAX_AUTO_THUMBNAILS to prove the cap doesn't apply to cache hits"
-        )
+        assert results.count() > 0
+        note = next(w for w in page.findChildren(QtWidgets.QLabel) if w.property("helpKey") == "image note")
+        assert note.text().startswith("Images: all")
 
         thumb_mod = pytest.importorskip("galileo.ui.app_window._widgets")
         for i in range(results.count()):
@@ -485,38 +479,27 @@ def test_tc_wut_060_every_cached_thumbnail_loads_regardless_of_position(tmp_path
 
 @pytest.mark.requirement("TC-WUT-060")
 @pytest.mark.priority("MVP")
-def test_tc_wut_060_thumbnail_network_fetch_is_bounded(tmp_path, monkeypatch):
-    """With nothing cached, every shown tile needs a real hips2fits fetch — that part
-    (and only that part) stays bounded at _MAX_AUTO_THUMBNAILS, so ranking a long list
-    never fires an unbounded number of network requests."""
+def test_tc_wut_060_never_downloads_images_and_says_none_loaded(tmp_path, monkeypatch):
+    """With nothing cached, ranking makes no network request for images and the on-screen
+    note tells the user to load images from Options > Planning."""
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
 
-    # Nothing is ever cached.
     monkeypatch.setattr(sky_mod, "_cached_thumbnail", lambda *a, **k: b"")
-
     fetch_calls = []
-    def _count_fetch(*a, **k):
-        fetch_calls.append(a)
-        return b""
-    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", _count_fetch)
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync", lambda *a, **k: fetch_calls.append(a) or b"")
 
     win, page = _build_wut_page_for_thumbnail_test(tmp_path, QtWidgets, "wut_thumb_bounded_test.db")
     try:
-        from galileo.ui.app_window._whats_up_page import _MAX_AUTO_THUMBNAILS as _max_auto
         rank_btn = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Rank Tonight")
         rank_btn.click()
 
-        results = page.findChildren(QtWidgets.QListWidget)[0]
-        assert results.count() > _max_auto, (
-            "test needs more shown tiles than _MAX_AUTO_THUMBNAILS to prove the network fetch is capped"
-        )
-        assert len(fetch_calls) == _max_auto, (
-            f"expected exactly {_max_auto} network fetches (one per uncached tile up to the cap), "
-            f"got {len(fetch_calls)}"
-        )
+        assert page.findChildren(QtWidgets.QListWidget)[0].count() > 0
+        assert fetch_calls == []
+        note = next(w for w in page.findChildren(QtWidgets.QLabel) if w.property("helpKey") == "image note")
+        assert "none loaded" in note.text() and "Options > Planning" in note.text()
     finally:
         win._window.close()
         from galileo.library.database import db as _db

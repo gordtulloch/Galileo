@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     # doesn't ALSO report "Name not defined", on top of the original site.
     from galileo.planning.sky_atlas import DeepSkyObject, SkyAtlas
     from galileo.scheduler import ObservatoryScheduler
-    from ._threads import _ThumbnailCacheThread
+    from ._threads import _ThumbnailPackThread
 
 
 class AppWindowState(Protocol):
@@ -104,7 +104,7 @@ class AppWindowState(Protocol):
     _star_atlas_set_horizon: Any
     _theme: Any
     _help: Any
-    _thumbnail_cache_worker: _ThumbnailCacheThread | None
+    _thumbnail_pack_worker: _ThumbnailPackThread | None
     _tracking_threads: Any
     _weather_history_by_observatory: Any
     _window: Any
@@ -276,7 +276,7 @@ class AppWindowState(Protocol):
     # _settings_pages.py
     def _build_star_atlas_settings_page(self) -> QWidget: ...
     def _build_planning_settings_page(self) -> QWidget: ...
-    def _cache_all_catalog_thumbnails(self, parent: QWidget) -> None: ...
+    def _download_thumbnail_pack(self, parent: QWidget) -> None: ...
     def _build_imaging_settings_page(self) -> QWidget: ...
     def _build_focus_settings_page(self) -> QWidget: ...
     def _build_solve_settings_page(self) -> QWidget: ...

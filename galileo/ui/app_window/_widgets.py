@@ -186,10 +186,15 @@ class _AltitudeChart(_QWidgetBase):
         self.times: list = []
         self.altitudes: list = []
         self.sun_altitudes: list = []
+        self.horizon_altitudes: list = []
 
-    def set_data(self, times: list, altitudes: list, sun_altitudes: list | None = None) -> None:
+    def set_data(self, times: list, altitudes: list, sun_altitudes: list | None = None,
+                 horizon_altitudes: list | None = None) -> None:
+        """*horizon_altitudes* — the Star Atlas horizon's obstruction altitude at the target's
+        azimuth at each sample; drawn as a shaded region that the curve must clear."""
         self.times, self.altitudes = times, altitudes
         self.sun_altitudes = list(sun_altitudes or [])
+        self.horizon_altitudes = list(horizon_altitudes or [])
         self.update()
 
     def _night_window(self) -> tuple[int, int]:
@@ -266,6 +271,22 @@ class _AltitudeChart(_QWidgetBase):
             painter.setPen(fg)
             painter.drawText(QRectF(0, y - 7, plot.left() - 3, 14),
                              _Qt.AlignmentFlag.AlignRight | _Qt.AlignmentFlag.AlignVCenter, f"{alt}°")
+
+        if len(self.horizon_altitudes) == len(self.altitudes):
+            from PySide6.QtGui import QPolygonF
+            horizon = self.horizon_altitudes[first:last + 1]
+            poly = QPolygonF([QPointF(x_at(0), y_at(0.0))])
+            poly.append(QPointF(x_at(0), y_at(horizon[0])))
+            for i, alt in enumerate(horizon):
+                poly.append(QPointF(x_at(i), y_at(alt)))
+            poly.append(QPointF(x_at(len(horizon) - 1), y_at(0.0)))
+            painter.setPen(_Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(150, 90, 60, 140))
+            painter.drawPolygon(poly)
+            painter.setBrush(_Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#d98a5a"), 1))
+            for a, b in pairwise(poly.toList()[1:-1]):
+                painter.drawLine(a, b)
 
         points = [QPointF(x_at(i), y_at(alt)) for i, alt in enumerate(altitudes)]
         painter.setPen(QPen(QColor("#5db8ff"), 2))
@@ -372,14 +393,15 @@ class _DayNightBandChart(_QWidgetBase):
         def x_at(when) -> float:
             return band.left() + (when - self._window_start).total_seconds() / total_seconds * band.width()
 
-        # Hour-axis ticks every 2 hours (00, 02, ..., 22), matching the
-        # reference day-length graphic this widget is modeled on.
+        # Hour-axis ticks every 2 hours from the window start (local noon, so night sits
+        # in the middle: 12, 14, ..., 00, ..., 10, 12).
         painter.setPen(fg)
-        for hour in range(0, 24, 2):
-            tick_time = self._window_start.replace(hour=0, minute=0, second=0, microsecond=0) + \
-                _dt.timedelta(hours=hour)
+        for step in range(13):
+            tick_time = self._window_start.replace(minute=0, second=0, microsecond=0) + \
+                _dt.timedelta(hours=2 * step)
             x = x_at(tick_time)
-            painter.drawText(QRectF(x - 14, 0, 28, 12), _Qt.AlignmentFlag.AlignCenter, f"{hour:02d}")
+            painter.drawText(QRectF(x - 14, 0, 28, 12), _Qt.AlignmentFlag.AlignCenter,
+                             f"{tick_time.hour:02d}")
 
         # Band segments, with a thin surface-colored gap between adjacent
         # fills so a boundary is always visible even between two close

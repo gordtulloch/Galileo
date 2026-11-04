@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     # actual base stays plain `object`.
     from ._state import AppWindowState
     from galileo.planning.sky_atlas import SkyAtlas
-    from ._threads import _ThumbnailCacheThread
+    from ._threads import _ThumbnailPackThread
 
 
 class AppWindowCoreMixin:
@@ -62,7 +62,7 @@ class AppWindowCoreMixin:
         # Imaging page buttons that reopen them — see _assistant_dialog.py.
         self._assistant_dialogs: dict = {}
         self._assistant_buttons: dict = {}
-        self._thumbnail_cache_worker: _ThumbnailCacheThread | None = None
+        self._thumbnail_pack_worker: _ThumbnailPackThread | None = None
         # A single persistent SkyAtlas instance, lazily created — see _shared_sky_atlas().
         self._sky_atlas: SkyAtlas | None = None
         # Where each Pier's telescope is pointing, for the Star Atlas reticles (SKYMAP-090):

@@ -535,7 +535,7 @@ class AppWindowMountPageMixin:
             driver_reversed = status.get("axis_reversed")
             state["driver_reversal"] = driver_reversed is not None
             if driver_reversed is not None:
-                for check, value in zip((primary_reversed_check, secondary_reversed_check), driver_reversed):
+                for check, value in zip((primary_reversed_check, secondary_reversed_check), driver_reversed, strict=False):
                     if check.isChecked() != bool(value):
                         check.blockSignals(True)
                         check.setChecked(bool(value))

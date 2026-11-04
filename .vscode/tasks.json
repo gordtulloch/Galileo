@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [{
+    "label": "Pull all repos",
+    "type": "shell",
+    "command": "foreach ($r in 'Galileo','Galileo.wiki','Galileo-Plugins','Galileo.web') { git -C \"C:/Users/gordt/Projects/$r\" pull --ff-only --autostash }",
+    "runOptions": { "runOn": "folderOpen" },
+    "presentation": { "reveal": "silent" }
+  }]
+}

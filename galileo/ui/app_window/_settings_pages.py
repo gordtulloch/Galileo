@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Options section's per-section settings pages (Star Atlas/Planning, Imaging, Focus, Solve) and the bulk thumbnail-caching action they share."""
+"""Options section's per-section settings pages (Star Atlas/Planning, Imaging, Focus, Solve) and the catalog thumbnail pack download."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _new_form_layout, _OBSTRUCTED_MESSAGE, QWidget
-from ._threads import _ThumbnailCacheThread
+from ._threads import _ThumbnailPackThread
 
 logger = logging.getLogger(__name__)
 
@@ -186,9 +186,8 @@ class AppWindowSettingsPagesMixin:
 
     def _build_planning_settings_page(self: AppWindowState) -> QWidget:
         """Options > Planning: whether slews into the Star Atlas horizon
-        obstructions are refused, and bulk-caching every catalog object's
-        survey-image thumbnail ahead of time (SKY-080)."""
-        from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
+        obstructions are refused, and downloading the catalog image pack."""
+        from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
         from galileo.planning.settings import load_planning_settings, save_planning_settings
 
         page = QWidget()
@@ -220,85 +219,68 @@ class AppWindowSettingsPagesMixin:
             self._apply_horizon()
 
         block.toggled.connect(changed)
+        images_heading = QLabel("Catalog images")
+        images_heading.setObjectName("PageSubtitle")
+        layout.addWidget(images_heading)
+        images_row = QHBoxLayout()
+        images_btn = QPushButton("Download Catalog Images")
+        images_btn.setToolTip(
+            "Downloads one ZIP of survey thumbnails for the whole catalog from galileo-imaging.com and "
+            "unpacks it, so What's Up Tonight and Targets show pictures.")
+        images_btn.clicked.connect(lambda: self._download_thumbnail_pack(page))
+        images_row.addWidget(images_btn)
+        images_row.addStretch(1)
+        layout.addLayout(images_row)
+        images_hint = QLabel(
+            "What's Up Tonight shows thumbnails only if they are on this computer. This fetches them all in "
+            "one download (a single ZIP from galileo-imaging.com) instead of one request per object. "
+            "Images you already have are kept; run it again after an update to add new ones.")
+        images_hint.setObjectName("StatusHint")
+        images_hint.setWordWrap(True)
+        layout.addWidget(images_hint)
 
-        cache_heading = QLabel("Sky-survey thumbnails")
-        cache_heading.setObjectName("PageSubtitle")
-        layout.addWidget(cache_heading)
-
-        cache_btn = QPushButton("Cache All Catalog Thumbnails…")
-        cache_btn.setToolTip(
-            "Pre-fetches every catalog object's survey-image thumbnail (SKY-080), so a later Planning "
-            "> Targets search shows its result-tile images immediately instead of fetching them then."
-        )
-        layout.addWidget(cache_btn)
-
-        cache_hint = QLabel(
-            "Fetches a thumbnail for every object in the offline catalog not already cached — tens of "
-            "thousands of objects, one network request each, so this can take hours. Already-cached "
-            "objects (from an earlier run, or from having shown up in a search) are skipped instantly, "
-            "so it's safe to cancel and resume later, or run again after the catalog updates."
-        )
-        cache_hint.setObjectName("StatusHint")
-        cache_hint.setWordWrap(True)
-        layout.addWidget(cache_hint)
         layout.addStretch(1)
-
-        cache_btn.clicked.connect(lambda: self._cache_all_catalog_thumbnails(page))
         return page
 
-    def _cache_all_catalog_thumbnails(self: AppWindowState, parent: QWidget) -> None:
-        """Options > Planning's "Cache All Catalog Thumbnails…" button
-        (SKY-080): confirms the scale of the operation (this is a real,
-        potentially hours-long bulk network fetch, not a quick local task),
-        then runs `_ThumbnailCacheThread` behind a cancellable progress
-        dialog — the same worker-thread/`QProgressDialog` pattern
-        `galileo.ui.library.download_dialog`'s telescope download already
-        uses, not a new one."""
+    def _download_thumbnail_pack(self: AppWindowState, parent: QWidget) -> None:
+        """Options > Planning's "Download Catalog Images" button (SKY-080): downloads the
+        catalog thumbnail pack — one ZIP from galileo-imaging.com — and unpacks it into the
+        thumbnail cache, via `_ThumbnailPackThread` behind a cancellable progress dialog (the
+        same worker-thread/`QProgressDialog` pattern `galileo.ui.library.download_dialog` uses)."""
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QMessageBox, QProgressDialog
 
-        try:
-            from galileo.planning.sky_atlas import SkyAtlas
-            total = len(SkyAtlas()._catalog)
-        except Exception:
-            logger.exception("Could not load the catalog to size the thumbnail-caching confirmation")
-            total = 0
-
-        confirmed = QMessageBox.question(
-            parent, "Cache All Catalog Thumbnails",
-            f"This fetches a survey-image thumbnail for every object in the catalog not already "
-            f"cached ({total:,} objects total) — one network request each, so it can take hours. "
-            f"You can cancel at any time; progress made so far stays cached. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
-        )
-        if confirmed != QMessageBox.StandardButton.Yes:
-            return
-
-        progress_dialog = QProgressDialog("Starting…", "Cancel", 0, max(total, 1), parent)
-        progress_dialog.setWindowTitle("Caching Thumbnails")
+        progress_dialog = QProgressDialog("Connecting to galileo-imaging.com…", "Cancel", 0, 0, parent)
+        progress_dialog.setWindowTitle("Download Catalog Images")
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setMinimumDuration(0)
         progress_dialog.setValue(0)
         progress_dialog.show()
 
-        worker = _ThumbnailCacheThread(parent)
-        self._thumbnail_cache_worker = worker  # keep a live reference so it isn't GC'd mid-run
+        worker = _ThumbnailPackThread(parent)
+        self._thumbnail_pack_worker = worker  # keep a live reference so it isn't GC'd mid-run
 
-        def on_progress(done: int, of_total: int) -> None:
-            progress_dialog.setMaximum(max(of_total, 1))
+        def on_progress(phase: str, done: int, total: int) -> None:
+            progress_dialog.setMaximum(max(total, 0))
             progress_dialog.setValue(done)
-            progress_dialog.setLabelText(f"Caching thumbnails: {done:,} / {of_total:,}")
+            if phase == "Downloading":
+                progress_dialog.setLabelText(
+                    f"Downloading the image pack: {done / 1e6:.0f} of {total / 1e6:.0f} MB" if total
+                    else f"Downloading the image pack: {done / 1e6:.0f} MB")
+            else:
+                progress_dialog.setLabelText(f"Unpacking images: {done:,} / {total:,}")
 
-        def on_finished(cached: int, failed: int) -> None:
+        def on_finished(added: int) -> None:
             progress_dialog.close()
             self._window.statusBar().showMessage(
-                f"Thumbnail caching complete: {cached:,} cached/already-cached, {failed:,} failed.", 8000)
-            self._thumbnail_cache_worker = None
+                f"Catalog images: {added:,} new image(s) installed." if added
+                else "Catalog images: nothing new to install.", 8000)
+            self._thumbnail_pack_worker = None
 
         def on_failed(message: str) -> None:
             progress_dialog.close()
-            QMessageBox.critical(parent, "Thumbnail Caching Failed", message)
-            self._thumbnail_cache_worker = None
+            QMessageBox.critical(parent, "Download Catalog Images Failed", message)
+            self._thumbnail_pack_worker = None
 
         worker.progress.connect(on_progress, Qt.ConnectionType.QueuedConnection)
         worker.finished_ok.connect(on_finished, Qt.ConnectionType.QueuedConnection)

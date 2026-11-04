@@ -403,24 +403,14 @@ class _MountGuardThread(_QThreadBase):
             result["status"] = await self._mount.get_status() or status
 
 
-class _ThumbnailCacheThread(_QThreadBase):
-    """Bulk-caches every catalog object's survey-image thumbnail off the Qt UI
-    thread (Options > Planning's "Cache all thumbnails" button, SKY-080), so a
-    later search's result-tile thumbnails load from disk instead of each
-    needing its own hips2fits round trip. Reuses ``SkyAtlas._fetch_thumbnail``'s
-    own ra/dec/field-size-keyed disk cache unchanged — an object already cached
-    (from a prior run, from having shown up in a search's result tiles, or from
-    being added to a target list) returns instantly with no network call, so
-    resuming after Cancel, or re-running later, only fetches what's still
-    missing. Runs one object at a time, sequentially, matching every other
-    thumbnail fetch already in this codebase — no added concurrency, so this
-    doesn't hit the free hips2fits service any harder than normal use already
-    does; for the full catalog (tens of thousands of objects) that means this
-    can genuinely take hours, which is why it's cancellable and why the
-    confirmation dialog before starting says so."""
+class _ThumbnailPackThread(_QThreadBase):
+    """Downloads the catalog thumbnail pack (one ZIP from galileo-imaging.com) and unpacks it into the
+    thumbnail cache, off the Qt UI thread (Options > Planning > "Download Catalog Images", SKY-080).
+    The work itself is ``galileo.planning.thumbnail_pack``; this only reports progress as Qt signals.
+    Thumbnails already cached are left alone, so re-running after the pack is updated adds only new ones."""
 
-    progress = Signal(int, int)        # (done, total)
-    finished_ok = Signal(int, int)      # (cached, failed)
+    progress = Signal(str, int, int)    # (phase: "Downloading" | "Unpacking", done, total)
+    finished_ok = Signal(int)           # thumbnails added
     failed = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -431,30 +421,28 @@ class _ThumbnailCacheThread(_QThreadBase):
         self._stop_requested = True
 
     def run(self) -> None:
-        import asyncio
+        import tempfile
+        from pathlib import Path
+
+        from galileo.planning import thumbnail_pack as pack
         try:
-            from galileo.planning.sky_atlas import SkyAtlas
-            atlas = SkyAtlas()
-            catalog = atlas._catalog
-            total = len(catalog)
-            cached_count = 0
-            failed_count = 0
-            for i, obj in enumerate(catalog):
-                if self._stop_requested:
-                    break
-                try:
-                    data = asyncio.run(atlas._fetch_thumbnail(obj))
-                except Exception:
-                    data = b""
-                if data:
-                    cached_count += 1
-                else:
-                    failed_count += 1
-                if i % 5 == 0 or i == total - 1:
-                    self.progress.emit(i + 1, total)
-        except Exception as exc:
-            logger.exception("Bulk thumbnail caching failed")
+            with tempfile.TemporaryDirectory(prefix="galileo-thumbs-") as tmp:
+                zip_path = Path(tmp) / "thumbnails.zip"
+                completed = pack.download_pack(
+                    zip_path, progress=lambda d, t: self.progress.emit("Downloading", d, t),
+                    should_stop=lambda: self._stop_requested)
+                if not completed:
+                    self.finished_ok.emit(0)
+                    return
+                added = pack.install_pack(
+                    zip_path, progress=lambda d, t: self.progress.emit("Unpacking", d, t),
+                    should_stop=lambda: self._stop_requested)
+        except pack.PackError as exc:
             self.failed.emit(str(exc))
             return
-        self.finished_ok.emit(cached_count, failed_count)
+        except Exception as exc:
+            logger.exception("Thumbnail pack install failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(added)
 

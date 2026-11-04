@@ -521,6 +521,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CSURF-230` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-230` |
 | `CSURF-240` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-240` |
 | `CSURF-250` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-250` |
+| `CSURF-260` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-260` |
 | `CSURF-300` | MVP | SDD 4.29 `control_surface.emergency` | Test | `TC-CSURF-300` |
 | `CSURF-400` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-400` |
 | `CSURF-410` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-410` |

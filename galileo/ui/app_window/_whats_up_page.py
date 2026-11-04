@@ -33,13 +33,6 @@ if TYPE_CHECKING:
 # ranking (unlike a plain search) always touches every pre-filtered object.
 _MAX_CANDIDATES = 300
 _MAX_SHOWN = 50
-# Same bound as the Targets page's own auto-thumbnail fill-in
-# (_planning_page.py). Unlike a plain disk-cache read (applied to every shown
-# tile, unbounded — see run_rank() below), a genuine network fetch is a real
-# hips2fits request per uncached object, so only *that* part of the fill-in
-# is capped, to keep a ranking run from firing up to _MAX_SHOWN (50) requests.
-_MAX_AUTO_THUMBNAILS = 12
-
 
 class AppWindowWhatsUpPageMixin:
     def _build_whats_up_page(self: AppWindowState) -> QWidget:
@@ -346,7 +339,8 @@ class AppWindowWhatsUpPageMixin:
             chart_widget = _AltitudeChart()
             chart_widget.setFixedSize(*_CARD_CHART_SIZE)
             if chart is not None and chart.get("altitudes"):
-                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"))
+                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"),
+                                     chart.get("horizon_altitudes"))
             row.addWidget(chart_widget)
 
             button_col = QVBoxLayout()
@@ -559,6 +553,12 @@ class AppWindowWhatsUpPageMixin:
         advisory_label.setWordWrap(True)
         content_layout.addWidget(advisory_label)
 
+        image_note_label = QLabel("")
+        image_note_label.setProperty("helpKey", "image note")
+        image_note_label.setObjectName("StatusHint")
+        image_note_label.setWordWrap(True)
+        content_layout.addWidget(image_note_label)
+
         results = QListWidget()
         results.setProperty("helpKey", "results")
         results.setSpacing(4)
@@ -596,6 +596,7 @@ class AppWindowWhatsUpPageMixin:
             results.clear()
             fov_label.setText("")
             advisory_label.setText("")
+            image_note_label.setText("")
             _refresh_day_night_band()
             self._window.statusBar().showMessage("Ranking…")
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -689,47 +690,35 @@ class AppWindowWhatsUpPageMixin:
                 results.setItemWidget(item, row_container)
                 thumb_labels.append(thumb_label)
 
-            # Fill in every cached thumbnail unconditionally (a plain disk
-            # read, cheap regardless of how many tiles are shown) — an object
-            # already thumbnailed via the Targets/Planning page shows its
-            # cached image immediately, however far down the ranked list it
-            # sits. Only a genuine network fetch (an object not yet cached
-            # anywhere) is bounded, at _MAX_AUTO_THUMBNAILS, to keep a ranking
-            # run from firing an unbounded number of hips2fits requests.
-            import asyncio
+            # Cached thumbnails only (a plain disk read) — this screen never downloads
+            # images: fetching them per ranking run made it very slow to load. Images
+            # are pre-loaded from Options > Planning (Download Catalog Images) or
+            # by browsing the Targets page.
             from galileo.planning.sky_atlas import _cached_thumbnail, _thumbnail_field_arcmin
             from PySide6.QtGui import QPixmap
 
-            def _set_thumb(thumb_label, data: bytes) -> None:
+            loaded = 0
+            for rec, thumb_label in zip(shown, thumb_labels, strict=True):
+                obj = rec.obj
+                field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
+                data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)
                 pixmap = QPixmap()
                 if data and pixmap.loadFromData(data) and not pixmap.isNull():
                     thumb_label.setPixmap(pixmap.scaled(
                         _CARD_THUMB_PX, _CARD_THUMB_PX,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
                     ))
-
-            uncached: list[tuple] = []
-            for rec, thumb_label in zip(shown, thumb_labels, strict=True):
-                obj = rec.obj
-                field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
-                data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin)
-                if data:
-                    _set_thumb(thumb_label, data)
-                else:
-                    uncached.append((obj, thumb_label))
-
-            if uncached:
-                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-                try:
-                    for obj, thumb_label in uncached[:_MAX_AUTO_THUMBNAILS]:
-                        try:
-                            data = asyncio.run(atlas._fetch_thumbnail(obj))
-                        except Exception:
-                            logger.debug("Could not fetch card thumbnail for %s", obj.primary_name, exc_info=True)
-                            continue
-                        _set_thumb(thumb_label, data)
-                finally:
-                    QApplication.restoreOverrideCursor()
+                    loaded += 1
+            if loaded == len(shown):
+                image_note_label.setText(f"Images: all {loaded} loaded from the local cache.")
+            elif loaded:
+                image_note_label.setText(
+                    f"Images: {loaded} of {len(shown)} loaded from the local cache; the rest are not "
+                    "downloaded here — load them in Options > Planning (Download Catalog Images).")
+            else:
+                image_note_label.setText(
+                    "Images: none loaded — this screen does not download images. Load them in "
+                    "Options > Planning (Download Catalog Images) to see them here.")
 
         rank_btn.clicked.connect(run_rank)
         date_edit.dateChanged.connect(lambda _=None: _refresh_day_night_band())

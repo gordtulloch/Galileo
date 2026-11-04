@@ -45,6 +45,8 @@ class Engine:
         self.leases: Any = None
         self.gateway: Any = None
         self.channel: Any = None
+        self.feed: Any = None
+        self.guiding: Any = None
         self._channel_loop: asyncio.AbstractEventLoop | None = None
         self._channel_thread: threading.Thread | None = None
         self.registry: Any = None
@@ -99,7 +101,9 @@ class Engine:
         register_device_operations(self.registry, self.devices)
         from galileo.control_surface.sessions import register_session_operations
         from galileo.engine.sessions import EngineSessions
-        sessions = EngineSessions(self.devices, self.runner)
+        from galileo.engine.guiding import EngineGuiding
+        self.guiding = EngineGuiding(self.devices, self.state)
+        sessions = EngineSessions(self.devices, self.runner, self.guiding)
         register_session_operations(self.registry, sessions)                                      # CSURF-180
         from galileo.control_surface.piers import EnginePiers, register_pier_operations
         register_pier_operations(self.registry, EnginePiers(self.devices, sessions))             # CSURF-100
@@ -109,6 +113,18 @@ class Engine:
         from galileo.control_surface.flips import register_flip_operations
         from galileo.engine.flips import EngineFlips
         register_flip_operations(self.registry, EngineFlips(self.devices, self.runner))           # CSURF-170
+        from galileo.control_surface.solve import register_solve_operations
+        from galileo.engine.solve import EngineSolve
+        register_solve_operations(self.registry, EngineSolve(self.devices, self.runner))          # CSURF-140
+        from galileo.control_surface.guiding import register_guiding_operations
+        register_guiding_operations(self.registry, self.guiding)                                  # CSURF-160
+        from galileo.control_surface.sky import register_sky_operations
+        from galileo.engine.sky import EngineSky
+        register_sky_operations(self.registry, EngineSky(self.devices))                           # CSURF-130
+        from galileo.control_surface.history import StoreHistory, register_history_operations
+        register_history_operations(self.registry, StoreHistory())                                # CSURF-230
+        from galileo.control_surface.schedule import StoredSchedule, register_schedule_operations
+        register_schedule_operations(self.registry, StoredSchedule(self.devices.pier_name))      # CSURF-200
         if not self.embedded:                                # the desktop has its own pointing helpers and watchdog
             self.helpers = Helpers(self.devices, self.state)    # HEAD-060
             self.helpers.start()
@@ -168,6 +184,13 @@ class Engine:
         self._channel_thread.start()
         info = asyncio.run_coroutine_threadsafe(self.channel.start(), loop).result(30)
         self.lock.update(channel=info)
+        from galileo.control_surface.feed import EventFeed
+        from galileo.control_surface.service import ControlSurfaceService, publish_control_surface
+        self.feed = EventFeed(state=self.state, leases=self.leases, bus=bus, pier_ids=self.devices.pier_ids)
+        publish_control_surface(ControlSurfaceService(                  # CSURF-250: front-end plugins use these objects
+            registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state,
+            piers=lambda: asyncio.run_coroutine_threadsafe(self.channel._piers_list(), loop).result(10),
+            feed=self.feed))                                            # CSURF-260
 
     def _on_settings_changed(self, _event: Any) -> None:
         """An Options change reached the database: read the engine's own settings again. A different Observatory
@@ -184,6 +207,11 @@ class Engine:
 
     def _stop_channel(self) -> None:
         loop, self._channel_loop = self._channel_loop, None
+        from galileo.control_surface.service import withdraw_control_surface
+        withdraw_control_surface()
+        feed, self.feed = self.feed, None
+        if feed is not None:
+            feed.close()
         if loop is None:
             return
         if self.channel is not None:
@@ -203,6 +231,8 @@ class Engine:
             self.helpers.stop()
         if self.runner is not None:
             self.runner.shutdown()                    # sessions end before their devices are disconnected
+        if self.guiding is not None:
+            self.guiding.close()                      # after the sessions that might still be guiding
         if self.devices is not None:
             self.devices.cancel_retries()
             if self._connecting is not None:

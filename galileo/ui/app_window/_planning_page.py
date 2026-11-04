@@ -154,7 +154,8 @@ class AppWindowPlanningPageMixin:
             chart_widget = _AltitudeChart()
             chart_widget.setFixedSize(*_CARD_CHART_SIZE)
             if chart is not None and chart.get("altitudes"):
-                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"))
+                chart_widget.set_data(chart["times"], chart["altitudes"], chart.get("sun_altitudes"),
+                                     chart.get("horizon_altitudes"))
             row.addWidget(chart_widget)
 
             # Rightmost: this result's own action buttons — select it as the

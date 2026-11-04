@@ -9,8 +9,8 @@ from the device service with the same assembly the desktop uses (``galileo.sessi
 ``preflight`` and hands it to the runner. Nothing here imports Qt.
 
 What differs from a desktop run: the FITS header context holds the optical tube, camera, site, pointing and focus
-position but not the Imaging page's current target, and there is no Guider service yet, so a template that guides
-reports "No guider connected" at pre-flight.
+position but not the Imaging page's current target, and PHD2 is used only if a client has already connected it
+(``guiding.connect``, CSURF-160); otherwise a template that guides reports "No guider connected" at pre-flight.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ async def frame_context(devices: Any, pier: str, record: Any, camera_slot: str) 
     return {k: v for k, v in context.items() if v not in (None, "")}
 
 
-async def build_context(devices: Any, pier: str, camera_slot: str = "primary") -> Any:
+async def build_context(devices: Any, pier: str, camera_slot: str = "primary", guider: Any = None) -> Any:
     from galileo.current_object import pier_key
     record = devices.pier_record(pier)
     if record is None:
@@ -120,7 +120,7 @@ async def build_context(devices: Any, pier: str, camera_slot: str = "primary") -
         mount=devices.controller(pier, "mount"), filter_wheel=devices.controller(pier, "filter_wheel"),
         focuser=devices.controller(pier, "focuser"), rotator=devices.controller(pier, "rotator"),
         dome=devices.controller(pier, "dome"), dome_service=None,
-        guider=None,                      # the guider service is not built in the engine yet
+        guider=guider,                    # the Pier's connected PHD2, if a client has connected it (CSURF-160)
         flat_panel=devices.controller(pier, "flat_panel"),
         arbiter=_arbiter(getattr(observatory, "name", "") or ""), observatory=observatory,
         notify_service=build_notify_service(observatory), location=location,
@@ -130,8 +130,8 @@ async def build_context(devices: Any, pier: str, camera_slot: str = "primary") -
 class EngineSessions:
     """``SessionAccess`` (``galileo.control_surface.sessions``) over the engine's runner and device service."""
 
-    def __init__(self, devices: Any, runner: Any) -> None:
-        self._devices, self._runner = devices, runner
+    def __init__(self, devices: Any, runner: Any, guiding: Any = None) -> None:
+        self._devices, self._runner, self._guiding = devices, runner, guiding
 
     # -- reading and controlling a run (the runner's own view) -----------------------------------
     def progress(self, pier: str) -> dict[str, Any] | None:
@@ -160,7 +160,8 @@ class EngineSessions:
         blocks = load_template(template, target)
         if not blocks:
             raise SessionRefused("This session has no blocks to run.")
-        context = await build_context(self._devices, pier, camera_slot)
+        context = await build_context(self._devices, pier, camera_slot,
+                                      guider=self._guiding.service(pier) if self._guiding is not None else None)
         problems = preflight(blocks, context)
         if problems:
             raise SessionRefused(" ".join(problems))
