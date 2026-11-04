@@ -32,7 +32,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
-from galileo.history import get_history
+from galileo.engine.runner import run_session
+from galileo.session_context import assemble_context
 from galileo.session_exec import (
     SessionContext,
     SessionExecutor,
@@ -50,20 +51,6 @@ SAFETY_INTERVAL_MS = 5_000
 # ---------------------------------------------------------------------------
 # Context construction (UI thread)
 # ---------------------------------------------------------------------------
-
-class _ConfiguredAutofocus:
-    """An ``AutofocusService`` plus the Pier's saved sweep settings (FOC-070), exposing the
-    zero-argument ``run()`` / ``cancel()`` the executor expects."""
-
-    def __init__(self, service: Any, step_size: int, num_points: int) -> None:
-        self._service, self._step, self._points = service, step_size, num_points
-
-    async def run(self):
-        return await self._service.run(step_size=self._step, num_points=self._points)
-
-    def cancel(self) -> None:
-        self._service.cancel()
-
 
 def _page_adapter(window: Any, page: str, key: Any = None, selected: bool = True) -> Any:
     """The device a page holds for a Pier. For the selected Pier that is whatever the page shows;
@@ -104,23 +91,9 @@ def _observatory_arbiter(window: Any) -> Any:
 
 
 def _build_notify_service(window: Any) -> Any:
-    """A ``NotificationService`` bound to the current Observatory, with the operator's e-mail /
-    SMS channels from its contact details (OBS-090, NOTIF-040) and in-app delivery to the log."""
-    from galileo.notify import NotificationService
-    from galileo.notify_settings import configure_service, load_notify_settings
-    service = NotificationService()
-    observatory = getattr(window, "_current_observatory", None)
-    contacts = None
-    # The UI's Observatory is a database record; only the in-memory ``Observatory`` carries
-    # contact details (OBS-090) today, so external channels are added only when they exist.
-    if observatory is not None and hasattr(observatory, "contact_details"):
-        service.set_owning_observatory(observatory)
-        contacts = service.resolve_delivery_contacts()
-    # Recipients: the Observatory's contact details when set, else Options > Notifications;
-    # SMTP server, credentials, gateway and per-event switches always come from Options > Notifications.
-    configure_service(service, load_notify_settings(), contacts)
-    service.subscribe(lambda n: logger.info("Notification: %r", n))
-    return service
+    """A ``NotificationService`` bound to the window's current Observatory (see ``build_notify_service``)."""
+    from galileo.session_context import build_notify_service
+    return build_notify_service(getattr(window, "_current_observatory", None))
 
 
 def build_session_context(window: Any, pier: Any = None, camera_slot: str | None = None) -> SessionContext:
@@ -168,27 +141,8 @@ def build_session_context(window: Any, pier: Any = None, camera_slot: str | None
     if guider is not None and not guider.is_connected:
         guider = None
 
-    ctx = SessionContext(
-        pier_name=getattr(pier, "name", "") or "",
-        camera=camera, mount=mount, filter_wheel=wheel, focuser=focuser,
-        rotator=_page_adapter(window, "rotator", key, selected),
-        dome=_page_adapter(window, "dome", key, selected),
-        dome_service=_dome_service(window, key, selected), arbiter=_observatory_arbiter(window),
-        guider=guider, flat_panel=_page_adapter(window, "flat_panel", key, selected),
-        observatory=getattr(window, "_current_observatory", None),
-        notify_service=_build_notify_service(window),
-        history=get_history(),
-    )
-
     location_getter = getattr(window, "_flats_observing_location", None)
-    ctx.location = (location_getter() if selected else location_getter(pier)) if location_getter else None
-    if pier is not None and camera is not None:
-        try:
-            from galileo.observatory import get_device_config
-            cfg = get_device_config(pier, "camera", slot=camera_slot)
-            ctx.max_well_depth = cfg.max_well_depth if cfg is not None else None
-        except Exception:
-            logger.exception("Could not read the camera's Max Well Depth")
+    location = (location_getter() if selected else location_getter(pier)) if location_getter else None
 
     frame_context_getter = getattr(window, "_imaging_frame_context", None)
     try:
@@ -200,62 +154,13 @@ def build_session_context(window: Any, pier: Any = None, camera_slot: str | None
         logger.exception("Could not gather the FITS header context")
         frame_context = {}
 
-    def make_imaging():
-        from galileo.ui.imaging import ImagingService
-        svc = ImagingService(camera=camera)
-        svc.auto_save_to_library = True
-        svc.pier_key = key
-        svc.frame_context = dict(frame_context)
-        svc._mount = mount
-        return svc
-
-    def autofocus_inputs():
-        from galileo.observatory import get_autofocus_params, get_filter_offset_steps
-        return get_autofocus_params(pier), get_filter_offset_steps(pier)
-
-    def make_autofocus():
-        from galileo.autofocus import AutofocusService
-        params, offsets = autofocus_inputs()
-        service = AutofocusService(
-            camera=camera, focuser=focuser, exposure_s=params.exposure_s,
-            backlash_compensation=params.backlash_compensation, pier_key=key, filter_offsets=offsets)
-        service._current_position = int(getattr(focuser, "position", 0) or 0)
-        return _ConfiguredAutofocus(service, params.step_size, params.num_points)
-
-    async def apply_filter_focus_offset(from_filter, to_filter):
-        if focuser is None or not from_filter or from_filter == to_filter:
-            return
-        params, offsets = autofocus_inputs()
-        if not offsets:
-            return
-        from galileo.autofocus import AutofocusService
-        service = AutofocusService(
-            focuser=focuser, backlash_compensation=params.backlash_compensation, filter_offsets=offsets)
-        service._current_position = int(getattr(focuser, "position", 0) or 0)
-        await service.apply_filter_offset(from_filter, to_filter)
-
-    def make_solve_workflow():
-        from galileo.observatory import make_pier_solver
-        from galileo.platesolve import SolveWorkflow
-        solver = make_pier_solver(pier, pier_key=key)
-        if not solver.is_available():
-            raise RuntimeError(f"the plate solver is not set up — {solver.missing_message()}")
-        return SolveWorkflow(solver, camera=camera, mount=mount, log=logger.info,
-                             frame_metadata=dict(frame_context))
-
-    def make_calibration():
-        from galileo.calibration import CalibrationService
-        from galileo.ui.imaging import ImagingService
-        return CalibrationService(
-            camera=camera, filter_wheel=wheel, flat_panel=ctx.flat_panel, mount=mount,
-            output_dir=ImagingService()._scratch_folder() / "flats")
-
-    ctx.make_imaging = make_imaging
-    ctx.make_autofocus = make_autofocus
-    ctx.make_solve_workflow = make_solve_workflow
-    ctx.make_calibration = make_calibration
-    ctx.apply_filter_focus_offset = apply_filter_focus_offset
-    return ctx
+    return assemble_context(
+        pier=pier, key=key, camera_slot=camera_slot, camera=camera, mount=mount, filter_wheel=wheel,
+        focuser=focuser, rotator=_page_adapter(window, "rotator", key, selected),
+        dome=_page_adapter(window, "dome", key, selected), dome_service=_dome_service(window, key, selected),
+        guider=guider, flat_panel=_page_adapter(window, "flat_panel", key, selected),
+        arbiter=_observatory_arbiter(window), observatory=getattr(window, "_current_observatory", None),
+        notify_service=_build_notify_service(window), location=location, frame_context=frame_context)
 
 
 # ---------------------------------------------------------------------------
@@ -287,20 +192,11 @@ class _RunThread(QThread):
 
     def run(self) -> None:
         run = self._run
-        executor = run.executor
-
-        async def runner(job):
-            run.result = await executor.run(job.sequence.blocks)
-            return run.result
-
+        # The same code path the engine's SessionRunner runs (HEAD-050): a manual Run executes at once and stays
+        # off the Schedule; a scheduled run goes through the scheduler so it behaves the same however it started.
         try:
-            if run.manual:
-                # Run executes at once and stays off the Schedule: no job, no queue, no timeline slot.
-                run.result = asyncio.run(executor.run(run.region.blocks))
-                value = getattr(run.result.state, "value", run.result.state)
-                state = value if value in ("completed", "error") else "stopped"
-            else:
-                state = asyncio.run(run.scheduler.run_job(run.job, runner))
+            state, run.result = asyncio.run(run_session(
+                run.executor, run.region.blocks, scheduler=run.scheduler, job=run.job, manual=run.manual))
         except Exception:
             logger.exception("Session run thread failed")
             state = "error"

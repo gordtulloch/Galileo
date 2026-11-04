@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import _when_visible, _DEFAULT_PORTS, QLabel, QWidget, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import NOT_CONNECTED, UNSUPPORTED, disconnect_all, scan_devices
+from galileo.rotator_ops import RotatorOps, derotation_rate, describe_status
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,6 @@ class AppWindowRotatorPageMixin:
         import datetime
         import time
         from galileo import derotation
-        from galileo.exceptions import DevicePropertyError
 
         page = QWidget()
         page.setObjectName("RotatorPage")
@@ -319,7 +321,8 @@ class AppWindowRotatorPageMixin:
             "adapter": None, "target": None, "correction": 0.0,
             "derotator": None, "position": None,
         }
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.ROTATOR)
         device_controls = (backlash_slider, backlash_ok, goto_spin, goto_btn, reverse_check, zero_btn)
 
         # --- target / derotation maths ----------------------------------
@@ -362,18 +365,8 @@ class AppWindowRotatorPageMixin:
             """``(alt, az, effective deg/min)`` for the target now, or ``None``
             if there's no target. The rate is ``None`` while the target is
             below the horizon."""
-            if state["target"] is None:
-                return None
-            alt, az = derotation.radec_to_altaz(
-                state["target"][0], state["target"][1], lat_spin.value(), lon_spin.value(),
-            )
-            if alt <= 0.0:
-                return alt, az, None
-            rate = derotation.field_rotation_rate_deg_per_min(lat_spin.value(), alt, az)
-            rate *= 1.0 + state["correction"] / 100.0
-            if reverse_check.isChecked():
-                rate = -rate
-            return alt, az, rate
+            return derotation_rate(state["target"], lat_spin.value(), lon_spin.value(), state["correction"],
+                                   reverse_check.isChecked())
 
         def _recompute() -> None:
             now = datetime.datetime.now().astimezone()
@@ -395,75 +388,52 @@ class AppWindowRotatorPageMixin:
         clock_timer.start(1000)
 
         # --- device actions ---------------------------------------------
+        ops = RotatorOps(lambda: state.get("adapter"))
+
         def _call(method: str, *args, action: str) -> bool:
             """Run one adapter command; report failure in the status bar/log."""
-            adapter = state.get("adapter")
-            if adapter is None:
+            outcome = ops.run(method, *args, action=action)
+            if outcome.ok:
+                return True
+            if outcome.kind == NOT_CONNECTED:
                 QMessageBox.information(self._window, "Not connected", "Connect the rotator first.")
-                return False
-            import asyncio
-            try:
-                asyncio.run(getattr(adapter, method)(*args))
-            except DevicePropertyError as exc:
-                logger.warning("Rotator %s not available: %s", action, exc)
-                self._window.statusBar().showMessage(str(exc), 8000)
-                return False
-            except Exception:
-                logger.exception("Rotator %s failed", action)
-                self._window.statusBar().showMessage(f"Rotator {action} failed — see log.", 6000)
-                return False
-            return True
+            else:
+                self._window.statusBar().showMessage(outcome.message, 8000 if outcome.kind == UNSUPPORTED else 6000)
+            return False
 
         def _apply_status(status: dict) -> None:
-            connected = bool(status)
+            view = describe_status(status)
+            connected = view.connected
             if connected:  # an empty status is "not connected": keep what a device pick looked up
                 apply_driver_info(status)
             derotating = state["derotator"] is not None
             for widget in device_controls:
                 locked = derotating and widget in (goto_spin, goto_btn, zero_btn)
                 widget.setEnabled(connected and not locked)
-            position = status.get("position")
-            state["position"] = position
-            position_value.setText("—" if position is None else f"{position:.2f}")
-            mechanical = status.get("mechanical_position")
-            bits = []
-            if mechanical is not None:
-                bits.append(f"Mechanical {mechanical:.2f}°")
-            if position is not None:
-                bits.append(f"Sky {position:.2f}°")
-            if status.get("is_moving"):
-                bits.append("moving")
-            position_detail.setText(" · ".join(bits))
-            if status.get("reverse") is not None:
+            state["position"] = view.position
+            position_value.setText(view.position_text)
+            position_detail.setText(view.detail)
+            if view.reverse is not None:
                 reverse_check.blockSignals(True)
-                reverse_check.setChecked(bool(status["reverse"]))
+                reverse_check.setChecked(view.reverse)
                 reverse_check.blockSignals(False)
-            supported = bool(status.get("backlash_supported"))
-            backlash_slider.setEnabled(connected and supported)
-            backlash_ok.setEnabled(connected and supported)
-            tip = "" if supported or not connected else "This rotator's driver has no backlash setting."
-            backlash_slider.setToolTip(tip)
-            backlash_ok.setToolTip(tip)
-            if supported and status.get("backlash") is not None and not backlash_slider.isSliderDown():
+            backlash_slider.setEnabled(connected and view.backlash_supported)
+            backlash_ok.setEnabled(connected and view.backlash_supported)
+            backlash_slider.setToolTip(view.backlash_tip)
+            backlash_ok.setToolTip(view.backlash_tip)
+            if view.backlash is not None and not backlash_slider.isSliderDown():
                 backlash_slider.blockSignals(True)
-                backlash_slider.setValue(round(status["backlash"] * 10))
+                backlash_slider.setValue(round(view.backlash * 10))
                 backlash_slider.blockSignals(False)
-                backlash_value.setText(f"{status['backlash']:.1f}")
+                backlash_value.setText(f"{view.backlash:.1f}")
             if connected and not derotating:
-                zero_btn.setEnabled(bool(status.get("can_sync", True)))
-            max_angle = status.get("max_angle")
-            if max_angle:
-                goto_hint.setText(f"(0 – {min(max_angle, 359.99):g})")
+                zero_btn.setEnabled(view.can_sync)
+            if view.goto_hint:
+                goto_hint.setText(view.goto_hint)
 
         def _refresh_status() -> dict | None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh rotator status")
+            status = ops.status("the rotator")
+            if status is None:
                 return None
             _apply_status(status)
             return status
@@ -627,17 +597,8 @@ class AppWindowRotatorPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.ROTATOR)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.ROTATOR))
-            except Exception:
-                logger.exception("Rotator scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.ROTATOR, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Rotator scan failed — see log.", 6000)
                 devices = []
             current = device_combo.currentText()
@@ -774,11 +735,7 @@ class AppWindowRotatorPageMixin:
             if adapter is None:
                 return
             _stop_derotation("Pier disconnected")
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Rotator")
+            disconnect_all([adapter], "Rotator")
             state["adapter"] = None
             _apply_status({})
             self._window.statusBar().showMessage("Rotator disconnected.", 4000)

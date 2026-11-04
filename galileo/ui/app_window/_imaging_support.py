@@ -188,6 +188,7 @@ class AppWindowImagingSupportMixin:
 
     def _connect_device_adapter(
         self: AppWindowState, category, driver: str, server: str, port: int, device_name: str, configure=None,
+        slot: str = "primary",
     ):
         """Instantiate and connect one device backend for *category*, or
         return ``None`` (having logged why) on failure. Shared by any
@@ -195,16 +196,25 @@ class AppWindowImagingSupportMixin:
         Camera page's auto-connect and the Focuser page's per-panel Connect
         and status polling. *configure*, if given, is called with the new
         adapter just before it connects (the Focuser page applies its saved
-        mode and travel limits that way)."""
+        mode and travel limits that way). *slot* names the device's place on the Pier
+        (the Focuser's second panel is ``focuser_2``); it matters only when devices are
+        held in the device service (see ``galileo.desktop_devices``)."""
         import asyncio
+        from galileo import desktop_devices
         from galileo.ui import startup_progress
         target = f"{device_name or category} at {server}:{port}"
         startup_progress.begin_detail(f"Connecting to {target}")
         try:
-            adapter = self._make_adapter(category, driver, server, port, device_name)
-            if configure is not None:
-                configure(adapter)
-            asyncio.run(adapter.connect())
+            if desktop_devices.enabled() and self._current_pier is not None:
+                adapter = desktop_devices.connect(self._current_pier, category, slot, driver, server, port,
+                                                  device_name, configure)
+                if adapter is None:
+                    raise RuntimeError("the device service could not connect it")
+            else:
+                adapter = self._make_adapter(category, driver, server, port, device_name)
+                if configure is not None:
+                    configure(adapter)
+                asyncio.run(adapter.connect())
         except Exception:
             logger.exception("Could not connect %s %r at %s:%s", category, device_name, server, port)
             startup_progress.end_detail(f"Failed to connect to {target}", False)
@@ -332,7 +342,8 @@ class AppWindowImagingSupportMixin:
         (driver/server/port) but are otherwise independent devices, each
         connected separately."""
         from galileo.core.devices import DeviceCategory
-        adapter = self._connect_device_adapter(DeviceCategory.CAMERA, driver, server, port, device_name)
+        slot = "primary" if slot_label.lower().startswith("primary") else slot_label.lower().replace(" ", "_")
+        adapter = self._connect_device_adapter(DeviceCategory.CAMERA, driver, server, port, device_name, slot=slot)
         if adapter is None:
             self._window.statusBar().showMessage(
                 f"Could not connect to saved {slot_label} {device_name!r} — see log.", 6000

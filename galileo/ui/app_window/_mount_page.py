@@ -10,10 +10,14 @@ from typing import TYPE_CHECKING, Any
 import logging
 import os
 
-from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
+from galileo.desktop_devices import PierAdapters
+from galileo.mount_ops import (
+    LIMIT, NOT_CONNECTED, OBSTRUCTED, PARKED, MountOps, connect_mount, describe_status, scan_mounts, target_alt_az,
+    target_ra_dec,
+)
 
 from ._hold_to_move import HoldToMove, combo_rate, combo_rate_index, sync_rate_combo
-from ._common import _format_hms, _format_dms, _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget, guard_loopback_edit
+from ._common import _when_visible, _DEFAULT_PORTS, _PARKED_MESSAGE, _OBSTRUCTED_MESSAGE, QLabel, QWidget, guard_loopback_edit
 
 logger = logging.getLogger(__name__)
 
@@ -385,10 +389,12 @@ class AppWindowMountPageMixin:
         # This Pier's mount adapter persists here across a Pier switch, keyed by
         # pier_key() — state["adapter"] is just "whichever Pier is displayed right
         # now"'s adapter, kept in sync with this on every reload (see reload_page()).
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.MOUNT)
+        ops = MountOps(lambda: state.get("adapter"))      # every command to the displayed Pier's mount (galileo.mount_ops)
 
         import time as _time
-        from galileo.mount_limits import MountLimits, pier_side_text
+        from galileo.mount_limits import MountLimits
 
         FLIP_COOLDOWN_S = 600.0         # don't re-attempt a flip the driver didn't carry out
         NOTE_SHOW_S = 120.0
@@ -536,59 +542,36 @@ class AppWindowMountPageMixin:
                         check.blockSignals(False)
 
         def _apply_status(status: dict) -> None:
-            name_value.setText(status.get("name") or "—")
-            description_value.setText(status.get("description") or "—")
-            driver_info_value.setText(status.get("driver_info") or "—")
-            driver_version_value.setText(status.get("driver_version") or "—")
-            site_latitude_value.setText(_format_dms(status.get("site_latitude")))
-            site_longitude_value.setText(_format_dms(status.get("site_longitude")))
-            elevation = status.get("site_elevation")
-            site_elevation_value.setText("—" if elevation is None else f"{elevation:.1f} m")
-            epoch_value.setText(status.get("equatorial_system") or "—")
-            lst = status.get("sidereal_time")
-            sidereal_time_value.setText(_format_hms(lst))
-            ra = status.get("right_ascension")
-            right_ascension_value.setText(_format_hms(ra))
-            declination_value.setText(_format_dms(status.get("declination")))
-            altitude_value.setText(_format_dms(status.get("altitude")))
-            azimuth_value.setText(_format_dms(status.get("azimuth")))
-            side_of_pier_value.setText(status.get("side_of_pier") or "—")
-            tracking = status.get("tracking")
-            tracking_value.setText("—" if tracking is None else ("Tracking" if tracking else "Stopped"))
-            meridian_in_value.setText(_format_hms((ra - lst) % 24.0) if ra is not None and lst is not None else "—")
-            pier_side_label.setText("Pier Side: " + pier_side_text(status.get("side_of_pier")))
-            state["tracking"] = bool(tracking) if tracking is not None else None
+            view = describe_status(status)
+            for label, text in (
+                (name_value, view.name), (description_value, view.description),
+                (driver_info_value, view.driver_info), (driver_version_value, view.driver_version),
+                (site_latitude_value, view.site_latitude), (site_longitude_value, view.site_longitude),
+                (site_elevation_value, view.site_elevation), (epoch_value, view.epoch),
+                (sidereal_time_value, view.sidereal_time), (right_ascension_value, view.right_ascension),
+                (declination_value, view.declination), (altitude_value, view.altitude),
+                (azimuth_value, view.azimuth), (side_of_pier_value, view.side_of_pier),
+                (tracking_value, view.tracking), (meridian_in_value, view.meridian_in),
+            ):
+                label.setText(text)
+            pier_side_label.setText(view.pier_side)
+            state["tracking"] = view.tracking_flag
             _update_flip_label(state["tracking"])
-            at_park = status.get("at_park")
-            state["at_park"] = at_park
-            park_status_value.setText("Park status: —" if at_park is None else ("Park status: Parked" if at_park else "Park status: Unparked"))
-            park_btn.setEnabled(not at_park)
-            unpark_btn.setEnabled(at_park is not False)
+            state["at_park"] = view.at_park
+            park_status_value.setText(view.park_status)
+            park_btn.setEnabled(view.park_enabled)
+            unpark_btn.setEnabled(view.unpark_enabled)
             _sync_manual_motion(status)
-            rate = status.get("tracking_rate")
-            if tracking is None:
-                tracking_status_value.setText("Tracking: —")
-            elif tracking:
-                tracking_status_value.setText(f"Tracking: On ({rate} rate)" if rate else "Tracking: On")
-            else:
-                tracking_status_value.setText("Tracking: Off" + (f" ({rate} rate selected)" if rate else ""))
+            tracking_status_value.setText(view.tracking_status)
 
         def _refresh_status() -> dict | None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return None
-            import asyncio
-            try:
-                status = asyncio.run(adapter.get_status())
-            except Exception:
-                logger.exception("Could not refresh mount status")
+            status = ops.status()
+            if status is None:
                 return None
             _apply_status(status)
             return status
 
         def _do_connect(device_name: str) -> None:
-            import asyncio
-            from galileo.core.devices import DeviceCategory
             from galileo.core.slew_guard import get_slew_guard
             from galileo.current_object import pier_key
             driver = driver_combo.currentText()
@@ -597,16 +580,9 @@ class AppWindowMountPageMixin:
             from galileo.ui import startup_progress
             target = f"Mount {device_name!r} at {server}:{port}"
             startup_progress.begin_detail(f"Connecting to {target}")
-            try:
-                adapter = self._make_adapter(DeviceCategory.MOUNT, driver, server, port, device_name)
-                obs = self._current_observatory
-                if obs is not None:
-                    adapter.site_lat = getattr(obs, "latitude", None)
-                    adapter.site_lon = getattr(obs, "longitude", None)
-                    adapter.site_elevation = getattr(obs, "elevation_m", None)
-                asyncio.run(adapter.connect())
-            except Exception:
-                logger.exception("Could not connect to Mount %r at %s:%d", device_name, server, port)
+            adapter = connect_mount(self._make_adapter, driver, server, port, device_name, self._current_observatory,
+                                    pier=self._current_pier)
+            if adapter is None:
                 startup_progress.end_detail(f"Failed to connect to {target}", False)
                 self._window.statusBar().showMessage(f"Could not connect to Mount {device_name!r} — see log.", 6000)
                 return
@@ -643,21 +619,7 @@ class AppWindowMountPageMixin:
             server = server_edit.text().strip() or "localhost"
             port = port_spin.value()
             driver = driver_combo.currentText()
-            from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.MOUNT)(host=server, port=port)
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                    adapter = get_adapter_class(DeviceCategory.MOUNT)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.MOUNT))
-            except Exception:
-                logger.exception("Mount scan failed on %s:%s", server, port)
-                self._window.statusBar().showMessage("Mount scan failed — see log.", 6000)
-                devices = []
+            devices = scan_mounts(driver, server, port)
             current = device_combo.currentText()
             device_combo.blockSignals(True)
             device_combo.clear()
@@ -681,70 +643,36 @@ class AppWindowMountPageMixin:
 
         scan_btn.clicked.connect(run_scan)
 
-        def _target_ra_dec() -> tuple:
-            ra_hours = ra_h.value() + ra_m.value() / 60.0 + ra_s.value() / 3600.0
-            dec_mag = abs(dec_d.value()) + dec_m.value() / 60.0 + dec_s.value() / 3600.0
-            dec_deg = -dec_mag if dec_d.value() < 0 else dec_mag
-            return ra_hours, dec_deg
-
-        def _target_alt_az() -> tuple:
-            alt_mag = abs(alt_d.value()) + alt_m.value() / 60.0 + alt_s.value() / 3600.0
-            alt_deg = -alt_mag if alt_d.value() < 0 else alt_mag
-            az_deg = az_d.value() + az_m.value() / 60.0 + az_s.value() / 3600.0
-            return alt_deg, az_deg
+        def _report(outcome) -> bool:
+            """Tell the person how a mount command went; ``True`` when it worked."""
+            if outcome.ok:
+                return True
+            if outcome.kind == NOT_CONNECTED:
+                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
+            elif outcome.kind == PARKED:
+                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
+            elif outcome.kind == OBSTRUCTED:
+                self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
+            elif outcome.kind == LIMIT:
+                self._window.statusBar().showMessage(outcome.message, 8000)
+            else:
+                self._window.statusBar().showMessage(outcome.message, 6000)
+            return False
 
         def _slew_radec_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            ra_hours, dec_deg = _target_ra_dec()
-            import asyncio
-            try:
-                asyncio.run(adapter.slew_to_coordinates(ra_hours * 15.0, dec_deg))
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except SlewObstructedError:
-                self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
-                return
-            except MountLimitError as exc:
-                self._window.statusBar().showMessage(str(exc), 8000)
-                return
-            except Exception:
-                logger.exception("Mount slew-to-coordinates failed")
-                self._window.statusBar().showMessage("Slew failed — see log.", 6000)
-                return
-            logger.info("Mount: slew requested to RA %.4fh Dec %.4f°", ra_hours, dec_deg)
-            self._track_when_slew_finishes(adapter)
+            ra_hours, dec_deg = target_ra_dec((ra_h.value(), ra_m.value(), ra_s.value()),
+                                              (dec_d.value(), dec_m.value(), dec_s.value()))
+            if _report(ops.slew_to_coordinates(ra_hours, dec_deg)):
+                self._track_when_slew_finishes(state["adapter"])
 
         ra_slew_btn.clicked.connect(_slew_radec_clicked)
         dec_slew_btn.clicked.connect(_slew_radec_clicked)
 
         def _slew_altaz_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            alt_deg, az_deg = _target_alt_az()
-            import asyncio
-            try:
-                asyncio.run(adapter.slew_to_altaz(alt_deg, az_deg))
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except SlewObstructedError:
-                self._window.statusBar().showMessage(_OBSTRUCTED_MESSAGE, 6000)
-                return
-            except MountLimitError as exc:
-                self._window.statusBar().showMessage(str(exc), 8000)
-                return
-            except Exception:
-                logger.exception("Mount slew-to-altaz failed")
-                self._window.statusBar().showMessage("Slew failed — see log.", 6000)
-                return
-            logger.info("Mount: slew requested to Alt %.4f° Az %.4f°", alt_deg, az_deg)
-            self._track_when_slew_finishes(adapter)
+            alt_deg, az_deg = target_alt_az((alt_d.value(), alt_m.value(), alt_s.value()),
+                                            (az_d.value(), az_m.value(), az_s.value()))
+            if _report(ops.slew_to_altaz(alt_deg, az_deg)):
+                self._track_when_slew_finishes(state["adapter"])
 
         alt_slew_btn.clicked.connect(_slew_altaz_clicked)
         az_slew_btn.clicked.connect(_slew_altaz_clicked)
@@ -758,15 +686,9 @@ class AppWindowMountPageMixin:
 
         def _reversed_toggled(axis: int, checked: bool) -> None:
             """Reversal the driver owns is set in the driver, so every INDI client sees it."""
-            adapter = state.get("adapter")
-            if adapter is None or not state.get("driver_reversal"):
+            if state.get("adapter") is None or not state.get("driver_reversal"):
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.set_axis_reversed(axis, checked))
-            except Exception:
-                logger.exception("Could not set the mount's axis %d reversal", axis)
-                self._window.statusBar().showMessage("The mount driver would not change its motion direction — see log.", 6000)
+            _report(ops.set_axis_reversed(axis, checked))
 
         primary_reversed_check.toggled.connect(lambda checked: _reversed_toggled(0, checked))
         secondary_reversed_check.toggled.connect(lambda checked: _reversed_toggled(1, checked))
@@ -783,152 +705,56 @@ class AppWindowMountPageMixin:
             jog_motion.attach(btn, direction)
 
         def _stop_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            if state.get("adapter") is None:
                 return
-            import asyncio
             jog_motion.stop_all()
             try:
                 jog_motion.flush()
-                asyncio.run(adapter.abort_slew())
             except Exception:
                 logger.exception("Mount stop failed")
-            logger.info("Mount: Stop requested")
+            ops.abort_slew()
 
         stop_btn.clicked.connect(_stop_clicked)
 
         def _home_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.find_home())
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except Exception:
-                logger.exception("Mount find_home failed")
-                self._window.statusBar().showMessage("Find Home failed — see log.", 6000)
-                return
-            logger.info("Mount: Find Home requested")
-            _refresh_status()
+            if _report(ops.find_home()):
+                _refresh_status()
 
         home_btn.clicked.connect(_home_clicked)
 
         def _park_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.park())
-                logger.info("Mount: Park requested")
-            except Exception:
-                logger.exception("Mount park failed")
-                self._window.statusBar().showMessage("Park failed — see log.", 6000)
-                return
-            _refresh_status()
+            if _report(ops.park()):
+                _refresh_status()
 
         park_btn.clicked.connect(_park_clicked)
 
         def _unpark_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.unpark())
-                logger.info("Mount: Unpark requested")
-            except Exception:
-                logger.exception("Mount unpark failed")
-                self._window.statusBar().showMessage("Unpark failed — see log.", 6000)
-                return
-            _refresh_status()
+            if _report(ops.unpark()):
+                _refresh_status()
 
         unpark_btn.clicked.connect(_unpark_clicked)
 
         def _set_park_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.set_park_position())
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except Exception:
-                logger.exception("Mount set park position failed")
-                self._window.statusBar().showMessage("Set Park Position failed — see log.", 6000)
-                return
-            logger.info("Mount: park position set to current position")
-            self._window.statusBar().showMessage("Park position set to the current position.", 6000)
+            if _report(ops.set_park_position()):
+                self._window.statusBar().showMessage("Park position set to the current position.", 6000)
 
         set_park_btn.clicked.connect(_set_park_clicked)
 
         def _set_home_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            if not hasattr(adapter, "set_home_position"):
-                self._window.statusBar().showMessage("This driver can't set a home position.", 6000)
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.set_home_position())
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except Exception:
-                logger.exception("Mount set home position failed")
-                self._window.statusBar().showMessage("Set Home Position failed — see log.", 6000)
-                return
-            logger.info("Mount: home position set to current position")
-            self._window.statusBar().showMessage("Home position set to the current position.", 6000)
+            if _report(ops.set_home_position()):
+                self._window.statusBar().showMessage("Home position set to the current position.", 6000)
 
         set_home_btn.clicked.connect(_set_home_clicked)
 
         def _set_tracking_clicked(enabled: bool) -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            import asyncio
-            try:
-                asyncio.run(adapter.set_tracking(enabled))
-                logger.info("Mount: tracking %s requested", "on" if enabled else "off")
-            except MountParkedError:
-                self._window.statusBar().showMessage(_PARKED_MESSAGE, 6000)
-                return
-            except Exception:
-                logger.exception("Mount set_tracking failed")
-                self._window.statusBar().showMessage("Tracking change failed — see log.", 6000)
-                return
-            _refresh_status()
+            if _report(ops.set_tracking(enabled)):
+                _refresh_status()
 
         tracking_on_btn.clicked.connect(lambda: _set_tracking_clicked(True))
         tracking_off_btn.clicked.connect(lambda: _set_tracking_clicked(False))
 
         def _set_tracking_rate_clicked() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
-                QMessageBox.information(self._window, "Not connected", "Connect the mount first.")
-                return
-            mode = tracking_rate_combo.currentText()
-            import asyncio
-            try:
-                asyncio.run(adapter.set_tracking_rate_mode(mode))
-            except Exception:
-                logger.exception("Mount set_tracking_rate_mode failed")
-                self._window.statusBar().showMessage("Set tracking rate failed — see log.", 6000)
-                return
-            logger.info("Mount: tracking rate set to %s", mode)
+            _report(ops.set_tracking_rate(tracking_rate_combo.currentText()))
 
         set_rate_btn.clicked.connect(_set_tracking_rate_clicked)
 
@@ -1047,11 +873,7 @@ class AppWindowMountPageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect Mount")
+            MountOps(lambda: adapter).disconnect()
             state["adapter"] = None
             _apply_status({})
             self._window.statusBar().showMessage("Mount disconnected.", 4000)

@@ -1363,3 +1363,515 @@ def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window)
     east.released.emit()
     window._device_pages["mount"]["jog_controller"].flush()
     assert mount.move_axis.await_args_list[-1].args == (0, 0.0)
+
+
+# --- the Mount page's logic without the page (galileo.mount_ops) ---------------------------------------------
+
+class _OpsMount:
+    """A mount adapter that records what it is asked and can be told to fail."""
+
+    def __init__(self, fail=None):
+        self.calls, self.fail = [], fail
+
+    def _go(self, name, *args):
+        async def run():
+            self.calls.append((name, *args))
+            if self.fail:
+                raise self.fail
+        return run()
+
+    def slew_to_coordinates(self, ra, dec):
+        return self._go("slew_radec", ra, dec)
+
+    def slew_to_altaz(self, alt, az):
+        return self._go("slew_altaz", alt, az)
+
+    def park(self):
+        return self._go("park")
+
+    def set_tracking(self, on):
+        return self._go("tracking", on)
+
+    def set_axis_reversed(self, axis, value):
+        return self._go("reversed", axis, value)
+
+    async def get_status(self):
+        return {"tracking": True}
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_010_mount_ops_commands_and_outcomes():
+    """EQP-MNT-010: mount commands run against the adapter and report what happened as an outcome (parked,
+    obstructed, limit, failed, not connected) with no screen involved."""
+    from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
+    from galileo.mount_ops import FAILED, LIMIT, NOT_CONNECTED, OBSTRUCTED, PARKED, UNSUPPORTED, MountOps
+
+    mount = _OpsMount()
+    ops = MountOps(lambda: mount)
+    assert ops.slew_to_coordinates(1.0, 20.0).ok and mount.calls[-1] == ("slew_radec", 15.0, 20.0)   # hours -> degrees
+    assert ops.slew_to_altaz(45.0, 180.0).ok and ops.park().ok and ops.set_tracking(True).ok
+    assert ops.set_axis_reversed(1, True).ok and mount.calls[-1] == ("reversed", 1, True)
+
+    mount.fail = MountParkedError("parked")
+    assert ops.slew_to_coordinates(1.0, 2.0).kind == PARKED and ops.set_tracking(False).kind == PARKED
+    assert ops.park().kind == FAILED and "Park failed" in ops.park().message                        # park is never "parked"
+    mount.fail = SlewObstructedError("blocked")
+    assert ops.slew_to_altaz(1.0, 2.0).kind == OBSTRUCTED
+    mount.fail = MountLimitError("below the altitude limit")
+    out = ops.slew_to_coordinates(1.0, 2.0)
+    assert out.kind == LIMIT and out.message == "below the altitude limit"
+    mount.fail = RuntimeError("boom")
+    assert ops.slew_to_coordinates(1.0, 2.0).kind == FAILED and ops.slew_to_coordinates(1.0, 2.0).message == "Slew failed — see log."
+
+    none = MountOps(lambda: None)
+    assert none.park().kind == NOT_CONNECTED and none.status() is None and not none.disconnect()
+    assert MountOps(lambda: mount).status() == {"tracking": True}
+    assert MountOps(lambda: mount).set_home_position().kind == UNSUPPORTED                        # no such method on this driver
+
+
+@pytest.mark.requirement("TC-EQP-MNT-020")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_020_mount_status_text_and_targets():
+    """EQP-MNT-020: the status display text, the park/tracking wording and the manual coordinate fields are
+    computed without the page."""
+    from galileo.mount_ops import describe_status, target_alt_az, target_ra_dec
+
+    blank = describe_status({})
+    assert blank.name == "—" and blank.tracking_status == "Tracking: —" and blank.park_status == "Park status: —"
+    assert blank.park_enabled and blank.unpark_enabled and blank.tracking_flag is None
+    view = describe_status({"name": "EQ6", "right_ascension": 6.5, "sidereal_time": 5.0, "declination": -10.5,
+                            "site_elevation": 123.456, "tracking": True, "tracking_rate": "sidereal", "at_park": False})
+    assert view.name == "EQ6" and view.right_ascension == "06:30:00" and view.meridian_in == "01:30:00"
+    assert view.declination.startswith("-10°") and view.site_elevation == "123.5 m"
+    assert view.tracking_status == "Tracking: On (sidereal rate)" and view.park_status == "Park status: Unparked"
+    assert view.park_enabled and view.unpark_enabled is False
+    parked = describe_status({"tracking": False, "tracking_rate": "lunar", "at_park": True})
+    assert parked.tracking_status == "Tracking: Off (lunar rate selected)" and not parked.park_enabled and parked.unpark_enabled
+
+    assert target_ra_dec((1, 30, 0.0), (-10, 30, 0)) == (1.5, -10.5)
+    assert target_alt_az((45, 0, 36), (180, 30, 0)) == (45.01, 180.5)
+
+
+@pytest.mark.requirement("TC-EQP-MNT-020")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_020_connect_mount_uses_given_factory_and_site():
+    """EQP-MNT-020: a mount is built by whichever factory is given, told the Observatory's location, connected,
+    and a failure gives ``None`` instead of raising."""
+    from types import SimpleNamespace
+
+    from galileo.core.devices import DeviceCategory
+    from galileo.mount_ops import connect_mount
+
+    adapter = MagicMock()
+    adapter.connect = AsyncMock()
+    made = []
+
+    def factory(*args):
+        made.append(args)
+        return adapter
+
+    site = SimpleNamespace(latitude=51.0, longitude=-114.0, elevation_m=1000.0)
+    assert connect_mount(factory, "INDI", "pi", 7624, "EQMod", site) is adapter
+    assert made == [(DeviceCategory.MOUNT, "INDI", "pi", 7624, "EQMod")]
+    assert (adapter.site_lat, adapter.site_lon, adapter.site_elevation) == (51.0, -114.0, 1000.0)
+    adapter.connect.assert_awaited_once()
+
+    adapter.connect = AsyncMock(side_effect=RuntimeError("no route"))
+    assert connect_mount(factory, "INDI", "pi", 7624, "EQMod") is None
+    assert connect_mount(lambda *a: (_ for _ in ()).throw(OSError("x")), "INDI", "pi", 7624, "EQMod") is None
+
+
+class _OpsFocuser:
+    def __init__(self):
+        self.position = 500
+        self.moves = []
+        self.temp_comp = None
+        self.fail = False
+        self.disconnected = False
+
+    async def move_to(self, target):
+        if self.fail:
+            raise RuntimeError("stalled")
+        self.moves.append(target)
+
+    async def set_temp_comp(self, enabled):
+        self.temp_comp = enabled
+
+    async def get_status(self):
+        return {"position": self.position}
+
+    async def get_driver_info(self):
+        return {"name": "Mock"}
+
+    async def disconnect(self):
+        self.disconnected = True
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_040_focuser_ops_commands_and_outcomes():
+    """EQP-FOC-040: focuser commands run without the page and report an outcome; travel limits are changed
+    through the focuser settings and refused when they would not be a range."""
+    from galileo.device_ops import FAILED, NOT_CONNECTED
+    from galileo.focuser_ops import FocuserOps, clear_travel_limits, set_travel_limit
+    from galileo.focuser_settings import FocuserSettings
+
+    focuser = _OpsFocuser()
+    ops = FocuserOps(lambda: focuser)
+    assert ops.move_to(700).ok and focuser.moves == [700]
+    assert ops.set_temp_comp(True).ok and focuser.temp_comp is True
+    assert ops.status() == {"position": 500} and ops.driver_info() == {"name": "Mock"} and ops.position() == 500
+    focuser.fail = True
+    failed = ops.move_to(1)
+    assert failed.kind == FAILED and failed.message == "Move failed — see log."
+    assert ops.disconnect() and focuser.disconnected
+
+    none = FocuserOps(lambda: None)
+    assert none.move_to(1).kind == NOT_CONNECTED and none.status() is None and none.position() is None
+    assert not none.disconnect()
+
+    settings = FocuserSettings()
+    assert set_travel_limit(settings, "max", 900) == "" and settings.travel_max == 900
+    assert set_travel_limit(settings, "min", 100) == "" and (settings.travel_min, settings.travel_max) == (100, 900)
+    assert set_travel_limit(settings, "min", 950)                                  # above the max: refused
+    assert (settings.travel_min, settings.travel_max) == (100, 900)
+    ops.apply_travel(settings)
+    assert (focuser.travel_min, focuser.travel_max) == (100, 900)
+    clear_travel_limits(settings)
+    assert settings.travel_min is None and settings.travel_max is None
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_040_focuser_status_text_and_transitions(caplog):
+    """EQP-FOC-040: the panel text is computed without the page, and only moves/settles starting or stopping
+    are logged."""
+    import logging
+
+    from galileo.focuser_ops import describe_status, log_transitions
+
+    blank = describe_status({})
+    assert blank.is_moving == blank.position == blank.temperature == "—"
+    assert blank.position_value is None and blank.temp_comp is None
+    view = describe_status({"is_moving": True, "is_settling": False, "position": 1234, "temp_comp": 0,
+                            "temperature": 12.34, "max_step": 5000})
+    assert (view.is_moving, view.is_settling, view.position, view.position_value) == ("Yes", "No", "1234", 1234)
+    assert view.temp_comp is False and view.temperature == "12.3 °C" and view.max_step == "5000"
+
+    with caplog.at_level(logging.INFO, logger="galileo.focuser_ops"):
+        last = log_transitions("Primary", {"is_moving": True, "position": 1}, (None, None), 99)
+        last = log_transitions("Primary", {"is_moving": True, "position": 2}, last, 99)      # unchanged: silent
+        last = log_transitions("Primary", {"is_moving": False, "position": 3}, last, 99)
+    assert last == (False, None)
+    assert [r.getMessage() for r in caplog.records] == [
+        "Focuser Primary: started moving (target position 99)", "Focuser Primary: stopped moving at position 3"]
+
+
+@pytest.mark.requirement("TC-EQP-FOC-040")
+@pytest.mark.priority("P2")
+def test_tc_eqp_foc_040_device_ops_connect_and_scan(monkeypatch):
+    """EQP-FOC-040: a device is built by the given factory, configured and connected, and a failed step gives
+    ``None`` instead of raising."""
+    from galileo.core.devices import DeviceCategory
+    from galileo.device_ops import connect_device
+
+    adapter = MagicMock()
+    adapter.connect = AsyncMock()
+    configured = []
+    got = connect_device(lambda *a: adapter, DeviceCategory.FOCUSER, "INDI", "pi", 7624, "Focuser",
+                         configure=configured.append)
+    assert got is adapter and configured == [adapter]
+    adapter.connect.assert_awaited_once()
+    assert connect_device(lambda *a: adapter, DeviceCategory.FOCUSER, "INDI", "pi", 7624, "F",
+                          configure=lambda a: 1 / 0) is None
+
+
+@pytest.mark.requirement("TC-EQP-ROT-010")
+@pytest.mark.priority("P2")
+def test_tc_eqp_rot_010_rotator_ops_outcomes_and_status():
+    """EQP-ROT-010: rotator commands report an outcome without the page, a driver without the property is
+    'unsupported' with its own text, and the status/derotation maths need no screen."""
+    from galileo.device_ops import FAILED, NOT_CONNECTED, UNSUPPORTED
+    from galileo.exceptions import DevicePropertyError
+    from galileo.rotator_ops import RotatorOps, derotation_rate, describe_status
+
+    class Rot:
+        def __init__(self):
+            self.calls = []
+
+        async def move_to_angle(self, angle):
+            self.calls.append(angle)
+
+        async def set_backlash(self, value):
+            raise DevicePropertyError("no backlash")
+
+        async def sync_position(self, value):
+            raise RuntimeError("boom")
+
+    rot = Rot()
+    ops = RotatorOps(lambda: rot)
+    assert ops.run("move_to_angle", 12.5, action="move").ok and rot.calls == [12.5]
+    unsupported = ops.run("set_backlash", 1.0, action="backlash")
+    assert unsupported.kind == UNSUPPORTED and unsupported.message == "no backlash"
+    failed = ops.run("sync_position", 0.0, action="sync")
+    assert failed.kind == FAILED and failed.message == "Rotator sync failed — see log."
+    assert RotatorOps(lambda: None).run("move_to_angle", 1, action="move").kind == NOT_CONNECTED
+
+    blank = describe_status({})
+    assert not blank.connected and blank.position_text == "—" and blank.detail == "" and blank.goto_hint == ""
+    view = describe_status({"position": 10.0, "mechanical_position": 20.0, "is_moving": True, "reverse": 0,
+                            "backlash_supported": True, "backlash": 1.5, "max_angle": 360.0, "can_sync": False})
+    assert view.connected and view.position_text == "10.00" and view.detail == "Mechanical 20.00° · Sky 10.00° · moving"
+    assert view.reverse is False and view.backlash == 1.5 and view.backlash_tip == ""
+    assert view.goto_hint == "(0 – 359.99)" and not view.can_sync
+    assert describe_status({"position": 1.0}).backlash_tip == "This rotator's driver has no backlash setting."
+
+    assert derotation_rate(None, 50.0, -100.0, 0, False) is None
+    # Polaris from mid-northern latitude is above the horizon; the opposite pole is below it.
+    up = derotation_rate((37.95, 89.26), 50.0, -100.0, 0, False)
+    assert up is not None and up[2] is not None
+    assert derotation_rate((37.95, 89.26), 50.0, -100.0, 10, True)[2] == pytest.approx(-up[2] * 1.1)
+    assert derotation_rate((0.0, -89.0), 50.0, -100.0, 0, False)[2] is None
+
+
+@pytest.mark.requirement("TC-EQP-WX-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_wx_010_weather_ops_readings_and_verdict():
+    """EQP-WX-010: a safety device is polled, shown and judged against its rules without the page."""
+    from galileo.safety import WeatherSafetyRule
+    from galileo.weather_ops import banner_text, format_value, read_device, violations
+
+    class Monitor:
+        is_safe = False
+
+        async def poll(self):
+            pass
+
+    assert read_device(Monitor(), "safety_monitor") == {"is_safe": 0.0}
+    Monitor.is_safe = True
+    assert read_device(Monitor(), "safety_monitor") == {"is_safe": 1.0}
+
+    assert format_value(None, "C") == "—" and format_value(1, "bool") == "Yes" and format_value(0, "bool") == "No"
+    assert format_value(12.345, "C") == "12.3 C" and format_value("windy", "C") == "windy"
+
+    rule = WeatherSafetyRule("wind", safety_related=True, operator=">", threshold=30.0, label="Wind", unit="km/h")
+    ignored = WeatherSafetyRule("rain", safety_related=False, operator=">", threshold=0.0, label="Rain", unit="mm")
+    assert banner_text({}, [rule], "Weather Station") == "Not connected."
+    assert banner_text({"wind": 5.0}, [rule], "Weather Station") == "Weather Station: SAFE"
+    unsafe = banner_text({"wind": 50.0}, [rule], "Weather Station")
+    assert unsafe.startswith("Weather Station: UNSAFE — ") and "Wind" in unsafe
+    assert violations({"wind": 5.0, "rain": 9.0}, [rule, ignored]) == []             # a rule not marked safety-related is ignored
+    assert len(violations({"wind": 50.0}, [rule, ignored])) == 1
+
+
+@pytest.mark.requirement("TC-EQP-DOME-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_dome_010_dome_ops_outcomes_status_and_slaving():
+    """EQP-DOME-010: dome commands, the status text and the slaving steps work without the page."""
+
+    from galileo.device_ops import FAILED, NOT_CONNECTED
+    from galileo.dome_ops import DomeOps, describe_status, slave_status_text, slave_step, sync_to_mount
+
+    class Dome:
+        def __init__(self):
+            self.calls = []
+
+        async def open_shutter(self):
+            self.calls.append("open")
+
+        async def park(self):
+            raise RuntimeError("stuck")
+
+    dome = Dome()
+    ops = DomeOps(lambda: dome)
+    assert ops.run("open_shutter", action="open").ok and dome.calls == ["open"]
+    failed = ops.run("park", action="park")
+    assert failed.kind == FAILED and failed.message == "Dome park failed — see log."
+    assert DomeOps(lambda: None).run("open_shutter", action="open").kind == NOT_CONNECTED
+
+    blank = describe_status({})
+    assert not blank.connected and blank.park_chip == "—" and blank.at_park is None and blank.park_button == "Park"
+    parked = describe_status({"shutter_state": "Closed", "azimuth": 90.04, "is_at_park": True})
+    assert (parked.shutter, parked.azimuth, parked.park_button, parked.park_chip) == ("Closed", "90.0°", "Unpark", "Parked")
+    assert parked.parked and describe_status({"is_at_park": False}).park_chip == "Unparked"
+
+    class Service:
+        slaving_enabled = True
+        ready = True
+        last_slaved_azimuth = None
+        fail = False
+
+        async def sync_to_mount(self, force):
+            if self.fail:
+                raise RuntimeError("no mount")
+
+        async def track_mount(self):
+            if self.fail:
+                raise RuntimeError("no mount")
+
+    service = Service()
+    assert sync_to_mount(service).ok and slave_step(service)
+    assert slave_status_text(service) == "Slaving on — waiting for the mount to track"
+    service.last_slaved_azimuth = 123.45
+    assert slave_status_text(service) == "Slaving on — followed mount to 123.5°"
+    service.ready = False
+    assert slave_status_text(service) == "Waiting for a connected mount"
+    service.slaving_enabled = False
+    assert slave_status_text(service) == "Slaving off" and slave_status_text(None) == "—"
+    service.fail = True
+    assert sync_to_mount(service).message == "Dome sync failed — see log." and not slave_step(service)
+
+
+@pytest.mark.requirement("TC-EQP-SW-120")
+@pytest.mark.priority("P2")
+def test_tc_eqp_sw_120_switch_ops_degrade_instead_of_raising(monkeypatch):
+    """EQP-SW-120: a lost server or a device that stops answering gives an error result, not an exception; a channel
+    write reports what failed."""
+    from types import SimpleNamespace
+
+    from galileo.device_ops import FAILED, NOT_CONNECTED, UNSUPPORTED
+    from galileo.switch_ops import SwitchOps, format_reading
+
+    class Adapter:
+        pass
+
+    channel = SimpleNamespace(id="p1", label="Dew heater")
+    none = SwitchOps(lambda: None)
+    assert none.read_panel() is None and none.set_channel(channel).kind == NOT_CONNECTED
+    assert none.write_property("X", {}).kind == NOT_CONNECTED
+
+    adapter = Adapter()
+    ops = SwitchOps(lambda: adapter)
+    assert ops.write_property("X", {}).kind == UNSUPPORTED                    # this adapter has no raw writer
+    wrote = []
+
+    async def writer(name, values):
+        wrote.append((name, values))
+
+    adapter.write_property = writer
+    assert ops.write_property("X", {"a": 1}).ok and wrote == [("X", {"a": 1})]
+
+    async def broken(name, values):
+        raise RuntimeError("link down")
+
+    adapter.write_property = broken
+    failed = ops.write_property("X", {})
+    assert failed.kind == FAILED and failed.message == "Could not set X: link down"
+
+    from galileo.core.devices import SwitchController
+
+    assert ops.read_panel().error == ""                                         # a bare adapter reads as an empty panel
+
+    async def lost(self):
+        raise ConnectionError("server gone")
+
+    monkeypatch.setattr(SwitchController, "get_panel", lost)
+    result = ops.read_panel()
+    assert result is not None and result.panel is None
+    assert result.error == "Cannot read the device right now: server gone"
+    assert format_reading(None, "A") == "—" and format_reading(float("nan"), "A") == "—"
+    assert format_reading(1.234, "A") == "1.23 A"
+
+
+@pytest.mark.requirement("TC-EQP-FW-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_fw_010_filter_wheel_ops_and_status():
+    """EQP-FW-010: a filter change reports an outcome and the wheel's status is described without the page."""
+    from galileo.device_ops import FAILED, NOT_CONNECTED
+    from galileo.simple_device_ops import FilterWheelOps, describe_filter_wheel
+
+    class Wheel:
+        moves = []
+        fail = False
+
+        async def move_to(self, index):
+            if self.fail:
+                raise RuntimeError("jammed")
+            self.moves.append(index)
+
+    wheel = Wheel()
+    ops = FilterWheelOps(lambda: wheel)
+    assert ops.move_to(2).ok and wheel.moves == [2]
+    wheel.fail = True
+    failed = ops.move_to(3)
+    assert failed.kind == FAILED and failed.message == "Filter change failed — see log."
+    assert FilterWheelOps(lambda: None).move_to(1).kind == NOT_CONNECTED
+
+    view = describe_filter_wheel({"name": "EFW", "filter_names": ["L", "R", "G"], "position": 1})
+    assert (view.name, view.position, view.current_filter, view.filter_names) == ("EFW", 1, "R", ["L", "R", "G"])
+    out_of_range = describe_filter_wheel({"filter_names": ["L"], "position": 5})
+    assert out_of_range.position is None and out_of_range.current_filter is None and out_of_range.name == "—"
+    assert describe_filter_wheel({}).filter_names == []
+
+
+@pytest.mark.requirement("TC-EQP-FP-010")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_fp_010_flat_panel_ops_and_status():
+    """EQP-FP-010: flat panel commands report an outcome and the cover/light/brightness text needs no page."""
+    from galileo.device_ops import FAILED, NOT_CONNECTED
+    from galileo.simple_device_ops import FlatPanelOps, describe_flat_panel
+
+    class Panel:
+        levels = []
+
+        async def set_brightness(self, level):
+            self.levels.append(level)
+
+        async def light_on(self):
+            raise RuntimeError("no power")
+
+    panel = Panel()
+    ops = FlatPanelOps(lambda: panel)
+    assert ops.run("set_brightness", 77, action="set brightness").ok and panel.levels == [77]
+    failed = ops.run("light_on", action="light on")
+    assert failed.kind == FAILED and failed.message == "Flat panel light on failed — see log."
+    assert FlatPanelOps(lambda: None).run("light_on", action="light on").kind == NOT_CONNECTED
+
+    blank = describe_flat_panel({})
+    assert not blank.connected and (blank.cover, blank.light, blank.brightness) == ("—", "—", None)
+    view = describe_flat_panel({"cover_state": "Closed", "is_light_on": False, "brightness": 128.0})
+    assert view.connected and (view.cover, view.light, view.brightness) == ("Parked", "Off", 128)
+    assert describe_flat_panel({"cover_state": "Open", "is_light_on": True}).cover == "Unparked"
+
+
+@pytest.mark.requirement("TC-EQP-AUX-010")
+@pytest.mark.priority("P2")
+def test_tc_eqp_aux_010_aux_ops_write_read_and_rebuild(monkeypatch):
+    """EQP-AUX-010: a property write reports an outcome, groups are read without raising, and the tabs are rebuilt
+    only when the device's set of properties changes."""
+    from types import SimpleNamespace
+
+    from galileo.core.devices import AuxController
+    from galileo.device_ops import FAILED, NOT_CONNECTED
+    from galileo.simple_device_ops import AuxOps, aux_needs_rebuild
+
+    written = []
+
+    async def write(self, name, values):
+        if name == "BAD":
+            raise RuntimeError("rejected")
+        written.append((name, values))
+
+    async def groups(self):
+        return [SimpleNamespace(properties=[SimpleNamespace(name="A"), SimpleNamespace(name="B")])]
+
+    monkeypatch.setattr(AuxController, "write_property", write)
+    monkeypatch.setattr(AuxController, "get_property_groups", groups)
+    ops = AuxOps(lambda: object())
+    assert ops.write_property("A", {"x": 1}).ok and written == [("A", {"x": 1})]
+    failed = ops.write_property("BAD", {})
+    assert failed.kind == FAILED and failed.message == "Could not set BAD — see log."
+    none = AuxOps(lambda: None)
+    assert none.write_property("A", {}).kind == NOT_CONNECTED and none.read_groups() is None
+
+    found = ops.read_groups()
+    assert found is not None
+    assert not aux_needs_rebuild({"A", "B"}, found, True)
+    assert aux_needs_rebuild({"A"}, found, True) and aux_needs_rebuild({"A", "B"}, found, False)
+
+    async def broken(self):
+        raise ConnectionError("gone")
+
+    monkeypatch.setattr(AuxController, "get_property_groups", broken)
+    assert ops.read_groups() is None

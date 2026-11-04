@@ -112,6 +112,19 @@ class EngineLock:
         except OSError:
             logger.warning("Could not write %s; the engine still holds the lock", self.info_path)
 
+    def update(self, **info: Any) -> None:
+        """Add to what the holder says about itself (the local channel's address and token), readable only
+        by the engine's user. Only the holder may call it."""
+        if self._fh is None:
+            return
+        record = {**self.holder(), **info}
+        try:
+            self.info_path.write_text(json.dumps(record), encoding="utf-8")
+            with contextlib.suppress(OSError):
+                os.chmod(self.info_path, 0o600)
+        except OSError:
+            logger.warning("Could not update %s", self.info_path)
+
     def release(self) -> None:
         fh, self._fh = self._fh, None
         if fh is None:

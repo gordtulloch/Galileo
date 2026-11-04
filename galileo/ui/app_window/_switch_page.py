@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, Any
 from galileo.ui.qt_helpers import take_widget
 
 from ._common import _DEFAULT_PORTS, QWidget, _when_visible, guard_loopback_edit
+from galileo.desktop_devices import PierAdapters
+from galileo.device_ops import NOT_CONNECTED, UNSUPPORTED, disconnect_all, scan_devices
+from galileo.switch_ops import SwitchOps, format_reading, panel_signature
 
 logger = logging.getLogger(__name__)
 
@@ -29,23 +32,6 @@ if TYPE_CHECKING:
 
 _STATE_COLOR = {"Ok": "#2ecc71", "Busy": "#f1c40f", "Alert": "#e74c3c"}
 _REFRESH_MS = 2000          # EQP-SW-090: no longer than 5 s
-
-
-def panel_signature(panel: Any) -> tuple:
-    """What decides whether the widgets must be rebuilt rather than refreshed in place."""
-    return (
-        panel.recognised, panel.message, panel.profile,
-        tuple((g.name, tuple((c.id, c.kind, c.switchable, c.available, c.writable) for c in g.channels))
-              for g in panel.groups),
-        tuple(s.id for s in panel.sensors),
-        tuple((g.name, tuple((p.name, p.kind) for p in g.properties)) for g in panel.other),
-    )
-
-
-def format_reading(value: float | None, unit: str) -> str:
-    if value is None or not math.isfinite(value):
-        return "—"
-    return f"{value:.2f} {unit}".strip()
 
 
 class AppWindowSwitchPageMixin:
@@ -136,7 +122,8 @@ class AppWindowSwitchPageMixin:
         layout.addLayout(panel_container)
 
         state: dict[str, Any] = {"adapter": None, "signature": None, "refreshers": [], "panel": None}
-        adapters_by_pier: dict = {}
+        from galileo.core.devices import DeviceCategory as _Category
+        adapters_by_pier = PierAdapters(_Category.SWITCH)
 
         def dot_style(prop_state: str) -> str:
             return f"color: {_STATE_COLOR.get(prop_state, '#888888')}; font-size: 14px;"
@@ -167,35 +154,23 @@ class AppWindowSwitchPageMixin:
             )
             return answer == QMessageBox.StandardButton.Yes
 
-        def write_channel(channel, **kwargs) -> bool:
-            adapter = state.get("adapter")
-            if adapter is None:
-                return False
-            import asyncio
+        ops = SwitchOps(lambda: state.get("adapter"))
 
-            from galileo.core.devices import SwitchController
-            try:
-                asyncio.run(SwitchController(adapter).set_channel(channel.id, **kwargs))
-            except Exception as exc:
-                logger.exception("Switches: setting %s failed", channel.id)
-                self._window.statusBar().showMessage(f"Could not set {channel.label}: {exc}", 8000)
-                refresh_panel()
+        def write_channel(channel, **kwargs) -> bool:
+            outcome = ops.set_channel(channel, **kwargs)
+            if outcome.kind == NOT_CONNECTED:
                 return False
-            logger.info("Switches: set %s %s", channel.label, kwargs)
+            if not outcome.ok:
+                self._window.statusBar().showMessage(outcome.message, 8000)
             refresh_panel()
-            return True
+            return outcome.ok
 
         def write_property(prop_name: str, values: dict) -> None:
-            adapter = state.get("adapter")
-            writer = getattr(adapter, "write_property", None)
-            if writer is None:
+            outcome = ops.write_property(prop_name, values)
+            if outcome.kind in (NOT_CONNECTED, UNSUPPORTED):
                 return
-            import asyncio
-            try:
-                asyncio.run(writer(prop_name, values))
-            except Exception as exc:
-                logger.exception("Switches: writing %s failed", prop_name)
-                self._window.statusBar().showMessage(f"Could not set {prop_name}: {exc}", 8000)
+            if not outcome.ok:
+                self._window.statusBar().showMessage(outcome.message, 8000)
             refresh_panel()
 
         # -- rows ----------------------------------------------------------
@@ -485,20 +460,15 @@ class AppWindowSwitchPageMixin:
             state["refreshers"] = refreshers
 
         def refresh_panel() -> None:
-            adapter = state.get("adapter")
-            if adapter is None:
+            result = ops.read_panel()
+            if result is None:
                 return
-            import asyncio
-
-            from galileo.core.devices import SwitchController
-            try:
-                panel = asyncio.run(SwitchController(adapter).get_panel())
-            except Exception as exc:
+            if result.error:
                 # EQP-SW-120: a lost server or a device that stopped answering degrades the panel, nothing more.
-                logger.warning("Switches: could not refresh the panel: %s", exc)
                 state["signature"] = None
-                show_placeholder(f"Cannot read the device right now: {exc}")
+                show_placeholder(result.error)
                 return
+            panel = result.panel
             state["panel"] = panel
             if state["signature"] != panel_signature(panel):
                 build_panel(panel)
@@ -552,18 +522,10 @@ class AppWindowSwitchPageMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             from galileo.core.devices import DeviceCategory
-            devices: list[str] = []
-            try:
-                import asyncio
-                if driver == "INDI":
-                    from galileo.adapters.indi import get_adapter_class
-                else:
-                    from galileo.adapters.alpaca import get_adapter_class
-                adapter = get_adapter_class(DeviceCategory.SWITCH)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(DeviceCategory.SWITCH))
-            except Exception:
-                logger.exception("Switch scan failed on %s:%s", server, port)
+            devices = scan_devices(DeviceCategory.SWITCH, driver, server, port)
+            if devices is None:
                 self._window.statusBar().showMessage("Switch scan failed — see log.", 6000)
+                devices = []
             current = device_combo.currentText()
             device_combo.blockSignals(True)
             device_combo.clear()
@@ -673,11 +635,7 @@ class AppWindowSwitchPageMixin:
             adapter = adapters_by_pier.pop(pier_key(self._current_pier), None)
             if adapter is None:
                 return
-            import asyncio
-            try:
-                asyncio.run(adapter.disconnect())
-            except Exception:
-                logger.exception("Could not disconnect the switch device")
+            disconnect_all([adapter], "the switch device")
             state["adapter"] = None
             show_placeholder("Connect a device to show its controls.")
             self._window.statusBar().showMessage("Switch device disconnected.", 4000)

@@ -127,6 +127,11 @@ def _connect(window, adapter):
     return page
 
 
+def _own_groups(page):
+    """The page's own sections: installed plugins (Kasa, SwitchBot, ...) add group boxes of their own subclasses."""
+    return [g for g in page.findChildren(QtWidgets.QGroupBox) if type(g) is QtWidgets.QGroupBox]
+
+
 @pytest.mark.requirement("TC-EQP-SW-090")
 @pytest.mark.priority("P2")
 def test_tc_eqp_sw_090_page_keeps_the_shared_connection_line(window):
@@ -139,7 +144,7 @@ def test_tc_eqp_sw_090_page_keeps_the_shared_connection_line(window):
     assert [combos[0].itemText(i) for i in range(combos[0].count())] == ["Alpaca", "INDI"]
     for text in ("Scan", "Connect", "Save"):
         _button(page, text)
-    assert not _toggles(page) and not page.findChildren(QtWidgets.QGroupBox)
+    assert not _toggles(page) and not _own_groups(page)
     assert _find(page, QtWidgets.QLabel, "Connect a device to show its controls.")
 
 
@@ -149,7 +154,7 @@ def test_tc_eqp_sw_090_connect_renders_every_part_of_the_panel(window):
     """EQP-SW-090: a section per group; a toggle per switchable channel; a read-out, no toggle, for a
     display-only channel; a field per dew duty, voltage and generic value; readings; and the Other group."""
     page = _connect(window, FakeSwitch())
-    titles = [g.title() for g in page.findChildren(QtWidgets.QGroupBox)]
+    titles = [g.title() for g in _own_groups(page)]
     assert titles == ["DC", "Dew heaters", "Adjustable outputs", "Device", "Readings", "Other"]
 
     assert len(_toggles(page)) == 3                       # Camera, Dew A, Regulator — not the display-only port

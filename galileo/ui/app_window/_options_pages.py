@@ -65,6 +65,20 @@ class AppWindowOptionsPagesMixin:
         hint.setObjectName("StatusHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+        from galileo import desktop_devices
+        use_service = QCheckBox("Hold devices in the device service")
+        use_service.setChecked(desktop_devices.enabled())
+        use_service.setToolTip(
+            "Connect devices through the same device service the headless engine uses, so other parts of "
+            "Galileo find the devices an Equipment screen connected. Off by default; applies to the next Connect."
+        )
+        use_service.toggled.connect(desktop_devices.set_enabled)
+        layout.addWidget(use_service)
+        service_hint = QLabel("Applies to devices connected from now on; a device already connected stays as it is.")
+        service_hint.setObjectName("StatusHint")
+        service_hint.setWordWrap(True)
+        layout.addWidget(service_hint)
         layout.addStretch(1)
 
         def changed(*_args) -> None:
