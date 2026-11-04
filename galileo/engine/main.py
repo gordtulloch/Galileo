@@ -97,6 +97,18 @@ class Engine:
         self.state = ObservableState()
         self.registry = Registry()
         register_device_operations(self.registry, self.devices)
+        from galileo.control_surface.sessions import register_session_operations
+        from galileo.engine.sessions import EngineSessions
+        sessions = EngineSessions(self.devices, self.runner)
+        register_session_operations(self.registry, sessions)                                      # CSURF-180
+        from galileo.control_surface.piers import EnginePiers, register_pier_operations
+        register_pier_operations(self.registry, EnginePiers(self.devices, sessions))             # CSURF-100
+        from galileo.control_surface.imaging import register_imaging_operations
+        from galileo.engine.imaging import EngineImaging
+        register_imaging_operations(self.registry, EngineImaging(self.devices, self.runner))      # CSURF-120
+        from galileo.control_surface.flips import register_flip_operations
+        from galileo.engine.flips import EngineFlips
+        register_flip_operations(self.registry, EngineFlips(self.devices, self.runner))           # CSURF-170
         if not self.embedded:                                # the desktop has its own pointing helpers and watchdog
             self.helpers = Helpers(self.devices, self.state)    # HEAD-060
             self.helpers.start()
@@ -104,6 +116,8 @@ class Engine:
 
             self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices))   # HEAD-160
             self.guard.start()
+            from galileo.control_surface.safety import GuardSafety, register_safety_operations
+            register_safety_operations(self.registry, GuardSafety(self.guard))                   # CSURF-220
         self._start_channel()                                # HEAD-080
         from galileo.bus import get_bus
         from galileo.replication import SettingsChanged

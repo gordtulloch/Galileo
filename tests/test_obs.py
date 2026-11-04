@@ -588,7 +588,7 @@ class _Piers:
 
         monkeypatch.setattr("galileo.observatory.list_piers", lambda _obs: list(self.piers))
         monkeypatch.setattr(session_runner, "_build_notify_service", lambda _w: None)
-        monkeypatch.setattr(session_runner, "get_history", lambda: None)
+        monkeypatch.setattr("galileo.session_context.get_history", lambda: None)
         monkeypatch.setattr(session_runner, "preflight", lambda blocks, ctx: [])
 
 

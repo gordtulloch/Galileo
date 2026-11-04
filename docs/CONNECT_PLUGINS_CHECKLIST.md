@@ -137,15 +137,17 @@ Uncommitted state to be aware of (commit only when the user asks):
 
 ## 4. Phase B — shared pipeline + relay (needs 2c, and the §1 home decision)
 
+**Checked 2026-11-03: this phase was built in core while the other work went on; these boxes were stale.** What is really left is the per-area operation inventory (`CSURF-100`–`240`, §2 table: the device/focus/safety catalogue and session status/pause/resume/stop (2026-11-03) are registered; session run/templates built the same day on a Qt-free `galileo.session_context`; skip-step, a guider in the engine and the full FITS header context remain), the desktop honouring the lease, frame sources for previews, and the contract tests, which need a plugin to run against.
+
 Design: MCON SDD §3.2–3.13; WCON SDD §3.9. Do this once, before either front end.
 
-- [ ] `Gateway` stages: Identify → Authorise → Validate → Lease → Confirm → Idempotency → Dispatch → Audit (audit in a `finally`); typed results `ok/refused/invalid/unavailable/busy/unreachable`; never swallow a safety refusal (`MCON-700`)
-- [ ] `catalogue` registry that rejects any *config*-class entry at startup (`MCON-1000`, `570`, `580`); `dispatch` to `ControlSurfacePort.invoke` or `RelayPort.call`
-- [ ] Guest deny-by-default allowlist (ADR-MCON-003); `confirm` two-step tokens; `idempotency`; `LoadGovernor` with strict priority order (`MCON-750`)
-- [ ] `lease` broker, `hold` + `emergency` (lease-free, Operator-only, single request)
-- [ ] `state` + `events` hub: snapshot then delta with sequence numbers (ADR-MCON-004)
-- [ ] `RelayPort` master relay to paired spokes, opt-in per node, spokes render previews (ADR-MCON-005)
-- [ ] Contract tests run against both plugins' stubs
+- [x] (built in core `galileo.connect_link.gateway`, `TC-LINK-230`) `Gateway` stages: Identify → Authorise → Validate → Lease → Confirm → Idempotency → Dispatch → Audit (audit in a `finally`); typed results `ok/refused/invalid/unavailable/busy/unreachable`; never swallow a safety refusal (`MCON-700`)
+- [x] (core `galileo.control_surface.registry`/`catalogue`; start-up rejection tested) `catalogue` registry that rejects any *config*-class entry at startup (`MCON-1000`, `570`, `580`); `dispatch` to `ControlSurfacePort.invoke` or `RelayPort.call`
+- [x] (core gateway, `TC-LINK-230`) Guest deny-by-default allowlist (ADR-MCON-003); `confirm` two-step tokens; `idempotency`; `LoadGovernor` with strict priority order (`MCON-750`)
+- [x] (core `galileo.control_surface.lease`/`holds`/`emergency`; the desktop does not yet honour the lease, `LEASE-060`) `lease` broker, `hold` + `emergency` (lease-free, Operator-only, single request)
+- [~] (core `control_surface.state`/`events` and the stream's per-stream sequence ids and `hello` resync are built; the snapshot-then-delta contract is not yet tested end to end) `state` + `events` hub: snapshot then delta with sequence numbers (ADR-MCON-004)
+- [x] (core `galileo.connect_link.relay`, `LINK-220`) `RelayPort` master relay to paired spokes, opt-in per node, spokes render previews (ADR-MCON-005)
+- [ ] **Only item left:** contract tests run against both plugins' stubs
 
 ## 5. Phase C — MobileConnect plugin (server side only)
 

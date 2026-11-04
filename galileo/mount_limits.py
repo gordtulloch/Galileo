@@ -89,6 +89,34 @@ def flip_due(limits: MountLimits, ha_hours: float | None, side_of_pier: str | No
     return ha_hours * 15.0 > limits.flip_ha_deg
 
 
+#: A sidereal hour is shorter than a clock hour, and the hour angle advances at the sidereal rate.
+SIDEREAL_DAY_RATIO = 0.99726958
+
+
+def minutes_to_flip(limits: MountLimits, ha_hours: float | None, side_of_pier: str | None) -> float | None:
+    """Clock minutes until the hour angle reaches the flip limit (MFLIP-010), ``0.0`` once it has.
+
+    ``None`` when no flip is ahead: the hour angle or pier side is unknown, or the mount is already on the east side
+    of the pier (a flip has been done, and the target only moves further past the meridian)."""
+    if ha_hours is None or side_of_pier != "West":
+        return None
+    return max(0.0, (limits.flip_ha_deg / 15.0 - ha_hours) * 60.0 * SIDEREAL_DAY_RATIO)
+
+
+def flip_phase(limits: MountLimits, ha_hours: float | None, side_of_pier: str | None, *,
+               tracking: bool, slewing: bool, flipping: bool) -> str:
+    """Where the Mount page's "Meridian Flip" section would say the flip stands (EQP-MNT-060, CSURF-170):
+    ``flipping`` while one runs, ``inactive`` when not requested, ``waiting`` until the mount tracks, ``due`` once
+    the limit is passed on the west side, else ``armed``."""
+    if flipping:
+        return "flipping"
+    if not limits.flip_enabled:
+        return "inactive"
+    if not tracking or slewing:
+        return "waiting"
+    return "due" if flip_due(limits, ha_hours, side_of_pier) else "armed"
+
+
 def evaluate(
     limits: MountLimits,
     *,

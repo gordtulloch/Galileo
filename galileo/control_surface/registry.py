@@ -117,6 +117,7 @@ class Registry:
         self._ops: dict[str, tuple[OperationSpec, Handler]] = {}
         self._bus = bus
         self._tasks: set[asyncio.Task[None]] = set()
+        self._gate: Callable[[OperationSpec, str], str | None] | None = None
 
     # -- declaration -------------------------------------------------------------------
     def register(self, spec: OperationSpec, handler: Handler, *, namespace: str = "") -> None:
@@ -135,6 +136,14 @@ class Registry:
         if spec.permission_class == "emergency" and spec.needs_lease:
             raise RegistrationError(f"{spec.name}: an emergency operation needs no lease")
         self._ops[spec.name] = (spec, handler)
+
+    def set_gate(self, gate: Callable[[OperationSpec, str], str | None] | None) -> None:
+        """A rule applied to every operation after its own availability: ``gate(spec, pier)`` returns a reason to
+        refuse it on that Pier, or ``None``. The safety acknowledgement uses it (CSURF-220)."""
+        self._gate = gate
+
+    def _gated(self, spec: OperationSpec, pier: str) -> str | None:
+        return self._gate(spec, pier) if self._gate is not None and pier else None
 
     def unregister_namespace(self, namespace: str) -> int:
         gone = [n for n in self._ops if n.split(".")[0] == namespace]
@@ -155,8 +164,14 @@ class Registry:
 
     def catalogue(self, pier: str = "") -> dict[str, Any]:
         """Every entry with its schema, class, lease requirement and — per Pier — availability (CSURF-030)."""
-        return {"version": CATALOGUE_VERSION,
-                "operations": [s.describe(pier) for s, _ in sorted(self._ops.values(), key=lambda e: e[0].name)]}
+        entries = []
+        for s, _ in sorted(self._ops.values(), key=lambda e: e[0].name):
+            d = s.describe(pier)
+            held = self._gated(s, pier)
+            if held and d["available"]:
+                d["available"], d["reason"] = False, held
+            entries.append(d)
+        return {"version": CATALOGUE_VERSION, "operations": entries}
 
     def names(self) -> list[str]:
         return sorted(self._ops)
@@ -169,6 +184,7 @@ class Registry:
             return Outcome("unavailable", "no such operation")
         spec = entry[0]
         reason = spec.available(pier)
+        reason = reason or self._gated(spec, pier)
         if reason:
             return Outcome("unavailable", reason)
         try:

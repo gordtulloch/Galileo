@@ -95,6 +95,11 @@ class DeviceService:
         record = self._piers.get(pier)
         return str(getattr(record, "name", pier))
 
+    def pier_record(self, pier: str) -> Any | None:
+        """The database record of Pier *pier*, or ``None`` if the engine does not run it."""
+        with self._lock:
+            return self._piers.get(pier)
+
     def pier_ids(self) -> list[str]:
         with self._lock:
             return list(self._piers)

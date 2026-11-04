@@ -73,6 +73,9 @@ _KIND_BY_TAG = {
 _DEF_TAGS = {f"def{k}Vector": v for k, v in _KIND_BY_TAG.items()}
 _SET_TAGS = {f"set{k}Vector": v for k, v in _KIND_BY_TAG.items()}
 _TOP_LEVEL_TAGS = set(_DEF_TAGS) | set(_SET_TAGS) | {"delProperty", "message"}
+_XML_BAD_BYTES = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_TOP_LEVEL_START = re.compile(
+    rb"<(?:" + b"|".join(t.encode() for t in sorted(_TOP_LEVEL_TAGS)) + rb")[\s/>]")
 
 _SEXAGESIMAL_SPLIT = re.compile(r"[:; ]+")
 
@@ -207,9 +210,15 @@ class IndiClient:
         # The INDI stream is a sequence of sibling elements with no single
         # document root, so wrap it in a synthetic one for the XML parser and
         # drop each top-level element once handled to keep memory flat.
-        parser = ET.XMLPullParser(events=("start", "end"))
-        parser.feed(b"<indi_stream>")
+        def new_parser() -> ET.XMLPullParser:
+            p = ET.XMLPullParser(events=("start", "end"))
+            p.feed(b"<indi_stream>")
+            return p
+
+        parser = new_parser()
         root: ET.Element | None = None
+        resync = False
+        resyncs = 0
         try:
             while self._alive:
                 sock = self._sock
@@ -219,20 +228,40 @@ class IndiClient:
                 if not chunk:
                     self._fail("connection closed by server")
                     break
-                parser.feed(chunk)
-                for event, elem in parser.read_events():
-                    if not isinstance(elem, ET.Element):
+                # Drivers occasionally emit raw control characters (e.g. in a
+                # message), which are illegal in XML 1.0 and would kill the parser.
+                chunk = _XML_BAD_BYTES.sub(b" ", chunk)
+                if resync:
+                    # After a malformed element, skip to the next recognisable
+                    # top-level start tag and carry on with a fresh parser.
+                    m = _TOP_LEVEL_START.search(chunk)
+                    if m is None:
                         continue
-                    if event == "start":
-                        if root is None:
-                            root = elem
-                    elif elem.tag in _TOP_LEVEL_TAGS:
-                        try:
-                            self._handle(elem)
-                        except Exception:
-                            logger.exception("Error handling INDI element <%s>", elem.tag)
-                        if root is not None:
-                            root.remove(elem)
+                    chunk = chunk[m.start():]
+                    parser, root, resync = new_parser(), None, False
+                try:
+                    parser.feed(chunk)
+                    for event, elem in parser.read_events():
+                        if not isinstance(elem, ET.Element):
+                            continue
+                        if event == "start":
+                            if root is None:
+                                root = elem
+                        elif elem.tag in _TOP_LEVEL_TAGS:
+                            try:
+                                self._handle(elem)
+                            except Exception:
+                                logger.exception("Error handling INDI element <%s>", elem.tag)
+                            if root is not None:
+                                root.remove(elem)
+                except ET.ParseError as exc:
+                    # One malformed element must not drop the whole connection.
+                    resyncs += 1
+                    logger.warning("INDI %s:%d sent malformed XML (%s); resynchronising (#%d)",
+                                   self.host, self.port, exc, resyncs)
+                    if resyncs > 50:
+                        raise
+                    resync = True
         except (OSError, ET.ParseError) as exc:
             if self._alive:
                 logger.exception("INDI connection to %s:%d lost", self.host, self.port)

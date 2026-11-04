@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
@@ -295,3 +295,30 @@ class NotificationBlock(SessionBlock):
             raise RuntimeError("no notification service is configured")
         from galileo.notify import NotificationEvent
         await context.notify_service.emit(NotificationEvent.SESSION_MESSAGE, self.message)
+
+
+BLOCK_CLASSES: dict[str, type] = {
+    cls.__name__: cls
+    for cls in (
+        TargetBlock, ImageBlock, FilterChangeBlock, CoolCameraBlock, WarmCameraBlock,
+        AutofocusBlock, PlateSolveBlock, GuideStartBlock, GuideStopBlock, DitherBlock,
+        FlatCaptureBlock, ParkMountBlock, UnparkMountBlock, MeridianFlipBlock,
+        DomeOpenBlock, DomeCloseBlock, DomeSyncBlock, NotificationBlock,
+        ForFilterBlock, ForObjectBlock, DarkCaptureBlock,
+    )
+}
+
+
+def block_to_dict(block: SessionBlock) -> dict:
+    d = asdict(block)
+    d["_type"] = type(block).__name__
+    return d
+
+
+def block_from_dict(d: dict) -> SessionBlock:
+    d = dict(d)
+    cls = BLOCK_CLASSES[d.pop("_type")]
+    # Drop fields a saved template has that the block no longer defines (e.g. an
+    # older Flat Capture's target_adu), so old templates still load.
+    known = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in d.items() if k in known})

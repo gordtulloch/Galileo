@@ -23,7 +23,7 @@ from galileo.ui.qt_helpers import layout_widget, take_widget
 import hashlib
 import json
 import logging
-from dataclasses import asdict, fields, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -49,11 +49,12 @@ from PySide6.QtWidgets import (
 
 from galileo.ui.session_runner import get_session_controller
 from galileo.ui.session_blocks import (
+    BLOCK_CLASSES,
     AutofocusBlock,
     BlockOrderError,
     CoolCameraBlock,
     DarkCaptureBlock,
-    DitherBlock,
+    DitherBlock,  # noqa: F401  (re-exported: the block dialogs and tests reach it as sessions.DitherBlock)
     DomeCloseBlock,
     DomeOpenBlock,
     DomeSyncBlock,
@@ -65,8 +66,8 @@ from galileo.ui.session_blocks import (
     GuideStopBlock,
     ImageBlock,
     LoopBlock,
-    MeridianFlipBlock,
-    NotificationBlock,
+    MeridianFlipBlock,  # noqa: F401  (re-exported: the block dialogs and tests reach it as sessions.MeridianFlipBlock)
+    NotificationBlock,  # noqa: F401  (re-exported: the block dialogs and tests reach it as sessions.NotificationBlock)
     ParkMountBlock,
     PlateSolveBlock,
     RegionLockedError,
@@ -74,6 +75,8 @@ from galileo.ui.session_blocks import (
     TargetBlock,
     UnparkMountBlock,
     WarmCameraBlock,
+    block_from_dict,
+    block_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,16 +96,7 @@ def _safe_filename(text: str) -> str:
 
 # The v1 action-block catalog (SES-130 MVP tier + SES-140 P2 tier), keyed by class
 # name for template (de)serialization — see _block_to_dict/_block_from_dict below.
-_BLOCK_CLASSES: dict[str, type] = {
-    cls.__name__: cls
-    for cls in (
-        TargetBlock, ImageBlock, FilterChangeBlock, CoolCameraBlock, WarmCameraBlock,
-        AutofocusBlock, PlateSolveBlock, GuideStartBlock, GuideStopBlock, DitherBlock,
-        FlatCaptureBlock, ParkMountBlock, UnparkMountBlock, MeridianFlipBlock,
-        DomeOpenBlock, DomeCloseBlock, DomeSyncBlock, NotificationBlock,
-        ForFilterBlock, ForObjectBlock, DarkCaptureBlock,
-    )
-}
+_BLOCK_CLASSES = BLOCK_CLASSES
 
 # Block types that require a preceding Target block in the same region (SES-170).
 # Deliberately small: PlateSolveBlock is the SRS/PSD's own literal example. Extend this
@@ -110,19 +104,8 @@ _BLOCK_CLASSES: dict[str, type] = {
 _REQUIRES_TARGET: tuple[type, ...] = (PlateSolveBlock,)
 
 
-def _block_to_dict(block: SessionBlock) -> dict:
-    d = asdict(block)
-    d["_type"] = type(block).__name__
-    return d
-
-
-def _block_from_dict(d: dict) -> SessionBlock:
-    d = dict(d)
-    cls = _BLOCK_CLASSES[d.pop("_type")]
-    # Drop fields a saved template has that the block no longer defines (e.g. an
-    # older Flat Capture's target_adu), so old templates still load.
-    known = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in d.items() if k in known})
+_block_to_dict = block_to_dict
+_block_from_dict = block_from_dict
 
 
 # ---------------------------------------------------------------------------

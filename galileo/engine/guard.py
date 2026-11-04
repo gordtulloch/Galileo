@@ -35,6 +35,8 @@ class Guard:
         self._bus = bus
         self.unsafe: dict[str, str] = {}                           # pier -> why it is unsafe right now
         self._acted: set[str] = set()
+        self.events: list[dict[str, Any]] = []                     # safety stops, newest last (CSURF-220)
+        self._next_event = 1
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._task: asyncio.Task | None = None
@@ -74,8 +76,27 @@ class Guard:
                 await mount.park()
             except Exception:
                 logger.exception("Pier %s: could not park the mount", pier)
+        self.events.append({"id": self._next_event, "pier": pier, "why": why, "at": time.time(),
+                            "acknowledged_by": "", "acknowledged_at": None})
+        self._next_event += 1
+        del self.events[:-50]
         from galileo.bus import SafetyUnsafeEvent, get_bus
         (self._bus or get_bus()).publish(SafetyUnsafeEvent(source=f"pier:{pier}", pier=pier, explanation=why))
+
+    def pending(self, pier: str) -> list[dict[str, Any]]:
+        """The Pier's safety stops nobody has acknowledged yet."""
+        return [e for e in self.events if e["pier"] == pier and not e["acknowledged_by"]]
+
+    def acknowledge(self, pier: str, who: str) -> int:
+        """Record that *who* has seen the Pier's safety stops (CSURF-220). Refused while the monitor still reports
+        unsafe: acknowledging is not resuming, and a person cannot acknowledge away a live hazard. Returns how many
+        events were acknowledged."""
+        if pier in self.unsafe:
+            raise ValueError(f"conditions are still unsafe: {self.unsafe[pier]}")
+        marked = self.pending(pier)
+        for event in marked:
+            event["acknowledged_by"], event["acknowledged_at"] = who, time.time()
+        return len(marked)
 
     def status(self) -> dict[str, Any]:
         wd = self.watchdog
