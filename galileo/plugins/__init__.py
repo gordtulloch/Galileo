@@ -786,8 +786,15 @@ class PluginManager:
 
             # --- 4. Extract ---
             if install_dir.exists():
-                shutil.rmtree(install_dir)
-            install_dir.mkdir(parents=True)
+                # Re-installing the same version over a running one: on Windows a DLL this process has loaded
+                # (a plugin dependency under .deps) cannot be deleted. Remove what can go, keep what is locked
+                # (the same dependency, already in place) and extract over the top.
+                try:
+                    shutil.rmtree(install_dir)
+                except OSError:
+                    logger.warning("Some files of %s are in use; reinstalling over them", install_dir)
+                    shutil.rmtree(install_dir, ignore_errors=True)
+            install_dir.mkdir(parents=True, exist_ok=True)
             try:
                 zf.extractall(install_dir)
             except Exception as exc:

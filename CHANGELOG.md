@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reinstalling a plugin over the same version crashed with `PermissionError` on Windows.** A plugin's private dependencies (`.deps`) can hold a DLL that Galileo itself has loaded (WebConnect's `_cffi_backend.pyd`), and the installer deleted the whole folder first. It now removes what it can, keeps the locked files (the same dependencies) and extracts over them. No visible change otherwise, so no help, wiki or design-document update.
+
 ### Added
 
 - **Connect plugins checklist: WebConnect's first operating screen.** `docs/CONNECT_PLUGINS_CHECKLIST.md` now records that the WebConnect plugin has its first browser screen (Pier list, live state, lease bar, catalogue-built operations); the code is in the plugins repository. Documentation only; nothing in Galileo itself changed.
