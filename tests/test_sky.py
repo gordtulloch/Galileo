@@ -528,6 +528,36 @@ def test_tc_sky_080_pack_builder_reuses_cache_and_install_unpacks_it(tmp_path, m
 
 @pytest.mark.requirement("TC-SKY-080")
 @pytest.mark.priority("P2")
+def test_tc_sky_080_pack_includes_large_images_and_installs_them(tmp_path, monkeypatch):
+    """SKY-080: building with both sizes packs the 150 px tile and the 640 px enlarge image per object,
+    and installing it puts the large one where the click-to-enlarge view looks for it (offline)."""
+    import zipfile
+
+    sky_mod = pytest.importorskip("galileo.planning.sky_atlas")
+    from galileo.planning import thumbnail_pack as pack
+
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: tmp_path / "cache")
+    (tmp_path / "cache").mkdir()
+    catalog = _fake_catalog(2)
+    monkeypatch.setattr(sky_mod, "_fetch_hips_thumbnail_sync",
+                        lambda ra, dec, w, h, size_px=150: f"img{size_px}".encode())
+    out = tmp_path / "pack.zip"
+    sizes = (sky_mod.TILE_IMAGE_SIZE_PX, sky_mod.FULL_IMAGE_SIZE_PX)
+    included, failed, _ = pack.build_pack(out, catalog, workers=1, sizes=sizes)
+    assert (included, failed) == (4, 0)
+    assert sum(n.endswith("_640px.jpg") for n in zipfile.ZipFile(out).namelist()) == 2
+
+    dest = tmp_path / "fresh"
+    dest.mkdir()
+    assert pack.install_pack(out, dest) == 4
+    monkeypatch.setattr("galileo.platform.get_cache_dir", lambda: dest)
+    field = sky_mod._thumbnail_field_arcmin(0.0)
+    assert sky_mod._cached_thumbnail(catalog[0].ra_deg, catalog[0].dec_deg, field, field,
+                                     sky_mod.FULL_IMAGE_SIZE_PX) == b"img640"
+
+
+@pytest.mark.requirement("TC-SKY-080")
+@pytest.mark.priority("P2")
 def test_tc_sky_080_install_pack_rejects_a_non_zip(tmp_path):
     """SKY-080: a downloaded file that is not a ZIP is reported, not unpacked."""
     from galileo.planning import thumbnail_pack as pack

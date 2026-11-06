@@ -438,6 +438,12 @@ _THUMBNAIL_SIZE_PAD = 2.0
 _THUMBNAIL_DEFAULT_FOV_ARCMIN = 15.0
 
 
+# Pixel sizes of the cached thumbnails: the small result-tile image and the click-to-enlarge image
+# (Targets / What's Up Tonight). The thumbnail pack carries both so the enlarged view works offline.
+TILE_IMAGE_SIZE_PX = 150
+FULL_IMAGE_SIZE_PX = 640
+
+
 def _thumbnail_field_arcmin(size_arcmin: float) -> float:
     """The thumbnail field of view (arcmin) for an object of *size_arcmin*
     angular size — padded so the object doesn't fill the frame edge-to-edge,

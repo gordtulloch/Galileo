@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build the catalog thumbnail pack to upload to galileo-imaging.com (SKY-080).
 
-Usage: python scripts/build_thumbnail_pack.py [--out galileo-thumbnails.zip] [--workers 4] [--limit N]
+Usage: python scripts/build_thumbnail_pack.py [--out galileo-thumbnails.zip] [--workers 4] [--limit N] [--no-large]
 
-Downloads a sky-survey thumbnail (CDS hips2fits, DSS2 colour) for every object in the bundled catalog and
-packs them into one ZIP. Galileo's Options > Planning > "Download Catalog Images" fetches that ZIP from
+Downloads sky-survey images (CDS hips2fits, DSS2 colour) for every object in the bundled catalog - the small
+150 px result-tile thumbnail and the 640 px click-to-enlarge image (Targets / What's Up Tonight), so the
+enlarged view works offline - and packs them into one ZIP (use --no-large for the tiles only; the large
+images make the pack several times bigger). Galileo's Options > Planning > "Download Catalog Images" fetches that ZIP from
 ``galileo.planning.thumbnail_pack.PACK_URL`` and unpacks it into the thumbnail cache, so users make one
 request instead of tens of thousands.
 
@@ -27,15 +29,18 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=4,
                         help="parallel requests (default 4 — be kind to the free hips2fits service)")
     parser.add_argument("--limit", type=int, default=0, help="only the first N catalog objects (for a trial run)")
+    parser.add_argument("--no-large", action="store_true", help="skip the 640 px click-to-enlarge images (tiles only)")
     args = parser.parse_args()
 
-    from galileo.planning.sky_atlas import SkyAtlas
+    from galileo.planning.sky_atlas import FULL_IMAGE_SIZE_PX, TILE_IMAGE_SIZE_PX, SkyAtlas
     from galileo.planning.thumbnail_pack import build_pack
 
     catalog = list(SkyAtlas()._catalog)
     if args.limit > 0:
         catalog = catalog[:args.limit]
-    print(f"Building a thumbnail pack for {len(catalog):,} catalog objects -> {args.out}")
+    sizes = (TILE_IMAGE_SIZE_PX,) if args.no_large else (TILE_IMAGE_SIZE_PX, FULL_IMAGE_SIZE_PX)
+    print(f"Building a thumbnail pack for {len(catalog):,} catalog objects at "
+          f"{', '.join(f'{s}px' for s in sizes)} -> {args.out}")
 
     started = time.monotonic()
 
@@ -45,7 +50,7 @@ def main() -> None:
         print(f"\r{done:,} / {total:,}  ({rate:.1f}/s, about {eta / 60:.0f} min left)   ", end="", flush=True)
 
     try:
-        included, failed, from_cache = build_pack(args.out, catalog, workers=args.workers, progress=progress)
+        included, failed, from_cache = build_pack(args.out, catalog, workers=args.workers, progress=progress, sizes=sizes)
     except KeyboardInterrupt:
         sys.exit("\nInterrupted — fetched images are cached; run again to resume.")
     print(f"\nDone: {included:,} thumbnails in {args.out} ({args.out.stat().st_size / 1e6:.1f} MB), "

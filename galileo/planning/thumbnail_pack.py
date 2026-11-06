@@ -108,9 +108,11 @@ def build_pack(
     workers: int = 4,
     progress: ProgressFn | None = None,
     should_stop: StopFn | None = None,
+    sizes: Iterable[int] = (150,),
 ) -> tuple[int, int, int]:
-    """Fetch a thumbnail for every catalog object in *objects* (reusing the local thumbnail cache, so
-    an interrupted run resumes) and write them all into the ZIP at *out_path*, with a ``manifest.json``.
+    """Fetch a thumbnail for every catalog object in *objects*, at each pixel size in *sizes* (150 = the
+    result-tile image; 640 = the click-to-enlarge image), reusing the local thumbnail cache so an
+    interrupted run resumes, and write them all into the ZIP at *out_path*, with a ``manifest.json``.
     Images already in the cache are used as-is with no network request. Returns ``(included, failed,
     from_cache)``. The publisher's tool — see ``scripts/build_thumbnail_pack.py``."""
     from concurrent.futures import ThreadPoolExecutor
@@ -121,21 +123,25 @@ def build_pack(
     )
 
     objs = list(objects)
+    size_list = sorted(set(sizes)) or [150]
 
     cache_hits = 0
 
-    def one(obj) -> tuple[str, bytes]:
+    def one(obj) -> list[tuple[str, bytes]]:
         nonlocal cache_hits
         field = _thumbnail_field_arcmin(obj.size_arcmin)
-        name = _thumbnail_cache_path(obj.ra_deg, obj.dec_deg, field, field).name
-        data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field, field)
-        if data:
-            cache_hits += 1
-        else:
-            data = _fetch_hips_thumbnail_sync(obj.ra_deg, obj.dec_deg, field, field)
+        out: list[tuple[str, bytes]] = []
+        for size_px in size_list:
+            name = _thumbnail_cache_path(obj.ra_deg, obj.dec_deg, field, field, size_px).name
+            data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field, field, size_px)
             if data:
-                _cache_thumbnail(obj.ra_deg, obj.dec_deg, field, field, data)
-        return name, data
+                cache_hits += 1
+            else:
+                data = _fetch_hips_thumbnail_sync(obj.ra_deg, obj.dec_deg, field, field, size_px)
+                if data:
+                    _cache_thumbnail(obj.ra_deg, obj.dec_deg, field, field, data, size_px)
+            out.append((name, data))
+        return out
 
     included = failed = 0
     seen: set[str] = set()
@@ -146,17 +152,18 @@ def build_pack(
         for start in range(0, len(objs), window):
             if should_stop is not None and should_stop():
                 break
-            for name, data in pool.map(one, objs[start:start + window]):
-                if not data:
-                    failed += 1
-                elif name not in seen:      # two catalog entries can share a position/field
-                    seen.add(name)
-                    archive.writestr(name, data)
-                    included += 1
+            for entries in pool.map(one, objs[start:start + window]):
+                for name, data in entries:
+                    if not data:
+                        failed += 1
+                    elif name not in seen:      # two catalog entries can share a position/field
+                        seen.add(name)
+                        archive.writestr(name, data)
+                        included += 1
             if progress is not None:
                 progress(min(start + window, len(objs)), len(objs))
         archive.writestr(MANIFEST_NAME, json.dumps({
-            "format": 1, "thumbnails": included, "failed": failed,
+            "format": 1, "thumbnails": included, "failed": failed, "sizes_px": size_list,
             "created": datetime.now(UTC).isoformat(timespec="seconds"),
         }, indent=2))
     tmp_path.replace(out_path)

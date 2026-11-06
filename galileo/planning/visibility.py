@@ -492,8 +492,10 @@ def sun_altitude_track(
     date_str: str | None = None,
     resolution_min: int = 1,
     start_hour: int = 0,
+    start: datetime.datetime | None = None,
 ) -> dict:
-    """The Sun's altitude across 24 h at *location*, from local *start_hour* (0 =
+    """The Sun's altitude across 24 h at *location*, from *start* (a datetime; when
+    given it overrides *start_hour* and *date_str*) or else from local *start_hour* (0 =
     local midnight, a calendar day; 12 = local noon, an observing night centred on
     local night) to the same time next day (unlike :func:`altitude_chart`'s UTC
     noon-to-noon "one observing night" window) — the day/night band on the
@@ -525,7 +527,10 @@ def sun_altitude_track(
         if date_str is None:
             date_str = datetime.datetime.now().astimezone().date().isoformat()
         year, month, day = (int(p) for p in date_str.split("-"))
-        local_midnight = datetime.datetime(year, month, day, start_hour).astimezone()
+        if start is not None:
+            local_midnight = start.astimezone()
+        else:
+            local_midnight = datetime.datetime(year, month, day, start_hour).astimezone()
 
         loc = EarthLocation(
             lat=location.latitude * u.deg, lon=location.longitude * u.deg, height=location.elevation_m * u.m,
@@ -575,8 +580,8 @@ def day_night_bands(
     resolution_min: int = 1,
 ) -> dict:
     """The day/night band for the What's Up Tonight screen's top graphic
-    (WUT-110) — one observing night, centred on night (local noon of the date to
-    local noon the next day, via
+    (WUT-110) — one observing night, centred on solar midnight (the site's solar noon on the
+    date to its solar noon the next day, via
     :func:`sun_altitude_track`) split into contiguous Night / Astronomical
     Twilight / Nautical Twilight / Civil Twilight / Daylight segments by the
     Sun's altitude, each boundary crossing linearly interpolated between the
@@ -598,7 +603,17 @@ def day_night_bands(
     All fields are empty/``None`` when the underlying track can't be
     computed (astropy unavailable) — never raises, matching this module's
     existing never-block-the-screen convention."""
-    track = sun_altitude_track(location, date_str, resolution_min, start_hour=12)
+    # The window starts at the *site's* mean solar noon (12:00 local mean solar time at the
+    # location's longitude, expressed in the system clock the labels use) and runs 24 h, so solar
+    # midnight - the middle of full night - is the middle of the band wherever the system
+    # timezone is set relative to the observatory (a clock-noon start put the night off-centre
+    # whenever the two differed). The equation of time (<= 16 min) is ignored.
+    if date_str is None:
+        date_str = datetime.datetime.now().astimezone().date().isoformat()
+    year, month, day = (int(p) for p in date_str.split("-"))
+    start = (datetime.datetime(year, month, day, 12, tzinfo=datetime.UTC)
+             - datetime.timedelta(hours=location.longitude / 15.0)).replace(second=0, microsecond=0)
+    track = sun_altitude_track(location, date_str, resolution_min, start=start)
     times_iso, altitudes = track["times"], track["altitudes"]
     if not times_iso:
         return {"segments": [], "totals_hours": {}, "solar_noon": None, "solar_midnight": None}

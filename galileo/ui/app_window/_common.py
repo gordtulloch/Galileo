@@ -21,7 +21,7 @@ _OBSTRUCTED_MESSAGE = "Unable to slew to that area, it is obstructed"
 # at this pixel size — over the same field of view the small result-tile
 # thumbnail uses, just far more pixels of it — rather than upscaling the
 # already-small 150px thumbnail, which would just look blurry this large.
-_FULL_IMAGE_SIZE_PX = 640
+_FULL_IMAGE_SIZE_PX = 640   # == galileo.planning.sky_atlas.FULL_IMAGE_SIZE_PX (the size the thumbnail pack carries)
 
 # Derived from this repository's own git remote — the docs/ folder doubles as
 # the online manual until a dedicated documentation site exists.

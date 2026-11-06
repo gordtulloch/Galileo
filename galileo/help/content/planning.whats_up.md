@@ -39,7 +39,7 @@ Tonight's forecast: weather (cloud, wind, temperature), aurora activity (Kp inde
 
 ## Image note
 
-States how many result thumbnails were loaded. What's Up Tonight never downloads images (that made it slow to open); it only shows thumbnails already cached on this computer. To load them all in one go, use **Download Catalog Images** in Options > Planning, or browse the objects on the Targets page.
+States how many result thumbnails were loaded. What's Up Tonight never downloads images (that made it slow to open); it only shows thumbnails already cached on this computer. To load them all in one go, use **Download Catalog Images** in Options > Planning, or browse the objects on the Targets page. Clicking a thumbnail opens a larger view, read from the same cache (the download includes those larger images, so it works offline).
 
 ## Results
 

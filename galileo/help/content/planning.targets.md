@@ -3,7 +3,7 @@
 
 Targets searches Galileo's catalogs of stars, galaxies, nebulae and clusters, and shows each result as a tile you can act on. Fill in any of the criteria on the left and press **Search**; blank or "Any" criteria are ignored.
 
-Each result tile shows a thumbnail, the object's name and type, its brightness, size, constellation and coordinates, when it rises, transits and sets, and a small chart of its altitude through tonight. The chart and times need the Observatory's latitude and longitude (top bar). Click the thumbnail for a full-size view.
+Each result tile shows a thumbnail, the object's name and type, its brightness, size, constellation and coordinates, when it rises, transits and sets, and a small chart of its altitude through tonight. The chart and times need the Observatory's latitude and longitude (top bar). Click the thumbnail for a full-size view; it is read from the local image cache (see **Download Catalog Images** in Options > Planning) and only fetched from the survey service if it is not there.
 
 ## Search Criteria
 

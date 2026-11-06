@@ -161,3 +161,4 @@ include = ["galileo*"]
 
 [tool.setuptools.package-data]
 "galileo.help" = ["content/*.md"]
+"galileo.planning" = ["data/*.json"]

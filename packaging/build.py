@@ -39,6 +39,8 @@ def main() -> None:
         "--add-data", f"{ROOT / 'galileo' / 'library' / 'migrations'}{SEP}galileo/library/migrations",
         # In-app help is Markdown read from disk at run time (galileo/help/__init__.py).
         "--add-data", f"{ROOT / 'galileo' / 'help' / 'content'}{SEP}galileo/help/content",
+        # Bundled Yale Bright Star Catalogue: the Star Atlas's star source on a fresh install (no network needed).
+        "--add-data", f"{ROOT / 'galileo' / 'planning' / 'data'}{SEP}galileo/planning/data",
         "--collect-submodules", "galileo",
         "--collect-submodules", "peewee_migrate",
         "--collect-data", "astropy",

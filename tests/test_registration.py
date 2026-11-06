@@ -46,6 +46,12 @@ def test_ping_once_sends_the_handshake_over_a_tcp_connection():
     assert received == [registration.REGISTRATION_HANDSHAKE.encode("utf-8")]
 
 
+def test_handshake_carries_the_app_version():
+    """The ping identifies the running version, so a release bump updates it automatically."""
+    import galileo
+    assert registration.REGISTRATION_HANDSHAKE == f"GA{galileo.__version__}"
+
+
 def test_ping_once_raises_on_connection_failure():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))

@@ -747,3 +747,23 @@ def test_tc_wut_110_no_data_degrades_gracefully(visibility_mod, observing_locati
     assert result["solar_midnight"] is None
 
 
+
+
+@pytest.mark.requirement("TC-WUT-110")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("longitude", [-114.0, 0.0, 120.0])
+def test_tc_wut_110_day_night_band_is_centred_on_solar_midnight(visibility_mod, longitude):
+    """WUT-110: the band spans the site's solar noon to solar noon, so the middle of full night sits
+    mid-band whatever the system timezone is relative to the observatory (it was centred on
+    dawn when the two differed)."""
+    import datetime as _dt
+    pytest.importorskip("astropy")
+    loc = visibility_mod.ObservingLocation(name="t", latitude=51.0, longitude=longitude)
+    result = visibility_mod.day_night_bands(loc, "2026-03-20")
+    segs = result["segments"]
+    assert segs
+    start = _dt.datetime.fromisoformat(segs[0]["start"])
+    end = _dt.datetime.fromisoformat(segs[-1]["end"])
+    mid = start + (end - start) / 2
+    midnight = _dt.datetime.fromisoformat(result["solar_midnight"])
+    assert abs((midnight - mid).total_seconds()) < 45 * 60

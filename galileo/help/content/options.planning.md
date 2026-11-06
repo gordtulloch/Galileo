@@ -9,4 +9,4 @@ When ticked, any slew whose target lies below the horizon obstructions you defin
 
 ## Download Catalog Images
 
-Downloads one ZIP file of sky-survey thumbnails for the whole catalog from galileo-imaging.com and unpacks it into Galileo's image cache, so What's Up Tonight and Planning › Targets show pictures without fetching each one. Images you already have are kept; run it again after an update to add the new ones. You can cancel while it downloads.
+Downloads one ZIP file of sky-survey thumbnails for the whole catalog from galileo-imaging.com and unpacks it into Galileo's image cache, so What's Up Tonight and Planning › Targets show pictures without fetching each one. The pack holds both the small tile images and the larger click-to-enlarge images, so enlarging a thumbnail works offline too. Images you already have are kept; run it again after an update to add the new ones. You can cancel while it downloads.

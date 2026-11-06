@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _CATALOG_FILENAME = "galileo_star_catalog.json"
+_BUNDLED_CATALOG = Path(__file__).parent / "data" / "bright_star_catalog.json"   # Yale BSC, ships with the app
 
 # (name, RA° J2000, Dec° J2000, V mag). Proper names are attached to the nearest
 # catalogue star (within _NAME_MATCH_DEG), so these need only be accurate to a
@@ -140,20 +142,31 @@ def _fetch_bsc() -> StarCatalog | None:
         return None
 
 
+def _read_catalog_file(path) -> StarCatalog:
+    raw = json.loads(path.read_text("utf-8"))
+    cat = StarCatalog(
+        ra=np.array(raw["ra"]), dec=np.array(raw["dec"]), mag=np.array(raw["mag"]),
+        names=raw["names"], designations=raw["des"],
+    )
+    if len(cat) == 0:
+        raise ValueError("empty star catalog")
+    return cat
+
+
 def load_star_catalog() -> StarCatalog:
-    """Load the cached star catalog, fetching and caching it on first use.
-    Falls back to the ~60 brightest named stars if nothing is cached and the
-    network is unavailable (not cached, so a later start retries)."""
+    """Load the cached star catalog; failing that the copy bundled with the app (so a fresh install,
+    on any OS, shows stars without network access); failing that fetch it from VizieR and cache it.
+    Falls back to the ~60 brightest named stars only if all of those fail."""
     path = _cache_path()
     if path.exists():
         try:
-            raw = json.loads(path.read_text("utf-8"))
-            return StarCatalog(
-                ra=np.array(raw["ra"]), dec=np.array(raw["dec"]), mag=np.array(raw["mag"]),
-                names=raw["names"], designations=raw["des"],
-            )
+            return _read_catalog_file(path)
         except Exception:
-            logger.exception("Failed to read the cached star catalog; refetching")
+            logger.exception("Failed to read the cached star catalog; using the bundled one")
+    try:
+        return _read_catalog_file(_BUNDLED_CATALOG)
+    except Exception:
+        logger.exception("Failed to read the bundled star catalog; fetching it")
     cat = _fetch_bsc()
     if cat is None or len(cat) == 0:
         logger.warning("Star catalog unavailable offline — showing only the brightest named stars.")

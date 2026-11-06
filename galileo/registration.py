@@ -19,6 +19,8 @@ import socket
 import threading
 from collections.abc import Callable
 
+from galileo import __version__
+
 logger = logging.getLogger(__name__)
 
 # Hardcoded registration settings (per project decision, mirroring AstroFiler).
@@ -26,7 +28,9 @@ REGISTRATION_ENABLED = True
 REGISTRATION_HOST = "www.gordtulloch.com"
 REGISTRATION_PORT = 5050
 REGISTRATION_TIMEOUT_SECONDS = 2.0
-REGISTRATION_HANDSHAKE = "GA02.0"
+# "GA" + the running app version, so a version bump (galileo/__init__.py) updates the ping with no
+# separate step. (It used to be the fixed string "GA02.0", which never tracked releases.)
+REGISTRATION_HANDSHAKE = f"GA{__version__}"
 
 
 def _ini_allows_registration() -> bool:

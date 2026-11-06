@@ -393,15 +393,16 @@ class _DayNightBandChart(_QWidgetBase):
         def x_at(when) -> float:
             return band.left() + (when - self._window_start).total_seconds() / total_seconds * band.width()
 
-        # Hour-axis ticks every 2 hours from the window start (local noon, so night sits
-        # in the middle: 12, 14, ..., 00, ..., 10, 12).
+        # Hour-axis ticks at every even clock hour inside the window. The window starts at the
+        # site's solar noon (not necessarily on the hour), so ticks are placed by time, not step.
         painter.setPen(fg)
-        for step in range(13):
-            tick_time = self._window_start.replace(minute=0, second=0, microsecond=0) + \
-                _dt.timedelta(hours=2 * step)
-            x = x_at(tick_time)
-            painter.drawText(QRectF(x - 14, 0, 28, 12), _Qt.AlignmentFlag.AlignCenter,
-                             f"{tick_time.hour:02d}")
+        tick_time = self._window_start.replace(minute=0, second=0, microsecond=0)
+        while tick_time <= self._window_end:
+            if tick_time >= self._window_start and tick_time.hour % 2 == 0:
+                x = x_at(tick_time)
+                painter.drawText(QRectF(x - 14, 0, 28, 12), _Qt.AlignmentFlag.AlignCenter,
+                                 f"{tick_time.hour:02d}")
+            tick_time += _dt.timedelta(hours=1)
 
         # Band segments, with a thin surface-colored gap between adjacent
         # fills so a boundary is always visible even between two close

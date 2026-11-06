@@ -118,22 +118,35 @@ class AppWindowCurrentObjectMixin:
         dialog.show()
         QApplication.processEvents()
 
-        import asyncio
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            data = asyncio.run(self._shared_sky_atlas()._fetch_thumbnail(obj, size_px=_FULL_IMAGE_SIZE_PX))
-        except Exception:
-            logger.exception("Could not fetch full-size image for %s", obj.primary_name)
-            data = b""
-        finally:
-            QApplication.restoreOverrideCursor()
+        # The local thumbnail cache first (filled by Options > Planning > Download Catalog Images, or by an
+        # earlier view): a plain disk read, so it works offline and the survey service is not touched.
+        from galileo.planning.sky_atlas import _cached_thumbnail, _thumbnail_field_arcmin
+        field_arcmin = _thumbnail_field_arcmin(obj.size_arcmin)
+        data = _cached_thumbnail(obj.ra_deg, obj.dec_deg, field_arcmin, field_arcmin, _FULL_IMAGE_SIZE_PX)
+        fetch_failed = False
+        if not data:
+            import asyncio
+            image_label.setText("Not in the local image cache - fetching from the survey service...")
+            QApplication.processEvents()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                data = asyncio.run(self._shared_sky_atlas()._fetch_thumbnail(obj, size_px=_FULL_IMAGE_SIZE_PX))
+            except Exception:
+                logger.exception("Could not fetch full-size image for %s", obj.primary_name)
+                data = b""
+            finally:
+                QApplication.restoreOverrideCursor()
+            fetch_failed = not data
 
         pixmap = QPixmap()
         if data and pixmap.loadFromData(data) and not pixmap.isNull():
             image_label.setPixmap(pixmap)
             image_label.setText("")
         else:
-            image_label.setText("No image available.")
+            image_label.setText(
+                "No image available - the survey service could not be reached and the image is not in the "
+                "local cache. Load the catalog images in Options > Planning (Download Catalog Images)."
+                if fetch_failed else "No image available.")
         dialog.exec()
 
     def _refresh_current_object(self: AppWindowState) -> None:

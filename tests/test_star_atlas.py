@@ -96,6 +96,7 @@ def test_star_atlas_sun_position_at_the_2000_march_equinox():
 def test_star_atlas_catalog_falls_back_to_named_stars_offline(tmp_path, monkeypatch):
     """SKYMAP-010: with no cache and no network the atlas still has the brightest named stars, and doesn't cache the fallback."""
     monkeypatch.setattr(sa, "_cache_path", lambda: tmp_path / "stars.json")
+    monkeypatch.setattr(sa, "_BUNDLED_CATALOG", tmp_path / "missing.json")
     monkeypatch.setattr(sa, "_fetch_bsc", lambda: None)
     cat = sa.load_star_catalog()
     assert "Sirius" in cat.names and "Polaris" in cat.names
@@ -111,12 +112,23 @@ def test_star_atlas_catalog_is_cached_and_reloaded(tmp_path, monkeypatch):
                              ["Foo", ""], ["", "9Bar Baz"])
     calls = []
     monkeypatch.setattr(sa, "_cache_path", lambda: tmp_path / "stars.json")
+    monkeypatch.setattr(sa, "_BUNDLED_CATALOG", tmp_path / "missing.json")
     monkeypatch.setattr(sa, "_fetch_bsc", lambda: calls.append(1) or fetched)
     first = sa.load_star_catalog()
     second = sa.load_star_catalog()
     assert len(calls) == 1
     assert second.names == ["Foo", ""] and second.designations == ["", "9Bar Baz"]
     assert second.ra.tolist() == first.ra.tolist() == [10.0, 20.0]
+
+
+@pytest.mark.requirement("TC-SKYMAP-010")
+@pytest.mark.priority("MVP")
+def test_star_atlas_uses_bundled_catalog_without_network(tmp_path, monkeypatch):
+    """SKYMAP-010: a fresh install (no cache, no network) still gets the full bundled star catalog."""
+    monkeypatch.setattr(sa, "_cache_path", lambda: tmp_path / "stars.json")
+    monkeypatch.setattr(sa, "_fetch_bsc", lambda: pytest.fail("must not touch the network"))
+    cat = sa.load_star_catalog()
+    assert len(cat) > 9000 and "Sirius" in cat.names
 
 
 def _box(code="ORI", ra0=80.0, ra1=90.0, dec0=0.0, dec1=10.0):
