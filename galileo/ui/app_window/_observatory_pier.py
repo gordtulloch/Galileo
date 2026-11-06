@@ -619,33 +619,40 @@ class AppWindowObservatoryPierMixin:
                 timings.append((label, time.perf_counter() - start))
 
         switch_start = time.perf_counter()
-        # A switch blocks the UI until the last device has connected, so show the same progress splash as
-        # start-up (a no-op when start-up's own is already up, or before the window is shown).
-        progress = startup_progress.transient_progress(total) if window_shown else nullcontext(False)
-        with progress:
-            startup_progress.report(f"Switching to Pier {pier_name}" if pier_name else "Switching Pier")
-            for page_id, state in self._device_pages.items():
-                timed(f"{page_id} reload", state["reload"], f"Loading {page_id} settings")
-            for page_id, state in self._device_pages.items():
-                autoconnect = state.get("autoconnect")
-                if autoconnect is not None:
-                    timed(f"{page_id} autoconnect", autoconnect, f"Connecting {page_id} devices")
-            timed("optics combo", self._refresh_optics_combo, "Selecting optical train")
-            # Auto-connects above pushed the optics before the combo settled on this
-            # Pier's tube; re-send now that the active tube is the new Pier's.
-            timed("push optics to devices", self._push_context_to_devices, "Sending optics to devices")
-            timed("camera combo", self._refresh_camera_combo, "Selecting camera")
-            timed("camera imaging defaults", self._apply_camera_imaging_defaults, "Applying camera defaults")
-            timed("imaging filters", self._refresh_imaging_filters, "Loading filters")
-            timed("current object", self._refresh_current_object, "Restoring current target")
-            refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
-            if refresh_star_atlas_site is not None:
-                timed("star atlas site", refresh_star_atlas_site, "Updating star atlas site")
-            timed("horizon", self._apply_horizon, "Applying horizon")
-            for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
-                refresh = getattr(self, refresh_name, None)
-                if refresh is not None:
-                    timed(refresh_name.strip("_").replace("_", " "), refresh)
+        # The progress splash pumps the Qt event loop, so periodic timers (mount limit guard, pointing
+        # poll) would otherwise fire mid-switch against half-reloaded pages and create worker QThreads
+        # re-entrantly (access violation in the faulthandler log). They check this flag and skip.
+        self._pier_switching = True
+        try:
+            # A switch blocks the UI until the last device has connected, so show the same progress splash as
+            # start-up (a no-op when start-up's own is already up, or before the window is shown).
+            progress = startup_progress.transient_progress(total) if window_shown else nullcontext(False)
+            with progress:
+                startup_progress.report(f"Switching to Pier {pier_name}" if pier_name else "Switching Pier")
+                for page_id, state in self._device_pages.items():
+                    timed(f"{page_id} reload", state["reload"], f"Loading {page_id} settings")
+                for page_id, state in self._device_pages.items():
+                    autoconnect = state.get("autoconnect")
+                    if autoconnect is not None:
+                        timed(f"{page_id} autoconnect", autoconnect, f"Connecting {page_id} devices")
+                timed("optics combo", self._refresh_optics_combo, "Selecting optical train")
+                # Auto-connects above pushed the optics before the combo settled on this
+                # Pier's tube; re-send now that the active tube is the new Pier's.
+                timed("push optics to devices", self._push_context_to_devices, "Sending optics to devices")
+                timed("camera combo", self._refresh_camera_combo, "Selecting camera")
+                timed("camera imaging defaults", self._apply_camera_imaging_defaults, "Applying camera defaults")
+                timed("imaging filters", self._refresh_imaging_filters, "Loading filters")
+                timed("current object", self._refresh_current_object, "Restoring current target")
+                refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
+                if refresh_star_atlas_site is not None:
+                    timed("star atlas site", refresh_star_atlas_site, "Updating star atlas site")
+                timed("horizon", self._apply_horizon, "Applying horizon")
+                for refresh_name in ("_focus_settings_refresh", "_solve_settings_refresh"):
+                    refresh = getattr(self, refresh_name, None)
+                    if refresh is not None:
+                        timed(refresh_name.strip("_").replace("_", " "), refresh)
+        finally:
+            self._pier_switching = False
         self._log_pier_switch_timings(time.perf_counter() - switch_start, timings)
         self._refresh_pier_connect_controls()
 
@@ -765,6 +772,8 @@ class AppWindowObservatoryPierMixin:
         so its reticle falls back to the Pier's target rather than freezing where it last was."""
         from galileo.current_object import pier_key
 
+        if getattr(self, "_pier_switching", False):     # pages are mid-reload; the next poll will do
+            return
         mount = (self._device_pages.get("mount") or {}).get("adapter")
         key = pier_key(self._current_pier)
         if mount is None or key is None:

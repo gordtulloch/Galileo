@@ -737,6 +737,7 @@ The preview service renders images on the node that owns them, so a remote clien
 | PREV-040 | Rendering shall never run on the UI thread and shall follow the concurrency model (`asyncio.to_thread` for pure-numpy work, `run_cpu` for GIL-holding work); it shall run at the lowest scheduling class, be dropped or delayed before session work is, and degrade (smaller size, lower quality) rather than delay imaging. | MVP |
 | PREV-050 | A **guest mode** shall encode from pixel data with **no FITS header, EXIF, GPS or other embedded metadata**, at no more than a stated size and quality, and shall verify the output contains no segment beyond the minimum (an `assert_clean` check) before it is returned. | MVP |
 | PREV-060 | A client shall be able to request a lower quality or size to suit its link, bounded by the options `preview.max_size` and `preview.quality`. | P2 |
+| PREV-070 | The engine shall register frame sources with the preview service and offer it to front-end plugins through the published Control Surface, so a plugin can render, tile and describe a frame: the **current exposure** of each Pier (kept from the frames the engine announces on the bus, whether a remote capture or a session took them, with a version that changes per frame) and **any Library frame** (read from its file, fetched from the Master first if it is held there), and can list the newest Library frames to choose from. A frame reference shall be `current:<pier>` or `library:<frame id>` and anything else shall be refused. | MVP |
 
 ### 4.28 `SKYSTR` — Sky Data Streaming
 

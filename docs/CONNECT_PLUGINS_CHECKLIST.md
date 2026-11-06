@@ -31,7 +31,7 @@ Tracks the work to build the three "Connect" plugins. Sources: `docs/plugins/{no
 1. Run Galileo with WebConnect, pair a browser, open a Pier and walk through the screen (ideally on a tablet). Fix what the tests could not show.
 2. With a PHD2 simulator and simulator camera and mount, try `guiding.*` and `solve.*` for real.
 3. Purpose-built panels over the same catalogue: guiding (star cut-out, error trace), sky (search, framing preview).
-4. Held motion and previews (`WCON-600` to `640`, `720`, `730`), then the page marking state stale on stream loss (`WCON-780`) and the first all-Pier snapshot (`WCON-300`).
+4. Held motion (`WCON-720`, `730`; previews `WCON-600` to `640` are done apart from FITS download), then the page marking state stale on stream loss (`WCON-780`) and the first all-Pier snapshot (`WCON-300`).
 5. Remaining catalogue areas: calibration (`210`), notifications (`240`), scheduler editing, Library thumbnails and FITS download.
 6. MobileConnect plugin server side (section 5), not started.
 7. Core: the desktop honouring the lease (`LEASE-060`); SRS/SDD/RTM text for `LINK-010` to `080`.
@@ -62,7 +62,7 @@ Each needs SRS + SDD + RTM rows + tests per CLAUDE.md before the dependent plugi
 | Outreach facility (L9) | `LINK-100`–`210` | §4.28 | [x] Facility built and tested; **no surface and no Outreach page yet** (`LINK-190` screen) |
 | Control Surface, operation events, held motion, emergency | `CSURF-010`–`420` | §4.29 | [x] Registry, schema, events, state, held motion and emergency built and tested; **the per-area inventory `CSURF-100`–`240` is not**: no service registers its operations yet |
 | Control lease | `LEASE-010`–`080` | §4.29 | [x] Built and tested (broker, gateway check, spoke-held via the relay); **the desktop does not yet honour or show it** (`LEASE-060`) |
-| Preview service | `PREV-010`–`060` | §4.30 | [x] Built and tested; nothing calls it yet (no frame sources are registered) |
+| Preview service | `PREV-010`–`070` | §4.30 | [x] Built and tested; the engine registers the current exposure and Library frames as sources (`PREV-070`) and WebConnect's Image page uses it |
 | Sky streaming | `SKYSTR-010`–`080` | §4.31 | [x] Built and tested (encoding schema v1 is in code; the Quest SDD must adopt it); nothing calls it yet |
 | Replication support (C1–C6) | `REPL-010`–`080`, `PROF-130`, `GUIDE-100` | §4.32, §4.4, §4.14 | [x] Tracking, tombstones, registry, busy signal, settings-changed event, sync tables and revisions built and tested for `app_settings`; **12 other configuration tables are listed as pending registration**; the loopback check exists but is not applied to the UI |
 | Library On Master (C7), history transfer form | `LIB-200`–`220`, `HIST-050` | §4.23, §4.17 | [x] Built and tested, including the Library > Images Retrieve action and help; moving frames to a Master awaits NodeConnect |
@@ -151,7 +151,8 @@ Design: `docs/plugins/webconnect/SDD.md`. Built 2026-11-04 in `Galileo-Plugins/w
 - [x] `HttpLinkClient` verified against a real Connect Link listener
 - [x] **Options page on the Master** (`WCON-050`, `900`): approve, reject, promote, demote, revoke, remove, expiry, address, start/stop, options, recent activity; inline help written and audited (`help/plugin.WebConnect.md`). Left: list signed-in browsers with the Piers they hold
 - [~] `web.events`: **server side done (2026-11-04)**: Master route `events` and browser `GET /api/v1/events` (hello, ids, `Last-Event-ID` resume, `resync` on a gap, `down`, `signed-out`, four streams per sign-in, idle sign-out not defeated by an open stream; `WCON-300`, `310`, `350`). Also fixed: the web process did not patch gevent sockets, so one slow Master call stalled every browser. **Left:** the page marking state stale and disabling Pier-affecting operations while the stream is down (`WCON-780`), a first snapshot of every Pier on connect (`WCON-300`), and the event schema in the OpenAPI document
-- [ ] `web.hold` held motion (`WCON-720`, `730`); previews, tiles and FITS (`WCON-600` to `640`)
+- [ ] `web.hold` held motion (`WCON-720`, `730`)
+- [x] Previews and tiles for the current exposure and Library frames, with blink and side by side (`WCON-600`, `610`, `630`, `640`; built 2026-11-05, driven in a headless browser against the real preview code, **not yet with real hardware or a phone**). Still open: FITS download (`WCON-620`), the live stack and guide/focus cut-outs as preview sources, and the `previews`/`tiles` relay for a spoke's Pier (`WCON-210`)
 - [~] `web.ui` operating screens, tablet first. **First screen done (2026-11-04):** Pier list, live state, lease bar and a catalogue-built operations panel; untried in a real browser; static sky image first (`WCON-400` to `560`, `650`, `810` to `890`)
 - [ ] Relay to spoke Piers (`WCON-200` to `250`); needs section 4
 - [ ] **Spike first** (P2): Raspberry Pi 5 with 50 idle SSE streams, a running session and preview rendering; decides gevent vs Cheroot and sets the `WCON-080` figures. *Needs hardware.*

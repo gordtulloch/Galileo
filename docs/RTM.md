@@ -550,6 +550,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `PREV-040` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-040` |
 | `PREV-050` | MVP | SDD 4.30 `galileo.preview` | Test | `TC-PREV-050` |
 | `PREV-060` | P2 | SDD 4.30 `galileo.preview` | Test | `TC-PREV-060` |
+| `PREV-070` | MVP | SDD 4.30 `galileo.preview`, `galileo.control_surface.frames` | Test | `TC-PREV-070` |
 
 ### `SKYSTR` — Sky Data Streaming
 

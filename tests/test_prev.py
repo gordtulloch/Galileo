@@ -232,3 +232,124 @@ async def test_tc_prev_060_a_client_can_ask_for_less_within_the_option_limits(ve
     assert max(under.width, under.height) == 200 and len(under.data) < len(over.data)
     clamped = PreviewParams(max_size=1, quality=1, bin=9, stretch=500).clamped(600, 80)
     assert (clamped.max_size, clamped.quality, clamped.bin, clamped.stretch) == (16, 10, 4, 100)
+
+
+# -- PREV-070: the frames a front end can look at ---------------------------------------------------------------
+class _Service:
+    def __init__(self, frame):
+        self.current_frame = frame
+
+
+@pytest.fixture
+def frame_sources():
+    from galileo.bus import EventBus
+    from galileo.control_surface.frames import FrameSources
+    bus = EventBus()
+    loaded = []
+
+    def loader(frame_id):
+        loaded.append(frame_id)
+        return None if frame_id == "missing" else ("v1", _frame(300, 400, seed=5))
+
+    sources = FrameSources(bus, loader=loader)
+    sources.bus, sources.loaded = bus, loaded
+    yield sources
+    sources.close()
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
+async def test_tc_prev_070_current_frame_follows_the_bus_per_pier(frame_sources):
+    """PREV-070: the current exposure of each Pier is kept from the frames the engine announces, and a new frame is
+    a new version, so a client knows to look again."""
+    from galileo.bus import FrameCapturedEvent
+    from galileo.control_surface.frames import FramePreviews
+    previews = FramePreviews(frame_sources)
+    assert frame_sources.current_version("7") == 0
+    with pytest.raises(PreviewError):
+        await previews.render("current:7", PreviewParams())
+    frame_sources.bus.publish(FrameCapturedEvent("imaging", pier=7, service=_Service(_frame(200, 300))))
+    first = frame_sources.current_version("7")
+    assert first > 0 and frame_sources.current_version("8") == 0
+    shot = await previews.render("current:7", PreviewParams(max_size=128))
+    assert Image.open(io.BytesIO(shot.data)).size[0] <= 128
+    frame_sources.bus.publish(FrameCapturedEvent("imaging", pier=7, service=_Service(_frame(200, 300, seed=9))))
+    assert frame_sources.current_version("7") > first
+    assert (await previews.info("current:7"))["width"] == 300
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
+async def test_tc_prev_070_library_frames_render_tile_and_are_read_once(frame_sources):
+    """PREV-070: a Library frame is rendered and tiled from its file, read once however many previews are asked for,
+    and an unknown frame or a malformed reference is refused."""
+    from galileo.control_surface.frames import FramePreviews
+    previews = FramePreviews(frame_sources)
+    await previews.render("library:abc", PreviewParams(max_size=200))
+    await previews.render("library:abc", PreviewParams(max_size=200, stretch=80))
+    tile = await previews.tile("library:abc", 0, 1, 0, PreviewParams())
+    assert Image.open(io.BytesIO(tile)).size == (144, 256)                  # 400 wide: a full 256 tile, then 144
+    assert frame_sources.loaded == ["abc"]
+    info = await previews.info("library:abc")
+    assert (info["width"], info["height"]) == (400, 300)
+    for bad in ("library:missing", "library:../etc", "nothing", "current:" + "x" * 90, ""):
+        with pytest.raises(PreviewError):
+            await previews.render(bad, PreviewParams())
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
+async def test_tc_prev_070_frame_list_offers_current_and_recent_library_frames(frame_sources):
+    """PREV-070: a client is offered the Pier's current frame and the recent Library frames to choose from."""
+    from galileo.bus import FrameCapturedEvent
+    from galileo.control_surface.frames import FramePreviews
+    previews = FramePreviews(frame_sources, recent=lambda n: [{"id": "abc", "name": "m42.fits"}][:n])
+    assert (await previews.frames("7"))["current"] == {"ref": "current:7", "version": 0, "available": False}
+    frame_sources.bus.publish(FrameCapturedEvent("imaging", pier=7, service=_Service(_frame(100, 100))))
+    out = await previews.frames("7")
+    assert out["current"]["available"] and out["frames"] == [{"id": "abc", "name": "m42.fits"}]
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
+def test_tc_prev_070_the_engine_publishes_previews_with_the_control_surface():
+    """PREV-070: the published Control Surface carries the preview facade, and stopping the engine's channel
+    withdraws it and stops following frames."""
+    import inspect
+
+    from galileo.control_surface.service import ControlSurfaceService
+    from galileo.engine.main import Engine
+    assert "previews" in ControlSurfaceService.__dataclass_fields__
+    start, stop = inspect.getsource(Engine._start_channel), inspect.getsource(Engine._stop_channel)
+    assert "previews=self.previews" in start and "FrameSources(bus)" in start
+    assert "sources.close()" in stop
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
+def test_tc_prev_070_library_listing_and_reading_use_the_catalogue_and_the_fits_file(settings_db, tmp_path):
+    """PREV-070: the recent list comes from the Library catalogue (newest first, soft-deleted and held-elsewhere
+    frames marked or left out) and a frame's pixels are read from its FITS file; an unknown id gives nothing."""
+    from astropy.io import fits
+
+    from galileo.control_surface.frames import _library_frame, recent_library_frames
+    from galileo.library.models.fits_file import fitsFile
+
+    path = tmp_path / "m42.fits"
+    fits.PrimaryHDU(np.random.default_rng(3).normal(1000, 20, (40, 60)).astype(np.float32)).writeto(path)
+    fitsFile.create(fitsFileId="new", fitsFileName=str(path), fitsFileDate="2026-11-04", fitsFileObject="M 42",
+                    fitsFileType="Light", fitsFileFilter="L", fitsFileExpTime="120", fitsFileLocation="local")
+    fitsFile.create(fitsFileId="old", fitsFileName=str(tmp_path / "old.fits"), fitsFileDate="2026-10-01")
+    fitsFile.create(fitsFileId="gone", fitsFileName=str(tmp_path / "gone.fits"), fitsFileDate="2026-11-05",
+                    fitsFileSoftDelete=True)
+    fitsFile.create(fitsFileId="away", fitsFileName=str(tmp_path / "away.fits"), fitsFileDate="2026-11-03",
+                    fitsFileLocation="on_master")
+    listing = recent_library_frames(10)
+    assert [f["id"] for f in listing] == ["new", "away", "old"]                    # newest first, no soft-deleted
+    assert listing[0] | {} == {"id": "new", "name": "m42.fits", "object": "M 42", "type": "Light", "filter": "L",
+                               "exposure": "120", "date": "2026-11-04", "session": "", "local": True}
+    assert [f["local"] for f in listing] == [True, False, True]                    # a frame on a Master is marked
+    assert len(recent_library_frames(1)) == 1
+    version, data = _library_frame("new")
+    assert data.shape == (40, 60) and version.isdigit()
+    assert _library_frame("no-such-frame") is None

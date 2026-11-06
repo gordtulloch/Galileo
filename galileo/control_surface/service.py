@@ -33,6 +33,7 @@ class ControlSurfaceService:
     state: ObservableState
     piers: Callable[[], list[dict[str, Any]]]       # id, name, connected, lease holder — one dict per local Pier
     feed: EventFeed | None = None                   # state, lease and operation events in order (CSURF-260)
+    previews: Any = None                            # galileo.control_surface.frames.FramePreviews: pictures (PREV-070)
 
 
 _lock = threading.Lock()

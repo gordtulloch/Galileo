@@ -270,7 +270,15 @@ class IndiAdapter(DeviceBackend):
                     self.CONNECT_TIMEOUT_S, f"{self.device_name} to connect", self.device_name,
                 )
                 if not client.get_switch(self.device_name, "CONNECTION", "CONNECT"):
-                    last = client.last_message(self.device_name) or "no message from driver"
+                    last = client.last_message(self.device_name)
+                    if not last:
+                        # Serial drivers (WandererBox, focusers, ...) often ALERT silently when the
+                        # configured port is wrong — say which port they tried.
+                        port = client.get_text(self.device_name, "DEVICE_PORT", "PORT")
+                        last = ("the driver sent no message"
+                                + (f"; its serial port is set to {port!r} — check the port "
+                                   "(INDI Control Panel → Connection) and that nothing else has it open"
+                                   if port else ""))
                     raise DeviceConnectionError(f"INDI device {self.device_name!r} failed to connect: {last}")
             lap("device CONNECT" if self._we_connected_device else "already connected")
             # Drivers define most of their properties only once connected, and

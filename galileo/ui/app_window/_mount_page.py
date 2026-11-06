@@ -465,6 +465,8 @@ class AppWindowMountPageMixin:
         def _guard_tick() -> None:
             """Every few seconds, off the UI thread: stop the mount if it is outside its limits
             while tracking or slewing, and flip it when a requested flip is due."""
+            if getattr(self, "_pier_switching", False):     # pages are mid-reload; next tick will do
+                return
             adapter = state.get("adapter")
             limits = _current_limits()
             if adapter is None or guard_state["thread"] is not None:

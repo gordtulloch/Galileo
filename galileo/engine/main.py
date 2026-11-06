@@ -46,6 +46,8 @@ class Engine:
         self.gateway: Any = None
         self.channel: Any = None
         self.feed: Any = None
+        self.frame_sources: Any = None
+        self.previews: Any = None
         self.guiding: Any = None
         self._channel_loop: asyncio.AbstractEventLoop | None = None
         self._channel_thread: threading.Thread | None = None
@@ -187,10 +189,18 @@ class Engine:
         from galileo.control_surface.feed import EventFeed
         from galileo.control_surface.service import ControlSurfaceService, publish_control_surface
         self.feed = EventFeed(state=self.state, leases=self.leases, bus=bus, pier_ids=self.devices.pier_ids)
+        from galileo.control_surface.frames import FramePreviews, FrameSources
+        self.frame_sources = FrameSources(bus)                          # PREV-070: the current exposure of each Pier
+        self.previews = FramePreviews(self.frame_sources, busy=self._session_running)
         publish_control_surface(ControlSurfaceService(                  # CSURF-250: front-end plugins use these objects
             registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state,
             piers=lambda: asyncio.run_coroutine_threadsafe(self.channel._piers_list(), loop).result(10),
-            feed=self.feed))                                            # CSURF-260
+            feed=self.feed, previews=self.previews))                    # CSURF-260, PREV-070
+
+    def _session_running(self) -> bool:
+        """Whether any Pier has a session running, so previews shrink rather than compete with imaging (PREV-040)."""
+        runner = self.runner
+        return bool(runner is not None and any(runner.is_running(p) for p in self.devices.pier_ids()))
 
     def _on_settings_changed(self, _event: Any) -> None:
         """An Options change reached the database: read the engine's own settings again. A different Observatory
@@ -209,6 +219,10 @@ class Engine:
         loop, self._channel_loop = self._channel_loop, None
         from galileo.control_surface.service import withdraw_control_surface
         withdraw_control_surface()
+        sources, self.frame_sources = self.frame_sources, None
+        self.previews = None
+        if sources is not None:
+            sources.close()
         feed, self.feed = self.feed, None
         if feed is not None:
             feed.close()
