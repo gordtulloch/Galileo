@@ -675,7 +675,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             exposure_s=self.exposure_spin.value(), settle_s=self.settle_spin.value() / 1000.0,
             scale_hint_arcsec_px=self._scale_hint(),
             step_deg=float(self.polar_step_spin.value()), direction=self.polar_direction.currentData(),
-            refraction=self.polar_refraction.isChecked())
+            refraction=self.polar_refraction.isChecked(),
+            slew_from_zenith=self.polar_from_zenith.isChecked())
 
         def make(solver, **kwargs):
             return PolarAlignWorkflow(solver, latitude=site[0], longitude=site[1],
