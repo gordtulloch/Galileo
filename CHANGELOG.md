@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **MobileConnect plugin design note** (`docs/plugins/mobileconnect/SDD.md` 5.2): records how the first draft in `Galileo-Plugins/mobileconnect` differs from the design, because Connect Link's route table matches exact paths and its stream has no connection hook. Documentation only; nothing in Galileo itself changed.
+
 - **WebConnect: the page marks itself stale and disables operations when its live stream drops (`WCON-780`).** Done in the plugin (`Galileo-Plugins/webconnect`); the checklist now records it. Emergency operations stay attemptable. Documentation only in this repository.
 
 - **Catalog image pack now includes the large click-to-enlarge images, and the enlarged view reads from the local cache.** Clicking a thumbnail on Planning > Targets or What's Up Tonight fetched a 640 px image live from the CDS survey service, so it failed whenever that service was down. `scripts/build_thumbnail_pack.py` (via `build_pack(sizes=...)`) now downloads each object at both 150 px and 640 px (`--no-large` for tiles only; expect a much bigger ZIP), and Options > Planning > Download Catalog Images unpacks both into the thumbnail cache. `_show_full_image` now checks the cache first and only contacts the survey service when the image is missing, saying so (and pointing at Download Catalog Images) if that fails. Existing packs still install; they just lack the large images until rebuilt and re-uploaded.
