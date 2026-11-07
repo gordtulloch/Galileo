@@ -9,11 +9,11 @@ Where your files are and how they are handled.
 
 ## Source Path
 
-The *incoming* folder: where new FITS (and XISF) files wait to be imported. **Load New** on the Library › Images screen imports from here.
+The *incoming* folder: where new FITS (and XISF) files wait to be imported. **Load New** on the Library › Images screen imports from here. Until you choose a folder, this defaults to `REPOSITORY.incoming` in your home folder, which Galileo creates for you.
 
 ## Repository Path
 
-The folder where the Library keeps your organised image files. Galileo creates its folder structure here. **This must be set** for Auto-Save to Library on the Imaging screen to work.
+The folder where the Library keeps your organised image files. Galileo creates its folder structure here. Until you choose a folder, this defaults to `REPOSITORY` in your home folder, which Galileo creates for you, so Auto-Save to Library on the Imaging screen works out of the box.
 
 ## Temporary Files Folder
 
@@ -65,7 +65,7 @@ Programs Galileo launches for you.
 
 ## FITS Viewer
 
-The program used to open frames when you double-click them or choose View. Leave empty to use your system's default.
+The program used to open frames when you double-click them or choose View. On macOS choose the application itself (e.g. `/Applications/Tenmon.app`). Leave empty to use your system's default; on macOS, if Tenmon is installed in `/Applications` or `~/Applications` it is used in preference to the system default for `.fits` files (which is often an image editor such as GIMP).
 
 ## Suppress Warnings
 

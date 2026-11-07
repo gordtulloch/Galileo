@@ -393,28 +393,9 @@ class SessionsMenuMixin(_MixinBase):
         config = load_library_config()
         fits_viewer_path = config.get('DEFAULT', 'fits_viewer_path', fallback=None)
 
-        # Try to open with configured FITS viewer first
-        if fits_viewer_path and os.path.exists(fits_viewer_path):
-            try:
-                import subprocess
-                subprocess.Popen([fits_viewer_path, file_path])
-                logger.info(f"Opened file with configured viewer: {fits_viewer_path}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to open with configured viewer {fits_viewer_path}: {e}")
-
-        # Fall back to OS default viewer
         try:
-            if os.name == 'nt':
-                os.startfile(file_path)
-            elif os.name == 'posix':
-                import subprocess
-                if hasattr(os, 'uname') and os.uname().sysname == 'Darwin':
-                    subprocess.run(["open", file_path], check=False)
-                else:
-                    subprocess.run(["xdg-open", file_path], check=False)
-            else:
-                QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
+            from .viewer import open_fits_file
+            open_fits_file(file_path, fits_viewer_path)
         except Exception as e:
             logger.exception("Failed to open file in external viewer")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{e!s}")

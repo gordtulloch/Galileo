@@ -460,28 +460,8 @@ class ImagesWidget(QWidget):
             config = load_library_config()
             fits_viewer_path = config.get('DEFAULT', 'fits_viewer_path', fallback=None)
 
-            # Try to open with configured FITS viewer first
-            if fits_viewer_path and os.path.exists(fits_viewer_path):
-                try:
-                    import subprocess
-                    subprocess.Popen([fits_viewer_path, filename])
-                    logger.info(f"Opened file with configured viewer: {fits_viewer_path}")
-                    return
-                except Exception as e:
-                    logger.warning(f"Failed to open with configured viewer {fits_viewer_path}: {e}")
-                    # Fall through to system default viewer
-
-            # Try to open with default system viewer as fallback
-            if os.name == 'nt':  # Windows
-                os.startfile(filename)
-            elif os.name == 'posix':  # macOS and Linux
-                import subprocess
-                if os.uname().sysname == 'Darwin':  # macOS
-                    subprocess.run(["open", filename], check=False)
-                else:  # Linux
-                    subprocess.run(["xdg-open", filename], check=False)
-            else:
-                QMessageBox.information(self, "Unsupported", "File viewing not supported on this platform")
+            from .viewer import open_fits_file
+            open_fits_file(filename, fits_viewer_path)
 
         except Exception as e:
             logger.exception(f"Error viewing file {filename}")

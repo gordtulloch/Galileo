@@ -18,11 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The Library now defaults to `~/REPOSITORY` and `~/REPOSITORY.incoming`.** Previously the repository and incoming (source) folders were empty until set under Options > Library, so Auto-Save to Library did nothing on a fresh install. When either is unset, `galileo.library.config.load_config` now fills in `REPOSITORY` / `REPOSITORY.incoming` in the user's home folder and creates them; a folder you have chosen is never overridden. Applies to database-backed settings only, not `--config` files. Updated Options > Library help and the wiki.
+
 - **Connect plugins checklist: stale Connect Link lines corrected, NodeConnect confirmed built.** Two lines still said Options > Outreach was not built (it was, 2026-11-02); they now say only a guest surface and a wiki article remain. NodeConnect's transfer, UI and packaging were checked and are already complete (79 tests pass, the ZIP builds); the remaining items are the Raspberry Pi 5 measurement, a real two-machine run and the release, which waits for your say-so. Documentation only; no behaviour changed.
 
 - **The startup registration ping now reports the real app version.** `galileo/registration.py` sent a fixed `"GA02.0"` handshake that never changed between releases; it is now `"GA" + galileo.__version__` (e.g. `GA0.9.05alpha`), so bumping the version in `galileo/__init__.py` updates the ping with nothing extra to remember. The server at `www.gordtulloch.com:5050` must accept this format (it is the same one-line, no-response TCP handshake). No UI/help/wiki change.
 
 ### Fixed
+
+- **macOS: FITS files opened in GIMP instead of Tenmon.** A viewer set in Options > Library that was a `.app` bundle (a folder) could not be executed, so Galileo silently fell back to the system default for `.fits`, which was GIMP. New `galileo/ui/library/viewer.py` (used by Library > Images and Sessions) launches `.app` viewers with `open -a`, and with no viewer configured prefers an installed Tenmon over the system default. Windows/Linux behaviour is unchanged. Help updated.
 
 - **What's Up Tonight's day/night band was centred on dawn instead of mid-night.** The band started at the *system clock's* local noon, so whenever the computer's timezone differed from the observatory's longitude (a Pi left on UTC, a laptop travelling) the dark period slid toward one end. It now runs from the site's own solar noon to the next, computed from the Observatory's longitude, so solar midnight is always mid-band; the hour labels are placed by time (even clock hours) since the window no longer starts on the hour. Hour labels are still in the system clock's time. No help/wiki change (behaviour now matches what they describe).
 

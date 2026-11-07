@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Gord Tulloch
+
+"""Open a FITS file in the user's viewer: the one set in Options > Library, else the OS default.
+
+On macOS an application is a ``.app`` *bundle* (a folder), which cannot be executed directly, so it
+is launched with ``open -a``. With no viewer configured, an installed Tenmon is preferred over the
+Launch Services default for ``.fits`` -- that default is often an image editor such as GIMP.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_MAC_PREFERRED_VIEWERS = ("Tenmon.app",)
+
+
+def _is_mac() -> bool:
+    return sys.platform == "darwin"
+
+
+def _mac_preferred_viewer() -> str | None:
+    """An installed preferred FITS viewer bundle in /Applications or ~/Applications, if any."""
+    for folder in (Path("/Applications"), Path.home() / "Applications"):
+        for name in _MAC_PREFERRED_VIEWERS:
+            if (folder / name).exists():
+                return str(folder / name)
+    return None
+
+
+def viewer_command(file_path: str, configured: str | None) -> list[str] | None:
+    """The command that opens *file_path* in the configured viewer, or ``None`` to use the OS default."""
+    configured = (configured or "").strip()
+    if configured and os.path.exists(configured):
+        if _is_mac() and configured.rstrip("/").lower().endswith(".app"):
+            return ["open", "-a", configured, file_path]
+        return [configured, file_path]
+    if _is_mac():
+        preferred = _mac_preferred_viewer()
+        if preferred:
+            return ["open", "-a", preferred, file_path]
+    return None
+
+
+def open_fits_file(file_path: str, configured: str | None) -> None:
+    """Open *file_path* in the configured viewer, falling back to the OS default. Raises on failure."""
+    command = viewer_command(file_path, configured)
+    if command:
+        try:
+            subprocess.Popen(command)  # noqa: S603
+            logger.info("Opened %s with %s", file_path, command[0] if len(command) == 2 else command[:3])
+            return
+        except Exception:
+            logger.warning("Failed to open with the FITS viewer %s", command, exc_info=True)
+    if os.name == "nt":
+        os.startfile(file_path)  # type: ignore[attr-defined]  # noqa: S606
+    elif _is_mac():
+        subprocess.run(["open", file_path], check=False)  # noqa: S603, S607
+    else:
+        subprocess.run(["xdg-open", file_path], check=False)  # noqa: S603, S607

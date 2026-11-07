@@ -97,6 +97,32 @@ def config_exists() -> bool:
     return bool(settings_store.get_namespace(LIBRARY_NAMESPACE))
 
 
+DEFAULT_REPOSITORY_DIRNAME = "REPOSITORY"
+DEFAULT_INCOMING_DIRNAME = "REPOSITORY.incoming"
+
+
+def default_repository_paths() -> tuple[Path, Path]:
+    """The default ``(repository, incoming)`` folders: ``~/REPOSITORY`` and ``~/REPOSITORY.incoming``."""
+    home = Path.home()
+    return home / DEFAULT_REPOSITORY_DIRNAME, home / DEFAULT_INCOMING_DIRNAME
+
+
+def _apply_default_folders(config: configparser.ConfigParser) -> None:
+    """Fill in an unset (or blank) ``repo`` / ``source`` with the home-folder defaults and create them.
+
+    A folder the user has chosen is left alone and not created here."""
+    repo, incoming = default_repository_paths()
+    for key, default in (("repo", repo), ("source", incoming)):
+        if config.get("DEFAULT", key, fallback="").strip():
+            continue
+        try:
+            default.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.warning("Could not create the default Library folder %s", default, exc_info=True)
+            continue
+        config.set("DEFAULT", key, str(default).replace("%", "%%"))
+
+
 def load_config(path: Path | str | None = None) -> configparser.ConfigParser:
     """Return the library settings, empty if none are saved yet.
 
@@ -108,6 +134,7 @@ def load_config(path: Path | str | None = None) -> configparser.ConfigParser:
         _import_legacy_ini()
         for key, value in settings_store.get_namespace(LIBRARY_NAMESPACE).items():
             config.set("DEFAULT", key, str(value).replace("%", "%%"))
+        _apply_default_folders(config)
         return config
     target = Path(path) if path else get_config_path()
     if target.exists():
