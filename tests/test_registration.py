@@ -49,7 +49,7 @@ def test_ping_once_sends_the_handshake_over_a_tcp_connection():
 def test_handshake_carries_the_app_version():
     """The ping identifies the running version, so a release bump updates it automatically."""
     import galileo
-    assert registration.REGISTRATION_HANDSHAKE == f"GA{galileo.__version__}"
+    assert f"GA{galileo.__version__}" == registration.REGISTRATION_HANDSHAKE
 
 
 def test_ping_once_raises_on_connection_failure():

@@ -124,23 +124,56 @@ def has_standard_properties(props: Props) -> bool:
 
 def map_standard(props: Props) -> tuple[Mapped, set[str]]:
     """Build a panel from INDI's power interface. Returns the mapping and the property names it claimed."""
-    claimed: set[str] = set()
-    targets: dict[str, Target] = {}
-    groups: list[SwitchGroup] = []
+    return _StandardMapper(props).build()
 
-    def currents(name: str) -> dict[str, float | None]:
-        prop = _kind_defined(props, name, "number")
+
+def _element_label(prop: IndiProperty | None, element: str) -> str:
+    """The driver's label for an element of a property it may not have defined."""
+    return prop.elements[element].label if prop and element in prop.elements else ""
+
+
+def _ref(prop: IndiProperty | None, name: str, element: str) -> tuple[str, str] | None:
+    """Where to write an element, if the driver has it."""
+    return (name, element) if prop is not None and element in prop.elements else None
+
+
+def _writable(*props: IndiProperty | None) -> bool:
+    """Whether every property the driver defined can be written."""
+    return all(prop is None or prop.perm != "ro" for prop in props)
+
+
+class _StandardMapper:
+    """One pass over a device's properties, one method per part of the panel, in the order they appear on it."""
+
+    def __init__(self, props: Props) -> None:
+        self.props = props
+        self.claimed: set[str] = set()
+        self.targets: dict[str, Target] = {}
+        self.groups: list[SwitchGroup] = []
+
+    def build(self) -> tuple[Mapped, set[str]]:
+        self._toggle_group("DC", "POWER_CHANNELS", "POWER_LABELS", "POWER_CURRENTS", "dc")
+        self._toggle_group("USB", "USB_PORTS", "USB_LABELS", None, "usb")
+        self._dew_group()
+        self._toggle_group("Auto dew", "AUTO_DEW_CONTROL", "DEW_LABELS", None, "autodew")
+        self._variable_group()
+        self._device_group()
+        sensors = self._sensors()
+        return Mapped(SwitchPanel(groups=self.groups, sensors=sensors), self.targets), self.claimed
+
+    def _currents(self, name: str) -> dict[str, float | None]:
+        prop = _kind_defined(self.props, name, "number")
         if prop is None:
             return {}
-        claimed.add(name)
-        return {n: _number(props, (name, n)) for n in prop.elements}
+        self.claimed.add(name)
+        return {n: _number(self.props, (name, n)) for n in prop.elements}
 
-    def toggle_group(title: str, switch: str, labels: str, current: str | None, prefix: str) -> None:
-        sw = _kind_defined(props, switch, "switch")
+    def _toggle_group(self, title: str, switch: str, labels: str, current: str | None, prefix: str) -> None:
+        sw = _kind_defined(self.props, switch, "switch")
         if sw is None:
             return
-        claimed.update({switch, labels})
-        names, amps = _labels(props, labels), currents(current) if current else {}
+        self.claimed.update({switch, labels})
+        names, amps = _labels(self.props, labels), self._currents(current) if current else {}
         channels = []
         for element, el in sw.elements.items():
             cid = f"{prefix}{_suffix(element)}"
@@ -148,49 +181,45 @@ def map_standard(props: Props) -> tuple[Mapped, set[str]]:
                 id=cid, label=names.get(element) or el.label or element, on=bool(el.value),
                 writable=sw.perm != "ro", current_a=amps.get(element), state=sw.state,
             ))
-            targets[cid] = Target(kind=KIND_TOGGLE, switch=(switch, element))
-        groups.append(SwitchGroup(title, channels))
+            self.targets[cid] = Target(kind=KIND_TOGGLE, switch=(switch, element))
+        self.groups.append(SwitchGroup(title, channels))
 
-    toggle_group("DC", "POWER_CHANNELS", "POWER_LABELS", "POWER_CURRENTS", "dc")
-    toggle_group("USB", "USB_PORTS", "USB_LABELS", None, "usb")
-
-    # Dew heaters: an on/off switch plus a duty, either of which a driver may omit.
-    dsw = _kind_defined(props, "DEW_CHANNELS", "switch")
-    dduty = _kind_defined(props, "DEW_DUTY_CYCLES", "number")
-    if dsw is not None or dduty is not None:
-        claimed.update({"DEW_CHANNELS", "DEW_DUTY_CYCLES", "DEW_LABELS"})
-        names, amps = _labels(props, "DEW_LABELS"), currents("DEW_CURRENTS")
+    def _dew_group(self) -> None:
+        """Dew heaters: an on/off switch plus a duty, either of which a driver may omit."""
+        dsw = _kind_defined(self.props, "DEW_CHANNELS", "switch")
+        dduty = _kind_defined(self.props, "DEW_DUTY_CYCLES", "number")
+        if dsw is None and dduty is None:
+            return
+        self.claimed.update({"DEW_CHANNELS", "DEW_DUTY_CYCLES", "DEW_LABELS"})
+        names, amps = _labels(self.props, "DEW_LABELS"), self._currents("DEW_CURRENTS")
         base = dsw if dsw is not None else dduty
         assert base is not None
-        elements = list(base.elements)
         channels = []
-        for element in elements:
+        for element in list(base.elements):
             cid = f"dew{_suffix(element)}"
             scale = float(dduty.elements[element].max or _DEFAULT_DEW_SCALE) if dduty and element in dduty.elements else _DEFAULT_DEW_SCALE
-            raw = _number(props, ("DEW_DUTY_CYCLES", element))
-            label = names.get(element) or (dsw.elements[element].label if dsw and element in dsw.elements else "") or element
+            raw = _number(self.props, ("DEW_DUTY_CYCLES", element))
             channels.append(SwitchChannel(
-                id=cid, label=label, kind=KIND_DEW,
-                on=_switch(props, ("DEW_CHANNELS", element)),
+                id=cid, label=names.get(element) or _element_label(dsw, element) or element, kind=KIND_DEW,
+                on=_switch(self.props, ("DEW_CHANNELS", element)),
                 duty=None if raw is None else _clamp(raw / scale * DUTY_MAX, 0.0, DUTY_MAX),
                 min=0.0, max=DUTY_MAX, step=_dew_step(dduty, element, scale),
-                writable=(dsw is None or dsw.perm != "ro") and (dduty is None or dduty.perm != "ro"),
+                writable=_writable(dsw, dduty),
                 current_a=amps.get(element), state=base.state,
             ))
-            targets[cid] = Target(
-                kind=KIND_DEW, switch=("DEW_CHANNELS", element) if dsw is not None and element in dsw.elements else None,
-                number=("DEW_DUTY_CYCLES", element) if dduty is not None and element in dduty.elements else None,
-                scale_max=scale,
+            self.targets[cid] = Target(
+                kind=KIND_DEW, switch=_ref(dsw, "DEW_CHANNELS", element),
+                number=_ref(dduty, "DEW_DUTY_CYCLES", element), scale_max=scale,
             )
-        groups.append(SwitchGroup("Dew heaters", channels))
+        self.groups.append(SwitchGroup("Dew heaters", channels))
 
-    toggle_group("Auto dew", "AUTO_DEW_CONTROL", "DEW_LABELS", None, "autodew")
-
-    vsw = _kind_defined(props, "VARIABLE_CHANNELS", "switch")
-    vvolts = _kind_defined(props, "VARIABLE_VOLTAGES", "number")
-    if vsw is not None or vvolts is not None:
-        claimed.update({"VARIABLE_CHANNELS", "VARIABLE_VOLTAGES", "VARIABLE_LABELS"})
-        names = _labels(props, "VARIABLE_LABELS")
+    def _variable_group(self) -> None:
+        vsw = _kind_defined(self.props, "VARIABLE_CHANNELS", "switch")
+        vvolts = _kind_defined(self.props, "VARIABLE_VOLTAGES", "number")
+        if vsw is None and vvolts is None:
+            return
+        self.claimed.update({"VARIABLE_CHANNELS", "VARIABLE_VOLTAGES", "VARIABLE_LABELS"})
+        names = _labels(self.props, "VARIABLE_LABELS")
         channels = []
         vbase = vsw if vsw is not None else vvolts
         assert vbase is not None
@@ -198,63 +227,71 @@ def map_standard(props: Props) -> tuple[Mapped, set[str]]:
             cid = f"var{_suffix(element)}"
             vel = vvolts.elements.get(element) if vvolts else None
             channels.append(SwitchChannel(
-                id=cid, label=names.get(element) or (vsw.elements[element].label if vsw and element in vsw.elements else "") or element,
-                kind=KIND_VARIABLE, on=_switch(props, ("VARIABLE_CHANNELS", element)),
-                volts=_number(props, ("VARIABLE_VOLTAGES", element)),
+                id=cid, label=names.get(element) or _element_label(vsw, element) or element,
+                kind=KIND_VARIABLE, on=_switch(self.props, ("VARIABLE_CHANNELS", element)),
+                volts=_number(self.props, ("VARIABLE_VOLTAGES", element)),
                 min=vel.min if vel else None, max=vel.max if vel else None, step=vel.step if vel else None,
-                writable=(vsw is None or vsw.perm != "ro") and (vvolts is None or vvolts.perm != "ro"),
+                writable=_writable(vsw, vvolts),
                 state=vbase.state,
             ))
-            targets[cid] = Target(
-                kind=KIND_VARIABLE, switch=("VARIABLE_CHANNELS", element) if vsw is not None and element in vsw.elements else None,
-                number=("VARIABLE_VOLTAGES", element) if vvolts is not None and element in vvolts.elements else None,
+            self.targets[cid] = Target(
+                kind=KIND_VARIABLE, switch=_ref(vsw, "VARIABLE_CHANNELS", element),
+                number=_ref(vvolts, "VARIABLE_VOLTAGES", element),
             )
-        groups.append(SwitchGroup("Adjustable outputs", channels))
+        self.groups.append(SwitchGroup("Adjustable outputs", channels))
 
-    device: list[SwitchChannel] = []
-    for prop_name, element, cid, label in (
-        ("LED_CONTROL", "INDI_ENABLED", "led", "LEDs"),
-        ("POWER_OFF_DISCONNECT", "INDI_ENABLED", "power_off_on_disconnect", "Power off on disconnect"),
-    ):
-        prop = _kind_defined(props, prop_name, "switch")
-        if prop is not None and element in prop.elements:
-            claimed.add(prop_name)
-            device.append(SwitchChannel(id=cid, label=label, on=bool(prop.elements[element].value),
-                                        writable=prop.perm != "ro", state=prop.state))
-            targets[cid] = Target(kind=KIND_TOGGLE, switch=(prop_name, element))
-    cycle = _kind_defined(props, "POWER_CYCLE", "switch")
-    if cycle is not None and cycle.elements:
-        claimed.add("POWER_CYCLE")
+    def _device_group(self) -> None:
+        device = [*self._device_toggles(), *self._power_cycle(), *self._over_voltage()]
+        if device:
+            self.groups.append(SwitchGroup("Device", device))
+
+    def _device_toggles(self) -> list[SwitchChannel]:
+        found = []
+        for prop_name, element, cid, label in (
+            ("LED_CONTROL", "INDI_ENABLED", "led", "LEDs"),
+            ("POWER_OFF_DISCONNECT", "INDI_ENABLED", "power_off_on_disconnect", "Power off on disconnect"),
+        ):
+            prop = _kind_defined(self.props, prop_name, "switch")
+            if prop is not None and element in prop.elements:
+                self.claimed.add(prop_name)
+                found.append(SwitchChannel(id=cid, label=label, on=bool(prop.elements[element].value),
+                                           writable=prop.perm != "ro", state=prop.state))
+                self.targets[cid] = Target(kind=KIND_TOGGLE, switch=(prop_name, element))
+        return found
+
+    def _power_cycle(self) -> list[SwitchChannel]:
+        cycle = _kind_defined(self.props, "POWER_CYCLE", "switch")
+        if cycle is None or not cycle.elements:
+            return []
+        self.claimed.add("POWER_CYCLE")
         element = next(iter(cycle.elements))
-        device.append(SwitchChannel(id="power_cycle", label="Cycle power", kind=KIND_ACTION,
-                                    writable=cycle.perm != "ro", state=cycle.state))
-        targets["power_cycle"] = Target(kind=KIND_ACTION, switch=("POWER_CYCLE", element), action=True)
-    ovp = _kind_defined(props, "OVER_VOLTAGE_PROTECTION", "number")
-    if ovp is not None and ovp.elements:
-        claimed.add("OVER_VOLTAGE_PROTECTION")
+        self.targets["power_cycle"] = Target(kind=KIND_ACTION, switch=("POWER_CYCLE", element), action=True)
+        return [SwitchChannel(id="power_cycle", label="Cycle power", kind=KIND_ACTION,
+                              writable=cycle.perm != "ro", state=cycle.state)]
+
+    def _over_voltage(self) -> list[SwitchChannel]:
+        ovp = _kind_defined(self.props, "OVER_VOLTAGE_PROTECTION", "number")
+        if ovp is None or not ovp.elements:
+            return []
+        self.claimed.add("OVER_VOLTAGE_PROTECTION")
         element = next(iter(ovp.elements))
         el = ovp.elements[element]
-        device.append(SwitchChannel(
+        self.targets["over_voltage"] = Target(kind=KIND_VALUE, number=("OVER_VOLTAGE_PROTECTION", element))
+        return [SwitchChannel(
             id="over_voltage", label="Over-voltage limit (V)", kind=KIND_VALUE,
-            value=_number(props, ("OVER_VOLTAGE_PROTECTION", element)),
+            value=_number(self.props, ("OVER_VOLTAGE_PROTECTION", element)),
             min=el.min, max=el.max, step=el.step, writable=ovp.perm != "ro", state=ovp.state,
-        ))
-        targets["over_voltage"] = Target(kind=KIND_VALUE, number=("OVER_VOLTAGE_PROTECTION", element))
-    if device:
-        groups.append(SwitchGroup("Device", device))
+        )]
 
-    sensors: list[SwitchSensor] = []
-    sensor_prop = _kind_defined(props, "POWER_SENSORS", "number")
-    if sensor_prop is not None:
-        claimed.add("POWER_SENSORS")
-        for element, label, unit in (
-            ("SENSOR_VOLTAGE", "Voltage", "V"), ("SENSOR_CURRENT", "Current", "A"), ("SENSOR_POWER", "Power", "W"),
-        ):
-            if element in sensor_prop.elements:
-                sensors.append(SwitchSensor(id=element.lower(), label=label, unit=unit,
-                                            value=_number(props, ("POWER_SENSORS", element))))
-
-    return Mapped(SwitchPanel(groups=groups, sensors=sensors), targets), claimed
+    def _sensors(self) -> list[SwitchSensor]:
+        prop = _kind_defined(self.props, "POWER_SENSORS", "number")
+        if prop is None:
+            return []
+        self.claimed.add("POWER_SENSORS")
+        return [SwitchSensor(id=element.lower(), label=label, unit=unit, value=_number(self.props, ("POWER_SENSORS", element)))
+                for element, label, unit in (
+                    ("SENSOR_VOLTAGE", "Voltage", "V"), ("SENSOR_CURRENT", "Current", "A"), ("SENSOR_POWER", "Power", "W"),
+                ) if element in prop.elements]
 
 
 def _dew_step(duty_prop: IndiProperty | None, element: str, scale: float) -> float | None:

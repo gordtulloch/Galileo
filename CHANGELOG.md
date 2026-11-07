@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Code-quality CI.** Five `ruff` findings had failed the `static-analysis` job on every push, so the steps after it weren't running, and one of those would have failed too: `map_standard` in `galileo/adapters/indi/switch_map.py` was over the complexity limit. The findings are fixed, and that function is split into one method per part of the panel. An internal refactor with no visible effect.
+
 - **Connect Link discovery on a Mac.** If mDNS can't bind every network interface ("address in use", seen on a Mac), Galileo now advertises on the default one rather than not at all, so apps and other nodes can still find it without typing its address. Computers where binding all of them works behave as before.
 
 - **macOS: FITS files opened in GIMP instead of Tenmon.** A viewer set in Options > Library that was a `.app` bundle (a folder) could not be executed, so Galileo silently fell back to the system default for `.fits`, which was GIMP. New `galileo/ui/library/viewer.py` (used by Library > Images and Sessions) launches `.app` viewers with `open -a`, and with no viewer configured prefers an installed Tenmon over the system default. Windows/Linux behaviour is unchanged. Help updated.
