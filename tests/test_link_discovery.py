@@ -124,3 +124,35 @@ async def test_tc_link_040_close_withdraws_and_releases_the_backend():
     assert len(backend.registered) == 1
     await discovery.close()
     assert backend.registered == [] and backend.closed
+
+
+@pytest.mark.requirement("TC-LINK-040")
+@pytest.mark.priority("MVP")
+def test_tc_link_040_a_failed_bind_of_every_interface_falls_back_to_the_default(monkeypatch):
+    """LINK-040: "address in use" on one interface must not cost the node its advertisement; and where binding
+    them all works, that stays the behaviour, so a computer on several networks advertises on all of them."""
+    import zeroconf
+    import zeroconf.asyncio
+    from galileo.connect_link.discovery import ZeroconfBackend
+
+    calls = []
+
+    class Failing:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            if "interfaces" not in kwargs:
+                raise OSError(48, "Address already in use")
+
+    monkeypatch.setattr(zeroconf.asyncio, "AsyncZeroconf", Failing)
+    assert isinstance(ZeroconfBackend()._zc, Failing)
+    assert calls == [{}, {"interfaces": zeroconf.InterfaceChoice.Default}]
+
+    calls.clear()
+
+    class Working:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(zeroconf.asyncio, "AsyncZeroconf", Working)
+    ZeroconfBackend()
+    assert calls == [{}]

@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Connect Link discovery on a Mac.** If mDNS can't bind every network interface ("address in use", seen on a Mac), Galileo now advertises on the default one rather than not at all, so apps and other nodes can still find it without typing its address. Computers where binding all of them works behave as before.
+
 - **macOS: FITS files opened in GIMP instead of Tenmon.** A viewer set in Options > Library that was a `.app` bundle (a folder) could not be executed, so Galileo silently fell back to the system default for `.fits`, which was GIMP. New `galileo/ui/library/viewer.py` (used by Library > Images and Sessions) launches `.app` viewers with `open -a`, and with no viewer configured prefers an installed Tenmon over the system default. Windows/Linux behaviour is unchanged. Help updated.
 
 - **What's Up Tonight's day/night band was centred on dawn instead of mid-night.** The band started at the *system clock's* local noon, so whenever the computer's timezone differed from the observatory's longitude (a Pi left on UTC, a laptop travelling) the dark period slid toward one end. It now runs from the site's own solar noon to the next, computed from the Observatory's longitude, so solar midnight is always mid-band; the hour labels are placed by time (even clock hours) since the window no longer starts on the hour. Hour labels are still in the system clock's time. No help/wiki change (behaviour now matches what they describe).
