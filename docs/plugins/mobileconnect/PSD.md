@@ -252,7 +252,7 @@ One domain, **`MCON`** (MobileConnect), specified in a future SRS. Provisional s
 | D1 | Operations are exposed through a **core Control Surface** (C1) |
 | D2 | The app can **author and edit sessions and the schedule**, not only run them |
 | D3 | Native iOS and Android tooling, sharing as many elements as possible (PC9) |
-| D4 | No background push alerts in v1 |
+| D4 | No background push alerts in v1 (no relay, no cloud, no APNs/FCM). Alerts while the app is closed come from the Master's own `NOTIF` channels (e-mail/SMS) |
 | D5 | The app is **not GPL**, and free initially |
 | D6 | A new pairing is Viewer by default; promotion to Operator is deliberate, on the Master |
 | D7 | After a safety stop an Operator can **acknowledge only**; resuming stays the core safety service's decision |

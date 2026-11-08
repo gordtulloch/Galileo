@@ -151,6 +151,16 @@ Text from PHD2 describing what it is doing now (calibrating, guiding, settling, 
 
 PHD2's picture of the guide star, with the lock position marked. Use Fit and 1:1 above it to change the zoom.
 
+**Tap to choose a star.** While PHD2 is looping (not guiding), tap or click the picture to make the star there the guide star. PHD2 picks the best star inside a small box around the tap, so you need to be near the star, not exactly on it. A drag pans the picture instead.
+
+## Star
+
+Shows PHD2's close-up of the guide star, with the lock box. Tapping it chooses a star relative to the one already selected, so it suits small corrections; to pick a different star altogether, use **Full frame**.
+
+## Full frame
+
+Shows the whole guide frame so you can see every candidate star and tap the one you want. Galileo gets the frame by asking PHD2 to save it as a file and reading that file, so it works when PHD2 runs on this computer or on one whose temporary folder Galileo can read; otherwise the picture stays empty and the **Star** view is all there is.
+
 ## Guide graph
 
 Tracking error over time. The horizontal axis is time, the vertical axis is error in arcseconds. Choose which lines are drawn with the tick boxes beneath it.

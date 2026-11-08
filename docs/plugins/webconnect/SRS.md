@@ -175,7 +175,7 @@ Every operation is a Control Surface entry (needs CS) invoking the same domain s
 | WCON-410 | **Observatory and Pier** — as `MCON-410`: list Observatories and Piers, choose the working Pier, view the Dashboard timelines of every Pier. | MVP |
 | WCON-420 | **Devices** — as `MCON-420`: connect and disconnect devices and operate the mount, camera, filter wheel, rotator, dome, flat panel and switches; view weather and safety-monitor state; focuser movement only under Focus (`WCON-470`). | MVP |
 | WCON-421 | After a mount connects through an operation of this plugin, the same date/time and site latitude/longitude synchronisation shall occur as when connecting at the desktop. | MVP |
-| WCON-430 | **Imaging** — as `MCON-430`: live exposure loop, single and series captures, current-frame preview with stretch, histogram, statistics and star metrics, live stack, reject frames. | MVP |
+| WCON-430 | **Imaging** — as `MCON-430`: live exposure loop, single and series captures, current-frame preview with stretch, histogram, statistics and star metrics, live stack, reject frames, and — as `MCON-430` — the **More** menu of switch channels ticked *Show on imaging* (on/off, dew percentage) with the flat panel's controls on the same screen (`imaging.controls`, `switch.set`; core `EQP-SW-150`). | MVP |
 | WCON-440 | **Sky and framing** — as `MCON-440`: sky view with the mount's position, target search and selection, go-to, Framing Assistant, current-object details, Planning and visibility lists, Telescopius and AAVSO targets. | MVP |
 | WCON-450 | **Plate solving and alignment** — as `MCON-450`. | MVP |
 | WCON-460 | **Guiding** — as `MCON-460`, including the error trace and guide-star cut-out. | MVP |

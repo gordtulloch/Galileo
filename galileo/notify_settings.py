@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from galileo.notify import EmailChannel, NotificationEvent, NotificationService, SmsChannel
+from galileo.notify import (
+    EmailChannel, NotificationEvent, NotificationService, NtfyChannel, SmsChannel, valid_ntfy_topic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +33,20 @@ DEFAULTS: dict[str, Any] = {
     # Carrier e-mail-to-SMS gateway: a domain ("vtext.com", sent to <phone>@vtext.com) or a full
     # address template/value containing "@" used as-is.
     "sms_gateway": "",
+    # ntfy push (https://ntfy.sh): the primary alert route; e-mail is its backup (sent only if the push fails).
+    "ntfy_enabled": True,
+    "ntfy_server": "https://ntfy.sh",
+    "ntfy_topic": "",             # empty = ntfy not set up
+    "email_backup_for_ntfy": True,
     # Event values switched off for external delivery, per channel (NOTIF-030).
     "email_disabled_events": [],
     "sms_disabled_events": [],
+    "ntfy_disabled_events": [],
 }
 
 _KEYRING_SERVICE = "galileo-notify"
 _KEYRING_SMTP_USER = "smtp"
+_KEYRING_NTFY_TOKEN = "ntfy-token"  # noqa: S105 - keychain entry name, not a secret
 
 
 NAMESPACE = "notifications"
@@ -98,6 +107,37 @@ def set_smtp_password(password: str) -> None:
         logger.warning("Could not save the SMTP password to the OS keychain", exc_info=True)
 
 
+def get_ntfy_token() -> str:
+    """The optional ntfy access token from the OS credential store ("" if unset or unavailable)."""
+    try:
+        import keyring
+        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_NTFY_TOKEN) or ""
+    except Exception:
+        logger.warning("Could not read the ntfy token from the OS keychain", exc_info=True)
+        return ""
+
+
+def set_ntfy_token(token: str) -> None:
+    """Store the ntfy access token in the OS credential store (an empty string clears it)."""
+    try:
+        import keyring
+        if token:
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_NTFY_TOKEN, token)
+        else:
+            try:
+                keyring.delete_password(_KEYRING_SERVICE, _KEYRING_NTFY_TOKEN)
+            except Exception:
+                logger.debug("Could not delete the ntfy token from the OS keychain", exc_info=True)
+    except Exception:
+        logger.warning("Could not save the ntfy token to the OS keychain", exc_info=True)
+
+
+def generate_ntfy_topic() -> str:
+    """A new unguessable topic name (anyone who knows the topic can read the alerts)."""
+    import secrets
+    return "galileo-" + secrets.token_urlsafe(16)
+
+
 def sms_gateway_address(phone_number: str, gateway: str) -> str | None:
     """The e-mail-to-SMS address for *phone_number*: ``<digits>@<gateway>`` for a bare domain,
     or *gateway* itself when it already contains the phone part (``"{number}@txt.example"`` or
@@ -128,8 +168,13 @@ def smtp_kwargs(settings: dict[str, Any], password: str | None = None) -> dict[s
 
 def build_channels(
     settings: dict[str, Any], contacts: Any = None, password: str | None = None,
+    ntfy_token: str | None = None,
 ) -> list[tuple[str, Any]]:
-    """The ``(kind, channel)`` pairs to deliver through, kind being ``"email"`` or ``"sms"``.
+    """The ``(kind, channel)`` pairs to deliver through, kind being ``"ntfy"``, ``"email"`` or ``"sms"``.
+
+    ntfy is Master-wide (a topic, not a recipient), so the Observatory's channel choice does not
+    narrow it. While ntfy is set up and ``email_backup_for_ntfy`` is on, the e-mail channel is not
+    a separate pair: it is the ntfy channel's backup, used only when the push fails.
 
     The recipient e-mail / phone come from the owning Observatory's contact details when it has
     them (NOTIF-040) and from *settings* otherwise; the Observatory's channel choice (OBS-090)
@@ -139,8 +184,19 @@ def build_channels(
     phone = getattr(contacts, "phone_number", None) or settings.get("phone_number") or ""
     kwargs = smtp_kwargs(settings, password)
     channels: list[tuple[str, Any]] = []
-    if settings.get("email_enabled") and "email" in wanted and email:
-        channels.append(("email", EmailChannel(email, **kwargs)))
+    email_channel = (
+        EmailChannel(email, **kwargs) if settings.get("email_enabled") and "email" in wanted and email else None)
+    topic = settings.get("ntfy_topic") or ""
+    if settings.get("ntfy_enabled") and valid_ntfy_topic(topic):
+        token = ntfy_token if ntfy_token is not None else get_ntfy_token()
+        backup = email_channel if settings.get("email_backup_for_ntfy") else None
+        channels.append(("ntfy", NtfyChannel(
+            topic, settings.get("ntfy_server", ""), token or None, backup,
+            settings.get("email_disabled_events", []) if backup else ())))
+        if backup is not None:
+            email_channel = None
+    if email_channel is not None:
+        channels.append(("email", email_channel))
     if settings.get("sms_enabled") and "sms" in wanted and phone:
         channels.append(("sms", SmsChannel(
             phone, sms_gateway_address(phone, settings.get("sms_gateway", "")), kwargs)))

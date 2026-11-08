@@ -261,7 +261,19 @@ class GuiderPage(QWidget):
         column.setSpacing(8)
         self.star_view = StarView()
         self.star_view.setProperty("helpKey", "guide star")
-        column.addLayout(build_zoom_toolbar(self.star_view))
+        toolbar = build_zoom_toolbar(self.star_view)
+        self.view_star_btn = QPushButton("Star")
+        self.view_star_btn.setToolTip("Show PHD2's cut-out of the guide star. Tap the picture to choose a guide star.")
+        self.view_frame_btn = QPushButton("Full frame")
+        self.view_frame_btn.setToolTip("Show the whole guide frame. Tap a star to choose it as the guide star.")
+        for position, (button, frame) in enumerate(((self.view_star_btn, False), (self.view_frame_btn, True))):
+            button.setCheckable(True)
+            button.setChecked(frame == self.star_view.show_frame)
+            button.setProperty("helpKey", "full frame" if frame else "star view")
+            button.clicked.connect(lambda _checked=False, frame=frame: self._set_view(frame))
+            toolbar.insertWidget(position, button)
+        self.star_view.star_tapped.connect(self._on_star_tapped)
+        column.addLayout(toolbar)
         column.addWidget(self.star_view, 3)
 
         lower = QHBoxLayout()
@@ -473,6 +485,31 @@ class GuiderPage(QWidget):
                   "set_equipment_connected": service.set_equipment_connected}[command]
         method(*args, **kwargs)
 
+    def _set_view(self, full_frame: bool) -> None:
+        self.star_view.set_show_frame(full_frame)
+        self.view_star_btn.setChecked(not full_frame)
+        self.view_frame_btn.setChecked(full_frame)
+        self._force_render()
+
+    def _on_star_tapped(self, x: float, y: float, space: str) -> None:
+        """A tap on the picture: make the star there PHD2's guide star. PHD2 looks for the best star in a small box
+        around the point, so the tap need not be exact. Only while PHD2 is looping, not while it is guiding."""
+        service = self._service()
+        if service is None or not service.is_connected:
+            return
+        if service.model.app_state not in ("Looping", "Selected", "LostLock"):
+            service.model.log("Start looping to choose a guide star.")
+            return
+        if space == "cutout":
+            mapped = service.cutout_to_frame(x, y)
+            if mapped is None:
+                return
+            x, y = mapped
+        try:
+            service.select_star(x, y)
+        except Exception as exc:
+            service.model.log(f"Could not choose a guide star: {exc}")
+
     def _on_exposure_chosen(self, index: int) -> None:
         ms = self.exposure_combo.itemData(index)
         service = self._service()
@@ -485,7 +522,8 @@ class GuiderPage(QWidget):
         service = self._service()
         self._ticks += 1
         if service is not None and self._ticks % 4 == 0:
-            service.poll(want_star_image=self.isVisible())
+            service.poll(want_star_image=self.isVisible() and not self.star_view.show_frame,
+                         want_frame=self.isVisible() and self.star_view.show_frame)
         key = (id(service), service.model.version if service else None, self._pier_key() in self._connecting)
         if key != self._last_key:
             self._last_key = key
@@ -551,6 +589,9 @@ class GuiderPage(QWidget):
         self.scatter.set_data(samples, pixel_scale, unit)
         self.calibration_plot.set_data(snap.calibration_points if snap else [], snap.calibration if snap else None)
         self.star_view.set_star_image(snap.star_image if snap else None)
+        self.star_view.set_frame_image(snap.frame if snap else None, snap.star_pos if snap else None)
+        state = snap.app_state if snap else "Stopped"
+        self.star_view.tap_enabled = bool(snap and snap.connected and state in ("Looping", "Selected", "LostLock"))
 
     def _render_choices(self, snap: GuideSnapshot | None) -> None:
         options = list(snap.exposure_options_ms) if snap else []

@@ -187,16 +187,26 @@ def polar_error(axis: np.ndarray, latitude_deg: float) -> PolarError:
         azimuth_rotation_arcsec=east * 3600.0)
 
 
-def target_offset_arcmin(result, axis: np.ndarray, when: dt.datetime, latitude: float, longitude: float,
-                         ) -> tuple[float, float] | None:
-    """Where the celestial pole lies relative to where the mount's axis points, as seen in the frame *result* solved:
-    ``(dx, dy)`` in arcminutes, x to the right and y downwards (the way the frame is shown).
+@dataclass(frozen=True)
+class TargetGeometry:
+    """Where the axis point (circle) and the celestial pole (cross) lie in the frame just solved."""
+    offset_arcmin: tuple[float, float]       # pole minus axis point, arcminutes, x right and y down
+    axis_px: tuple[float, float]             # the axis point, pixels from the frame's centre (x right, y down)
+    pole_px: tuple[float, float]             # the pole, the same way
+    arcmin_per_px: float
+
+
+def target_geometry(result, axis: np.ndarray, when: dt.datetime, latitude: float, longitude: float,
+                    ) -> TargetGeometry | None:
+    """Where the celestial pole lies relative to where the mount's axis points, as seen in the frame *result* solved.
 
     The axis is a fixed point in the camera's view (the camera turns about it), and the pole moves towards it as
     the altitude and azimuth adjusters are turned, so the user is asked to bring the pole (drawn as an X) into the
     axis point (drawn as a circle). Both are put through the same horizon frame, so they coincide exactly when the
-    reported error is nil. ``None`` if the solver gave no CD matrix, or either point is too far from the frame
-    centre for a flat projection."""
+    reported error is nil. Pixel positions are measured from the reference pixel, taken to be the frame's centre
+    (true of the solvers Galileo uses), with x to the right and y downwards in array order, which is the way the
+    frame is shown. ``None`` if the solver gave no CD matrix, or either point is too far from the frame centre for
+    a flat projection."""
     cd = getattr(result, "cd", None)
     if cd is None or result.ra_deg is None or result.dec_deg is None:
         return None
@@ -221,7 +231,16 @@ def target_offset_arcmin(result, axis: np.ndarray, when: dt.datetime, latitude: 
         return None
     scale_arcmin = math.hypot(cd[0], cd[2]) * 60.0
     dx, dy = (cross - circle) * scale_arcmin
-    return float(dx), float(dy)
+    return TargetGeometry((float(dx), float(dy)), (float(circle[0]), float(circle[1])),
+                          (float(cross[0]), float(cross[1])), float(scale_arcmin))
+
+
+def target_offset_arcmin(result, axis: np.ndarray, when: dt.datetime, latitude: float, longitude: float,
+                         ) -> tuple[float, float] | None:
+    """``(dx, dy)`` in arcminutes from the axis point to the pole in the solved frame, or ``None``
+    (see :func:`target_geometry`)."""
+    geometry = target_geometry(result, axis, when, latitude, longitude)
+    return None if geometry is None else geometry.offset_arcmin
 
 
 def _rotate_about(vector: np.ndarray, axis: np.ndarray, degrees: float) -> np.ndarray:
@@ -306,6 +325,8 @@ class PolarAlignProgress:
     # Adjusting: where the pole (X) lies relative to the axis point (circle) in the latest frame, in
     # arcminutes (x right, y down); ``None`` when the solver gave no WCS to place them with.
     target_offset: tuple[float, float] | None = None
+    # The same in the frame's own pixels, for drawing the circle and cross over the picture of that frame.
+    geometry: TargetGeometry | None = None
 
 
 class PolarAlignWorkflow(SolveWorkflow):
@@ -332,9 +353,11 @@ class PolarAlignWorkflow(SolveWorkflow):
         await self._run(self._align(settings))
 
     def _report(self, phase: str, message: str, step: int = 0, error: PolarError | None = None,
-                target_offset: tuple[float, float] | None = None) -> None:
+                geometry: TargetGeometry | None = None) -> None:
         self._log(message)
-        self._on_progress(PolarAlignProgress(phase, message, step=step, error=error, target_offset=target_offset))
+        self._on_progress(PolarAlignProgress(
+            phase, message, step=step, error=error, geometry=geometry,
+            target_offset=None if geometry is None else geometry.offset_arcmin))
 
     def _crosses_meridian(self, start_ra: float, dec: float, offsets: list[float]) -> bool:
         """Whether turning to *offsets* degrees from *start_ra* takes a GEM across the meridian (where it
@@ -526,7 +549,7 @@ class PolarAlignWorkflow(SolveWorkflow):
         self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole. "
                                   "Turn the altitude and azimuth adjusters to bring the X into the circle.",
                      MEASURE_POINTS, self.error,
-                     target_offset_arcmin(solved[2], axis, stamps[-1], self.latitude, self.longitude))
+                     target_geometry(solved[2], axis, stamps[-1], self.latitude, self.longitude))
 
         anchor, anchor_time = vectors[-1], stamps[-1]
         failures = 0
@@ -548,7 +571,7 @@ class PolarAlignWorkflow(SolveWorkflow):
             self.error = polar_error(adjusted, self.latitude)
             self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole.",
                          MEASURE_POINTS, self.error,
-                         target_offset_arcmin(fresh[2], adjusted, fresh[1], self.latitude, self.longitude))
+                         target_geometry(fresh[2], adjusted, fresh[1], self.latitude, self.longitude))
 
     async def _capture_solve(self, settings: PolarAlignSettings, hint, attempt: int) -> tuple[np.ndarray, dt.datetime, object] | None:
         """One frame, solved: where it points in the horizon frame, when (mid-exposure) and the solver's result,

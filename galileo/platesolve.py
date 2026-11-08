@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from galileo.platesolve_solvers import (  # noqa: F401  (re-exported: these used to live in this module)
     PlateSolver,
@@ -156,6 +157,9 @@ class SolveWorkflow:
         # Called as ``(duration_s, label)`` when an exposure starts and ``(None, "")`` when it ends, on the
         # workflow's thread, so a UI can show that the camera is exposing.
         self.on_exposure: Callable[[float | None, str], None] | None = None
+        # Called with each frame captured for solving (the pixel array, after any dark is subtracted), on the
+        # workflow's thread, so a front end can show the frame being solved.
+        self.on_frame: Callable[[Any], None] | None = None
         # J2000 (ra_deg, dec_deg) the mount should end up at; taken from the mount when a run
         # starts if not already set.
         self.target: tuple[float, float] | None = None
@@ -399,6 +403,11 @@ class SolveWorkflow:
                     data = _subtract_dark(data, dark)
             frame = self._work_path(self._frame_stem(str(attempt)))
             await asyncio.to_thread(_write_frame, data, frame, self.frame_metadata)
+            if self.on_frame is not None:
+                try:
+                    self.on_frame(data)
+                except Exception:
+                    logger.exception("The frame callback failed")
         except asyncio.CancelledError:
             raise
         except Exception as exc:

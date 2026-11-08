@@ -132,6 +132,66 @@ def register_device_operations(registry: Registry, access: DeviceAccess, holds: 
         (Arg("level", "int", minimum=0, maximum=65535),))
     add("weather.readings", "weather", "weather station", lambda c, a: ctrl(c, "weather").get_readings(), cls="read")
 
+    # -- switches and the Imaging screen's own controls (EQP-SW-150) -----------------------------------------
+    def switches(ctx: OperationContext) -> Any:
+        from galileo.core.devices import SwitchController
+        adapter = ctrl(ctx, "switch")
+        return adapter if isinstance(adapter, SwitchController) else SwitchController(adapter)
+
+    async def switch_panel(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        from galileo.imaging_switches import can_show, describe, shown_ids
+        panel = await switches(ctx).get_panel()
+        shown = set(shown_ids(ctx.pier))
+        return {
+            "groups": [{"name": g.name, "channels": [describe(c, c.id in shown if can_show(c) else None)
+                                                     for c in g.channels]} for g in panel.groups],
+            "sensors": [{"id": s.id, "label": s.label, "value": s.value, "unit": s.unit} for s in panel.sensors],
+            "message": panel.message,
+        }
+
+    async def switch_set(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        from galileo.imaging_switches import can_show
+        on, duty = args.get("on"), args.get("duty")
+        if on is None and duty is None:
+            raise Refused("give on (true/false), duty (0-100) or both")
+        controller = switches(ctx)
+        channel = (await controller.get_panel()).channel(args["channel"])
+        if channel is None or not can_show(channel):
+            raise Refused(f"this switch device has no on/off channel {args['channel']!r}")
+        if not (channel.writable and channel.available):
+            raise Refused(f"{channel.label} cannot be set right now")
+        if duty is not None and channel.kind != "dew":
+            raise Refused(f"{channel.label} has no percentage; only a dew heater does")
+        await controller.set_channel(channel.id, on=on, duty=None if duty is None else float(duty))
+        return {"channel": channel.id}
+
+    async def imaging_controls(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        """What the Imaging screen offers besides the camera: the switch channels ticked Show on imaging on
+        Equipment > Switches, and the flat panel, so a small screen can put both beside the exposure."""
+        from galileo.imaging_switches import describe, shown_channels
+        out: dict[str, Any] = {"switches": [], "flat_panel": None}
+        if available("switch", "switch device")(ctx.pier) is None:
+            try:
+                out["switches"] = [describe(c, True) for c in shown_channels(await switches(ctx).get_panel(), ctx.pier)]
+            except (DeviceConnectionError, DeviceTimeoutError):
+                out["switches_error"] = "the switch device did not answer"
+        if available("flat_panel", "flat panel")(ctx.pier) is None:
+            out["flat_panel"] = ctrl(ctx, "flat_panel").get_status()
+        return out
+
+    registry.register(OperationSpec("switch.panel", "read", (), needs_lease=False, available=available("switch", "switch device"),
+                                    description="Every channel of the switch device and its readings, with which are shown on Imaging"),
+                      _device(switch_panel))
+    registry.register(OperationSpec(
+        "switch.set", "operate",
+        (Arg("channel", "str"), Arg("on", "bool", required=False),
+         Arg("duty", "float", required=False, minimum=0, maximum=100, unit="%")),
+        needs_lease=True, available=available("switch", "switch device"),
+        description="Switch a channel on or off and, for a dew heater, set its power in percent"), _device(switch_set))
+    registry.register(OperationSpec("imaging.controls", "read", (), needs_lease=False,
+                                    description="The switches ticked Show on imaging, and the flat panel's state, for the Imaging screen"),
+                      _device(imaging_controls))
+
     # -- safety (CSURF-220): read-only; the safety service alone decides when it is safe again ---------------
     add("safety.status", "safety", "safety monitor",
         lambda c, a: {"safe": ctrl(c, "safety").is_safe, "explanation": ctrl(c, "safety").explanation,

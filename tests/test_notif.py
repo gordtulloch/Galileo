@@ -218,3 +218,75 @@ def test_tc_notif_050_session_runner_uses_saved_settings(notify_cfg):
     service = _build_notify_service(_Win())
     assert [type(c).__name__ for c in service.channels] == ["EmailChannel"]
     assert service.channels[0].address == "me@example.com"
+
+
+# ---------------------------------------------------------------------------
+# ntfy phone push with e-mail backup (NOTIF-020 / NOTIF-050)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-NOTIF-020")
+@pytest.mark.priority("P3")
+async def test_tc_notif_020_ntfy_posts_to_topic_and_falls_back_to_email(monkeypatch):
+    """NOTIF-020: ntfy phone push posts to <server>/<topic>; e-mail is sent only if the push fails."""
+    import galileo.notify as notify_mod
+    posted = []
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=None):
+        posted.append(req)
+        if posted_fail:
+            raise OSError("no route")
+        return _Resp()
+
+    posted_fail = False
+    monkeypatch.setattr(notify_mod, "urlopen_http", fake_urlopen)
+    email = notify_mod.EmailChannel(address="op@example.com")
+    email.send = AsyncMock()
+    channel = notify_mod.NtfyChannel("galileo-abc123", "ntfy.example.org/", token="tk", backup=email,
+                                     backup_disabled_events={notify_mod.NotificationEvent.MERIDIAN_FLIP})
+    note = notify_mod._Notification(notify_mod.NotificationEvent.SAFETY_ABORT, "Rain detected")
+
+    await channel.send(note)
+    req = posted[0]
+    assert req.full_url == "https://ntfy.example.org/galileo-abc123"
+    assert req.data == b"Rain detected"
+    assert req.get_header("Priority") == "5" and req.get_header("Authorization") == "Bearer tk"
+    email.send.assert_not_called()                      # push worked: no backup
+
+    posted_fail = True
+    await channel.send(note)
+    email.send.assert_called_once_with(note)            # push failed: backup used
+    await channel.send(notify_mod._Notification(notify_mod.NotificationEvent.MERIDIAN_FLIP, "x"))
+    assert email.send.call_count == 1                   # backup honours its per-event switch
+
+    with pytest.raises(ValueError):
+        await notify_mod.NtfyChannel("bad topic!").deliver(note)
+    with pytest.raises(OSError):
+        await channel.deliver(note)                     # deliver (the test-send path) raises
+
+
+@pytest.mark.requirement("TC-NOTIF-050")
+@pytest.mark.priority("P3")
+def test_tc_notif_050_ntfy_channel_wiring_and_backup(notify_cfg):
+    """NOTIF-050: ntfy needs a valid topic; e-mail becomes its backup unless switched off."""
+    import galileo.notify_settings as ns
+    settings = ns.load_notify_settings()
+    settings.update(email_address="me@example.com", sms_enabled=False)
+    assert [k for k, _ in ns.build_channels(settings, ntfy_token="")] == ["email"]   # no topic yet
+
+    settings["ntfy_topic"] = ns.generate_ntfy_topic()
+    kinds = ns.build_channels(settings, ntfy_token="")
+    assert [k for k, _ in kinds] == ["ntfy"]
+    assert kinds[0][1].backup is not None and kinds[0][1].backup.address == "me@example.com"
+
+    settings["email_backup_for_ntfy"] = False
+    assert [k for k, _ in ns.build_channels(settings, ntfy_token="")] == ["ntfy", "email"]
+    settings.update(email_backup_for_ntfy=True, ntfy_topic="not a valid topic")
+    assert [k for k, _ in ns.build_channels(settings, ntfy_token="")] == ["email"]
+
+    from galileo.ui.app_window._notifications_page import run_test_send
+    settings["ntfy_topic"] = ""
+    assert "topic" in run_test_send("ntfy", settings, "", ntfy_token="")

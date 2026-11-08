@@ -23,6 +23,7 @@ from galileo.ui.qt_helpers import take_widget
 from ._common import _DEFAULT_PORTS, QWidget, _when_visible, guard_loopback_edit
 from galileo.desktop_devices import PierAdapters
 from galileo.device_ops import NOT_CONNECTED, UNSUPPORTED, disconnect_all, scan_devices
+from galileo.imaging_switches import can_show, set_shown, shown_ids
 from galileo.switch_ops import SwitchOps, format_reading, panel_signature
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class AppWindowSwitchPageMixin:
         """The Switches page: pick a power/switch device (INDI or Alpaca), connect, and control it."""
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import (
-            QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+            QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
             QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTableWidget, QVBoxLayout,
         )
 
@@ -193,6 +194,14 @@ class AppWindowSwitchPageMixin:
             enabled = channel.writable and channel.available
             parts: dict[str, Any] = {}
 
+            if can_show(channel):
+                from galileo.current_object import pier_key
+                show = QCheckBox("Show on imaging")
+                show.setToolTip("Offer this channel on the Imaging screen (desktop, web and mobile).")
+                show.setChecked(channel.id in shown_ids(pier_key(self._current_pier)))
+                show.toggled.connect(
+                    lambda on, cid=channel.id: set_shown(pier_key(self._current_pier), cid, bool(on)))
+                row.insertWidget(row.count() - 1, show)     # before the stretch, so it sits by the name
             if not channel.switchable and channel.kind != "value":
                 state_text = "On" if channel.on else ("Off" if channel.on is False else "—")
                 row.addWidget(QLabel(f"{state_text} (not switchable)"))

@@ -128,15 +128,16 @@ class AppWindowImagingPageMixin:
         capture_row = QHBoxLayout()
         capture_btn = QPushButton("Capture")
         capture_btn.setObjectName("AccentButton")
-        capture_row.addWidget(capture_btn, 1)
+        capture_row.addWidget(capture_btn)          # sized to its label, not stretched across the panel
         loop_btn = QPushButton("Loop")
         loop_btn.setToolTip("Capture repeatedly: as soon as one Quantity-frame run finishes, start the next. "
                             "Stop ends the loop.")
-        capture_row.addWidget(loop_btn, 1)
+        capture_row.addWidget(loop_btn)
         stop_capture_btn = QPushButton("Stop")
         stop_capture_btn.setToolTip("Abandon the exposure in progress and take no more frames.")
         stop_capture_btn.setEnabled(False)
         capture_row.addWidget(stop_capture_btn)
+        capture_row.addStretch(1)
         settings_layout.addLayout(capture_row)
 
         clear_mosaic_btn = QPushButton("Clear Mosaic")
@@ -322,6 +323,13 @@ class AppWindowImagingPageMixin:
         )
         crosshair_btn.toggled.connect(preview_view.set_crosshair)
         zoom_toolbar.insertWidget(0, crosshair_btn)
+        more_btn = QPushButton("More")
+        more_btn.setToolTip(
+            "Switch channels you ticked Show on imaging on Equipment > Switches: a power port on or off, "
+            "a dew heater on or off and its power in percent.")
+        more_menu = QMenu(more_btn)
+        more_btn.setMenu(more_menu)
+        zoom_toolbar.insertWidget(0, more_btn)
         zoom_toolbar.insertWidget(0, darks_btn)
         zoom_toolbar.insertWidget(0, flats_btn)
         zoom_toolbar.insertWidget(0, framing_btn)
@@ -775,7 +783,7 @@ class AppWindowImagingPageMixin:
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
             "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "offset": offset_spin, "auto_save": auto_save_check,
-            "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
+            "more_button": more_btn, "more_menu": more_menu, "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
             "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
             "nudge_rate": nudge_rate_combo,
@@ -1136,6 +1144,98 @@ class AppWindowImagingPageMixin:
                     logger.exception("Could not abort the exposure")
 
         stop_capture_btn.clicked.connect(stop_capture)
+
+        def _populate_more_menu() -> None:
+            """Rebuild the More menu from the connected switch device: one row per channel ticked Show on
+            imaging (EQP-SW-150) — a toggle, plus a percentage for a dew heater."""
+            from PySide6.QtWidgets import QWidgetAction
+            from galileo.core.devices import DeviceCategory
+            from galileo.current_object import pier_key
+            from galileo.desktop_devices import PierAdapters
+            from galileo.imaging_switches import shown_channels
+            from galileo.switch_ops import SwitchOps
+
+            more_menu.clear()
+
+            def note(text: str) -> None:
+                action = more_menu.addAction(text)
+                action.setEnabled(False)
+
+            key = pier_key(self._current_pier)
+            adapter_for = (self._device_pages.get("switch") or {}).get("adapter_for")   # the Switches page's connection
+            adapter = (adapter_for(key) if adapter_for else None) or PierAdapters(DeviceCategory.SWITCH).get(key)
+            if adapter is None:
+                return note("No switch device connected (Equipment > Switches)")
+            ops = SwitchOps(lambda: adapter)
+            result = ops.read_panel()
+            if result is None or result.error:
+                return note(result.error if result is not None else "No switch device connected")
+            channels = shown_channels(result.panel, key)
+            if not channels:
+                return note("Tick Show on imaging for a channel on Equipment > Switches")
+
+            def write(channel, **kwargs) -> bool:
+                outcome = ops.set_channel(channel, **kwargs)
+                if not outcome.ok:
+                    self._window.statusBar().showMessage(outcome.message, 8000)
+                return outcome.ok
+
+            def confirm_off(label: str) -> bool:
+                from galileo.ui.session_runner import get_session_controller
+                try:
+                    running = key in get_session_controller(self).run_snapshot()
+                except Exception:
+                    running = False
+                if not running:
+                    return True
+                return QMessageBox.question(
+                    self._window, "Switch off during a session",
+                    f"A session is running on this Pier. Switch off {label!r}?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+
+            for channel in channels:
+                row = QWidget()
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(8, 2, 8, 2)
+                row_layout.addWidget(QLabel(channel.label), 1)
+                enabled = channel.writable and channel.available
+                toggle = QPushButton("On" if channel.on else "Off")
+                toggle.setCheckable(True)
+                toggle.setChecked(bool(channel.on))
+                toggle.setEnabled(enabled)
+                toggle.setObjectName("AccentButton" if channel.on else "")
+
+                def clicked(checked: bool, channel=channel, toggle=toggle) -> None:
+                    if not checked and not confirm_off(channel.label):
+                        toggle.setChecked(True)
+                        return
+                    if write(channel, on=checked):
+                        toggle.setText("On" if checked else "Off")
+                        toggle.setObjectName("AccentButton" if checked else "")
+                        toggle.style().unpolish(toggle)
+                        toggle.style().polish(toggle)
+                    else:
+                        toggle.setChecked(not checked)
+
+                toggle.clicked.connect(clicked)
+                row_layout.addWidget(toggle)
+                if channel.kind == "dew":
+                    duty = QSpinBox()
+                    duty.setRange(0, 100)
+                    duty.setSuffix(" %")
+                    duty.setValue(round(channel.duty or 0))
+                    duty.setEnabled(enabled)
+                    set_btn = QPushButton("Set")
+                    set_btn.setEnabled(enabled)
+                    set_btn.clicked.connect(lambda _c=False, channel=channel, duty=duty: write(channel, duty=float(duty.value())))
+                    row_layout.addWidget(duty)
+                    row_layout.addWidget(set_btn)
+                widget_action = QWidgetAction(more_menu)
+                widget_action.setDefaultWidget(row)
+                more_menu.addAction(widget_action)
+
+        more_menu.aboutToShow.connect(_populate_more_menu)
 
         def _open_framing() -> None:
             self._open_framing_dialog(_current_service())

@@ -11,7 +11,8 @@ preview, a tile, the facts about a frame, and a list of recent Library frames to
 
 A reference is ``current:<pier>`` (the text of the Pier's database id, as everywhere in the Control Surface; the
 latest single exposure), ``stack:<pier>`` (the live stack of the series under way, once it has a frame) or
-``library:<frame id>``. This module imports no Qt and no device code; the engine builds it and hands it to the plugin
+``guide:<pier>`` (the whole frame PHD2 is guiding on, for choosing the guide star), ``solve:<pier>`` (the latest frame
+captured for plate solving or polar alignment, so a client can watch it) or ``library:<frame id>``. This module imports no Qt and no device code; the engine builds it and hands it to the plugin
 through ``ControlSurfaceService.previews``.
 """
 
@@ -33,7 +34,7 @@ from galileo.preview import Preview, PreviewError, PreviewParams, PreviewService
 
 logger = logging.getLogger(__name__)
 
-REF = re.compile(r"^(current|stack|library):[\w.\-]{1,80}$")
+REF = re.compile(r"^(current|stack|guide|solve|library):[\w.\-]{1,80}$")
 LOADED_KEPT = 3                       # decoded Library frames held, so a pan or a restretch does not re-read the file
 RECENT_MAX = 100
 
@@ -41,12 +42,14 @@ RECENT_MAX = 100
 class FrameSources:
     """``Source`` callables for the preview service, keyed by the part of a reference before the colon."""
 
-    def __init__(self, bus: EventBus | None = None, loader: Callable[[str], tuple[str, np.ndarray] | None] | None = None
-                 ) -> None:
+    def __init__(self, bus: EventBus | None = None, loader: Callable[[str], tuple[str, np.ndarray] | None] | None = None,
+                 guide: Callable[[str], tuple[str, np.ndarray] | None] | None = None) -> None:
         self._bus = bus or get_bus()
+        self._guide_frame = guide
         self._load_library = loader or _library_frame
         self._latest: dict[str, tuple[int, np.ndarray]] = {}
         self._stacks: dict[str, tuple[int, np.ndarray]] = {}
+        self._solves: dict[str, tuple[int, np.ndarray]] = {}
         self._counter = 0
         self._loaded: OrderedDict[str, tuple[str, np.ndarray]] = OrderedDict()
         self._lock = threading.Lock()
@@ -57,10 +60,12 @@ class FrameSources:
         with self._lock:
             self._latest.clear()
             self._stacks.clear()
+            self._solves.clear()
             self._loaded.clear()
 
     def sources(self) -> dict[str, Callable[[str], tuple[str, np.ndarray] | None]]:
-        return {"current": self._current, "stack": self._stack, "library": self._library}
+        return {"current": self._current, "stack": self._stack, "guide": self._guide, "solve": self._solve,
+                "library": self._library}
 
     def _on_frame(self, event: Any) -> None:
         """On the imaging thread: remember the frame (a reference, not a copy; a service replaces its frame). With a
@@ -92,6 +97,23 @@ class FrameSources:
         with self._lock:
             found = self._stacks.get(ref.split(":", 1)[-1])
         return None if found is None else (str(found[0]), found[1])
+
+    def set_solve_frame(self, pier: str, frame: Any) -> int:
+        """Remember the frame just captured for solving on *pier* (a reference, not a copy). Returns its version."""
+        with self._lock:
+            self._counter += 1
+            self._solves[pier] = (self._counter, np.asarray(frame))
+            return self._counter
+
+    def _solve(self, ref: str) -> tuple[str, np.ndarray] | None:
+        with self._lock:
+            found = self._solves.get(ref.split(":", 1)[-1])
+        return None if found is None else (str(found[0]), found[1])
+
+    def _guide(self, ref: str) -> tuple[str, np.ndarray] | None:
+        if self._guide_frame is None:
+            return None
+        return self._guide_frame(ref.split(":", 1)[-1])
 
     def _library(self, ref: str) -> tuple[str, np.ndarray] | None:
         key = ref.split(":", 1)[-1]

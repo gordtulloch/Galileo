@@ -776,3 +776,28 @@ def test_tc_eqp_sw_140_values_are_not_switches_in_the_flat_list():
         SwitchChannel(id="x", label="X", kind="action"), SwitchChannel(id="d", label="D", switchable=False),
     ]))
     assert [s.name for s in flat_switches(panel)] == ["a"]
+
+
+@pytest.mark.requirement("TC-EQP-SW-150")
+@pytest.mark.priority("P2")
+def test_tc_eqp_sw_150_show_on_imaging_selection_is_stored_per_pier_and_filters_the_panel(settings_db):
+    """EQP-SW-150: the channels ticked Show on imaging are kept per Pier, in tick order, and only on/off channels
+    the device still offers are shown; a channel is described with the controls a client must draw."""
+    from galileo.core.switches import SwitchChannel, SwitchGroup, SwitchPanel
+    from galileo.imaging_switches import describe, set_shown, shown_channels, shown_ids
+    panel = SwitchPanel(groups=[SwitchGroup("g", [
+        SwitchChannel(id="a", label="A"), SwitchChannel(id="d", label="Dew", kind="dew", duty=40.0),
+        SwitchChannel(id="x", label="Fixed", switchable=False), SwitchChannel(id="v", label="Val", kind="value")])])
+    set_shown("p1", "d", True)
+    set_shown("p1", "a", True)
+    set_shown("p1", "x", True)          # display-only: never offered
+    set_shown("p1", "gone", True)       # no longer on the device: skipped
+    set_shown("p2", "a", True)
+    assert shown_ids("p1") == ["d", "a", "x", "gone"] and shown_ids("p2") == ["a"]
+    assert [c.id for c in shown_channels(panel, "p1")] == ["a", "d"]      # panel order
+    assert shown_channels(None, "p1") == []
+    set_shown("p1", "a", False)
+    assert [c.id for c in shown_channels(panel, "p1")] == ["d"]
+    info = describe(panel.channel("d"), True)
+    assert info["duty"] == 40.0 and info["duty_max"] == 100.0 and info["unit"] == "%" and info["show_on_imaging"]
+    assert "duty" not in describe(panel.channel("a"))

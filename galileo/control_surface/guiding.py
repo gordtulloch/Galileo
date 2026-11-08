@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026 Gord Tulloch
 
 """The Control Surface catalogue for guiding (CSURF-160): connect to PHD2, guide, stop, dither, recalibrate, and read
-the error trace and the guide-star cut-out.
+the error trace, the guide-star cut-out and the whole guide frame, and choose the guide star by tapping either.
 
 Commands are the Guider screen's own: each is *requested* of PHD2 and answered once PHD2 has accepted it, not once
 guiding has settled, because settling can take minutes. ``guiding.status`` reports the progress (state, whether it is
@@ -33,7 +33,8 @@ class GuidingAccess(Protocol):
     async def disconnect(self, pier: str) -> None: ...
 
     async def command(self, pier: str, name: str, **kwargs: Any) -> None:
-        """Send ``guide`` (with ``recalibrate``), ``stop``, ``dither`` or ``find_star``; ``Refused`` if PHD2 rejects."""
+        """Send ``guide`` (with ``recalibrate``), ``stop``, ``dither``, ``find_star`` or ``select_star`` (``x``, ``y``
+        and ``space``); ``Refused`` if PHD2 rejects."""
 
     def status(self, pier: str) -> dict[str, Any]: ...
 
@@ -88,6 +89,18 @@ def register_guiding_operations(registry: Registry, access: GuidingAccess) -> No
     registry.register(OperationSpec("guiding.find_star", "operate", (), needs_lease=True,
                                     available=commands_available,
                                     description="Ask PHD2 to choose a guide star"), sender("find_star", "requested"))
+    registry.register(OperationSpec(
+        "guiding.select_star", "operate",
+        (Arg("x", "float", minimum=0, maximum=100000, unit="px",
+             description="Where the user tapped, in pixels from the left of the picture they tapped"),
+         Arg("y", "float", minimum=0, maximum=100000, unit="px",
+             description="Pixels from the top of the picture they tapped"),
+         Arg("space", "enum", required=False, default="frame", choices=("frame", "cutout"),
+             description="'frame' when the tap was on the whole guide frame (guide:<pier>), 'cutout' when it was on "
+                         "the guide-star cut-out (guiding.star)")),
+        needs_lease=True, available=commands_available,
+        description="Choose the guide star nearest a tapped point; PHD2 picks the best star in a small box around it"),
+        sender("select_star", "requested"))
 
 
 __all__ = ["GuidingAccess", "register_guiding_operations"]

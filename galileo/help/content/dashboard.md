@@ -26,3 +26,15 @@ In the red night-vision theme the colours become shades of red, told apart by br
 ## Plugin area
 
 When a plugin offers a view for the Dashboard and you tick **Publish on Dashboard** on its page under Options, the view appears in a strip above the timelines — an all-sky camera animation, for example. The strip takes whatever height the timelines leave free, so every Pier's timeline stays in view; if there are too many Piers for that, the strip keeps a minimum height and the Dashboard scrolls. With nothing published there is no strip.
+
+## Node health
+
+The single line at the bottom of the Dashboard shows how this computer is coping: **CPU** use, **Memory** use, **Disk free** space on the drive that holds Galileo's database and images, the CPU **Temp**erature (when the computer reports one, which most Raspberry Pi and Linux machines do and many Macs and PCs do not) and how long the computer has been **Up**. It updates every few seconds. A ⚠ starts the line when a figure is getting tight (CPU or memory above 85%, under 10 GB free, or over 75 °C) and a ⛔ when it is critical (above 95%, under 2 GB free, or over 85 °C); it is a symbol rather than a colour so it shows in the red night theme too. Low disk space is the one to watch: a night's frames need room to be written.
+
+## Restart
+
+Restarts this computer, after asking you to confirm. Galileo and every connected device are disconnected first, so use it for the occasional cure of a wedged USB device or a Pi that has been up for weeks. It is refused while a session is running; stop the session first.
+
+## Shut down
+
+Powers off this computer, after asking you to confirm. Use it at the end of the night on a computer that lives at the telescope. It is refused while a session is running. Remember that a computer that is off cannot be woken from the mobile app, so shut down only when you are at the telescope or can power it back on.

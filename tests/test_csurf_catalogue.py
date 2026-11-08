@@ -201,7 +201,7 @@ async def test_tc_csurf_110_exposures_are_long_running_and_the_lease_and_confirm
     events = []
     bus.subscribe(OperationFinished, lambda e: events.append(e.operation))
     refused = await gateway.handle(req("camera.expose", args={"seconds": 2}))
-    assert refused.status == "refused" and "lease" in refused.reason and access.camera.calls == []
+    assert refused.status == "refused" and "take control" in refused.reason and access.camera.calls == []
     leases.acquire("p1", "webconnect:c1")
     out = await gateway.handle(req("camera.expose", args={"seconds": 2, "gain": 120}))
     assert out.ok and out.correlation_id
@@ -772,3 +772,84 @@ def test_tc_csurf_170_the_flip_rules_are_pure():
     assert flip_phase(limits, 1.5, "West", **{**kw, "tracking": False}) == "waiting"
     assert flip_phase(limits, 1.5, "West", **{**kw, "flipping": True}) == "flipping"
     assert flip_phase(MountLimits(), 1.5, "West", **kw) == "inactive"
+
+
+@pytest.mark.requirement("TC-EQP-SW-150")
+@pytest.mark.priority("P2")
+async def test_tc_eqp_sw_150_switch_operations_and_imaging_controls_for_remote_clients(rig):
+    """EQP-SW-150: a remote client can read the switch panel, switch a channel and set a dew heater's percentage,
+    and imaging.controls returns the channels ticked Show on imaging together with the flat panel's state."""
+    from galileo.core.switches import SwitchChannel, SwitchGroup, SwitchPanel
+    from galileo.imaging_switches import set_shown
+
+    class Power:
+        is_connected = True
+
+        def __init__(self):
+            self.calls = []
+            self.panel = SwitchPanel(groups=[SwitchGroup("Ports", [
+                SwitchChannel(id="dc1", label="Camera", on=True),
+                SwitchChannel(id="dew1", label="Dew A", kind="dew", on=True, duty=60.0),
+                SwitchChannel(id="ro", label="Fixed", switchable=False)])])
+
+        async def get_panel(self):
+            return self.panel
+
+        async def set_channel(self, channel_id, *, on=None, duty=None, volts=None, value=None):
+            self.calls.append((channel_id, on, duty))
+
+    class Flat:
+        is_connected = True
+
+        def get_status(self):
+            return {"cover_state": "open", "is_light_on": True, "brightness": 128}
+
+    registry, access, *_ = rig
+    power = Power()
+    original = access.controller
+    access.controller = lambda pier, cat: {"switch": power, "flat_panel": Flat()}.get(cat) if pier == "p1" and cat in (
+        "switch", "flat_panel") else original(pier, cat)
+
+    assert (await registry.invoke("imaging.controls", {}, "p1", "c1")).value == {"switches": [], "flat_panel": {
+        "cover_state": "open", "is_light_on": True, "brightness": 128}}
+    set_shown("p1", "dew1", True)
+    controls = (await registry.invoke("imaging.controls", {}, "p1", "c1")).value
+    assert [c["id"] for c in controls["switches"]] == ["dew1"]
+    assert controls["switches"][0]["duty"] == 60.0 and controls["switches"][0]["duty_max"] == 100.0
+    assert controls["flat_panel"]["brightness"] == 128
+
+    panel = (await registry.invoke("switch.panel", {}, "p1", "c1")).value
+    flags = {c["id"]: c.get("show_on_imaging") for c in panel["groups"][0]["channels"]}
+    assert flags == {"dc1": False, "dew1": True, "ro": None}
+
+    assert (await registry.invoke("switch.set", {"channel": "dew1", "duty": 25}, "p1", "c1")).ok
+    assert (await registry.invoke("switch.set", {"channel": "dc1", "on": False}, "p1", "c1")).ok
+    assert power.calls == [("dew1", None, 25.0), ("dc1", False, None)]
+    for args in ({"channel": "dc1"}, {"channel": "dc1", "duty": 10}, {"channel": "ro", "on": True},
+                 {"channel": "nope", "on": True}):
+        assert (await registry.invoke("switch.set", args, "p1", "c1")).status == "refused", args
+    assert (await registry.invoke("switch.set", {"channel": "dew1", "duty": 150}, "p1", "c1")).status == "invalid"
+    assert (await registry.invoke("switch.set", {"channel": "dew1", "on": True}, "p2", "c1")).status == "unavailable"
+    assert len(power.calls) == 2
+
+
+class _Estimator(_Starter):
+    async def estimate(self, pier, template, target=None, camera_slot="primary"):
+        from galileo.control_surface.sessions import SessionRefused
+        if template not in self.templates():
+            raise SessionRefused(f"There is no session template named {template!r}.")
+        return {"duration_s": 60, "target": target}
+
+
+@pytest.mark.requirement("TC-CSURF-185")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_185_estimate_is_a_read_that_refuses_in_the_session_layers_words():
+    """CSURF-185: session.estimate returns the pre-run summary without a lease and refuses an unknown template."""
+    from galileo.control_surface.sessions import register_session_operations
+    registry = Registry(EventBus())
+    register_session_operations(registry, _Estimator())
+    ok = await registry.invoke("session.estimate", {"template": "Deep sky", "target_name": "M31", "ra_deg": 1.0,
+                                                    "dec_deg": 2.0}, "p1", "c1")
+    assert ok.ok and ok.value["target"]["name"] == "M31"
+    bad = await registry.invoke("session.estimate", {"template": "Nope"}, "p1", "c1")
+    assert bad.status == "refused" and "Nope" in bad.reason

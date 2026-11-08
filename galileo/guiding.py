@@ -27,11 +27,14 @@ from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 DEC_GUIDE_MODES = ("Off", "Auto", "North", "South")
 MAX_SAMPLES = 1000
 MAX_LOG_LINES = 500
+SELECT_BOX_PX = 40          # side of the search box handed to PHD2 around a tapped point (it picks the best star inside)
 
 # PHD2 AppState → the three-lamp status the Guider screen shows.
 _PHASE_BY_STATE = {
@@ -107,6 +110,8 @@ class GuideSnapshot:
     rms_ra: float
     rms_dec: float
     rms_total: float
+    frame: np.ndarray | None = None   # the whole guide frame (a reference, not a copy), once one has been fetched
+    frame_version: int = 0            # 0 until there is a frame; changes with each new one
 
 
 def _running_stat_update(stat: list, x: float) -> None:
@@ -140,6 +145,8 @@ class GuideModel:
         self.star_pos: tuple[float, float] | None = None
         self.star_image: StarImage | None = None
         self.calibration: dict | None = None
+        self.frame: np.ndarray | None = None
+        self.frame_version = 0
         self._samples: deque[GuideSample] = deque(maxlen=MAX_SAMPLES)
         self._cal_points: list[CalibrationPoint] = []
         self._log: deque[str] = deque(maxlen=MAX_LOG_LINES)
@@ -184,6 +191,7 @@ class GuideModel:
                 star_image=self.star_image, samples=list(self._samples),
                 calibration_points=list(self._cal_points), calibration=self.calibration,
                 log=list(self._log), unit=self.unit, rms_ra=ra, rms_dec=dec, rms_total=total,
+                frame=self.frame, frame_version=self.frame_version,
             )
 
     # --- Writing ----------------------------------------------------------
@@ -211,6 +219,15 @@ class GuideModel:
             self.settling = False
             self.equipment_connected = False
             self.star_image = None
+            self.frame = None
+            self.frame_version = 0
+            self._touch()
+
+    def set_frame(self, frame: np.ndarray) -> None:
+        """Store the whole guide frame (2-D) PHD2 last exposed."""
+        with self._lock:
+            self.frame = frame
+            self.frame_version += 1
             self._touch()
 
     def set_star_image(self, result: dict) -> None:
@@ -368,6 +385,8 @@ class GuidingService:
         self._client = client  # a GuiderAdapter; created on connect() when not injected
         self._event_bus = None
         self._is_guiding = False
+        self._frame_lock = threading.Lock()
+        self._frame_busy = False
 
     @property
     def is_connected(self) -> bool:
@@ -440,14 +459,68 @@ class GuidingService:
         if ask("get_calibrated"):
             self._request_calibration_data()
 
-    def poll(self, want_star_image: bool = True) -> None:
+    def poll(self, want_star_image: bool = True, want_frame: bool = False) -> None:
         """Non-blocking refresh of the things PHD2 doesn't push as events.
-        Answers land in the model from the adapter's reader thread."""
+        Answers land in the model from the adapter's reader thread. *want_frame* also fetches the whole guide frame,
+        which costs a file write on PHD2's side, so only a view that is showing it asks."""
         if not self.is_connected:
             return
         self._ask("get_connected", None, lambda v: self.model.update(equipment_connected=bool(v)))
-        if want_star_image and self.model.app_state in ("Looping", "Guiding", "Selected", "LostLock"):
+        active = self.model.app_state in ("Looping", "Guiding", "Selected", "LostLock")
+        if want_star_image and active:
             self._ask("get_star_image", [100], self.model.set_star_image)
+        if want_frame and active:
+            self.request_frame()
+
+    def request_frame(self) -> None:
+        """Fetch the whole guide frame: PHD2 saves it as a FITS file (``save_image``), which is read here and then
+        removed. PHD2 does not stream frames to network clients, so this only works when that file is readable from
+        this machine (PHD2 on the same computer, or a shared folder); otherwise the frame stays unavailable and the
+        guide-star cut-out is all there is. At most one fetch is in flight."""
+        with self._frame_lock:
+            if self._frame_busy or self._client is None:
+                return
+            self._frame_busy = True
+
+        def read(path: str) -> None:
+            try:
+                from pathlib import Path
+
+                from astropy.io import fits
+                with fits.open(path, memmap=False) as hdus:
+                    data = next((h.data for h in hdus if getattr(h, "data", None) is not None and h.data.ndim >= 2),
+                                None)
+                if data is not None:
+                    self.model.set_frame(np.asarray(data))
+                Path(path).unlink(missing_ok=True)
+            except Exception as exc:
+                logger.debug("Could not read PHD2's saved frame %s: %s", path, exc)
+            finally:
+                with self._frame_lock:
+                    self._frame_busy = False
+
+        def done(future: Future) -> None:
+            exc = future.exception()
+            result = None if exc is not None else future.result()
+            name = result.get("filename") if isinstance(result, dict) else None
+            if not name:
+                logger.debug("PHD2 save_image gave no frame: %s", exc or result)
+                with self._frame_lock:
+                    self._frame_busy = False
+                return
+            # Off the reader thread: reading a FITS file must not hold up PHD2's replies.
+            threading.Thread(target=read, args=(name,), name="guide-frame", daemon=True).start()
+
+        self._client.request("save_image", None).add_done_callback(done)
+
+    def cutout_to_frame(self, x: float, y: float) -> tuple[float, float] | None:
+        """A point on the guide-star cut-out, as a point on the whole guide frame. ``None`` until both the cut-out and
+        PHD2's star position are known. The cut-out is centred on the star, so the star is the common point."""
+        snap = self.model.snapshot()
+        if snap.star_image is None or snap.star_pos is None:
+            return None
+        sx, sy = snap.star_image.star_pos
+        return x - sx + snap.star_pos[0], y - sy + snap.star_pos[1]
 
     # --- Commands (session-facing, async) -------------------------------
 
@@ -506,6 +579,18 @@ class GuidingService:
 
     def find_star(self) -> Future:
         return self._command("find_star", None, "Auto star selection requested")
+
+    def select_star(self, x: float, y: float, box_px: int = SELECT_BOX_PX) -> Future:
+        """Choose the guide star at frame pixel (*x*, *y*): PHD2 picks the best star inside a *box_px* square around
+        the point (``find_star`` with a region), so a tap needs to be near the star, not on it. The point must lie on
+        the guide frame; ``GuiderError`` otherwise."""
+        size = self.model.frame_size
+        if size is not None and not (0 <= x < size[0] and 0 <= y < size[1]):
+            raise GuiderError(f"({x:.0f}, {y:.0f}) is outside the {size[0]}x{size[1]} guide frame")
+        half = box_px // 2
+        left, top = max(0, round(x) - half), max(0, round(y) - half)
+        return self._command("find_star", [[left, top, box_px, box_px]],
+                             f"Guide star requested near {x:.0f}, {y:.0f}")
 
     def request_dither(self, amount_px: float | None = None, ra_only: bool | None = None,
                        settle_pixels: float | None = None, settle_time_s: float | None = None,
