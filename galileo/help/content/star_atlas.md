@@ -49,6 +49,10 @@ How faint the stars drawn can be. Lower numbers show only the brightest stars; h
 
 How faint the deep-sky objects (galaxies, nebulae, clusters) drawn can be.
 
+## Sky survey
+
+Draws real sky behind the map: Axel Mellinger's all-sky Milky Way photo-mosaic, one continuous picture so the background is even across the sky, with more detail as you zoom in. Zoomed in past a 3° field it downloads nothing new and shows what it already has, so panning stays smooth. Tiles are downloaded as they come into view and kept on this computer, up to 1 GB. A blurry patch sharpens when its tile arrives, and offline you see whatever has been seen before. It fades out as a daylight sky brightens. Credit: Mellinger color optical survey - (c) Axel Mellinger, via CDS.
+
 ## Coordinate grid
 
 Draws lines of right ascension and declination.
@@ -79,7 +83,7 @@ Shows names beside objects on the map.
 
 ## Ground
 
-Shades the sky below the horizon.
+Hides everything below 0° altitude behind a landscape, as if you were standing outside: no stars, photographs, grid or labels show through. The landscape is made up, not your site, and gets lighter with a daylight sky. Your selected object and telescope markers still show, so you can tell where they are. Turn this off to see the sky below the horizon.
 
 ## Daylight sky
 
@@ -87,7 +91,7 @@ Brightens the sky background when the Sun is up (or twilight), as the real sky w
 
 ## Horizon
 
-Draws the horizon line, including the horizon profile configured for the Observatory in Options › Star Atlas.
+Fills what the horizon profile for this Observatory blocks, from 0° up to the profile, in transparent red. The profile is set in Options › Star Atlas; with none set there is nothing to fill.
 
 ## Field of view
 

@@ -234,6 +234,62 @@ async def test_tc_csurf_150_focus_uses_the_modules_manual_focus_and_its_limits_a
     assert (await registry.invoke("focus.move_to", {"position": 1}, "p2", "c1")).status == "unavailable"
 
 
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_live_stack_is_asked_for_reported_and_served_apart_from_the_latest_frame(monkeypatch):
+    """CSURF-120, PREV-070: imaging.capture takes live_stack for a series of three or more frames (a shorter series is not stacked);
+    imaging.status reports the stack's frames, requested count and integration time and the exposure under way; the
+    stack is served as stack:<pier>, apart from current:<pier>, which stays the latest single exposure."""
+    import json
+    from types import SimpleNamespace
+
+    from galileo.bus import get_bus
+    from galileo.control_surface.frames import FrameSources
+    from galileo.control_surface.imaging import register_imaging_operations
+    from galileo.engine.imaging import EngineImaging
+    from galileo.ui.imaging import ImagingService
+
+    camera, runner = _Camera(), _Runner()
+    devices = _ImagingDevices(camera)
+
+    async def fake_context(devs, pier, slot="primary"):
+        def make():
+            service = ImagingService(camera=camera)
+            service.auto_save_to_library = False
+            service.pier_key = pier
+            return service
+        return SimpleNamespace(make_imaging=make)
+
+    monkeypatch.setattr("galileo.engine.imaging.build_context", fake_context)
+    sources = FrameSources(get_bus())
+    try:
+        registry, imaging = Registry(EventBus()), EngineImaging(devices, runner)
+        register_imaging_operations(registry, imaging)
+        offered = {o["name"]: o for o in registry.catalogue("p1")["operations"]}["imaging.capture"]
+        assert "live_stack" in [a["name"] for a in offered["args"]]
+
+        assert (await registry.invoke("imaging.capture", {"seconds": 1.0, "count": 2, "live_stack": True}, "p1", "c1")).ok
+        await registry.wait_idle()                                      # two frames: nothing to stack, so none is reported
+        assert "stack" not in (await registry.invoke("imaging.status", {}, "p1", "c1")).value
+
+        assert (await registry.invoke("imaging.capture", {"seconds": 1.0, "count": 3, "live_stack": True}, "p1", "c1")).ok
+        await registry.wait_idle()
+        stack = (await registry.invoke("imaging.status", {}, "p1", "c1")).value["stack"]
+        assert stack["enabled"] and stack["frames"] == 3 and stack["requested"] == 3 and stack["total_exposure_s"] == 3.0
+        json.dumps(stack)
+
+        assert sources._stack("stack:p1") is not None and sources.stack_version("p1") > 0
+        latest, stacked = sources._current("current:p1"), sources._stack("stack:p1")
+        assert latest is not None and stacked is not None and latest[1].shape == stacked[1].shape
+
+        assert (await registry.invoke("imaging.capture", {"seconds": 1.0, "count": 3}, "p1", "c1")).ok
+        await registry.wait_idle()
+        assert "stack" not in (await registry.invoke("imaging.status", {}, "p1", "c1")).value
+        assert sources._stack("stack:p1") is None                      # a series without a stack drops the old one
+    finally:
+        sources.close()
+
+
 @pytest.mark.requirement("TC-CSURF-220")
 @pytest.mark.priority("MVP")
 async def test_tc_csurf_220_safety_is_read_only(rig):

@@ -285,6 +285,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKYMAP-070` | P2 | SDD 4.9a `galileo.ui.star_atlas` / `galileo.planning.visibility` | Test | `TC-SKYMAP-070` |
 | `SKYMAP-080` | P2 | SDD 4.9a `galileo.core.slew_guard` | Test | `TC-SKYMAP-080` |
 | `SKYMAP-090` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-090` |
+| `SKYMAP-100` | P2 | SDD 4.9a `galileo.planning.sky_survey`, `galileo.ui.star_atlas` | Test | `TC-SKYMAP-100` |
+| `SKYMAP-110` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-110` |
 
 ### `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 

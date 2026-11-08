@@ -219,7 +219,8 @@ The Gateway never catches `BaseException` and never swallows a safety refusal: a
 - **Availability:** `capability()` reports whether the Master can stream (platform class: PC/Mac vs Pi-class, and measured headroom) and with what limits (maximum LOD, rate, concurrent clients). The handshake publishes this (`MCON-650`); a Pi-class Master reports `sky_stream: {available: false, reason: "master_hardware"}` to a client whose declared class is `quest`, and `reduced` limits to tablets and phones.
 - **Admission:** a new streaming client is admitted by the `LoadGovernor` against the concurrent-client cap; a refused client gets a typed `busy` with a reason (`MCON-680`).
 - **No client state:** the service holds no per-client catalogue; it is a pure function of the request and the atlas, which also keeps the headset's cache disposable (`MCON-1050`).
-- **Satisfies:** `MCON-640`, `650`, `660`, `680`, `1050` (node side).
+- **Sky survey:** `/sky/survey/tile?order=&npix=` serves `galileo.planning.sky_survey.tile_jpeg()`, which core fetches and caches, on a worker thread so a slow tile holds up only its own request. The credit travels in `X-Image-Credit`, as ASCII. The images aren't ours to ship, so the plugin ZIP carries none, and core's cache means a tile one client has seen is local for the next. Orders run 0-4 (Mellinger's mosaic). `/sky/catalogs` lists each of `DSO_CATALOGS` with its objects' indexes, from `catalogs_of`.
+- **Satisfies:** `MCON-640`, `650`, `660`, `680`, `690`, `1050` (node side).
 
 ### 3.12 `mobileconnect.governor` — Load governor
 

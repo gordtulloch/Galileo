@@ -544,3 +544,7 @@ def _isolate_star_atlas_catalogs(tmp_path_factory):
     star_atlas_mod._lines_cache_path = lambda: cache_dir / star_atlas_mod._LINES_FILENAME
     star_atlas_mod._fetch_boundaries = lambda: None
     star_atlas_mod._fetch_constellation_lines = lambda: None
+    import galileo.planning.sky_survey as sky_survey_mod
+    sky_survey_mod._cache_root = lambda: cache_dir / "sky_survey"
+    sky_survey_mod._unpatched_fetch_tile = sky_survey_mod._fetch_tile
+    sky_survey_mod._fetch_tile = lambda order, npix: None

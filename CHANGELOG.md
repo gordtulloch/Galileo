@@ -10,7 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Star Atlas sky survey is now Mellinger's Milky Way mosaic, and fetches nothing when zoomed in past 3°.** The Digitized Sky Survey colour tiles were a patchwork (each photographic plate has its own background level and some have no blue), so the sky looked patchy and discontiguous; the Quest atlas spike had already rejected them for that reason. Axel Mellinger's all-sky mosaic is one continuous picture, tiles stop at order 4 (it has no finer detail), and a view narrower than a 3° field draws what is already held instead of fetching, so panning deep in is never held up by the network. The Master serves the same tiles, so MobileConnect gets both changes. Cache moves to `sky_survey/MellingerRGB`; old DSS tiles can be deleted.
+
 ### Added
+
+- **`docs/App Recommended Features.md`: draft gap analysis for the mobile apps.** Compares the planned MobileConnect feature set with a competitive review of widely available apps, and lists recommended additions (power/dew control, demo mode, guiding depth, node health and others) plus decisions needed. Documentation for review/edit only; no requirements changed yet.
+- **A phone or tablet can run a live stack and see it.** `imaging.capture` takes `live_stack` (a series of three or more frames is registered and averaged, as the Imaging screen does). `imaging.status` now reports the exposure under way (`seconds`, `elapsed`) and, while stacking, the stack (`frames`, `requested`, `total_exposure_s`, `method`, `rejected`). The stack is served as its own picture, `stack:<pier>`, beside `current:<pier>`, which is now always the latest single exposure (before, a live stack replaced it). `ImagingService` keeps `last_sub_frame` and `exposure_started_at` for this. No desktop screen changes.
+- **Real sky behind the Star Atlas.** The map now draws Digitized Sky Survey colour photographs behind the stars, from tiles at a resolution matching the zoom, so the Milky Way, nebulae and galaxies are simply there and sharpen as you zoom in. A **Sky survey** checkbox turns it off. The images are STScI's, so nothing ships with Galileo: tiles are downloaded as they come into view, cached on your computer (up to 1 GB) and credited on the map, and the map works as before while they're unavailable. The MobileConnect plugin's design documents gain `MCON-690`, which serves the same tiles to the app.
+- **Landscape ground on the Star Atlas.** Everything below 0° altitude is now hidden behind an opaque, made-up landscape receding to the horizon, rather than a nearly opaque flat shade, so stars and survey photographs no longer show through. It lightens with a daylight sky and the **Ground** option still turns it off. The horizon profile's fill stays transparent red, from 0° upward.
 
 - **MobileConnect plugin design note** (`docs/plugins/mobileconnect/SDD.md` 5.2): records how the first draft in `Galileo-Plugins/mobileconnect` differs from the design, because Connect Link's route table matches exact paths and its stream has no connection hook. Documentation only; nothing in Galileo itself changed.
 

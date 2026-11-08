@@ -6,8 +6,8 @@
 ``imaging.capture`` is long-running: it answers at once with a correlation id, reports ``progress`` as each frame is
 taken, and ends with one ``finished`` event. Whether a capture can start is part of availability, so a client is told
 why not (no camera, a session running, a capture already under way) before anything moves. ``imaging.status`` returns
-the series progress and the current frame's statistics and histogram as plain data; the picture itself is not served
-here (it needs a binary route, which the checklist does not specify yet).
+the series progress, the exposure under way, the live stack's size and the current frame's statistics and histogram as
+plain data; the pictures themselves (the frame and the stack) are served by ``galileo.control_surface.frames``.
 
 ``register_imaging_operations(registry, access)`` takes an :class:`ImagingAccess` so this module imports no camera,
 service or screen.
@@ -26,7 +26,8 @@ class ImagingAccess(Protocol):
         """Why a capture cannot start on *pier* now, or ``None``."""
 
     async def capture(self, pier: str, count: int, seconds: float, filter_name: str, frame_type: str,
-                      gain: int, offset: int, camera_slot: str, progress: Any) -> dict[str, Any]:
+                      gain: int, offset: int, camera_slot: str, progress: Any,
+                      live_stack: bool = False) -> dict[str, Any]:
         """Take the series; calls ``progress(done, total)`` after each frame; returns a summary."""
 
     async def stop(self, pier: str) -> bool:
@@ -47,7 +48,8 @@ def register_imaging_operations(registry: Registry, access: ImagingAccess) -> No
 
         return await access.capture(
             ctx.pier, total, float(args["seconds"]), args.get("filter") or "", args["frame_type"],
-            int(args["gain"]), int(args["offset"]), args.get("camera_slot") or "primary", progress)
+            int(args["gain"]), int(args["offset"]), args.get("camera_slot") or "primary", progress,
+            bool(args.get("live_stack", False)))
 
     async def stop(ctx: OperationContext, args: dict[str, Any]) -> Any:
         if not await access.stop(ctx.pier):
@@ -65,9 +67,11 @@ def register_imaging_operations(registry: Registry, access: ImagingAccess) -> No
          Arg("frame_type", "enum", required=False, default="Light", choices=("Light", "Dark", "Flat", "Bias")),
          Arg("gain", "int", required=False, default=0, minimum=0, maximum=10000),
          Arg("offset", "int", required=False, default=0, minimum=0, maximum=10000),
-         Arg("camera_slot", "str", required=False)),
+         Arg("camera_slot", "str", required=False),
+         Arg("live_stack", "bool", required=False, default=False)),
         needs_lease=True, long_running=True, available=capture_available,
-        description="Take one frame or a series; each frame is saved to the Library"), capture)
+        description="Take one frame or a series; each frame is saved to the Library. With live_stack, a series of "
+                    "three or more frames is also registered and averaged into a stack, shown as it builds"), capture)
     registry.register(OperationSpec("imaging.stop", "operate", (), needs_lease=True,
                                     description="Stop the running capture after aborting the frame in progress"), stop)
     registry.register(OperationSpec("imaging.status", "read", (), needs_lease=False,

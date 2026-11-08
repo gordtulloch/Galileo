@@ -9,8 +9,9 @@ import math
 from typing import TYPE_CHECKING, Any
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen
 from galileo.planning import minor_bodies as mb
+from galileo.planning import sky_survey
 from galileo.planning import star_atlas as sa
 
 
@@ -98,6 +99,7 @@ class StarAtlasPaintMixin(_MixinBase):
         sky = (tuple(np.interp(self._sun_alt, _SKY_ALT_STOPS, _SKY_RGB_STOPS[:, c]) for c in range(3))
                if self.daylight_sky else (3, 5, 12))
         p.fillRect(self.rect(), QColor(*(int(v) for v in sky)))
+        self._draw_background(p, vp, brightness)
 
         if self.show_grid:
             self._draw_grid(p, vp)
@@ -121,6 +123,24 @@ class StarAtlasPaintMixin(_MixinBase):
         self._draw_pier_markers(p, vp)
         self._draw_overlay(p)
         p.end()
+
+    def _draw_background(self, p: QPainter, vp, brightness: float) -> None:
+        """Real sky from survey tiles behind everything (SKYMAP-100), fading out as a daylight sky brightens."""
+        if not self.show_background or brightness >= 1.0:
+            return
+        key = (vp.alt0, vp.az0, vp.fov_deg, vp.width, vp.height, round(self._lst, 2), self.latitude, self._survey.generation)
+        if self._background_frame is None or self._background_frame[0] != key:
+            pixels = sky_survey.render_view(self._survey, vp, self._lst, self.latitude, self._jd)
+            height, width = pixels.shape[:2]
+            # copy(): the QImage must own its pixels, since the array goes out of scope here.
+            frame = QImage(pixels.tobytes(), width, height, width * 3, QImage.Format.Format_RGB888).copy()
+            self._background_frame = (key, frame)
+        p.save()
+        p.setOpacity(1.0 - brightness)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)  # adds light to the sky, as it would
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(self.rect(), self._background_frame[1])
+        p.restore()
 
     def _polyline(self, p: QPainter, x, y, vis) -> None:
         limit = max(self.width(), self.height())
@@ -267,18 +287,17 @@ class StarAtlasPaintMixin(_MixinBase):
                 p.drawPath(tri)
 
     def _draw_ground(self, p: QPainter, vp, brightness: float) -> None:
-        """Shade everything below the horizon, computed on a coarse pixel grid
-        (the horizon is a circle in this projection, but not always one that
-        fits the view, so the mask is built per pixel rather than as a path)."""
-        cell = 3
+        """Hide everything below the horizon behind an opaque landscape (SKYMAP-110), computed on a coarse pixel grid (the
+        horizon is a circle in this projection, but not always one that fits the view, so it's per pixel, not a path)."""
+        cell = 2
         gw, gh = max(1, vp.width // cell), max(1, vp.height // cell)
         sx, sy = np.meshgrid((np.arange(gw) + 0.5) * cell, (np.arange(gh) + 0.5) * cell)
-        alt, _ = vp.unproject(sx, sy)
+        alt, az = vp.unproject(sx, sy)
         below = alt < 0.0
-        r, g, b = (int(12 + 40 * brightness), int(16 + 46 * brightness), int(14 + 38 * brightness))
         arr = np.zeros((gh, gw, 4), dtype=np.uint8)
-        arr[below] = (b, g, r, 238)          # Format_ARGB32 is BGRA in memory (little-endian)
-        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format.Format_ARGB32).copy()
+        land = sa.landscape_rgb(alt[below], az[below], brightness)
+        arr[below, 0], arr[below, 1], arr[below, 2], arr[below, 3] = land[:, 2], land[:, 1], land[:, 0], 255  # BGRA in memory
+        img = QImage(arr.data, gw, gh, gw * 4, QImage.Format.Format_ARGB32_Premultiplied).copy()
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.drawImage(QRectF(0, 0, gw * cell, gh * cell), img)
 
@@ -463,3 +482,7 @@ class StarAtlasPaintMixin(_MixinBase):
         p.setPen(QColor(220, 230, 240, 200))
         p.drawText(QPointF(10, 18), f"Alt {self.view.alt0:.1f}°  Az {self.view.az0:.1f}°  ·  FOV {self.view.fov_deg:.1f}°")
         p.drawText(QPointF(10, self.height() - 10), self._cursor_text())
+        if self.show_background and self._survey.generation:
+            metrics = QFontMetrics(font)
+            p.drawText(QPointF(self.width() - metrics.horizontalAdvance(sky_survey.SURVEY_CREDIT) - 10, self.height() - 10),
+                       sky_survey.SURVEY_CREDIT)
