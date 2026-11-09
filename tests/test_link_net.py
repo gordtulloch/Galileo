@@ -393,3 +393,18 @@ async def test_tc_link_060_revoke_disable_and_slow_peer_close_the_stream(link):
     server.streams.publish(peer_id, "y")
     assert stream.conn is None
     await ws.close()
+
+
+@pytest.mark.requirement("TC-LINK-010")
+@pytest.mark.priority("MVP")
+def test_tc_link_010_mismatched_stored_pair_is_replaced_not_left_to_break_the_listener(certs, secrets_store):
+    """LINK-010: a stored certificate whose key does not match (KEY_VALUES_MISMATCH on start-up) is replaced
+    by a fresh pair, so the listener starts instead of leaving every Connect Link plugin inert."""
+    broken = certs.ensure()
+    other = CertificateStore(MemorySecretStore(), "other")
+    other.ensure()                                      # shares the settings database: it replaced the certificate
+    secrets_store.set("tls_private_key", other._secrets.get("tls_private_key"))
+    certs._set_cert(broken)                             # the first certificate with the second pair's key
+    certs.ssl_context()                                # no ssl.SSLError
+    assert certs._get_cert() != broken
+    assert certs.fingerprint() == CertificateStore(secrets_store).fingerprint()

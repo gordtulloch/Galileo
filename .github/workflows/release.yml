@@ -125,6 +125,18 @@ jobs:
         with:
           files: out/*
 
+  # Rebuilds every plugin ZIP and its release in gordtulloch/Galileo-Plugins by dispatching that repo's workflow.
+  # Needs a repo secret PLUGINS_REPO_TOKEN: a fine-grained PAT on Galileo-Plugins with Actions read/write.
+  rebuild-plugins:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch the plugin build
+        env:
+          GH_TOKEN: ${{ secrets.PLUGINS_REPO_TOKEN }}
+        run: gh workflow run build-plugin.yml --repo gordtulloch/Galileo-Plugins --ref main
+
   # Publishes the new version and installer links to the web site (repo gordtulloch/Galileo.web, downloads.json).
   # Needs a repo secret WEB_REPO_TOKEN: a fine-grained PAT with Contents read/write on Galileo.web.
   update-site:

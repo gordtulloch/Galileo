@@ -11,8 +11,10 @@ SHA-256 fingerprint, which the Options page also shows. A user-supplied pair rep
 from __future__ import annotations
 
 import datetime
+import logging
 import ssl
 import tempfile
+import threading
 from pathlib import Path
 
 from cryptography import x509
@@ -21,6 +23,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from galileo.connect_link.secrets_store import SecretStore
+
+logger = logging.getLogger(__name__)
 
 _NS = "connect_link"
 _KEY_SECRET = "tls_private_key"  # noqa: S105 -- the secret store entry name, not a secret
@@ -41,6 +45,7 @@ class CertificateStore:
     def __init__(self, secrets: SecretStore, node_name: str = "galileo") -> None:
         self._secrets = secrets
         self._node_name = node_name
+        self._lock = threading.RLock()  # several plugins ask for the certificate at start-up, on different threads
 
     # -- settings access (kept lazy so import never touches the database) --------------
     @staticmethod
@@ -55,11 +60,27 @@ class CertificateStore:
             raise CertificateError("could not save the certificate (no database)")
 
     def ensure(self) -> str:
-        """The certificate PEM, generating and storing a new pair if there is none."""
-        cert_pem, key_pem = self._get_cert(), self._secrets.get(_KEY_SECRET)
-        if cert_pem and key_pem:
-            return cert_pem
-        return self._generate()
+        """The certificate PEM, generating and storing a new pair if there is none (or the stored pair is broken)."""
+        with self._lock:
+            cert_pem, key_pem = self._get_cert(), self._secrets.get(_KEY_SECRET)
+            if cert_pem and key_pem:
+                if self._pair_matches(cert_pem, key_pem):
+                    return cert_pem
+                # A certificate saved by one writer and a key by another (or a restored database against a different
+                # secret store) leaves a pair the listener refuses with KEY_VALUES_MISMATCH, which silently disabled
+                # every Connect Link plugin. Peers pin the fingerprint, so they re-pair, but nothing worked before.
+                logger.warning("The stored Connect Link certificate and private key do not match; generating a new pair")
+            return self._generate()
+
+    @staticmethod
+    def _pair_matches(cert_pem: str, key_pem: str) -> bool:
+        try:
+            cert = x509.load_pem_x509_certificate(cert_pem.encode("ascii"))
+            key = serialization.load_pem_private_key(key_pem.encode("ascii"), password=None)
+        except Exception:
+            return False
+        spki, pem = serialization.PublicFormat.SubjectPublicKeyInfo, serialization.Encoding.PEM
+        return cert.public_key().public_bytes(pem, spki) == key.public_key().public_bytes(pem, spki)
 
     def fingerprint(self) -> str:
         return fingerprint_of(self.ensure())
