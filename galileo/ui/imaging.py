@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import logging
 import math
+import time
 from pathlib import Path
 
 from galileo.core.compute import run_cpu
@@ -138,6 +139,11 @@ class ImagingService:
         # canvas at its grid position, fresh per mosaic capture — None until the first one runs.
         self.mosaic_stacker: MosaicStacker | None = None
         self.stack_started = None              # when the stack's first sub began, for its DATE-OBS
+        # The latest single exposure of a series, kept when a live stack replaces ``current_frame`` with the stack,
+        # so a remote viewer can show the sub and the stack separately; and when the exposure under way began.
+        self.last_sub_frame = None
+        self.exposure_started_at: float | None = None      # time.time() while exposing, else None
+        self.exposure_seconds: float = 0.0
         # The FITS sample format saved frames are written in (IMG-170, Options > Imaging).
         # "auto" (the default) is the pre-existing behaviour; loaded fresh per instance so a
         # changed setting takes effect on the next screen build rather than needing a restart.
@@ -328,6 +334,7 @@ class ImagingService:
         self.stop_requested = False
         self.series_total, self.series_done = count, 0
         self.library_ids, self.library_note = [], ""
+        self.last_sub_frame = None
         # Only a run of more than two frames stacks; below that there is nothing to build up.
         stacking = self.live_stack_enabled and count >= LIVE_STACK_MIN_FRAMES
         if stacking:
@@ -347,6 +354,7 @@ class ImagingService:
                     break
                 raise
             self.series_done = index
+            self.last_sub_frame = self.current_frame
             # The sub is what goes to the Library; the stack is kept separately and saved on request.
             if self.auto_save_to_library:
                 self._auto_save_to_library(index)
@@ -632,8 +640,12 @@ class ImagingService:
             options["gain"] = int(gain)
         if offset:
             options["offset"] = int(offset)
-        await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)
-        data = await self._camera.get_image_array()
+        self.exposure_started_at, self.exposure_seconds = time.time(), float(duration)
+        try:
+            await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)
+            data = await self._camera.get_image_array()
+        finally:
+            self.exposure_started_at = None
         self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.UTC),
                           "duration": float(duration), "frame_type": frame_type,
                           "filter": filter_name, "gain": int(gain) if gain else None,

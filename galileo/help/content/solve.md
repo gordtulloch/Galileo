@@ -207,6 +207,10 @@ Which way the RA axis turns, **East** or **West**. Choose the side with clear sk
 
 Allows for the atmosphere lifting stars, so the mount is aimed where it must point to see them. On by default. The target stays the geometric pole.
 
+## Slew from Zenith
+
+Checked (the default): Galileo slews to the zenith and solves there to confirm the mount's position (syncing it if it is wrong), then moves to about Dec 70° and takes the three measuring frames. Unchecked: Galileo solves right where the mount points now and syncs the mount to the solution if it is off, then turns in RA for the second and third frames, at the same declination. Nothing moves the mount first, so it must already be pointing at a good, clear, non-polar field away from the meridian.
+
 ## Polar alignment status
 
 What the procedure is doing now, or why it stopped.

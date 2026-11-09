@@ -45,6 +45,10 @@ class SessionStarter(SessionAccess, Protocol):
     async def start(self, pier: str, template: str, target: dict[str, Any] | None = None,
                     camera_slot: str = "primary") -> None: ...
 
+    async def estimate(self, pier: str, template: str, target: dict[str, Any] | None = None,
+                       camera_slot: str = "primary") -> dict[str, Any]:
+        """The pre-run summary of a template: duration, storage, flip time and warnings (``session.estimate``)."""
+
 
 def progress_dict(name: str, state: str, progress: Any) -> dict[str, Any]:
     """A run and its latest ``SessionProgress`` as JSON-friendly data (the block as its class name)."""
@@ -125,8 +129,32 @@ def register_start_operations(registry: Registry, access: SessionStarter) -> Non
             raise Refused(str(exc)) from exc
         return access.progress(ctx.pier) or {"state": "running"}
 
+    def run_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        target = None
+        if args.get("target_name"):
+            if args.get("ra_deg") is None or args.get("dec_deg") is None:
+                raise Refused("a target needs target_name, ra_deg and dec_deg together")
+            target = {"name": args["target_name"], "ra_deg": args["ra_deg"], "dec_deg": args["dec_deg"]}
+        return target, args.get("camera_slot") or "primary"
+
+    async def estimate(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        target, slot = run_args(args)
+        try:
+            return await access.estimate(ctx.pier, args["template"], target, slot)
+        except SessionRefused as exc:
+            raise Refused(str(exc)) from exc
+
     registry.register(OperationSpec("session.templates", "read", (), needs_lease=False,
                                     description="The saved session templates that can be run"), templates)
+    registry.register(OperationSpec(
+        "session.estimate", "read",
+        (Arg("template", "str"), Arg("target_name", "str", required=False),
+         Arg("ra_deg", "float", required=False, minimum=0, maximum=360, unit="deg"),
+         Arg("dec_deg", "float", required=False, minimum=-90, maximum=90, unit="deg"),
+         Arg("camera_slot", "str", required=False)),
+        needs_lease=False,
+        description="Pre-run summary of a saved template: duration, storage against free space, meridian "
+                    "flip time, and warnings if it would run into dawn, the horizon or the flip"), estimate)
     registry.register(OperationSpec(
         "session.run", "operate",
         (Arg("template", "str"), Arg("target_name", "str", required=False),

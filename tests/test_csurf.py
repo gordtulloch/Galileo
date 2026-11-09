@@ -646,7 +646,8 @@ async def test_tc_csurf_160_guiding_connects_commands_and_reports(registry, monk
     try:
         cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("guiding.")}
         assert set(cat) == {"guiding.status", "guiding.star", "guiding.connect", "guiding.disconnect", "guiding.start",
-                            "guiding.recalibrate", "guiding.stop", "guiding.dither", "guiding.find_star"}
+                            "guiding.recalibrate", "guiding.stop", "guiding.dither", "guiding.find_star",
+                            "guiding.select_star"}
         assert cat["guiding.connect"]["available"] is True
         assert cat["guiding.start"]["available"] is False and "not connected" in cat["guiding.start"]["reason"]
         assert cat["guiding.status"]["class"] == "read" and cat["guiding.start"]["needs_lease"] is True
@@ -700,6 +701,57 @@ async def test_tc_csurf_160_guiding_connects_commands_and_reports(registry, monk
 
 @pytest.mark.requirement("TC-CSURF-160")
 @pytest.mark.priority("MVP")
+async def test_tc_csurf_160_guiding_select_star_by_tap_on_frame_or_cutout(registry, monkeypatch):
+    """CSURF-160: tapping the whole guide frame or the guide-star cut-out chooses the guide star: PHD2 is asked to
+    find a star in a box around the tapped frame point, a cut-out tap is mapped onto the frame first, a point off the
+    frame is refused, and the whole frame is offered as the ``guide:<pier>`` picture source."""
+    import base64
+
+    import numpy as np
+
+    from galileo.control_surface.frames import FrameSources
+    from galileo.bus import EventBus
+
+    guiding, fake, _state = _guiding_world(registry, monkeypatch)
+    try:
+        assert (await registry.invoke("guiding.connect", {}, "p1", "web")).ok
+        service = guiding.service("p1")
+        service.model.update(frame_size=(640, 480))
+        fake.requests.clear()
+        assert (await registry.invoke("guiding.select_star", {"x": 100.0, "y": 50.0}, "p1", "web")).ok
+        assert fake.requests[0] == ("find_star", [[80, 30, 40, 40]])
+        fake.requests.clear()
+        assert (await registry.invoke("guiding.select_star", {"x": 2.0, "y": 3.0}, "p1", "web")).ok
+        assert fake.requests[0][1] == [[0, 0, 40, 40]]                          # the box is kept on the frame
+        refused = await registry.invoke("guiding.select_star", {"x": 700.0, "y": 10.0}, "p1", "web")
+        assert refused.status == "refused" and "outside" in refused.reason
+
+        no_cutout = await registry.invoke("guiding.select_star", {"x": 1.0, "y": 1.0, "space": "cutout"}, "p1", "web")
+        assert no_cutout.status == "refused"
+        service.model.apply_event({"Event": "StarSelected", "X": 300.0, "Y": 200.0})
+        service.model.set_star_image({"width": 2, "height": 2, "pixels": base64.b64encode(bytes(8)).decode(),
+                                      "star_pos": [1.0, 1.0], "frame": 1})
+        fake.requests.clear()
+        assert (await registry.invoke("guiding.select_star", {"x": 0.0, "y": 2.0, "space": "cutout"}, "p1", "web")).ok
+        assert fake.requests[0][1] == [[279, 181, 40, 40]]                      # (0,2) on the cut-out is (299,201) on the frame
+
+        sources = FrameSources(EventBus(), guide=guiding.frame)
+        try:
+            assert sources._guide("guide:p1") is None                           # nothing fetched yet
+            service.model.set_frame(np.zeros((480, 640), dtype=np.uint16))
+            version, frame = sources._guide("guide:p1")
+            assert frame.shape == (480, 640) and version == "1"
+            frame_info = (await registry.invoke("guiding.status", {}, "p1", "web")).value["frame"]
+            assert frame_info == {"ref": "guide:p1", "version": 1, "available": True, "width": 640, "height": 480}
+        finally:
+            sources.close()
+        assert (await registry.invoke("guiding.disconnect", {}, "p1", "web")).ok
+    finally:
+        guiding.close()
+
+
+@pytest.mark.requirement("TC-CSURF-160")
+@pytest.mark.priority("MVP")
 async def test_tc_csurf_160_guiding_refusals_name_their_reason(registry, monkeypatch):
     """CSURF-160: no PHD2 saved, no such Pier and a PHD2 that rejects a command are each refused with a reason a
     person can read; nothing is sent to PHD2 in the first two cases."""
@@ -733,6 +785,8 @@ class _FakeSolveWorkflow:
         self.log, self.succeed, self.gate = log, succeed, gate
         self.target = self.settings = self.filter_wheel = None
         self.stopped = False
+        self.on_frame = None
+        self.loaded = None
 
     def set_target(self, ra, dec, name=""):
         self.target = (ra, dec, name)
@@ -746,6 +800,9 @@ class _FakeSolveWorkflow:
         from galileo.platesolve_solvers import SolveResult
         self.settings = settings
         self.log("Exposing")
+        if self.on_frame is not None:
+            import numpy as np
+            self.on_frame(np.zeros((600, 800), dtype=np.uint16))
         if self.gate is not None:
             await asyncio.get_running_loop().run_in_executor(None, self.gate.wait, 5)
         if self.stopped:
@@ -797,7 +854,8 @@ async def test_tc_csurf_140_solve_captures_syncs_and_centres(registry, bus):
 
     solve, made = _solve_world(registry)
     cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("solve.")}
-    assert set(cat) == {"solve.capture", "solve.sync", "solve.centre", "solve.stop", "solve.status"}
+    assert set(cat) == {"solve.capture", "solve.sync", "solve.centre", "solve.stop", "solve.status", "solve.load",
+                        "solve.frames"}
     assert cat["solve.capture"]["long_running"] and cat["solve.capture"]["needs_lease"]
     assert cat["solve.status"]["class"] == "read"
 
@@ -985,3 +1043,243 @@ async def test_tc_csurf_130_framing_uses_the_piers_rig(registry, monkeypatch):
     _sky_world(r2, monkeypatch, rig=False)
     refused = await r2.invoke("sky.framing", {"ra_deg": 1, "dec_deg": 2}, "p1", "web")
     assert refused.status == "refused" and "focal length" in refused.reason
+
+
+class _FakePolarWorkflow:
+    """Stands in for ``PolarAlignWorkflow``: reports a measurement, then three live refreshes, then waits to be stopped."""
+
+    def __init__(self, log, on_progress, gate):
+        self.log, self.on_progress, self.gate = log, on_progress, gate
+        self.settings = None
+        self.stopped = False
+        self.on_frame = None
+
+    def stop(self):
+        self.stopped = True
+        self.gate.set()
+
+    async def align(self, settings):
+        import numpy as np
+        from galileo.polaralign import PolarAlignProgress, PolarError, TargetGeometry
+        self.settings = settings
+        self.log("Moving the mount to the zenith to start…")
+        self.on_progress(PolarAlignProgress("measuring", "Solving position 1 of 3…", step=1))
+        for total in (900.0, 240.0, 30.0):
+            error = PolarError(axis=(1.0, 0.0, 0.0), total_arcsec=total, altitude_arcsec=total * 0.6,
+                               azimuth_arcsec=-total * 0.8, azimuth_rotation_arcsec=-total * 0.9)
+            self.on_frame(np.zeros((100, 200), dtype=np.uint16))
+            geometry = TargetGeometry((total / 60.0, -1.5), (4.0, 2.0), (4.0 + total / 60.0 / 0.5, 2.0 - 3.0), 0.5)
+            self.on_progress(PolarAlignProgress("adjusting", "Polar axis moved", step=3, error=error,
+                                                target_offset=(total / 60.0, -1.5), geometry=geometry))
+        await asyncio.get_running_loop().run_in_executor(None, self.gate.wait, 5)
+
+
+@pytest.mark.requirement("TC-CSURF-145")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_145_polar_alignment_runs_live_and_stops(registry, bus):
+    """CSURF-145: polar.start measures and then adjusts until polar.stop; the live error, its quality band, the trend
+    and the pole's offset in the frame are published as the observable state polar.state and read by polar.status."""
+    import threading
+    from types import SimpleNamespace
+
+    from galileo.control_surface import ObservableState
+    from galileo.control_surface.polar import register_polar_operations
+    from galileo.engine.polar import EnginePolar
+
+    parts = {"camera": SimpleNamespace(is_connected=True), "mount": SimpleNamespace(is_connected=True)}
+    observatory = SimpleNamespace(latitude=51.0, longitude=-114.0)
+    devices = SimpleNamespace(controller=lambda pier, cat, slot="primary": parts.get(cat),
+                              pier_record=lambda pier: SimpleNamespace(observatory=observatory))
+    state, made, gate = ObservableState(), [], threading.Event()
+
+    async def factory(pier, log, progress):
+        made.append(_FakePolarWorkflow(log, progress, gate))
+        return made[0]
+
+    taken = []
+
+    def frames(pier, data):
+        taken.append((pier, data.shape))
+        return len(taken)
+
+    polar = EnginePolar(devices, SimpleNamespace(is_running=lambda pier: False), state, factory=factory, frames=frames)
+    register_polar_operations(registry, polar)
+    cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("polar.")}
+    assert set(cat) == {"polar.start", "polar.stop", "polar.status"}
+    assert cat["polar.start"]["long_running"] and cat["polar.start"]["needs_lease"]
+    assert cat["polar.status"]["class"] == "read"
+
+    assert (await registry.invoke("polar.stop", {}, "p1", "web")).status == "refused"          # nothing running
+    assert (await registry.invoke("polar.start", {"direction": "north"}, "p1", "web")).status == "invalid"
+    started = await registry.invoke("polar.start", {"step_deg": 20, "direction": "west", "refraction": False},
+                                    "p1", "web")
+    assert started.ok
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        picture = state.read("p1", "polar.state") or {}
+        if (picture.get("error") or {}).get("total_arcsec") == 30.0:
+            break
+    assert picture["running"] is True and picture["phase"] == "adjusting"
+    assert picture["error"]["quality"] == "good" and picture["error"]["trend"] == [900.0, 240.0, 30.0]
+    assert picture["error"]["altitude_advice"].startswith("Lower the polar axis")
+    assert picture["target_offset_arcmin"] == [0.5, -1.5]
+    # The circle and cross are placed in the frame the client can fetch as solve:<pier>, from its top left.
+    assert picture["frame"]["ref"] == "solve:p1" and (picture["frame"]["width"], picture["frame"]["height"]) == (200, 100)
+    assert picture["frame"]["axis_px"] == [104.0, 52.0] and picture["frame"]["pole_px"] == [105.0, 49.0]
+    assert picture["frame"]["arcmin_per_px"] == 0.5 and picture["frame"]["version"] == len(taken) == 3
+    assert made[0].settings.step_deg == 20 and made[0].settings.direction == "west"
+    assert made[0].settings.refraction is False and made[0].settings.slew_from_zenith is True
+    assert picture["log"] == ["Moving the mount to the zenith to start…"]
+
+    second = await registry.invoke("polar.start", {}, "p1", "web")
+    assert second.status == "unavailable" and "already running" in second.reason
+    live = (await registry.invoke("polar.status", {}, "p1", "web")).value
+    assert live["running"] is True and live["error"]["total_arcsec"] == 30.0
+
+    assert (await registry.invoke("polar.stop", {}, "p1", "web")).ok
+    await registry.wait_idle()
+    done = (await registry.invoke("polar.status", {}, "p1", "web")).value
+    assert done["running"] is False and done["phase"] == "finished" and done["stopped"] is True
+    assert done["error"]["total_arcsec"] == 30.0                                            # the last picture is kept
+
+
+@pytest.mark.requirement("TC-CSURF-145")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_145_polar_alignment_refusals(registry, bus):
+    """CSURF-145: no camera, no mount, a running session or plate solve, or an Observatory with no location is
+    refused with a reason before anything moves."""
+    from types import SimpleNamespace
+
+    from galileo.control_surface import ObservableState
+    from galileo.engine.polar import EnginePolar
+
+    def world(camera=True, mount=True, running=False, site=True, busy=False):
+        parts = {"camera": SimpleNamespace(is_connected=True) if camera else None,
+                 "mount": SimpleNamespace(is_connected=True) if mount else None}
+        observatory = SimpleNamespace(latitude=51.0 if site else None, longitude=-114.0 if site else None)
+        devices = SimpleNamespace(controller=lambda pier, cat, slot="primary": parts.get(cat),
+                                  pier_record=lambda pier: SimpleNamespace(observatory=observatory))
+        return EnginePolar(devices, SimpleNamespace(is_running=lambda pier: running), ObservableState(),
+                           busy=lambda pier: busy)
+
+    assert world().why_not("p1") is None
+    assert "no camera" in world(camera=False).why_not("p1")
+    assert "mount is not connected" in world(mount=False).why_not("p1")
+    assert "session is running" in world(running=True).why_not("p1")
+    assert "plate solve is running" in world(busy=True).why_not("p1")
+    assert "latitude and longitude" in world(site=False).why_not("p1")
+
+
+@pytest.mark.requirement("TC-CSURF-185")
+@pytest.mark.priority("MVP")
+def test_tc_csurf_185_estimate_run_totals_and_warns():
+    """CSURF-185: duration, frames, storage and the dawn / horizon / flip / storage warnings of a block list."""
+    from datetime import UTC, datetime, timedelta
+    from galileo.session_estimate import estimate_run
+    from galileo.ui.session_blocks import ForFilterBlock, ImageBlock, TargetBlock
+    t0 = datetime(2026, 11, 8, 20, 0, tzinfo=UTC)
+    blocks = [TargetBlock(name="x", ra_deg=1, dec_deg=1), ForFilterBlock(filters=["L", "R"]),
+              ImageBlock(exposure=60, count=10, indent=1)]
+    est = estimate_run(blocks, start=t0, width_px=4000, height_px=3000, free_bytes=1000,
+                       dawn=t0 + timedelta(minutes=10), sets_at=t0 + timedelta(minutes=15),
+                       flip_at=t0 + timedelta(minutes=5))
+    assert est.frames == 20 and est.exposure_s == 1200 and est.duration_s == 60 + 20 * 63
+    assert est.storage_bytes == 20 * (4000 * 3000 * 2 + 5760)
+    assert len(est.warnings) == 4
+    quiet = estimate_run(blocks, start=t0)
+    assert quiet.storage_bytes is None and quiet.warnings == []
+
+
+@pytest.mark.requirement("TC-CSURF-145")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_145_the_frame_being_solved_can_be_previewed(bus):
+    """CSURF-145: the latest frame captured for solving or polar alignment is served as solve:<pier>, with a
+    version that changes with each frame, so a client can watch it and draw the circle and cross over it."""
+    import numpy as np
+
+    from galileo.control_surface.frames import FramePreviews, FrameSources
+    from galileo.preview import PreviewError
+    sources = FrameSources(bus)
+    previews = FramePreviews(sources)
+    try:
+        with pytest.raises(PreviewError):
+            await previews.info("solve:p1")                                         # nothing captured yet
+        first = sources.set_solve_frame("p1", np.zeros((60, 80), dtype=np.uint16))
+        info = await previews.info("solve:p1")
+        assert (info["width"], info["height"]) == (80, 60) and info["version"] == str(first)
+        assert sources.set_solve_frame("p1", np.zeros((60, 80), dtype=np.uint16)) != first
+        assert FramePreviews.check("solve:p1") == "solve:p1"
+    finally:
+        sources.close()
+
+
+@pytest.mark.requirement("TC-CSURF-140")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_140_solve_action_state_and_solution_coordinates(registry, bus, monkeypatch):
+    """CSURF-140: solve.capture takes the Solver Action (slew aims at the Pier's current object); the screen's state
+    (running, accuracy ring, bullseye points, last run) is published; a solution carries its JNow position, error from
+    the target, field of view and the focal length and ratio it implies; Load & Slew solves a Library frame."""
+    from types import SimpleNamespace
+
+    from galileo.control_surface import ObservableState
+    from galileo.control_surface.solve import register_solve_operations
+    from galileo.engine.solve import EngineSolve
+    from galileo.platesolve import SolveAction
+
+    parts = {"camera": SimpleNamespace(is_connected=True), "mount": SimpleNamespace(is_connected=True)}
+    devices = SimpleNamespace(controller=lambda pier, cat, slot="primary": parts.get(cat),
+                              pier_record=lambda pier: SimpleNamespace(name="p"))
+    state, made, taken = ObservableState(), [], []
+
+    async def factory(pier, log):
+        made.append(_FakePolarSolve(log))
+        return made[-1]
+
+    class _FakePolarSolve(_FakeSolveWorkflow):
+        def __init__(self, log):
+            super().__init__(log)
+            self.target = (10.0, 41.0)                               # the mount's own position, as the real one sets
+
+        async def solve_file(self, path, slew=False):
+            self.loaded = (path, slew)
+            self.log("Loading")
+            from galileo.platesolve_solvers import SolveResult
+            self.results = [SolveResult(True, ra_deg=10.5, dec_deg=41.2, rotation_deg=3.0, scale_arcsec_px=1.4)]
+            return self.results
+
+    solve = EngineSolve(devices, SimpleNamespace(is_running=lambda pier: False), factory=factory, state=state,
+                        frames=lambda pier, data: taken.append(data.shape) or len(taken))
+    monkeypatch.setattr(solve, "_optics", lambda pier: (1000.0, 200.0, 4.0))
+    monkeypatch.setattr(solve, "_current_object", lambda pier: (10.25, 41.1, "M31"))
+    register_solve_operations(registry, solve)
+    cat = {o["name"]: o for o in registry.catalogue("p1")["operations"]}
+    assert next(a for a in cat["solve.capture"]["args"] if a["name"] == "action")["choices"] == ["nothing", "sync", "slew"]
+
+    started, done = await _finish(registry, bus, "solve.capture", {"action": "slew", "accuracy_arcsec": 15})
+    assert started.ok and done["outcome"] == "ok"
+    wf = made[0]
+    assert wf.settings.action is SolveAction.SLEW_TO_TARGET and wf.target == (10.25, 41.1, "M31")   # current object
+    assert taken == [(600, 800)]
+    last = state.read("p1", "solve.last")
+    solution = last["solutions"][0]
+    assert 0 <= solution["jnow_ra_hours"] < 24 and "jnow_dec_deg" in solution
+    assert solution["error_arcsec"] > 0 and solution["d_ra_arcsec"] != 0
+    assert solution["fov_arcmin"] == [pytest.approx(800 * 1.4 / 60), pytest.approx(600 * 1.4 / 60)]
+    assert solution["focal_mm"] == pytest.approx(206.265 * 4.0 / 1.4)
+    assert solution["focal_ratio"] == pytest.approx(206.265 * 4.0 / 1.4 / 200)
+    assert solution["scale_ratio"] == pytest.approx(1.4 / (206.265 * 4.0 / 1000.0))
+    assert state.read("p1", "solve.running") is False and state.read("p1", "solve.accuracy_arcsec") == 15
+    assert state.read("p1", "solve.points") == [[solution["d_ra_arcsec"], solution["d_dec_arcsec"]]]
+    await _finish(registry, bus, "solve.capture", {})                                 # the default does nothing
+    assert made[1].settings.action is SolveAction.NOTHING
+    assert len(state.read("p1", "solve.points")) == 2                                 # the bullseye accumulates
+
+    import galileo.library.core.location as location
+    monkeypatch.setattr(location, "ensure_local_sync", lambda frame_id: f"frames/{frame_id}.fits")
+    monkeypatch.setattr(solve, "frames", lambda: [{"id": 7, "name": "a.fits"}])
+    started, done = await _finish(registry, bus, "solve.load", {"frame_id": "7"})
+    assert started.ok and done["outcome"] == "ok" and made[-1].loaded == ("frames/7.fits", True)
+    listed = await registry.invoke("solve.frames", {}, "p1", "web")
+    assert listed.value == {"frames": [{"id": 7, "name": "a.fits"}]}
+    parts["camera"] = None                                                            # loading needs no camera
+    assert solve.why_not("p1", mount=True, camera=False) is None and "no camera" in solve.why_not("p1")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from enum import StrEnum
 from collections.abc import Callable
 from galileo.net import http_request, urlopen_http
@@ -155,6 +156,82 @@ class SmsChannel:
             )
             return
         await EmailChannel(address=self.gateway_address, **self.email_channel_kwargs).send(notification)
+
+
+_NTFY_TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+# Title / priority / emoji tag per event for ntfy (priority 1-5; 5 makes the phone alert loudly).
+_NTFY_STYLE: dict[NotificationEvent, tuple[str, int, str]] = {
+    NotificationEvent.SEQUENCE_COMPLETE: ("Galileo: session complete", 3, "white_check_mark"),
+    NotificationEvent.SEQUENCE_ERROR: ("Galileo: session error", 4, "x"),
+    NotificationEvent.SAFETY_ABORT: ("Galileo: safety abort", 5, "rotating_light"),
+    NotificationEvent.AUTOFOCUS_COMPLETE: ("Galileo: autofocus complete", 3, "mag"),
+    NotificationEvent.MERIDIAN_FLIP: ("Galileo: meridian flip", 3, "arrows_counterclockwise"),
+    NotificationEvent.SESSION_MESSAGE: ("Galileo: message", 3, "telescope"),
+}
+
+
+def valid_ntfy_topic(topic: str) -> bool:
+    """True if *topic* is a legal ntfy topic name (1-64 letters, digits, ``_`` or ``-``)."""
+    return bool(_NTFY_TOPIC_RE.match(topic or ""))
+
+
+def normalise_ntfy_server(server: str) -> str:
+    """*server* as an ``http(s)://host`` base URL without a trailing slash (a bare host gets
+    ``https://``); the default public server when blank."""
+    server = (server or "").strip().rstrip("/")
+    if not server:
+        return "https://ntfy.sh"
+    return server if "://" in server else f"https://{server}"
+
+
+class NtfyChannel:
+    """Push notification to the phone's ntfy app (https://ntfy.sh): one HTTPS POST from this
+    computer, no account, no relay of our own. Anyone who knows the *topic* can read the
+    alerts, so it should be a long random string (the settings page can generate one).
+
+    *backup*, if given, is another channel (the e-mail channel) used only when the push fails,
+    except for events in *backup_disabled_events*."""
+
+    def __init__(
+        self, topic: str, server: str = "https://ntfy.sh", token: str | None = None,
+        backup=None, backup_disabled_events: frozenset | set | tuple = (),
+    ) -> None:
+        self.topic = topic
+        self.server = normalise_ntfy_server(server)
+        self.token = token or None
+        self.backup = backup
+        self.backup_disabled_events = frozenset(backup_disabled_events)
+
+    async def deliver(self, notification: _Notification) -> None:
+        """POST the alert to the topic; raises on an invalid topic or any HTTP/network failure."""
+        if not valid_ntfy_topic(self.topic):
+            raise ValueError("invalid ntfy topic (use 1-64 letters, digits, - or _)")
+        title, priority, tag = _NTFY_STYLE.get(
+            notification.event_type, ("Galileo", 3, "telescope"))
+        headers = {"Title": title, "Priority": str(priority), "Tags": tag}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        body = (notification.detail or title).encode("utf-8")
+        req = http_request(f"{self.server}/{self.topic}", data=body, headers=headers, method="POST")
+
+        def _post() -> None:
+            with urlopen_http(req, 10):
+                pass
+
+        await asyncio.to_thread(_post)
+
+    async def send(self, notification: _Notification) -> None:
+        """As :meth:`deliver`, but a failure is logged and handed to the backup channel."""
+        try:
+            await self.deliver(notification)
+            return
+        except Exception:
+            logger.exception("NtfyChannel: failed to push to %s", self.server)
+        if self.backup is None or notification.event_type in self.backup_disabled_events:
+            return
+        logger.warning("NtfyChannel: sending the alert through the backup channel instead")
+        await self.backup.send(notification)
 
 
 class NotificationService:

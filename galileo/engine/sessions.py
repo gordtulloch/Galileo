@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 from galileo.control_surface.sessions import SessionRefused
@@ -151,6 +153,44 @@ class EngineSessions:
     def templates(self) -> list[str]:
         return template_names()
 
+    async def estimate(self, pier: str, template: str, target: dict[str, Any] | None = None,
+                       camera_slot: str = "primary") -> dict[str, Any]:
+        """The pre-run summary of *template* on *pier* (``CSURF-185``): duration, storage, flip time and warnings."""
+        from galileo.session_estimate import estimate_run
+        blocks = load_template(template, target)
+        if not blocks:
+            raise SessionRefused("This session has no blocks to run.")
+        record = self._devices.pier_record(pier)
+        if record is None:
+            raise SessionRefused(f"There is no Pier {pier}.")
+        width = height = None
+        try:
+            from galileo.observatory import get_device_config
+            cfg = get_device_config(record, "camera", slot=camera_slot)
+            width, height = (cfg.sensor_width_px, cfg.sensor_height_px) if cfg is not None else (None, None)
+        except Exception:
+            logger.debug("Pier %s: no camera configuration for the pre-run summary", pier, exc_info=True)
+        free = None
+        try:
+            from galileo.library.config import get_repository_path
+            free = shutil.disk_usage(get_repository_path()).free
+        except Exception:
+            logger.debug("Could not read free storage for the pre-run summary", exc_info=True)
+        location = None
+        try:
+            observatory = record.observatory
+            if observatory.latitude is not None and observatory.longitude is not None:
+                from galileo.planning.visibility import ObservingLocation
+                location = ObservingLocation(name=observatory.name, latitude=observatory.latitude,
+                                             longitude=observatory.longitude,
+                                             elevation_m=getattr(observatory, "elevation_m", None) or 0.0)
+        except Exception:
+            logger.debug("Pier %s: no site for the pre-run summary", pier, exc_info=True)
+        start = datetime.now(UTC)
+        facts = night_facts(blocks, location, start)
+        return estimate_run(blocks, start=start, width_px=width, height_px=height, free_bytes=free,
+                            **facts).to_dict()
+
     async def start(self, pier: str, template: str, target: dict[str, Any] | None = None,
                     camera_slot: str = "primary") -> None:
         """Start *template* on *pier*; raises ``SessionRefused`` saying why not."""
@@ -174,4 +214,46 @@ class EngineSessions:
             raise SessionRefused(str(exc)) from exc
 
 
-__all__ = ["EngineSessions", "SessionRefused", "build_context", "frame_context", "load_template", "template_names"]
+def night_facts(blocks: list, location: Any, start: datetime) -> dict[str, Any]:
+    """When dawn comes, when the first Target sets and when it crosses the meridian, as far as they can be worked
+    out (``None`` where not): the limits the pre-run summary checks the session against."""
+    facts: dict[str, Any] = {"dawn": None, "sets_at": None, "flip_at": None}
+    if location is None:
+        return facts
+    from galileo.planning.visibility import rise_transit_set, sun_altitude_track
+    try:
+        track = sun_altitude_track(location, start=start)
+        alts, times = track.get("altitudes") or [], track.get("times") or []
+        dark = False
+        for t, alt in zip(times, alts, strict=False):
+            if alt < -18.0:
+                dark = True
+            elif dark:                                  # the first sample after the sky was dark and is now brightening
+                facts["dawn"] = datetime.fromisoformat(t)
+                break
+    except Exception:
+        logger.debug("Could not work out dawn for the pre-run summary", exc_info=True)
+    from galileo.ui.session_blocks import ForObjectBlock, TargetBlock
+    target = next((b for b in blocks if isinstance(b, TargetBlock)), None)
+    if target is None and any(isinstance(b, ForObjectBlock) for b in blocks):
+        return facts                                    # several targets: no single set or flip time to check
+    if target is not None:
+        try:
+            rts = rise_transit_set(target.ra_deg, target.dec_deg, location)
+
+            def parse(text: str | None) -> datetime | None:
+                if not text:
+                    return None
+                t = datetime.fromisoformat(text)
+                return t if t.tzinfo else t.replace(tzinfo=UTC)
+            facts["sets_at"], facts["flip_at"] = parse(rts.get("set")), parse(rts.get("transit"))
+            if facts["sets_at"] is not None and facts["sets_at"] < start:
+                facts["sets_at"] = None
+            if facts["flip_at"] is not None and facts["flip_at"] < start:
+                facts["flip_at"] = None
+        except Exception:
+            logger.debug("Could not work out the target's set and transit times", exc_info=True)
+    return facts
+
+
+__all__ = ["EngineSessions", "SessionRefused", "build_context", "frame_context", "load_template", "night_facts", "template_names"]

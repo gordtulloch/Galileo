@@ -18,6 +18,7 @@ import asyncio
 import base64
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -30,6 +31,7 @@ DRIVER_NAME = "PHD2"                         # what the Guider screen saves as t
 DEFAULT_HOST, DEFAULT_PORT = "localhost", 4400
 COMMAND_TIMEOUT_S = 15.0                     # PHD2 accepting a command, not guiding settling
 POLL_S = 2.0
+FRAME_WANTED_S = 10.0                        # how long after a client last looked at the guide frame it keeps being fetched
 TRACE_SAMPLES = 120                          # the recent error trace a status reply carries
 
 
@@ -44,6 +46,8 @@ class EngineGuiding:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._frame_wanted: dict[str, float] = {}
+        self._star_wanted: dict[str, float] = {}
 
     # -- where PHD2 is -------------------------------------------------------------------------------
     def _saved(self, pier: str) -> tuple[str, int] | None:
@@ -121,6 +125,14 @@ class EngineGuiding:
                 future = service.request_dither()
             elif name == "find_star":
                 future = service.find_star()
+            elif name == "select_star":
+                x, y = float(kwargs["x"]), float(kwargs["y"])
+                if kwargs.get("space") == "cutout":
+                    mapped = service.cutout_to_frame(x, y)
+                    if mapped is None:
+                        raise Refused("there is no guide-star cut-out to tap yet")
+                    x, y = mapped
+                future = service.select_star(x, y)
             else:
                 raise Refused(f"unknown guiding command {name!r}")
             await asyncio.wait_for(asyncio.wrap_future(future), COMMAND_TIMEOUT_S)
@@ -147,6 +159,9 @@ class EngineGuiding:
             guiding=snap.app_state == "Guiding", settling=snap.settling, equipment_connected=snap.equipment_connected,
             exposure_ms=snap.exposure_ms, pixel_scale=snap.pixel_scale, dec_mode=snap.dec_mode,
             star_pos=list(snap.star_pos) if snap.star_pos else None, unit=snap.unit,
+            frame={"ref": f"guide:{pier}", "version": snap.frame_version, "available": snap.frame is not None,
+                   "width": int(snap.frame.shape[1]) if snap.frame is not None else None,
+                   "height": int(snap.frame.shape[0]) if snap.frame is not None else None},
             rms={"ra": snap.rms_ra, "dec": snap.rms_dec, "total": snap.rms_total},
             calibrated=snap.calibration is not None,
             trace=[[round(s.t, 2), s.frame, s.ra, s.dec, s.snr] for s in snap.samples[-TRACE_SAMPLES:]],
@@ -154,13 +169,29 @@ class EngineGuiding:
         return out
 
     def star(self, pier: str) -> dict[str, Any] | None:
+        self._star_wanted[pier] = time.monotonic()      # the poller only fetches the cut-out while a client is looking
         service = self.service(pier)
         image = service.model.snapshot().star_image if service is not None else None
         if image is None:
+            if service is not None:
+                service.poll(want_star_image=True)      # the first look should not wait for the poller
             return None
         return {"available": True, "frame": image.frame, "width": image.width, "height": image.height,
                 "star_pos": list(image.star_pos), "format": "uint16 little-endian, row-major",
                 "pixels": base64.b64encode(image.pixels).decode("ascii")}
+
+    def frame(self, pier: str) -> tuple[str, Any] | None:
+        """The whole guide frame as a preview source: ``(version, pixels)``, or ``None`` while there is none. Asking
+        for it also tells the poller to keep fetching it (PHD2 writes a file for each), until nobody asks for a while."""
+        self._frame_wanted[pier] = time.monotonic()
+        service = self._services.get(pier)
+        if service is None:
+            return None
+        snap = service.model.snapshot()
+        if snap.frame is None:
+            service.poll(want_star_image=False, want_frame=True)       # the first look should not wait for the poller
+            return None
+        return str(snap.frame_version), snap.frame
 
     # -- observable state ------------------------------------------------------------------------------
     def _publish(self, pier: str) -> None:
@@ -189,10 +220,15 @@ class EngineGuiding:
             for pier, service in list(self._services.items()):
                 try:
                     if service.is_connected:
-                        service.poll(want_star_image=False)
+                        service.poll(want_star_image=self._wants(self._star_wanted, pier),
+                                     want_frame=self._wants(self._frame_wanted, pier))
                     self._publish(pier)
                 except Exception:
                     logger.exception("Pier %s: could not refresh guiding state", pier)
+
+    @staticmethod
+    def _wants(asked: dict[str, float], pier: str) -> bool:
+        return time.monotonic() - asked.get(pier, float("-inf")) < FRAME_WANTED_S
 
     def close(self) -> None:
         """Stop publishing and let go of every PHD2 connection."""

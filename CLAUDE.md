@@ -26,6 +26,10 @@ Galileo is a cross-platform (Windows/macOS/Linux, including Raspberry Pi 5-class
 
 If a change genuinely needs none of these (an internal refactor with no visible effect), say so in the changelog entry rather than skipping it silently.
 
+## Plugins are installed by the user, from the zip
+
+Galileo loads an installed copy of each plugin (`<config dir>/plugins/<name>-<version>/`, for example `~/Library/Application Support/Galileo/plugins/` on macOS), not the source in `../Galileo-Plugins`. **When plugin code changes and the running Galileo needs it, the user loads it from the plugin's zip through the UI (Options > Plugins). Do not copy, rsync or otherwise write files into that installed folder yourself.** Build the zip if asked (`../Galileo-Plugins/build_plugins.py`, or the plugin's `build_zip.py`), then tell the user which plugin changed and that it needs reinstalling and Galileo restarting. When a phone or browser feature does nothing after a Master restart, suspect a stale installed copy and say so, rather than patching it.
+
 ## Design documents (read these before making architectural changes)
 
 The `docs/` folder is a linked requirements → design → traceability chain, in this order of authority:

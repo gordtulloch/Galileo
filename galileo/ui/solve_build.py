@@ -403,6 +403,12 @@ class SolveBuildMixin(_MixinBase):
             "Allow for the atmosphere raising stars, so the mount is aimed where it must point to see them. The "
             "target stays the geometric pole.")
         controls.addWidget(self.polar_refraction)
+        self.polar_from_zenith = QCheckBox("Slew from Zenith")
+        self.polar_from_zenith.setChecked(True)
+        self.polar_from_zenith.setToolTip(
+            "Checked: slew to the zenith, solve there to confirm the mount's position, then move to the measuring "
+            "position. Unchecked: solve where the mount points now (syncing it if wrong), then turn in RA for the second and third positions.")
+        controls.addWidget(self.polar_from_zenith)
         controls.addStretch(1)
         layout.addLayout(controls)
 

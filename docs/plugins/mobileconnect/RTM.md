@@ -114,6 +114,7 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 | `MCON-660` | MVP | Sky streaming shall be requested by region, limiting magnitude and level of detail, progre… | SDD 3.11 `skystream` | — | Test | `TC-MCON-660` |
 | `MCON-670` | MVP | The tile pyramid of MCON-610 shall be available for the current exposure, the live stack a… | SDD 3.10 `previews` | — | Test | `TC-MCON-670` |
 | `MCON-680` | MVP | Streaming shall always yield to a running session, shall be rate-limited per client, shall… | SDD 3.11 `skystream`; SDD 3.12 `governor` | — | Test | `TC-MCON-680` |
+| `MCON-690` | P2 | Core's all-sky survey tiles, by HiPS order and cell, with their credit… | SDD 3.11 `skystream` | — | Test | `TC-MCON-690` |
 
 ### `MCON` — Safety and failure behaviour
 

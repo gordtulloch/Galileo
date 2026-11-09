@@ -8,7 +8,7 @@ a row at the top of the Releases table in CHANGELOG.md. Refuses to run when [Unr
 """
 import re
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +20,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     version = sys.argv[1].removeprefix("v")
-    when = sys.argv[2] if len(sys.argv) > 2 else date.today().isoformat()
+    when = sys.argv[2] if len(sys.argv) > 2 else datetime.now().astimezone().date().isoformat()
     archive = ARCHIVE_DIR / f"{version}.md"
     if archive.exists():
         sys.exit(f"{archive} already exists; refusing to overwrite")
@@ -28,7 +28,7 @@ def main() -> None:
     raw = CHANGELOG.read_bytes().decode("utf-8")
     nl = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    m = re.search(r"^## \[Unreleased\]\n(.*?)^## Releases\n", text, re.S | re.M)
+    m = re.search(r"^## \[Unreleased\]\n(.*?)^## Releases\n", text, re.DOTALL | re.MULTILINE)
     if not m or not m.group(1).strip():
         sys.exit("nothing under [Unreleased] to archive")
     body = m.group(1).strip("\n")

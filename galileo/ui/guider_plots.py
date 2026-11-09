@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from typing import ClassVar
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QLabel, QWidget
 from galileo.ui._image_view import ImagePreviewView
@@ -286,7 +286,12 @@ class CalibrationPlot(_PlotBase):
 
 
 class StarView(ImagePreviewView):
-    """The guide-star cut-out PHD2 sends. Fits the window until the user zooms; drag to pan."""
+    """The guide picture: PHD2's guide-star cut-out, or the whole guide frame. Fits the window until the user zooms;
+    drag to pan; a tap (a click that did not drag) asks for the star there to be the guide star."""
+
+    TAP_SLOP_PX = 4
+    # (x, y, space): where on the picture, and whether it was the "cutout" or the whole "frame"
+    star_tapped = Signal(float, float, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -294,21 +299,67 @@ class StarView(ImagePreviewView):
         self.setMinimumHeight(160)
         self.setBackgroundBrush(QColor("#141414"))
         self._star: tuple[float, float] | None = None
+        self._press: QPoint | None = None
+        self.show_frame = False       # False: the guide-star cut-out. True: the whole guide frame.
+        self.tap_enabled = True
         self.message = "No guide star image"
 
+    def set_show_frame(self, on: bool) -> None:
+        if on != self.show_frame:
+            self.show_frame = on
+            self.clear_image()
+            self.fit_to_window()
+            self.message = "No guide frame yet" if on else "No guide star image"
+            self.viewport().update()
+
+    @staticmethod
+    def _stretch(data: np.ndarray) -> np.ndarray:
+        data = data.astype(np.float32)
+        lo, hi = float(np.median(data)), float(np.percentile(data, 99.8))
+        if hi <= lo:
+            hi = lo + 1.0
+        return np.ascontiguousarray((np.clip((data - lo) / (hi - lo), 0, 1) ** 0.5 * 255).astype(np.uint8))
+
     def set_star_image(self, star) -> None:
+        """Show the cut-out (ignored while the whole frame is showing; see :meth:`set_frame_image`)."""
+        if self.show_frame:
+            return
         if star is None:
             self.clear_image()
             self._star = None
         else:
-            data = np.frombuffer(star.pixels, dtype="<u2").reshape(star.height, star.width).astype(np.float32)
-            lo, hi = float(np.median(data)), float(np.percentile(data, 99.8))
-            if hi <= lo:
-                hi = lo + 1.0
-            grey = np.ascontiguousarray((np.clip((data - lo) / (hi - lo), 0, 1) ** 0.5 * 255).astype(np.uint8))
-            self.show_array(grey)
+            self.show_array(self._stretch(np.frombuffer(star.pixels, dtype="<u2").reshape(star.height, star.width)))
             self._star = star.star_pos
         self.viewport().update()
+
+    def set_frame_image(self, frame: np.ndarray | None, star_pos: tuple[float, float] | None) -> None:
+        """Show the whole guide frame with the lock box at *star_pos* (ignored while the cut-out is showing)."""
+        if not self.show_frame:
+            return
+        if frame is None:
+            self.clear_image()
+            self._star = None
+        else:
+            self.show_array(self._stretch(np.asarray(frame)))
+            self._star = star_pos
+        self.viewport().update()
+
+    def mousePressEvent(self, event) -> None:
+        self._press = event.position().toPoint() if event.button() == Qt.MouseButton.LeftButton else None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        press, self._press = self._press, None
+        if press is None or not (self.tap_enabled and self.has_image):
+            return
+        here = event.position().toPoint()
+        if abs(here.x() - press.x()) > self.TAP_SLOP_PX or abs(here.y() - press.y()) > self.TAP_SLOP_PX:
+            return                      # a pan, not a tap
+        scene = self.mapToScene(here)
+        rect = self.sceneRect()
+        if rect.contains(scene):
+            self.star_tapped.emit(scene.x(), scene.y(), "frame" if self.show_frame else "cutout")
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)

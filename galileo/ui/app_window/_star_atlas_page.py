@@ -103,7 +103,7 @@ class AppWindowStarAtlasPageMixin:
         dso_mag_spin.setValue(view.dso_mag_limit)
         form.addRow("Deep-sky magnitude limit", dso_mag_spin)
 
-        toggles = (("Coordinate grid", "show_grid"), ("Constellation boundaries", "show_boundaries"),
+        toggles = (("Sky survey", "show_background"), ("Coordinate grid", "show_grid"), ("Constellation boundaries", "show_boundaries"),
                    ("Constellation outlines", "show_lines"),
                    ("Abbreviate constellation names", "abbreviate_constellations"),
                    ("Deep-sky objects", "show_dsos"),

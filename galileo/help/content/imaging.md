@@ -127,6 +127,10 @@ Labels catalogued stars and deep-sky objects on the preview. It plate-solves the
 
 Overlays a red diagonal crosshair, with a target circle at the point where the lines cross, on the preview so you can see the exact centre of the frame — handy for centring a target. Display only: saved frames and stacks are not changed. Press again to turn it off.
 
+## More
+
+A menu of the power and dew channels you ticked **Show on imaging** on Equipment > Switches, so you can change them without leaving the frame you are taking. Each channel has an **On** / **Off** button; a dew heater also has a percentage (0 to 100) with a **Set** button. The menu stays open while you work and shows the device's present state each time it opens. It says so when no switch device is connected or no channel is ticked. Switching a channel off while a session runs asks you to confirm first. The same channels appear on the web and mobile Imaging screens.
+
 ## Framing
 
 Opens the Framing Assistant: shows the field of view of the selected optics on the sky, and lets you set up a mosaic grid to capture directly from this screen.

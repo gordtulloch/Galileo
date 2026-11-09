@@ -34,6 +34,8 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QToolTip,
     QVBoxLayout,
@@ -41,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from galileo import dashboard_timeline as tl
+from galileo import node_health
 from galileo.dashboard_timeline import PierActivity, PierTimeline, TimelineRecorder
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,7 @@ logger = logging.getLogger(__name__)
 REFRESH_INTERVAL_MS = 2000
 HIDDEN_REFRESH_EVERY = 8          # while the screen is not showing, collect on every 8th refresh
 SAMPLE_INTERVAL_MS = 1000
+NODE_HEALTH_INTERVAL_MS = 5000
 MIN_PLUGIN_STRIP_H = 140          # the plugin strip is never squeezed below this (the page scrolls instead)
 
 _now: Callable[[], float] = time.time     # replaced in tests
@@ -381,6 +385,58 @@ class PierTimelineWidget(QWidget):
 
 # --- The page ------------------------------------------------------------------------------------
 
+class NodeHealthBar(QWidget):
+    """One line at the foot of the Dashboard: this computer's CPU, memory, free disk, temperature and uptime, with
+    Restart and Shut down buttons (NODE-010 to NODE-030). The buttons ask first and refuse while a session runs."""
+
+    def __init__(self, session_running: Callable[[], bool], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("NodeHealthBar")
+        self._session_running = session_running
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 0)
+        self._label = QLabel()
+        self._label.setObjectName("NodeHealthText")
+        self._label.setAccessibleName("Node health")
+        layout.addWidget(self._label, 1)
+        self.restart_button = QPushButton("Restart")
+        self.shutdown_button = QPushButton("Shut down")
+        self.restart_button.setToolTip("Restart this computer")
+        self.shutdown_button.setToolTip("Power off this computer")
+        self.restart_button.clicked.connect(lambda: self.request_power("restart"))
+        self.shutdown_button.clicked.connect(lambda: self.request_power("shutdown"))
+        layout.addWidget(self.restart_button)
+        layout.addWidget(self.shutdown_button)
+        self._timer = QTimer(self)
+        self._timer.setInterval(NODE_HEALTH_INTERVAL_MS)
+        self._timer.timeout.connect(self.refresh)
+        self._timer.start()
+        self.refresh()
+
+    def refresh(self) -> None:
+        reading = node_health.sample()
+        self._label.setText(node_health.summary(reading))
+        self._label.setToolTip({"ok": "", "warning": "A figure is getting tight", "critical": "A figure is critical"}[reading["status"]])
+
+    def request_power(self, action: str) -> bool:
+        """Ask, then restart or power off. Returns whether the command was issued."""
+        verb = "Restart" if action == "restart" else "Shut down"
+        if self._session_running():
+            QMessageBox.warning(self, verb, f"A session is running. Stop it before you {verb.lower()} this computer.")
+            return False
+        answer = QMessageBox.question(
+            self, verb, f"{verb} this computer now?\n\nGalileo and every connected device will be disconnected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            node_health.request_power(action)
+        except node_health.PowerError as exc:
+            QMessageBox.warning(self, verb, str(exc))
+            return False
+        return True
+
+
 class DashboardPage(QWidget):
     """The multi-Pier activity dashboard (OBS-060, OBS-150)."""
 
@@ -426,6 +482,8 @@ class DashboardPage(QWidget):
         self._content.addStretch(1)
         self._scroll.setWidget(content)
         outer.addWidget(self._scroll, 1)
+        self._node = NodeHealthBar(self._any_session_running)
+        outer.addWidget(self._node)
 
         self._collected.connect(self._show)
         self._timer = QTimer(self)
@@ -439,6 +497,9 @@ class DashboardPage(QWidget):
         self._subscribe_bus()
         self.sync_plugins()
         self._render([])
+
+    def _any_session_running(self) -> bool:
+        return any(r.get("sequence_state") in ("running", "paused") for r in self._rows)
 
     # --- Manual focus / solve runs (started from their own screens; they carry no Pier) -------
 

@@ -9,8 +9,10 @@ frames (a remote capture and a running session both announce theirs) and keeps t
 reads a Library frame from disk on request. :class:`FramePreviews` puts the two behind the calls a plugin needs: a
 preview, a tile, the facts about a frame, and a list of recent Library frames to choose from.
 
-A reference is ``current:<pier>`` (the text of the Pier's database id, as everywhere in the Control Surface) or
-``library:<frame id>``. This module imports no Qt and no device code; the engine builds it and hands it to the plugin
+A reference is ``current:<pier>`` (the text of the Pier's database id, as everywhere in the Control Surface; the
+latest single exposure), ``stack:<pier>`` (the live stack of the series under way, once it has a frame) or
+``guide:<pier>`` (the whole frame PHD2 is guiding on, for choosing the guide star), ``solve:<pier>`` (the latest frame
+captured for plate solving or polar alignment, so a client can watch it) or ``library:<frame id>``. This module imports no Qt and no device code; the engine builds it and hands it to the plugin
 through ``ControlSurfaceService.previews``.
 """
 
@@ -32,7 +34,7 @@ from galileo.preview import Preview, PreviewError, PreviewParams, PreviewService
 
 logger = logging.getLogger(__name__)
 
-REF = re.compile(r"^(current|library):[\w.\-]{1,80}$")
+REF = re.compile(r"^(current|stack|guide|solve|library):[\w.\-]{1,80}$")
 LOADED_KEPT = 3                       # decoded Library frames held, so a pan or a restretch does not re-read the file
 RECENT_MAX = 100
 
@@ -40,11 +42,14 @@ RECENT_MAX = 100
 class FrameSources:
     """``Source`` callables for the preview service, keyed by the part of a reference before the colon."""
 
-    def __init__(self, bus: EventBus | None = None, loader: Callable[[str], tuple[str, np.ndarray] | None] | None = None
-                 ) -> None:
+    def __init__(self, bus: EventBus | None = None, loader: Callable[[str], tuple[str, np.ndarray] | None] | None = None,
+                 guide: Callable[[str], tuple[str, np.ndarray] | None] | None = None) -> None:
         self._bus = bus or get_bus()
+        self._guide_frame = guide
         self._load_library = loader or _library_frame
         self._latest: dict[str, tuple[int, np.ndarray]] = {}
+        self._stacks: dict[str, tuple[int, np.ndarray]] = {}
+        self._solves: dict[str, tuple[int, np.ndarray]] = {}
         self._counter = 0
         self._loaded: OrderedDict[str, tuple[str, np.ndarray]] = OrderedDict()
         self._lock = threading.Lock()
@@ -54,25 +59,61 @@ class FrameSources:
         self._bus.unsubscribe(FrameCapturedEvent, self._on_frame)
         with self._lock:
             self._latest.clear()
+            self._stacks.clear()
+            self._solves.clear()
             self._loaded.clear()
 
     def sources(self) -> dict[str, Callable[[str], tuple[str, np.ndarray] | None]]:
-        return {"current": self._current, "library": self._library}
+        return {"current": self._current, "stack": self._stack, "guide": self._guide, "solve": self._solve,
+                "library": self._library}
 
     def _on_frame(self, event: Any) -> None:
-        """On the imaging thread: remember the frame (a reference, not a copy; a service replaces its frame)."""
+        """On the imaging thread: remember the frame (a reference, not a copy; a service replaces its frame). With a
+        live stack running, ``current_frame`` is the stack, so the single exposure is the service's ``last_sub_frame``
+        and the stack is kept under its own reference."""
         pier = str(event.payload.get("pier", ""))
-        frame = getattr(event.payload.get("service"), "current_frame", None)
+        service = event.payload.get("service")
+        frame = getattr(service, "last_sub_frame", None)
+        if frame is None:
+            frame = getattr(service, "current_frame", None)
         if not pier or frame is None:
             return
+        stacker = getattr(service, "active_stacker", None) if getattr(service, "live_stack_enabled", False) else None
+        stacked = stacker.result if stacker is not None and stacker.frames else None
         with self._lock:
             self._counter += 1
             self._latest[pier] = (self._counter, np.asarray(frame))
+            if stacked is not None:
+                self._stacks[pier] = (self._counter, np.asarray(stacked))
+            else:
+                self._stacks.pop(pier, None)
 
     def _current(self, ref: str) -> tuple[str, np.ndarray] | None:
         with self._lock:
             found = self._latest.get(ref.split(":", 1)[-1])
         return None if found is None else (str(found[0]), found[1])
+
+    def _stack(self, ref: str) -> tuple[str, np.ndarray] | None:
+        with self._lock:
+            found = self._stacks.get(ref.split(":", 1)[-1])
+        return None if found is None else (str(found[0]), found[1])
+
+    def set_solve_frame(self, pier: str, frame: Any) -> int:
+        """Remember the frame just captured for solving on *pier* (a reference, not a copy). Returns its version."""
+        with self._lock:
+            self._counter += 1
+            self._solves[pier] = (self._counter, np.asarray(frame))
+            return self._counter
+
+    def _solve(self, ref: str) -> tuple[str, np.ndarray] | None:
+        with self._lock:
+            found = self._solves.get(ref.split(":", 1)[-1])
+        return None if found is None else (str(found[0]), found[1])
+
+    def _guide(self, ref: str) -> tuple[str, np.ndarray] | None:
+        if self._guide_frame is None:
+            return None
+        return self._guide_frame(ref.split(":", 1)[-1])
 
     def _library(self, ref: str) -> tuple[str, np.ndarray] | None:
         key = ref.split(":", 1)[-1]
@@ -88,6 +129,12 @@ class FrameSources:
                 while len(self._loaded) > LOADED_KEPT:
                     self._loaded.popitem(last=False)
         return found
+
+    def stack_version(self, pier: str) -> int:
+        """0 while the Pier has no live stack; then a number that changes each time a frame joins it."""
+        with self._lock:
+            found = self._stacks.get(pier)
+        return 0 if found is None else found[0]
 
     def current_version(self, pier: str) -> int:
         """0 until the Pier has a frame; then a number that changes with each new one (the page uses it to refresh)."""
@@ -164,7 +211,9 @@ class FramePreviews:
     async def frames(self, pier: str, limit: int = 30) -> dict[str, Any]:
         current = self.sources.current_version(pier)
         recent = await asyncio.to_thread(self._recent, limit)
-        return {"current": {"ref": f"current:{pier}", "version": current, "available": current > 0}, "frames": recent}
+        stack = self.sources.stack_version(pier)
+        return {"current": {"ref": f"current:{pier}", "version": current, "available": current > 0},
+                "stack": {"ref": f"stack:{pier}", "version": stack, "available": stack > 0}, "frames": recent}
 
 
 __all__ = ["REF", "FramePreviews", "FrameSources", "recent_library_frames"]

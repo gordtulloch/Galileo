@@ -260,7 +260,9 @@ def test_tc_obs_150_dashboard_draws_a_timeline_per_pier_without_blocking(window)
     shown = [page._piers.itemAt(i).widget() for i in range(2)]
     assert [w.title for w in shown] == [p.name for p in list_piers(observatory)]
     assert all(isinstance(w, PierTimelineWidget) for w in shown)
-    assert not page.findChildren(QtWidgets.QPushButton)
+    node_bar = page._node
+    assert not [b for b in page.findChildren(QtWidgets.QPushButton) if b.parent() is not node_bar]   # only the node bar has buttons
+    assert node_bar.findChildren(QtWidgets.QPushButton) and page.layout().itemAt(page.layout().count() - 1).widget() is node_bar
     assert not page._busy
     page.grab()                                    # paints without error
 

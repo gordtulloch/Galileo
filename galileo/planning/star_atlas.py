@@ -450,6 +450,48 @@ def load_constellation_lines() -> ConstellationLines:
 
 
 # ---------------------------------------------------------------------------
+# The ground (SKYMAP-110)
+# ---------------------------------------------------------------------------
+
+_LAND_NOISE = np.random.default_rng(1).random((256, 256))
+_LAND_NEAR = (np.array([14.0, 20.0, 12.0]), np.array([58.0, 82.0, 38.0]))      # at night, in daylight
+_LAND_FAR = (np.array([30.0, 36.0, 30.0]), np.array([132.0, 150.0, 120.0]))
+
+
+def _land_noise(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    ix, iy = np.floor(x).astype(np.int64), np.floor(y).astype(np.int64)
+    fx, fy = x - ix, y - iy
+    fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+    n = _LAND_NOISE
+    a, b = n[iy & 255, ix & 255], n[iy & 255, (ix + 1) & 255]
+    c, d = n[(iy + 1) & 255, ix & 255], n[(iy + 1) & 255, (ix + 1) & 255]
+    return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy
+
+
+def landscape_rgb(alt_deg, az_deg, brightness: float) -> np.ndarray:
+    """An opaque, made-up landscape for directions below the horizon: ``... x 3`` uint8. Patches on a flat ground plane
+    seen from above it, so they recede into the distance as real fields do, and pale into haze towards the horizon."""
+    down = np.radians(np.maximum(-np.asarray(alt_deg, dtype=float), 0.1))
+    az = np.radians(np.asarray(az_deg, dtype=float))
+    distance = 1.0 / np.tan(down)
+    x, y = distance * np.sin(az), distance * np.cos(az)
+    patches = np.zeros_like(distance)
+    for frequency, amount in ((0.7, 0.55), (3.0, 0.3), (13.0, 0.15)):
+        # Finer than a pixel can show is flat, not glitter: each scale fades out with distance.
+        fade = np.clip(2.0 / (distance * frequency), 0.0, 1.0)
+        patches += amount * fade * (_land_noise(x * frequency, y * frequency) - 0.5)
+    near = _LAND_NEAR[0] + (_LAND_NEAR[1] - _LAND_NEAR[0]) * brightness
+    far = _LAND_FAR[0] + (_LAND_FAR[1] - _LAND_FAR[0]) * brightness
+    closeness = np.sqrt(np.clip(down / np.radians(30.0), 0.0, 1.0))[..., None]
+    colour = (far + (near - far) * closeness) * (1.0 + 1.8 * patches[..., None])
+    # A dark line of trees and hills along the far edge. All below 0 degrees, so it hides no sky.
+    s, c = np.sin(az), np.cos(az)
+    ridge = 0.5 + 2.5 * _land_noise(s * 8.0 + 40.0, c * 8.0 + 40.0) + 1.2 * _land_noise(s * 40.0 + 90.0, c * 40.0 + 90.0)
+    colour = np.where((np.degrees(down) < ridge)[..., None], far * 0.5, colour)
+    return np.clip(colour, 0.0, 255.0).astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------
 # Time and coordinates
 # ---------------------------------------------------------------------------
 

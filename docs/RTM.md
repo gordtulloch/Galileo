@@ -123,6 +123,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-SW-120` | P2 | SDD 4.2 `galileo.adapters.indi`; SDD 4.2a (dynamic properties, degraded panel) | Test | `TC-EQP-SW-120` |
 | `EQP-SW-130` | P2 | SDD 4.3 `galileo.adapters.alpaca` (`AlpacaSwitchAdapter` panel mapping); SDD 4.2a (shared page) | Test | `TC-EQP-SW-130` |
 | `EQP-SW-140` | P2 | SDD 4.1 `galileo.core.devices` (`"value"` channel kind); SDD 4.3 `galileo.adapters.alpaca`; SDD 4.2a (rendering) | Test | `TC-EQP-SW-140` |
+| `EQP-SW-150` | P2 | SDD 4.2a Switches page and Imaging **More** menu; `galileo.imaging_switches`; SDD 4.29 `galileo.control_surface` (`switch.*`, `imaging.controls`) | Test | `TC-EQP-SW-150` |
 
 ### `PROF` — Equipment Profiles (Piers)
 
@@ -285,6 +286,8 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKYMAP-070` | P2 | SDD 4.9a `galileo.ui.star_atlas` / `galileo.planning.visibility` | Test | `TC-SKYMAP-070` |
 | `SKYMAP-080` | P2 | SDD 4.9a `galileo.core.slew_guard` | Test | `TC-SKYMAP-080` |
 | `SKYMAP-090` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-090` |
+| `SKYMAP-100` | P2 | SDD 4.9a `galileo.planning.sky_survey`, `galileo.ui.star_atlas` | Test | `TC-SKYMAP-100` |
+| `SKYMAP-110` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-110` |
 
 ### `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 
@@ -510,10 +513,12 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CSURF-120` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-120` |
 | `CSURF-130` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-130` |
 | `CSURF-140` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-140` |
+| `CSURF-145` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-145` |
 | `CSURF-150` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-150` |
 | `CSURF-160` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-160` |
 | `CSURF-170` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-170` |
 | `CSURF-180` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-180` |
+| `CSURF-185` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-185` |
 | `CSURF-190` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-190` |
 | `CSURF-200` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-200` |
 | `CSURF-210` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-210` |
@@ -523,6 +528,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CSURF-250` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-250` |
 | `CSURF-260` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-260` |
 | `CSURF-300` | MVP | SDD 4.29 `control_surface.emergency` | Test | `TC-CSURF-300` |
+| `CSURF-310` | P2 | SDD 4.29 `control_surface.node`, `galileo.node_health` | Test | `TC-CSURF-310` |
 | `CSURF-400` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-400` |
 | `CSURF-410` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-410` |
 | `CSURF-420` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-420` |

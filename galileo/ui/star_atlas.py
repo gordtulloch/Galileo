@@ -19,10 +19,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QWidget
 
 from galileo.planning import minor_bodies as mb
+from galileo.planning import sky_survey
 from galileo.planning import star_atlas as sa
 from galileo.planning.sky_atlas import DSO_CATALOGS, catalogs_of
 from galileo.ui.gc_guard import gc_paused
@@ -68,7 +69,8 @@ MAX_MAG_LIMIT = 7.0
 # catalogs are remembered between runs.
 PERSISTED_TOGGLES = ("show_grid", "show_boundaries", "show_lines", "abbreviate_constellations",
                      "show_dsos", "show_bodies", "show_labels", "show_ground", "daylight_sky", "show_horizon",
-                     "show_pier_markers", "show_fov", "show_comets", "show_asteroids", "show_satellites")
+                     "show_pier_markers", "show_fov", "show_comets", "show_asteroids", "show_satellites",
+                     "show_background")
 
 #: Display option -> the kind of orbital-element data it needs (downloaded on first use).
 MINOR_BODY_TOGGLES = {"show_comets": mb.COMET, "show_asteroids": mb.ASTEROID, "show_satellites": mb.SATELLITE}
@@ -112,6 +114,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
     # and the sky coords at the click (always a dict with ra_deg/dec_deg/alt/az, or None on error).
     contextMenuRequested = Signal(object, QPoint, object)
     viewChanged = Signal()
+    surveyTileArrived = Signal()    # from a worker thread: the signal carries it back to the UI thread
     catalogsLoaded = Signal(int, int)
     # (kind, number of orbits/TLEs loaded) once a comet/asteroid/satellite download finishes.
     minorBodiesLoaded = Signal(str, int)
@@ -143,6 +146,10 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self.show_bodies = True
         self.show_labels = True
         self.show_ground = True
+        self.show_background = True     # real sky from survey tiles, fetched as they come into view (SKYMAP-100)
+        self._survey = sky_survey.SurveyTiles(on_arrival=self.surveyTileArrived.emit)
+        self.surveyTileArrived.connect(self.update)
+        self._background_frame: tuple[tuple, QImage] | None = None
         self.daylight_sky = False
         self.show_horizon = False       # shade the horizon obstructions (Options > Star Atlas)
         self._horizon: HorizonProfile | None = None
@@ -498,7 +505,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         margin = 20
         inside = vis & mask & (x > -margin) & (x < vp.width + margin) & (y > -margin) & (y < vp.height + margin)
         if self.show_ground:
-            inside &= alt > -0.5
+            inside &= alt >= 0.0
         idx = np.nonzero(inside)[0]
         return idx, x[idx], y[idx]
 

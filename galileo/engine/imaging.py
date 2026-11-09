@@ -12,9 +12,11 @@ none while a session is running, since both would drive the one camera.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from galileo.engine.sessions import build_context
+from galileo.livestack import LIVE_STACK_MIN_FRAMES
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,8 @@ class EngineImaging:
         return None
 
     async def capture(self, pier: str, count: int, seconds: float, filter_name: str, frame_type: str,
-                      gain: int, offset: int, camera_slot: str, progress: Any) -> dict[str, Any]:
+                      gain: int, offset: int, camera_slot: str, progress: Any,
+                      live_stack: bool = False) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             from galileo.control_surface import Refused
@@ -49,6 +52,7 @@ class EngineImaging:
         try:
             service = (await build_context(self._devices, pier, camera_slot)).make_imaging()
             service.gain, service.offset = gain, offset
+            service.live_stack_enabled = live_stack
             self._services[pier] = service
             ids = await service.capture_series(count, seconds, filter_name, frame_type,
                                                on_frame_done=progress)
@@ -75,6 +79,14 @@ class EngineImaging:
         if service is None:
             return out
         out.update(status=service.capture_status, series_done=service.series_done, series_total=service.series_total)
+        if service.exposure_started_at is not None:
+            out["exposure"] = {"seconds": service.exposure_seconds,
+                               "elapsed": max(0.0, time.time() - service.exposure_started_at)}
+        stacker = service.active_stacker
+        if service.live_stack_enabled and service.series_total >= LIVE_STACK_MIN_FRAMES:   # shorter runs don't stack
+            out["stack"] = {"enabled": True, "frames": stacker.frames, "requested": service.series_total,
+                            "total_exposure_s": stacker.total_exposure_s, "method": getattr(stacker, "method", ""),
+                            "rejected": getattr(stacker, "rejected", 0)}
         if service.current_frame is not None:
             out["frame"] = {"shape": list(getattr(service.current_frame, "shape", ())),
                             "stats": _plain(service.get_frame_stats()), "histogram": _plain(service.get_histogram()),

@@ -54,6 +54,7 @@ class Engine:
         self.registry: Any = None
         self.config: Any = None
         self.guard: Any = None
+        self.node: Any = None
         self.observatory: str | None = None
         self._connecting: threading.Thread | None = None
         self._started = False
@@ -117,7 +118,16 @@ class Engine:
         register_flip_operations(self.registry, EngineFlips(self.devices, self.runner))           # CSURF-170
         from galileo.control_surface.solve import register_solve_operations
         from galileo.engine.solve import EngineSolve
-        register_solve_operations(self.registry, EngineSolve(self.devices, self.runner))          # CSURF-140
+        from galileo.control_surface.polar import register_polar_operations
+        from galileo.engine.polar import EnginePolar
+        def solve_frame(pier: str, data: Any) -> int:
+            return self.frame_sources.set_solve_frame(pier, data)       # built below; read when a frame arrives
+
+        solve = EngineSolve(self.devices, self.runner, busy=lambda pier: polar.running(pier), frames=solve_frame,
+                       state=self.state)
+        polar = EnginePolar(self.devices, self.runner, self.state, busy=solve.running, frames=solve_frame)
+        register_solve_operations(self.registry, solve)                                           # CSURF-140
+        register_polar_operations(self.registry, polar)                                           # CSURF-145
         from galileo.control_surface.guiding import register_guiding_operations
         register_guiding_operations(self.registry, self.guiding)                                  # CSURF-160
         from galileo.control_surface.sky import register_sky_operations
@@ -136,6 +146,11 @@ class Engine:
             self.guard.start()
             from galileo.control_surface.safety import GuardSafety, register_safety_operations
             register_safety_operations(self.registry, GuardSafety(self.guard))                   # CSURF-220
+        from galileo.control_surface.node import register_node_operations
+        from galileo.engine.node import EngineNode
+        self.node = EngineNode(self.state, self.devices.pier_ids, self.runner)
+        register_node_operations(self.registry, self.node)                                        # CSURF-310
+        self.node.start()
         self._start_channel()                                # HEAD-080
         from galileo.bus import get_bus
         from galileo.replication import SettingsChanged
@@ -190,7 +205,7 @@ class Engine:
         from galileo.control_surface.service import ControlSurfaceService, publish_control_surface
         self.feed = EventFeed(state=self.state, leases=self.leases, bus=bus, pier_ids=self.devices.pier_ids)
         from galileo.control_surface.frames import FramePreviews, FrameSources
-        self.frame_sources = FrameSources(bus)                          # PREV-070: the current exposure of each Pier
+        self.frame_sources = FrameSources(bus, guide=self.guiding.frame)                          # PREV-070: the current exposure of each Pier
         self.previews = FramePreviews(self.frame_sources, busy=self._session_running)
         publish_control_surface(ControlSurfaceService(                  # CSURF-250: front-end plugins use these objects
             registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state,
@@ -239,6 +254,8 @@ class Engine:
         from galileo.replication import SettingsChanged
         get_bus().unsubscribe(SettingsChanged, self._on_settings_changed)
         self._stop_channel()
+        if self.node is not None:
+            self.node.stop()
         if self.guard is not None:
             self.guard.stop()                         # disarmed first: a normal stop never parks the mount
         if self.helpers is not None:

@@ -551,7 +551,7 @@ def test_tc_ses_030_run_terminates_a_running_scheduled_session(window, monkeypat
     """SES-030: Run while a scheduled session is running stops that session and then runs this one."""
     from galileo.ui import session_runner
     page = _page(window)
-    ctx, frames = make_context(imaging={"delay": 0.5})
+    ctx, _frames = make_context(imaging={"delay": 0.5})
     monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
     controller = page._controller
 

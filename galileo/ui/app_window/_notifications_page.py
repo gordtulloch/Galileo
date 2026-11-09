@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""Options > Notifications: e-mail / SMS delivery settings (NOTIF-020, NOTIF-030, NOTIF-050).
+"""Options > Notifications: phone-push (ntfy) / e-mail / SMS delivery settings (NOTIF-020, NOTIF-030, NOTIF-050).
 
 Settings are saved as they change (``galileo.notify_settings``); the SMTP password goes to the
 OS credential store, not the settings file (NFR-SEC-030). The session runner reads the saved
@@ -33,14 +33,20 @@ _SECURITY_LABELS = {"none": "None", "starttls": "STARTTLS", "ssl": "SSL/TLS"}
 _DEFAULT_PORTS = {"none": 25, "starttls": 587, "ssl": 465}
 
 
-def run_test_send(kind: str, settings: dict[str, Any], password: str, contacts: Any = None) -> str:
-    """Send one test message through the *kind* (``"email"``/``"sms"``) channel built from
-    *settings*. Returns "" on success, else a message saying why it could not be sent."""
+def run_test_send(
+    kind: str, settings: dict[str, Any], password: str, contacts: Any = None, ntfy_token: str | None = None,
+) -> str:
+    """Send one test message through the *kind* (``"ntfy"``/``"email"``/``"sms"``) channel built
+    from *settings*. Returns "" on success, else a message saying why it could not be sent."""
     from galileo.notify import NotificationEvent, _Notification
     from galileo.notify_settings import build_channels
 
-    channel = next((c for k, c in build_channels(settings, contacts, password) if k == kind), None)
+    # a test of e-mail must reach e-mail itself, not sit behind the ntfy channel as its backup
+    settings = {**settings, "email_backup_for_ntfy": False}
+    channel = next((c for k, c in build_channels(settings, contacts, password, ntfy_token) if k == kind), None)
     if channel is None:
+        if kind == "ntfy":
+            return "Enter a topic (or press Generate topic) and tick Send phone alerts (ntfy) first."
         if kind == "email":
             return "Enter an e-mail address and tick Send e-mail alerts first."
         return "Enter a phone number and tick Send text-message alerts first."
@@ -54,15 +60,15 @@ def run_test_send(kind: str, settings: dict[str, Any], password: str, contacts: 
 
 class AppWindowNotificationsPageMixin:
     def _build_notifications_settings_page(self) -> QWidget:
-        """Options > Notifications: e-mail and text-message alert delivery."""
+        """Options > Notifications: phone-push (ntfy), e-mail and text-message alert delivery."""
         from PySide6.QtCore import QObject, Qt, Signal
         from PySide6.QtWidgets import (
             QCheckBox, QComboBox, QGroupBox, QLabel, QLineEdit, QPushButton, QScrollArea,
             QSpinBox, QVBoxLayout,
         )
         from galileo.notify_settings import (
-            SECURITY_CHOICES, get_smtp_password, load_notify_settings, save_notify_settings,
-            set_smtp_password,
+            SECURITY_CHOICES, generate_ntfy_topic, get_ntfy_token, get_smtp_password,
+            load_notify_settings, save_notify_settings, set_ntfy_token, set_smtp_password,
         )
 
         settings = load_notify_settings()
@@ -93,6 +99,38 @@ class AppWindowNotificationsPageMixin:
         def _store(key: str, value: Any) -> None:
             settings[key] = value
             save_notify_settings(settings)
+
+        # --- Phone push (ntfy) --------------------------------------------------------------
+        ntfy_box = QGroupBox("Phone alerts (ntfy)")
+        ntfy_form = _new_form_layout(ntfy_box)
+        ntfy_enabled = QCheckBox("Send phone alerts (ntfy)")
+        ntfy_enabled.setChecked(bool(settings["ntfy_enabled"]))
+        ntfy_enabled.toggled.connect(lambda v: _store("ntfy_enabled", bool(v)))
+        ntfy_form.addRow(ntfy_enabled)
+        ntfy_topic = _line("ntfy_topic", "press Generate topic")
+        ntfy_form.addRow("Topic", ntfy_topic)
+        generate_topic = QPushButton("Generate topic")
+        ntfy_form.addRow(generate_topic)
+        ntfy_server = _line("ntfy_server", "https://ntfy.sh")
+        ntfy_form.addRow("ntfy server", ntfy_server)
+        ntfy_token = QLineEdit(get_ntfy_token())
+        ntfy_token.setEchoMode(QLineEdit.EchoMode.Password)
+        ntfy_token.setToolTip("Only for a private server. Stored in your operating system's credential store.")
+        ntfy_token.editingFinished.connect(lambda: set_ntfy_token(ntfy_token.text()))
+        ntfy_form.addRow("Access token", ntfy_token)
+        email_backup = QCheckBox("Use e-mail as a backup")
+        email_backup.setChecked(bool(settings["email_backup_for_ntfy"]))
+        email_backup.toggled.connect(lambda v: _store("email_backup_for_ntfy", bool(v)))
+        ntfy_form.addRow(email_backup)
+        test_ntfy = QPushButton("Send test alert")
+        ntfy_form.addRow(test_ntfy)
+        layout.addWidget(ntfy_box)
+
+        def _generate_topic() -> None:
+            ntfy_topic.setText(generate_ntfy_topic())
+            _store("ntfy_topic", ntfy_topic.text())
+
+        generate_topic.clicked.connect(_generate_topic)
 
         # --- E-mail -------------------------------------------------------------------------
         email_box = QGroupBox("E-mail")
@@ -138,7 +176,7 @@ class AppWindowNotificationsPageMixin:
         layout.addWidget(email_box)
 
         # --- SMS ----------------------------------------------------------------------------
-        sms_box = QGroupBox("Text message (SMS)")
+        sms_box = QGroupBox("Text message (SMS, carrier gateway)")
         sms_form = _new_form_layout(sms_box)
         sms_enabled = QCheckBox("Send text-message alerts")
         sms_enabled.setChecked(bool(settings["sms_enabled"]))
@@ -162,7 +200,7 @@ class AppWindowNotificationsPageMixin:
         from PySide6.QtWidgets import QHBoxLayout
         events_layout = QHBoxLayout(events_row)
         events_layout.setContentsMargins(0, 0, 0, 0)
-        for kind, title in (("email", "E-mail alerts for"), ("sms", "Text alerts for")):
+        for kind, title in (("ntfy", "Phone alerts for"), ("email", "E-mail alerts for"), ("sms", "Text alerts for")):
             box = QGroupBox(title)
             box_layout = QVBoxLayout(box)
             disabled = set(settings[f"{kind}_disabled_events"])
@@ -192,11 +230,11 @@ class AppWindowNotificationsPageMixin:
 
         result = _Result(inner)
         result.done.connect(lambda kind, error: _finish(kind, error))
-        buttons = {"email": test_email, "sms": test_sms}
+        buttons = {"ntfy": test_ntfy, "email": test_email, "sms": test_sms}
 
         def _finish(kind: str, error: str) -> None:
             buttons[kind].setEnabled(True)
-            noun = "e-mail" if kind == "email" else "text message"
+            noun = {"ntfy": "phone alert", "email": "e-mail"}.get(kind, "text message")
             status.setText(f"Test {noun} failed: {error}" if error else f"Test {noun} sent.")
 
         def _test(kind: str) -> None:
@@ -206,8 +244,10 @@ class AppWindowNotificationsPageMixin:
                 smtp_port=smtp_port.value(), smtp_security=security.currentData(),
                 smtp_username=smtp_user.text().strip(), from_address=from_address.text().strip(),
                 phone_number=phone.text().strip(), sms_gateway=gateway.text().strip(),
-                email_enabled=True, sms_enabled=True,
+                email_enabled=True, sms_enabled=True, ntfy_enabled=True,
+                ntfy_topic=ntfy_topic.text().strip(), ntfy_server=ntfy_server.text().strip(),
             )
+            token = ntfy_token.text()
             password = smtp_password.text()
             contacts = None
             observatory = getattr(self, "_current_observatory", None)
@@ -218,13 +258,14 @@ class AppWindowNotificationsPageMixin:
 
             def _work() -> None:
                 try:
-                    error = run_test_send(kind, snapshot, password, contacts)
+                    error = run_test_send(kind, snapshot, password, contacts, token)
                 except Exception as exc:  # never leave the button disabled
                     error = f"{type(exc).__name__}: {exc}"
                 result.done.emit(kind, error)
 
             threading.Thread(target=_work, name="galileo-notify-test", daemon=True).start()
 
+        test_ntfy.clicked.connect(lambda: _test("ntfy"))
         test_email.clicked.connect(lambda: _test("email"))
         test_sms.clicked.connect(lambda: _test("sms"))
 

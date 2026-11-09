@@ -90,6 +90,7 @@ dependencies = [
     # Device protocols
     "zeroconf>=0.130.0",      # resolves .local mDNS hostnames (e.g. seestar.local) on Windows
     "segno>=1.6",             # QR codes for the Connect Link outreach event display (LINK-190)
+    "psutil>=5.9",            # node health: CPU, memory, temperature, uptime (NODE-010)
     # Image processing
     "sep>=1.2",               # Source Extractor Python (star detection / HFR)
     "Pillow>=10.0",           # FITS-cutout-to-JPEG thumbnail conversion (SKY-080, ported from Obsy)

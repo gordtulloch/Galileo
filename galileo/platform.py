@@ -93,3 +93,16 @@ def get_plugins_dir() -> Path:
     d = get_data_dir() / "plugins"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def power_command(action: str) -> list[str]:
+    """The command that restarts (``"restart"``) or powers off (``"shutdown"``) this computer, for the node-health
+    controls (NODE-030). Raises ``ValueError`` for any other action."""
+    if action not in ("restart", "shutdown"):
+        raise ValueError(f"unknown power action {action!r}")
+    if sys.platform == "win32":
+        return ["shutdown", "/r" if action == "restart" else "/s", "/t", "5"]
+    if sys.platform == "darwin":
+        # System Events asks the logged-in user's session, so it needs no root and lets apps close cleanly.
+        return ["osascript", "-e", f'tell application "System Events" to {"restart" if action == "restart" else "shut down"}']
+    return ["systemctl", "reboot" if action == "restart" else "poweroff"]

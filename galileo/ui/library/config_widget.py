@@ -663,7 +663,7 @@ class ConfigWidget(QWidget):
         """Open file dialog for FITS viewer executable"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select FITS Viewer Executable",
+            "Select FITS Viewer (on macOS, the .app, e.g. Tenmon)",
             self.fits_viewer_path.text() or os.path.expanduser("~"),
             "Executable Files (*.exe);;All Files (*)" if os.name == 'nt' else "All Files (*)"
         )

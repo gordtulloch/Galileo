@@ -27,6 +27,10 @@ Port names are the driver's own, or the box's vendor names where a plugin suppli
 
 Switching a port off while a session is running on this Pier asks you to confirm first, naming the port. Switching it on never asks. Actions a session performs itself are not asked about.
 
+## Show on imaging
+
+Ticked, the channel is offered in the **More** menu on the Imaging screen — on the desktop, the web page and the mobile app — so you can switch a port or set a dew heater's percentage while imaging. Offered for ports, dew heaters and adjustable outputs that the hardware can switch; the choice is remembered per Pier. A ticked channel the connected device does not have is ignored.
+
 ## Dew heaters
 
 Shows the heater's duty as a percentage from 0 to 100, whatever scale the driver uses, with the heater's current where the box measures it. Type a percentage and press **Set**; the **On** / **Off** button switches it fully on or off. A heater driven by the box's own automatic mode (dew-point difference or constant temperature) is set from the **Other** section.

@@ -50,8 +50,15 @@ class DiscoveryBackend(Protocol):
 
 class ZeroconfBackend:
     def __init__(self) -> None:
+        from zeroconf import InterfaceChoice
         from zeroconf.asyncio import AsyncZeroconf
-        self._zc = AsyncZeroconf()
+        try:
+            self._zc = AsyncZeroconf()
+        except OSError as exc:
+            # Binding every interface can fail with "address in use" (seen on a Mac): one working interface
+            # is still better than none, which would leave peers typing the address.
+            logger.info("mDNS could not use every network interface (%s); using the default one", exc)
+            self._zc = AsyncZeroconf(interfaces=InterfaceChoice.Default)
 
     async def register(self, info: Any) -> None:
         await self._zc.async_register_service(info)

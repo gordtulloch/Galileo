@@ -136,8 +136,8 @@ class Gateway:
             holder = self._leases.holder(req.pier)
             if holder != req.holder:
                 who = holder or "nobody"
-                return Outcome("refused", f"you do not hold the control lease for this Pier ({who} does)"
-                               if holder else "take the control lease for this Pier first"), cls
+                return Outcome("refused", f"you do not have control of this Pier ({who} does)"
+                               if holder else "take control of this Pier first"), cls
         # 5/6. idempotency lookup precedes the confirm check so a retried confirmed request is not
         # asked to confirm twice
         fingerprint = json.dumps([req.name, req.pier, prepared.args], sort_keys=True, default=str)

@@ -321,7 +321,7 @@ def test_tc_prev_070_the_engine_publishes_previews_with_the_control_surface():
     from galileo.engine.main import Engine
     assert "previews" in ControlSurfaceService.__dataclass_fields__
     start, stop = inspect.getsource(Engine._start_channel), inspect.getsource(Engine._stop_channel)
-    assert "previews=self.previews" in start and "FrameSources(bus)" in start
+    assert "previews=self.previews" in start and "FrameSources(bus" in start
     assert "sources.close()" in stop
 
 

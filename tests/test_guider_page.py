@@ -465,3 +465,46 @@ def test_tc_guide_080_drift_graph_draws_only_the_enabled_series():
     empty.resize(400, 200)
     empty.set_data([], None, "px", 0.0, 0.0)
     assert not empty.grab().isNull()
+
+
+@pytest.mark.requirement("TC-GUIDE-080")
+@pytest.mark.priority("MVP")
+def test_tc_guide_080_tap_chooses_the_guide_star_and_full_frame_view_shows_the_frame(window, phd2):
+    """GUIDE-080: the picture can show the whole guide frame as well as the cut-out, and tapping either (while looping)
+    asks PHD2 to find a star there; a drag only pans, and a tap while guiding is not sent."""
+    import numpy as np
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    phd2.responses["find_star"] = 0
+    page, service = _connect(window, phd2)
+    service.model.update(frame_size=(64, 48))
+    phd2.push({"Event": "LoopingExposures", "Frame": 1})
+    assert _pump(window, lambda: service.model.app_state == "Looping")
+    service.model.set_frame(np.arange(64 * 48, dtype=np.uint16).reshape(48, 64))
+    page._set_view(True)
+    page._tick()
+    view = page.star_view
+    view.resize(640, 480)
+    view.fit_to_window()
+    assert view.show_frame and view.has_image and view._item.pixmap().width() == 64
+
+    def click(at, release=None):
+        QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+        QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, release or at)
+
+    centre = view.mapFromScene(32, 24)
+    click(centre)
+    assert phd2.wait_for_request("find_star")
+    sent = next(p for m, p in reversed(phd2.received) if m == "find_star")
+    assert sent[0][2:] == [40, 40] and abs(sent[0][0] - 12) <= 1 and abs(sent[0][1] - 4) <= 1
+
+    phd2.received.clear()
+    click(centre, QPoint(centre.x() + 30, centre.y()))
+    assert not any(m == "find_star" for m, _p in phd2.received)               # dragged: panned, not tapped
+
+    phd2.push({"Event": "StartGuiding"})
+    assert _pump(window, lambda: service.model.app_state == "Guiding")
+    page._tick()
+    click(centre)
+    assert not any(m == "find_star" for m, _p in phd2.received)               # PHD2 is guiding: leave the star alone

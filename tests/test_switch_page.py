@@ -314,3 +314,63 @@ def test_tc_eqp_sw_090_save_needs_a_pier_and_disconnect_clears_the_panel(window)
     window._device_pages["switch"]["disconnect"]()
     assert adapter.disconnected and not _toggles(page)
     assert _find(page, QtWidgets.QLabel, "Connect a device to show its controls.")
+
+
+# ---------------------------------------------------------------------------
+# EQP-SW-150: Show on imaging
+# ---------------------------------------------------------------------------
+
+def _show_checks(page):
+    return [c for c in page.findChildren(QtWidgets.QCheckBox) if c.text() == "Show on imaging"]
+
+
+@pytest.mark.requirement("TC-EQP-SW-150")
+@pytest.mark.priority("P2")
+def test_tc_eqp_sw_150_show_on_imaging_is_offered_for_switchable_channels_and_remembered(window):
+    """EQP-SW-150: every switchable on/off channel (port, dew heater, regulated output) has a Show on imaging
+    tick, kept per Pier; display-only channels, actions and values have none."""
+    from galileo.current_object import pier_key
+    from galileo.imaging_switches import shown_ids
+    page = _connect(window, FakeSwitch())
+    checks = _show_checks(page)
+    assert len(checks) == 3          # Camera, Dew A, Regulator — not the display-only, action or value channels
+    checks[1].setChecked(True)
+    assert shown_ids(pier_key(window._current_pier)) == ["dew1"]
+    checks[1].setChecked(False)
+    assert shown_ids(pier_key(window._current_pier)) == []
+
+
+@pytest.mark.requirement("TC-EQP-SW-150")
+@pytest.mark.priority("P2")
+def test_tc_eqp_sw_150_more_menu_on_imaging_switches_and_sets_dew_percent(window, monkeypatch):
+    """EQP-SW-150: the Imaging screen's More menu lists the ticked channels with an On/Off button and, for a
+    dew heater, a percentage; it says why when there is nothing to show."""
+    from galileo.current_object import pier_key
+    from galileo.imaging_switches import set_shown
+    switch = FakeSwitch()
+    _connect(window, switch)
+    window._build_imaging_page()
+    ui = window._imaging_ui
+    menu = ui["more_menu"]
+
+    menu.aboutToShow.emit()
+    assert [a.text() for a in menu.actions()] == ["Tick Show on imaging for a channel on Equipment > Switches"]
+
+    key = pier_key(window._current_pier)
+    set_shown(key, "dew1", True)
+    set_shown(key, "dc1", True)
+    menu.aboutToShow.emit()
+    rows = [a.defaultWidget() for a in menu.actions() if hasattr(a, "defaultWidget")]
+    assert len(rows) == 2
+    camera, dew = rows
+    spin = dew.findChild(QtWidgets.QSpinBox)
+    assert spin.value() == 50 and camera.findChild(QtWidgets.QSpinBox) is None
+
+    spin.setValue(30)
+    _button(dew, "Set").click()
+    assert ("dew1", {"duty": 30.0}) in switch.calls
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    toggle = _toggles(dew)[0]
+    toggle.click()
+    assert ("dew1", {"on": False}) in switch.calls and toggle.text() == "Off"
