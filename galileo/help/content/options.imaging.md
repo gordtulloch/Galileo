@@ -12,3 +12,7 @@ It does not affect frames taken for plate solving, which always use whichever fo
 ## Mosaic pane overlap
 
 How much neighbouring panes of a mosaic overlap, as a percentage of the frame, used when the Framing Assistant lays out a mosaic and when a Session Image block is given a mosaic. 10 % is a sensible starting point; more overlap makes the panes easier to stitch at the cost of more panes. It is shared with the Overlap box in the Framing Assistant, and applies at once.
+
+## Mosaic settle time
+
+How long Galileo waits after the mount reports a mosaic re-slew finished, before the next exposure starts. A mount stops saying it is slewing while it is still settling, so a frame begun straight away is blurred. The default is 5 seconds; raise it if the first frame of each pane is smeared, or set 0 to start at once. The wait applies only when the mosaic moves to a new pane (not between repeat exposures of the same pane), is cut short by Stop, and is read at the start of each mosaic capture.

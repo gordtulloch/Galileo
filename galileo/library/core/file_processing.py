@@ -524,15 +524,11 @@ class FileProcessor:
             telescope = hdr.get("TELESCOP", "Unknown")
             instrument = hdr.get("INSTRUME", "Unknown")
 
-            # Check if telescope is iTelescope or instrument is SeeStar - mark as calibrated
+            # iTelescope delivers calibrated frames; Seestar frames are raw FITS and are not
             is_precalibrated = False
-            if (telescope and "itelescope" in telescope.lower()) or \
-               (instrument and "seestar" in instrument.lower()):
+            if telescope and "itelescope" in telescope.lower():
                 is_precalibrated = True
-                if telescope and "itelescope" in telescope.lower():
-                    logger.debug(f"Marking file as pre-calibrated from iTelescope: {telescope}")
-                else:
-                    logger.debug(f"Marking file as pre-calibrated from SeeStar instrument: {instrument}")
+                logger.debug(f"Marking file as pre-calibrated from iTelescope: {telescope}")
 
             # Create new file record
             if hdr.get("OBJECT"):

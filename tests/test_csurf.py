@@ -1128,7 +1128,8 @@ async def test_tc_csurf_145_polar_alignment_runs_live_and_stops(registry, bus):
     assert picture["frame"]["axis_px"] == [104.0, 52.0] and picture["frame"]["pole_px"] == [105.0, 49.0]
     assert picture["frame"]["arcmin_per_px"] == 0.5 and picture["frame"]["version"] == len(taken) == 3
     assert made[0].settings.step_deg == 20 and made[0].settings.direction == "west"
-    assert made[0].settings.refraction is False and made[0].settings.slew_from_zenith is True
+    assert made[0].settings.refraction is False and made[0].settings.slew_from_zenith is False
+    assert made[0].settings.settle_s == 5.0                     # the default pause before a frame
     assert picture["log"] == ["Moving the mount to the zenith to start…"]
 
     second = await registry.invoke("polar.start", {}, "p1", "web")

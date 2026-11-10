@@ -323,6 +323,7 @@ def download_files(telescope_type, hostname, network, destination, username=None
             failed_count += 1
             logger.error(f"Failed to download {file_name}: {error}")
 
+    manager.close_sftp_sessions()
     logger.info(f"Download completed: {downloaded_count} downloaded, {registered_count} registered, {failed_count} failed")
     return failed_count == 0
 

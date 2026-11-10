@@ -12,7 +12,7 @@ Modes:
 
 Notes:
   - This command only stacks sessions that already have stackable frames available:
-      * Precalibrated sessions (iTelescope/SeeStar): stacks non-soft-deleted light frames
+      * Precalibrated sessions (iTelescope): stacks non-soft-deleted light frames
       * Other sessions: stacks calibrated, non-soft-deleted light frames
   - Star registration for light stacking uses astroalign (required).
 
@@ -60,7 +60,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 def _is_precalibrated_session(telescope: str | None, instrument: str | None) -> bool:
     telescope = telescope or ''
     instrument = instrument or ''
-    return ('itelescope' in telescope.lower()) or ('seestar' in instrument.lower())
+    return 'itelescope' in telescope.lower()
 
 
 def _light_type_values() -> list[str]:

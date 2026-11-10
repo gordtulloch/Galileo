@@ -413,6 +413,7 @@ class AppWindowCoreMixin:
                 ("manual", "Open online manual", self._open_manual),
                 ("community", "Community & support — ask a question, report a problem, suggest a feature",
                  self._show_community_menu),
+                ("log", "View Log — this run's log file, with level filter and search", self._show_log_viewer),
                 ("about", "About Galileo", self._show_about),
             ],
             initial_selection="dashboard",
@@ -722,6 +723,17 @@ class AppWindowCoreMixin:
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
         QDesktopServices.openUrl(QUrl(url))
+
+    def _show_log_viewer(self: AppWindowState) -> None:
+        """Open (or raise) the non-modal log viewer window."""
+        from galileo.ui.log_viewer import LogViewerDialog
+        dialog = getattr(self, "_log_viewer", None)
+        if dialog is None:
+            dialog = self._log_viewer = LogViewerDialog(self._window)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        dialog.reload()
 
     def _show_about(self: AppWindowState) -> None:
         from pathlib import Path

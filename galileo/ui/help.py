@@ -31,7 +31,7 @@ try:
     from PySide6.QtCore import QEvent, QObject, Qt, QTimer
     from PySide6.QtGui import QColor, QCursor, QKeySequence, QPalette, QShortcut
     from PySide6.QtWidgets import (
-        QAbstractButton, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QFormLayout,
+        QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QFormLayout,
         QGridLayout, QBoxLayout, QGroupBox, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton, QRadioButton, QSplitter,
         QTabBar, QTableWidget, QTextBrowser, QToolButton, QTreeWidget, QTreeWidgetItem,
         QVBoxLayout, QWidget,
@@ -389,6 +389,8 @@ def audit(root) -> list[str]:
             continue
         if isinstance(w, QToolButton) and (parent_w := w.parentWidget()) is not None and parent_w.objectName().endswith("Sidebar"):
             continue
+        if type(w) is QAbstractButton and isinstance(w.parentWidget(), QAbstractItemView):
+            continue  # a table's select-all corner button (unnamed, created by Qt)
         if isinstance(w.parentWidget(), QTabBar):
             continue  # a tab's scroll arrows and close button
         if lookup(w) is None:

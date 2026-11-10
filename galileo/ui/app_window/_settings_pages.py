@@ -292,7 +292,9 @@ class AppWindowSettingsPagesMixin:
         """Options > Imaging: the FITS sample format (BITPIX) saved frames are written in (IMG-170)
         and how much neighbouring mosaic panes overlap (FRAME-040)."""
         from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel, QVBoxLayout, QWidget
-        from galileo.imaging_settings import MOSAIC_OVERLAP_RANGE, load_imaging_settings, save_imaging_settings
+        from galileo.imaging_settings import (
+            MOSAIC_OVERLAP_RANGE, MOSAIC_SETTLE_RANGE, load_imaging_settings, save_imaging_settings,
+        )
         from galileo.metadata import BITPIX_AUTO, BITPIX_CHOICES
 
         page = QWidget()
@@ -345,6 +347,19 @@ class AppWindowSettingsPagesMixin:
         )
         form.addRow("Mosaic pane overlap", overlap_spin)
 
+        settle_spin = QDoubleSpinBox()
+        settle_spin.setRange(*MOSAIC_SETTLE_RANGE)
+        settle_spin.setDecimals(1)
+        settle_spin.setSingleStep(1.0)
+        settle_spin.setSuffix(" s")
+        settle_spin.setValue(settings["mosaic_settle_s"])
+        settle_spin.setToolTip(
+            "How long to wait after the mount reports a mosaic re-slew finished, before the next exposure "
+            "starts. A mount stops reporting that it is slewing while it is still settling, and a frame "
+            "begun then is blurred. Increase it if the first frame of each pane is smeared."
+        )
+        form.addRow("Mosaic settle time", settle_spin)
+
         hint = QLabel(
             "Applies to frames the Imaging tab saves. Frames captured for plate solving always use "
             "whichever of these formats best fits, regardless of this setting, since that is about "
@@ -368,8 +383,15 @@ class AppWindowSettingsPagesMixin:
             settings["mosaic_overlap_pct"] = value
             MosaicSettings.instance().set_pane_overlap_pct(value)   # remembers it too
 
+        def settle_changed(value: float) -> None:
+            settings["mosaic_settle_s"] = value
+            save_imaging_settings(settings)
+            for service in getattr(self, "_imaging_services", {}).values():
+                service.mosaic_settle_s = None      # re-read at the next mosaic capture
+
         bitpix_combo.currentIndexChanged.connect(changed)
         overlap_spin.valueChanged.connect(overlap_changed)
+        settle_spin.valueChanged.connect(settle_changed)
         return page
 
     def _build_focus_settings_page(self: AppWindowState) -> QWidget:

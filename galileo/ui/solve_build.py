@@ -180,7 +180,8 @@ class SolveBuildMixin(_MixinBase):
         self.auto_centre_check = QCheckBox("Auto-Centre")
         self.auto_centre_check.setToolTip(
             "Capture, solve and centre on the Pier's current object now, then again every Auto-Centre Cadence, "
-            "whatever Solver Action is chosen above. Uses the camera, so leave it off while imaging.")
+            "whatever Solver Action is chosen above. Uses the camera and mount, so a pass is skipped while a session "
+            "or the Imaging screen is capturing, and the option is disabled (and unticked) while guiding runs.")
         self.auto_centre_check.toggled.connect(self._on_auto_centre_toggled)
         layout.addWidget(self.auto_centre_check)
         cadence_row = QHBoxLayout()
@@ -271,7 +272,8 @@ class SolveBuildMixin(_MixinBase):
         form.addRow("Gain/ISO:", self.gain_spin)
         self.filter_combo = QComboBox()
         self.filter_combo.addItem("Current")
-        self.filter_combo.setToolTip("Filter to solve through. Current leaves the filter wheel where it is.")
+        self.filter_combo.setToolTip("Filter to solve through. The first entry names the filter in the beam now and leaves the wheel "
+            "where it is; pick another to move the wheel there first.")
         form.addRow("Filter:", self.filter_combo)
         layout.addLayout(form)
         self.dark_check = QCheckBox("Dark")
@@ -370,8 +372,8 @@ class SolveBuildMixin(_MixinBase):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 6, 6, 6)
         intro = QLabel(
-            "Point the scope at the pole to begin (roughly polar-aligned, Polaris in the field), then start. Galileo "
-            "moves away from the pole to about Dec 70° (solves are unreliable at the pole), solves three frames while "
+            "Point the scope at a clear field away from the pole and the meridian (or tick Slew from Zenith), then "
+            "start. Galileo solves where the mount points, then solves two more frames while "
             "turning the mount in RA to find where the axis really points, then keeps solving. Turn the altitude and "
             "azimuth adjusters to bring the X (the celestial pole) into the circle (where the axis points now). The "
             "mount must be level, and should not be near the meridian, where it would flip.")
@@ -387,7 +389,7 @@ class SolveBuildMixin(_MixinBase):
         controls.addWidget(QLabel("Rotate:"))
         self.polar_step_spin = QSpinBox()
         self.polar_step_spin.setRange(10, 90)
-        self.polar_step_spin.setValue(30)
+        self.polar_step_spin.setValue(15)
         self.polar_step_spin.setSuffix("°")
         self.polar_step_spin.setToolTip("How far the mount turns in RA between the three measuring frames.")
         controls.addWidget(self.polar_step_spin)
@@ -404,7 +406,7 @@ class SolveBuildMixin(_MixinBase):
             "target stays the geometric pole.")
         controls.addWidget(self.polar_refraction)
         self.polar_from_zenith = QCheckBox("Slew from Zenith")
-        self.polar_from_zenith.setChecked(True)
+        self.polar_from_zenith.setChecked(False)
         self.polar_from_zenith.setToolTip(
             "Checked: slew to the zenith, solve there to confirm the mount's position, then move to the measuring "
             "position. Unchecked: solve where the mount points now (syncing it if wrong), then turn in RA for the second and third positions.")

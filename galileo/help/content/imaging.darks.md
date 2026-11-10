@@ -1,13 +1,13 @@
 <!-- order: 22 -->
 # Darks Assistant
 
-The Darks Assistant captures dark frames — exposures with the lens or mirror covered — which record the sensor's heat noise and hot pixels so they can be subtracted from your lights. Open it from the Imaging screen's **Darks…** button. Cover the telescope (or close the dust cover) *before* you press Start, and keep the camera at the same temperature and gain as for your lights.
+The Darks Assistant captures dark frames — exposures with the lens or mirror covered — which record the sensor's heat noise and hot pixels so they can be subtracted from your lights. Open it from the Imaging screen's **Darks…** button. Each dark appears in the Imaging screen's preview, histogram and statistics as it is captured (while the Pier it is running on is the one shown). Cover the telescope (or close the dust cover) *before* you press Start, and keep the camera at the same temperature and gain as for your lights.
 
 Each frame is saved to the Library.
 
 ## Filter
 
-The filter to select on the wheel before each exposure. Leave at (none) for unfiltered darks, or when no filter wheel is connected. A dark does not depend on the filter, but this keeps the wheel position consistent with the matching lights.
+The filter the wheel is moved to before the first exposure (the run waits for the wheel to settle). Leave at (none) for unfiltered darks, or when no filter wheel is connected. A dark does not depend on the filter, but this keeps the wheel position consistent with the matching lights.
 
 ## Exposures (s)
 

@@ -151,6 +151,7 @@ class ImagingService:
         self.bitpix: int | str = load_imaging_settings()["bitpix"]
         # Framing Assistant (IMG-180): a mosaic defined and run directly from this tab.
         self.active_mosaic = None
+        self.mosaic_settle_s: float | None = None   # None: use Options > Imaging at capture time
         self._mount = None      # set by the page (Equipment > Mount's adapter) before a mosaic capture
 
         # Annotation overlay (IMG-200 … IMG-220): labels catalogued stars/DSOs on the preview from
@@ -387,6 +388,8 @@ class ImagingService:
         on_slew_start=None,
         on_frame_start=None,
         on_frame_done=None,
+        settle_s: float | None = None,
+        solver=None,
     ) -> list:
         """Capture ``active_mosaic`` (set by :meth:`run_mosaic_from_framing`): one exposure per
         pane per pass, in the pane-major order ``galileo.planning.framing.mosaic_capture_order``
@@ -400,13 +403,19 @@ class ImagingService:
         ``capture_series``.
 
         With live stacking on (IMG-160/IMG-180), each pane's frame is registered onto that pane's
-        own running stack and composited into a mosaic-sized canvas at its grid position, which
-        becomes the displayed frame — so the preview (and its statistics/histogram) show the whole
+        own running stack and composited into a mosaic-sized canvas at its position on the sky,
+        which becomes the displayed frame — so the preview (and its statistics/histogram) show the whole
         mosaic's extent filling in pane by pane, rather than one pane's own frame at a time. Unlike
         :meth:`capture_series`, this has no minimum-frame-count gate: a mosaic's point is the
         panes' geometry, not building signal-to-noise on one pointing, so it composites from the
         very first exposure. Each individual sub still goes to the Library; the mosaic composite
-        is saved separately with Save Stack, same as a single-pointing stack."""
+        is saved separately with Save Stack, same as a single-pointing stack.
+
+        Given a plate *solver*, each pane's first frame is solved in the background, aimed at the
+        pane's planned centre, and the solution places that pane where the sky says it is (and
+        sets the canvas's orientation and scale from the first one), correcting for the mount's
+        pointing error, a flipped camera or a rotated field; unsolved panes stay at their planned
+        places. The finished canvas is trimmed to the panes that were captured."""
         if self.active_mosaic is None:
             raise ValueError("No mosaic is defined — define one from the Framing Assistant first.")
         if self._mount is None:
@@ -417,6 +426,11 @@ class ImagingService:
         from galileo.tracking import wait_for_slew
         import datetime as _dt
 
+        if settle_s is None:
+            settle_s = self.mosaic_settle_s
+        if settle_s is None:
+            from galileo.imaging_settings import load_imaging_settings
+            settle_s = load_imaging_settings()["mosaic_settle_s"]
         mosaic = self.active_mosaic
         panels = {p.pane_index: p for p in mosaic.panels}
         steps = mosaic_capture_order(mosaic, max(1, int(exposures_per_pane)))
@@ -426,43 +440,114 @@ class ImagingService:
         self.library_ids, self.library_note = [], ""
 
         stacking = self.live_stack_enabled
+        solving = stacking and solver is not None
         if stacking:
-            self.mosaic_stacker = MosaicStacker(mosaic.cols, mosaic.rows, mosaic.overlap_pct)
+            from galileo.mosaic_place import MosaicSky
+            self.mosaic_stacker = MosaicStacker(mosaic.cols, mosaic.rows, mosaic.overlap_pct,
+                                                sky=MosaicSky.from_mosaic(mosaic))
             self.stack_started = None
+        solve_tasks: list = []
+        solve_lock = asyncio.Lock()
+        solve_queued: set[int] = set()
 
-        for index, step in enumerate(steps, start=1):
-            if self.stop_requested:
-                break
-            if step.requires_reslew:
-                if on_slew_start is not None:
-                    on_slew_start(index, count)
-                pane = panels[step.pane_index]
-                ra_deg, dec_deg = pane.ra_deg, pane.dec_deg
-                if (await self._mount.get_status() or {}).get("equatorial_system") != "J2000":
-                    jd = julian_date(_dt.datetime.now(_dt.UTC).replace(tzinfo=None))
-                    ra_deg, dec_deg = (float(v) for v in precess_from_j2000(ra_deg, dec_deg, jd))
-                await self._mount.slew_to_coordinates(ra_deg, dec_deg)
-                await wait_for_slew(self._mount)
-            if on_frame_start is not None:
-                on_frame_start(index, count)
-            try:
-                # When stacking, it's the mosaic composite that gets shown and measured, not each pane's sub.
-                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
-                                               offset=self.offset or None, analyse=not stacking)
-            except Exception:
+        try:
+            for index, step in enumerate(steps, start=1):
                 if self.stop_requested:
                     break
-                raise
-            self.series_done = index
-            # The sub is what goes to the Library; the mosaic composite is kept separately.
-            if self.auto_save_to_library:
-                self._auto_save_to_library(index)
-            if stacking:
-                await self._stack_current_mosaic_pane(step.pane_index)
-            self._announce_frame()
-            if on_frame_done is not None:
-                on_frame_done(index, count)
+                if step.requires_reslew:
+                    if on_slew_start is not None:
+                        on_slew_start(index, count)
+                    pane = panels[step.pane_index]
+                    ra_deg, dec_deg = pane.ra_deg, pane.dec_deg
+                    if (await self._mount.get_status() or {}).get("equatorial_system") != "J2000":
+                        jd = julian_date(_dt.datetime.now(_dt.UTC).replace(tzinfo=None))
+                        ra_deg, dec_deg = (float(v) for v in precess_from_j2000(ra_deg, dec_deg, jd))
+                    await self._mount.slew_to_coordinates(ra_deg, dec_deg)
+                    await wait_for_slew(self._mount)
+                    await self._settle_after_slew(settle_s)
+                    if self.stop_requested:
+                        break
+                if on_frame_start is not None:
+                    on_frame_start(index, count)
+                try:
+                    # When stacking, it's the mosaic composite that gets shown and measured, not each pane's sub.
+                    await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
+                                                   offset=self.offset or None, analyse=not stacking)
+                except Exception:
+                    if self.stop_requested:
+                        break
+                    raise
+                self.series_done = index
+                # The sub is what goes to the Library; the mosaic composite is kept separately.
+                if self.auto_save_to_library:
+                    self._auto_save_to_library(index)
+                if solving and step.pane_index not in solve_queued and self.current_frame is not None:
+                    solve_queued.add(step.pane_index)
+                    pane = panels[step.pane_index]
+                    solve_tasks.append(asyncio.ensure_future(self._solve_mosaic_pane(
+                        step.pane_index, self.current_frame, (pane.ra_deg, pane.dec_deg), solver, solve_lock)))
+                if stacking:
+                    await self._stack_current_mosaic_pane(step.pane_index)
+                self._announce_frame()
+                if on_frame_done is not None:
+                    on_frame_done(index, count)
+        except BaseException:
+            await self._finish_mosaic(solve_tasks, cancel=True, show=False)
+            raise
+        await self._finish_mosaic(solve_tasks, cancel=self.stop_requested)
         return list(self.library_ids)
+
+    async def _solve_mosaic_pane(self, pane_index: int, frame, centre: tuple[float, float], solver, lock) -> None:
+        """Plate-solve a pane's first frame, aimed at *centre* (J2000), and hand the solution to the
+        mosaic stacker so the pane is placed where the sky says it is rather than where the mount
+        was told to point. One solve at a time; a failure just leaves the pane at its planned place."""
+        import tempfile
+        from pathlib import Path
+
+        from galileo.platesolve import _write_frame
+        path = Path(tempfile.gettempdir()) / f"galileo_solve_mosaic_{pane_index}.fits"
+        async with lock:
+            try:
+                await asyncio.to_thread(_write_frame, frame, path, self.frame_metadata())
+                result = await solver.solve(path, hint=centre)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Mosaic pane %d could not be solved; it stays at its planned place.",
+                               pane_index, exc_info=True)
+                return
+        if not result.success or result.ra_deg is None or result.dec_deg is None:
+            logger.info("Mosaic pane %d was not solved (%s); it stays at its planned place.",
+                        pane_index, result.failure_reason or "no solution")
+            return
+        if self.mosaic_stacker is not None:
+            self.mosaic_stacker.set_pane_solution(pane_index, result.ra_deg, result.dec_deg, result.cd)
+
+    async def _finish_mosaic(self, solve_tasks: list, cancel: bool, show: bool = True) -> None:
+        """End of a mosaic capture: let the pane solves finish (or drop them when stopped or failed),
+        then show the composite trimmed to the panes that were captured."""
+        if cancel:
+            for task in solve_tasks:
+                task.cancel()
+        if solve_tasks:
+            await asyncio.gather(*solve_tasks, return_exceptions=True)
+        stacker = self.mosaic_stacker
+        if not show or stacker is None or not stacker.places_by_sky or not stacker.frames:
+            return
+        canvas = stacker.finish()
+        if canvas is not None:
+            self.current_frame = canvas
+            await self._analyse_current_frame()
+            self._announce_frame()
+
+    async def _settle_after_slew(self, seconds: float) -> None:
+        """Let the mount stop ringing after a re-slew before the next exposure begins. Ends early
+        when Stop is pressed."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, seconds)
+        while not self.stop_requested and (remaining := deadline - loop.time()) > 0:  # noqa: ASYNC110 - Stop is a plain flag
+            await asyncio.sleep(min(0.25, remaining))
 
     async def _stack_current_mosaic_pane(self, pane_index: int) -> None:
         """Add the frame just captured to pane *pane_index*'s own running stack within the active

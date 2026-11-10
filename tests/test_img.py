@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 def imaging_service(mock_indi_camera):
     imaging = pytest.importorskip("galileo.ui.imaging")
     svc = imaging.ImagingService(camera=mock_indi_camera)
+    svc.mosaic_settle_s = 0.0       # tests don't wait out the real settle time after each mosaic slew
     return svc
 
 
@@ -1585,14 +1586,14 @@ def test_tc_img_170_imaging_options_default_to_auto_and_round_trip(settings_db):
     from galileo.metadata import BITPIX_AUTO
     from galileo.settings_store import set_setting
 
-    defaults = {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 10.0}
+    defaults = {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 10.0, "mosaic_settle_s": 5.0}
     assert load_imaging_settings() == defaults
 
-    save_imaging_settings({"bitpix": 16, "mosaic_overlap_pct": 25.0})
-    assert load_imaging_settings() == {"bitpix": 16, "mosaic_overlap_pct": 25.0}
+    save_imaging_settings({"bitpix": 16, "mosaic_overlap_pct": 25.0, "mosaic_settle_s": 12.0})
+    assert load_imaging_settings() == {"bitpix": 16, "mosaic_overlap_pct": 25.0, "mosaic_settle_s": 12.0}
 
     set_setting("imaging", "bitpix", "not a real choice")
-    assert load_imaging_settings() == {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 25.0}, "an unrecognised value is not trusted"
+    assert load_imaging_settings() == {"bitpix": BITPIX_AUTO, "mosaic_overlap_pct": 25.0, "mosaic_settle_s": 12.0}, "an unrecognised value is not trusted"
 
 
 @pytest.mark.requirement("TC-IMG-170")
@@ -1735,6 +1736,54 @@ async def test_tc_img_180_mosaic_capture_executes_every_pane_pane_major(mock_ind
 
 
 @pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_mosaic_waits_to_settle_after_each_reslew(mock_indi_camera, imaging_service):
+    """IMG-180: after a re-slew to a new pane the mount is given the settle time before the next
+    exposure begins (a mount stops reporting "slewing" while still ringing, which blurred the frame),
+    and Stop cuts the wait short."""
+    import time
+    import numpy as np
+    mock_indi_camera.get_image_array = AsyncMock(return_value=np.zeros((10, 10), dtype=np.uint16))
+    imaging_service.auto_save_to_library = False
+    asst = imaging_service.open_framing_assistant()
+    asst.set_mosaic(asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=1, overlap_pct=10.0))
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = mount = _FakeMosaicMount()
+    stamps: dict[str, list[float]] = {"slew": [], "exposure": []}
+    real_slew = mount.slew_to_coordinates
+
+    async def slew(ra, dec):
+        stamps["slew"].append(time.monotonic())
+        await real_slew(ra, dec)
+
+    async def start_exposure(*args, **kwargs):
+        stamps["exposure"].append(time.monotonic())
+
+    mount.slew_to_coordinates = slew
+    mock_indi_camera.start_exposure = AsyncMock(side_effect=start_exposure)
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01, settle_s=0.5)
+    assert len(stamps["slew"]) == 2
+    assert all(e - s >= 0.45 for s, e in zip(stamps["slew"], stamps["exposure"], strict=True))
+
+    # Stop during the settle wait: no exposure follows.
+    stamps["exposure"].clear()
+    imaging_service.stop_requested = False
+
+    async def stop_soon():
+        import asyncio
+        await asyncio.sleep(0.1)
+        imaging_service.request_stop()
+
+    import asyncio
+    stopper = asyncio.ensure_future(stop_soon())
+    started = time.monotonic()
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01, settle_s=5.0)
+    await stopper
+    assert time.monotonic() - started < 2.0 and stamps["exposure"] == []
+
+
+@pytest.mark.requirement("TC-IMG-180")
 @pytest.mark.priority("MVP")
 async def test_tc_img_180_mosaic_capture_requires_a_mosaic_and_a_mount(imaging_service):
     """IMG-180: mosaic capture refuses clearly — rather than silently capturing a single frame,
@@ -1873,7 +1922,7 @@ class _PaneValueCamera:
 @pytest.mark.priority("P2")
 async def test_tc_img_180_live_stacked_mosaic_composites_panes_into_one_canvas(imaging_service):
     """IMG-160/IMG-180: capturing a mosaic with Live Stack on shows the whole mosaic's extent as a
-    single composited canvas, each pane's own frame at its own grid position — not just the one
+    single composited canvas, each pane's own frame at its own place on the sky — not just the one
     pane most recently exposed, which is what a mosaic capture showed before this."""
     imaging_service._camera = _PaneValueCamera(shape=(10, 10))
     imaging_service.auto_save_to_library = False
@@ -1889,10 +1938,12 @@ async def test_tc_img_180_live_stacked_mosaic_composites_panes_into_one_canvas(i
 
     canvas = imaging_service.current_frame
     assert canvas.shape == (20, 20)
-    assert canvas[0:10, 0:10].mean() == pytest.approx(10.0)
-    assert canvas[0:10, 10:20].mean() == pytest.approx(20.0)
-    assert canvas[10:20, 0:10].mean() == pytest.approx(30.0)
-    assert canvas[10:20, 10:20].mean() == pytest.approx(40.0)
+    # Placed as the sky lies, north up and east left: pane 0 (the grid's south-west corner) is at
+    # the bottom right, and the panes' east-and-north steps run left and up.
+    assert canvas[10:20, 10:20].mean() == pytest.approx(10.0)
+    assert canvas[10:20, 0:10].mean() == pytest.approx(20.0)
+    assert canvas[0:10, 10:20].mean() == pytest.approx(30.0)
+    assert canvas[0:10, 0:10].mean() == pytest.approx(40.0)
     assert imaging_service.current_preview is not None
     assert imaging_service.mosaic_stacker.frames == 4
     assert imaging_service.stack_frame_count == 4
@@ -1947,6 +1998,200 @@ async def test_tc_img_180_save_stack_saves_the_mosaic_composite_after_a_mosaic_r
     with fits.open(path) as hdul:
         assert hdul[0].data.shape == (10, 20)
         assert hdul[0].header["NCOMBINE"] == 2
+
+
+def _sky_stacker(cols=2, rows=1, overlap_pct=0.0, shape=(10, 10), fov=1.0, rotation=0.0, centre=(100.0, 20.0)):
+    """A sky-placing MosaicStacker for a cols x rows grid of *shape* panes spanning *fov* degrees each."""
+    import math
+
+    from galileo.livestack import MosaicStacker
+    from galileo.mosaic_place import MosaicSky
+    from galileo.planning.framing import Mosaic, MosaicPanel
+    from galileo.tangent import tangent_to_sky
+    step = fov * (1.0 - overlap_pct / 100.0)
+    c, s = math.cos(math.radians(rotation)), math.sin(math.radians(rotation))
+    panels, index = [], 0
+    for row in range(rows):
+        for col in range(cols):
+            d_x, d_y = (col - (cols - 1) / 2) * step, (row - (rows - 1) / 2) * step
+            ra, dec = tangent_to_sky(d_x * c - d_y * s, d_x * s + d_y * c, *centre)
+            panels.append(MosaicPanel(index, ra, dec, overlap_pct))
+            index += 1
+    mosaic = Mosaic(cols, rows, overlap_pct, panels, centre[0], centre[1], rotation, fov, fov)
+    return MosaicStacker(cols, rows, overlap_pct, sky=MosaicSky.from_mosaic(mosaic)), mosaic
+
+
+def _solved_cd(shape, fov, rotation=0.0):
+    from galileo.mosaic_place import nominal_cd
+    return nominal_cd(fov, fov, shape, rotation)
+
+
+def test_tc_img_180_mosaic_stacker_places_panes_by_the_sky_not_the_grid():
+    """IMG-180: with the mosaic's sky geometry the canvas is the sky as seen (north up, east left):
+    the grid's east-going column steps run leftwards, and a rotated grid stays aligned to its panes."""
+    import asyncio
+
+    import numpy as np
+    stacker, _ = _sky_stacker(cols=2, rows=1)
+    assert stacker.places_by_sky
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 1.0, dtype=np.float32)))
+    asyncio.run(stacker.add_async(1, np.full((10, 10), 2.0, dtype=np.float32)))
+    assert stacker.result.shape == (10, 20)
+    assert stacker.result[:, 10:].mean() == pytest.approx(1.0)      # pane 0 is the western one: on the right
+    assert stacker.result[:, :10].mean() == pytest.approx(2.0)
+
+    rotated, _ = _sky_stacker(cols=2, rows=2, rotation=37.0)        # panes turned with the camera
+    for index in range(4):
+        asyncio.run(rotated.add_async(index, np.full((10, 10), float(index + 1), dtype=np.float32)))
+    assert rotated.result.shape == (20, 20)
+    assert rotated.result[10:, 10:].mean() == pytest.approx(1.0)
+
+
+def test_tc_img_180_mosaic_stacker_moves_a_solved_pane_to_where_it_really_is():
+    """IMG-180: a pane the mount pointed 3 pixels east of plan is placed 3 pixels to the left of its
+    planned place — the mount's pointing error does not smear the mosaic — and the canvas grows for it."""
+    import asyncio
+
+    import numpy as np
+
+    from galileo.tangent import sky_to_tangent, tangent_to_sky
+    stacker, mosaic = _sky_stacker(cols=2, rows=1)
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 1.0, dtype=np.float32)))
+    asyncio.run(stacker.add_async(1, np.full((10, 10), 2.0, dtype=np.float32)))
+    before = stacker.result.copy()
+
+    planned = mosaic.panels[1]
+    xi, eta = sky_to_tangent(planned.ra_deg, planned.dec_deg, 100.0, 20.0)
+    ra, dec = tangent_to_sky(xi + 0.3, eta, 100.0, 20.0)             # 3 px of 0.1 deg: east
+    stacker.set_pane_solution(1, ra, dec, _solved_cd((10, 10), 1.0))
+
+    after = stacker.result
+    assert before.shape == (10, 20) and after.shape == (10, 23)
+    assert after[:, :10].mean() == pytest.approx(2.0)                # pane 1: now columns 0-9
+    assert after[:, 13:].mean() == pytest.approx(1.0)                # pane 0 is unmoved, 3 px further right
+    assert after[:, 10:13].mean() == 0.0                             # the gap the pointing error opened
+
+    # A solve that is nowhere near the plan, or at the wrong scale, is a false match and is ignored.
+    stacker.set_pane_solution(0, 100.0 + 5.0, 25.0, _solved_cd((10, 10), 1.0))
+    assert stacker.result.shape == after.shape
+    stacker.set_pane_solution(0, 100.0, 20.0, _solved_cd((10, 10), 3.0))
+    assert stacker.result.shape == after.shape
+
+
+def test_tc_img_180_mosaic_stacker_follows_a_flipped_solved_orientation():
+    """IMG-180: a pane the solver says is turned 180 degrees relative to the others (a meridian flip)
+    is turned back onto the canvas, so its stars line up with the sky instead of being stamped on
+    upside down."""
+    import asyncio
+
+    import numpy as np
+    stacker, _ = _sky_stacker(cols=1, rows=1)
+    ramp = np.tile(np.arange(10, dtype=np.float32), (10, 1))         # brightness grows with x
+    asyncio.run(stacker.add_async(0, ramp))
+    assert np.allclose(stacker.result, ramp)
+
+    two, _ = _sky_stacker(cols=2, rows=1)
+    asyncio.run(two.add_async(0, ramp))
+    asyncio.run(two.add_async(1, ramp))
+    p0, p1 = two._sky.panes[0], two._sky.panes[1]
+    normal = _solved_cd((10, 10), 1.0)
+    two.set_pane_solution(0, p0[0], p0[1], normal)                   # sets the canvas orientation
+    two.set_pane_solution(1, p1[0], p1[1], tuple(-v for v in normal))
+    right, left = two.result[:, 10:], two.result[:, :10]
+    assert np.allclose(right, ramp)                                  # pane 0 as shot
+    assert np.allclose(left, ramp[::-1, ::-1], atol=1e-4)            # pane 1 was upside down
+
+
+def test_tc_img_180_mosaic_stacker_blends_the_overlap_and_matches_backgrounds():
+    """IMG-180: where panes overlap they are feathered together and the later pane's background is
+    shifted to match, so a different sky glow does not show as a step across the seam."""
+    import asyncio
+
+    import numpy as np
+    stacker, _ = _sky_stacker(cols=2, rows=1, overlap_pct=50.0, shape=(20, 20))
+    asyncio.run(stacker.add_async(0, np.full((20, 20), 100.0, dtype=np.float32)))
+    asyncio.run(stacker.add_async(1, np.full((20, 20), 140.0, dtype=np.float32)))
+    canvas = stacker.result
+    assert canvas.shape == (20, 30)
+    assert np.allclose(canvas, 100.0, atol=1e-3)
+
+
+def test_tc_img_180_mosaic_stacker_trims_to_the_panes_captured():
+    """IMG-180: a run stopped part-way leaves the canvas cropped to the panes that were captured."""
+    import asyncio
+
+    import numpy as np
+    stacker, _ = _sky_stacker(cols=3, rows=1)
+    asyncio.run(stacker.add_async(0, np.full((10, 10), 1.0, dtype=np.float32)))
+    assert stacker.result.shape == (10, 30)
+    assert stacker.finish().shape == (10, 10)
+
+
+class _FakeMosaicSolver:
+    """Returns the solution a perfect mount would give for whatever it is asked to solve."""
+
+    def __init__(self, shape, fov):
+        self.calls, self.shape, self.fov = [], shape, fov
+
+    async def solve(self, path, hint=None):
+        from galileo.platesolve_solvers import SolveResult
+        self.calls.append(hint)
+        return SolveResult(success=True, ra_deg=hint[0], dec_deg=hint[1], cd=_solved_cd(self.shape, self.fov))
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_live_stacked_mosaic_solves_each_pane_once_and_places_it(imaging_service):
+    """IMG-180: given a solver, a live-stacked mosaic solves each pane's first frame (not every
+    exposure) aimed at the pane's planned centre, and places the pane by the solution; the finished
+    canvas is trimmed to the captured panes."""
+    imaging_service._camera = _PaneValueCamera(shape=(10, 10))
+    imaging_service.auto_save_to_library = False
+    imaging_service.live_stack_enabled = True
+    asst = imaging_service.open_framing_assistant()
+    mosaic = asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=1, overlap_pct=0.0)
+    asst.set_mosaic(mosaic)
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+    solver = _FakeMosaicSolver((10, 10), mosaic.fov_width_deg)
+
+    await imaging_service.capture_mosaic(exposures_per_pane=2, duration=0.01, solver=solver)
+
+    assert [(round(a, 6), round(b, 6)) for a, b in solver.calls] == \
+        [(round(p.ra_deg, 6), round(p.dec_deg, 6)) for p in mosaic.panels]      # once per pane, at its plan
+    assert imaging_service.current_frame.shape == (10, 20)
+    assert imaging_service.mosaic_stacker.frames == 4
+
+
+@pytest.mark.requirement("TC-IMG-180")
+@pytest.mark.priority("P2")
+async def test_tc_img_180_a_failing_solver_leaves_panes_at_their_planned_places(imaging_service):
+    """IMG-180: a solver that errors or finds nothing does not stop the capture; the panes stay where
+    the mosaic was planned."""
+    from galileo.platesolve_solvers import SolveResult
+
+    class Broken:
+        calls = 0
+
+        async def solve(self, path, hint=None):
+            Broken.calls += 1
+            if Broken.calls == 1:
+                raise RuntimeError("solver crashed")
+            return SolveResult(success=False, failure_reason="no stars")
+
+    imaging_service._camera = _PaneValueCamera(shape=(10, 10))
+    imaging_service.auto_save_to_library = False
+    imaging_service.live_stack_enabled = True
+    asst = imaging_service.open_framing_assistant()
+    asst.set_mosaic(asst.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=2, rows=1, overlap_pct=0.0))
+    imaging_service.run_mosaic_from_framing(asst)
+    imaging_service._mount = _FakeMosaicMount()
+
+    await imaging_service.capture_mosaic(exposures_per_pane=1, duration=0.01, solver=Broken())
+
+    assert Broken.calls == 2
+    assert imaging_service.current_frame.shape == (10, 20)
+    assert imaging_service.mosaic_stacker.frames == 2
 
 
 @pytest.mark.requirement("TC-IMG-180")

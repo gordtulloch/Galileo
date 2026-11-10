@@ -517,6 +517,38 @@ def test_tc_plt_100_auto_centre_skips_quietly_and_switches_off_on_stop(window, p
     assert not page.auto_centre_check.isChecked() and not page._auto_centre_timer.isActive()
 
 
+@pytest.mark.requirement("TC-PLT-100")
+@pytest.mark.priority("P2")
+def test_tc_plt_100_auto_centre_defers_to_imaging_and_guiding(window, page, caplog):
+    """PLT-100: A pass is skipped while a session or the Imaging screen is using the camera; Auto-Centre is
+    disabled, and unticked, while guiding runs."""
+    import logging
+    from types import SimpleNamespace
+    _open(window)
+    key = page._pier_key()
+    solution = _Devices.near_mount(d_ra_deg=0.0)
+    _Devices(window, page, solution)
+    window._set_current_object({"name": "M13", "ra_deg": solution.ra_deg, "dec_deg": solution.dec_deg,
+                                "kind": "Star Atlas"})
+
+    window._imaging_capture_threads = {key: object()}              # the Imaging screen is exposing
+    with caplog.at_level(logging.INFO):
+        page._auto_centre_tick()
+    assert "Imaging screen is capturing" in caplog.text and not page._running.get(key)
+    window._imaging_capture_threads = {}
+
+    guiding = SimpleNamespace(is_guiding=True)
+    window._device_pages["guider"] = {"service_for": lambda k: guiding}
+    page.auto_centre_check.setChecked(True)                        # ticking while guiding: switched straight off
+    assert not page.auto_centre_check.isChecked() and not page._auto_centre_timer.isActive()
+    page.refresh_auto_centre_enabled()
+    assert not page.auto_centre_check.isEnabled() and not page.auto_centre_cadence.isEnabled()
+
+    guiding.is_guiding = False
+    page.refresh_auto_centre_enabled()
+    assert page.auto_centre_check.isEnabled() and page.auto_centre_cadence.isEnabled()
+
+
 def test_tc_plt_070_stop_ends_a_run_in_progress(window, page):
     """PLT-070: Stop cancels a run mid-exposure, aborts the camera, and puts the controls back."""
     _open(window)
@@ -719,7 +751,7 @@ def _polar_solutions(count: int) -> list[SolveResult]:
 def test_tc_plt_080_polar_alignment_tab_has_its_controls(page):
     """PLT-080: The Polar Alignment tab offers a start button, the rotation step and direction and the refraction option, and starts idle."""
     assert page.polar_start_btn.isEnabled() and page.polar_start_btn.text() == "Start Polar Alignment"
-    assert page.polar_step_spin.value() == 30
+    assert page.polar_step_spin.value() == 15 and not page.polar_from_zenith.isChecked()
     assert [page.polar_direction.itemData(i) for i in range(page.polar_direction.count())] == ["east", "west"]
     assert page.polar_refraction.isChecked()
     assert page.polar_status.text() == "Not started." and page.polar_total.text() == "—"
@@ -743,7 +775,7 @@ def test_tc_plt_080_polar_alignment_needs_a_camera_mount_and_site(window, page):
     assert not page._running.get(page._pier_key())
 
 
-def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page, tmp_path):
+def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page, tmp_path, monkeypatch):
     """PLT-080: Start Polar Alignment turns the mount, solves, and shows the measured error with plain advice; Stop ends it."""
     window.observatory.latitude, window.observatory.longitude = _POLAR_LAT, _POLAR_LON
     window.observatory.save()
@@ -760,6 +792,9 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     page.exposure_spin.setValue(0.1)
     page.polar_direction.setCurrentIndex(1)
     page.polar_refraction.setChecked(False)
+    monkeypatch.setattr("galileo.ui.solve.POLAR_SETTLE_S", 0.0)    # the screen's 5 s minimum pause would stall the test
+    page.polar_step_spin.setValue(30)              # the canned solutions below swing 30° a step
+    page.polar_from_zenith.setChecked(True)        # this run goes through the zenith first (unticked is the default)
     _open(window, "solve")
 
     page.polar_start_btn.click()
@@ -771,7 +806,7 @@ def test_tc_plt_080_polar_alignment_run_shows_the_error_and_advice(window, page,
     assert page.polar_azimuth.text().startswith("Move the polar axis west by")
     slews = [call[1:] for call in devices.calls if call[0] == "slew"]
     assert slews[0][0] == pytest.approx(_lst_now(), abs=0.5) and slews[0][1] == pytest.approx(_POLAR_LAT, abs=0.01)  # zenith first
-    assert [round((slews[1][0] - ra) % 360.0) for ra, _ in slews[1:]] == [0, 30, 60]     # then the measuring turns
+    assert [round((slews[0][0] - ra) % 360.0) for ra, _ in slews] == [0, 30, 60]         # measured at the zenith, then turned
 
     page.stop()
     assert _pump(window, lambda: page.polar_start_btn.isEnabled())
@@ -835,6 +870,39 @@ def test_tc_plt_070_capture_options_reach_the_camera_and_filter_wheel(window, pa
     exposures = devices.camera.start_exposure.await_args_list
     assert [c.kwargs["frame_type"] for c in exposures] == ["Light", "Dark"]
     assert all(c.kwargs["binning"] == 2 and c.kwargs["gain"] == 120 for c in exposures)
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("P2")
+def test_tc_plt_070_filter_box_reads_a_device_adapter_wheel(window, page):
+    """PLT-070: the Filter box works with the connected device adapter (``filter_names`` /
+    ``position`` / ``move_to(slot)``), not just a controller: it lists the filters, names the one in
+    the beam on its first entry, and picking another moves the wheel to that slot."""
+    from galileo.platesolve import SolveAction
+
+    class AdapterWheel:
+        filter_names = ["L", "R", "Ha"]
+        position = 1
+        moved: list[int] = []
+
+        async def move_to(self, index):
+            self.moved.append(index)
+            self.position = index
+
+    _open(window)
+    _Devices(window, page, _Devices.near_mount())
+    wheel = AdapterWheel()
+    window._device_pages["filter_wheel"] = {"adapter": wheel}
+    page.refresh_filters()
+    items = [page.filter_combo.itemText(i) for i in range(page.filter_combo.count())]
+    assert items == ["Current (R)", "L", "R", "Ha"]
+    page.action_radios[SolveAction.NOTHING].setChecked(True)
+    page.filter_combo.setCurrentText("Ha")
+    page.capture_btn.click()
+    assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
+    assert wheel.moved == [2]
+    assert page.filter_combo.itemText(0) == "Current (Ha)"      # repainted once the run ended
+    assert page.filter_combo.currentText() == "Ha"
 
 
 @pytest.mark.requirement("TC-PLT-070")

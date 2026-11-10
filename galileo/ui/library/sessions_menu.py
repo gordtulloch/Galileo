@@ -87,11 +87,7 @@ class SessionsMenuMixin(_MixinBase):
         """Best-effort directory where stack outputs are expected to be written."""
         try:
             telescope = getattr(session, 'fitsSessionTelescope', None) or ''
-            instrument = getattr(session, 'fitsSessionImager', None) or ''
-            is_precalibrated_session = (
-                ('itelescope' in telescope.lower()) or
-                ('seestar' in instrument.lower())
-            )
+            is_precalibrated_session = 'itelescope' in telescope.lower()
 
             base = (
                 (FitsFileModel.fitsFileSession == session.fitsSessionId)

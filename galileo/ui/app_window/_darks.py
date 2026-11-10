@@ -68,7 +68,7 @@ class AppWindowDarksMixin:
         filter_combo.addItem("(none)")
         filter_combo.addItems(filter_names)
         filter_combo.setToolTip(
-            "Filter to select on the wheel before each exposure. "
+            "Filter the wheel is moved to before the first exposure. "
             "Leave at (none) for unfiltered darks or when no filter wheel is connected."
         )
         form.addRow("Filter", filter_combo)
@@ -180,13 +180,14 @@ class AppWindowDarksMixin:
             run_state["frames_total"] = len(exposures) * count_spin.value()
             svc = ImagingService(camera=camera)
             svc.auto_save_to_library = True
+            svc.pier_key = key          # announces each dark, so the Imaging preview (and remote clients) show it
             svc.frame_context = self._imaging_frame_context()
             run_state["service"] = svc
 
             filter_name = filter_combo.currentText() if filter_combo.currentIndex() > 0 else ""
             # Parented to the window, not the dialog: the dialog is deleted when closed idle, which
             # must never take a thread that is still returning from run() down with it.
-            thread = _DarksThread(svc, exposures, filter_name, count_spin.value(), self._window)
+            thread = _DarksThread(svc, exposures, filter_name, count_spin.value(), self._window, wheel=wheel)
             thread.finished.connect(thread.deleteLater)
             from PySide6.QtCore import Qt
             thread.frame_started.connect(on_frame_started, Qt.ConnectionType.QueuedConnection)
@@ -195,7 +196,7 @@ class AppWindowDarksMixin:
             thread.failed.connect(failed, Qt.ConnectionType.QueuedConnection)
             self._darks_threads[key] = thread
             set_running(True)
-            status_label.setText("Starting…")
+            status_label.setText(f"Moving the filter wheel to {filter_name}…" if filter_name and wheel is not None else "Starting…")
             thread.start()
 
         def stop() -> None:

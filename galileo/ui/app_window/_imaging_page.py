@@ -1020,7 +1020,8 @@ class AppWindowImagingPageMixin:
             countdown: dict[str, Any] = {"timer": None, "start": 0.0, "duration": 0.0, "frame": 1, "total": 1}
 
             def _tick_countdown() -> None:
-                if not _is_displayed(key):
+                # A tick from a capture that has ended (or been replaced) must not paint.
+                if not _is_displayed(key) or self._imaging_capture_threads.get(key) is not countdown.get("thread"):
                     return
                 import time
                 elapsed = time.monotonic() - countdown["start"]
@@ -1052,19 +1053,23 @@ class AppWindowImagingPageMixin:
                 save_stack_btn.setEnabled(service.stack_frame_count > 0)
                 annotate_btn.setEnabled(service.current_frame is not None)
 
-            def _end_capture() -> None:
+            def _end_capture(restarting: bool = False) -> None:
                 self._imaging_capture_threads.pop(key, None)
-                if not _is_displayed(key):
-                    return
+                # Always stop this capture's countdown timer, displayed or not: left running it keeps
+                # painting the finished capture's last "Frame N of N" over the next capture's status.
                 timer = countdown["timer"]
                 if timer is not None:
                     timer.stop()
+                    countdown["timer"] = None
+                if not _is_displayed(key) or restarting:
+                    return      # a looping capture restarts at once: leave Stop live, Capture/Loop off
                 capture_btn.setEnabled(True)
                 loop_btn.setEnabled(True)
                 stop_capture_btn.setEnabled(False)
 
             def on_capture_finished() -> None:
-                _end_capture()
+                restart = key in looping and not service.stop_requested and _is_displayed(key)
+                _end_capture(restarting=restart)
                 summary = _series_summary(service)
                 if service.library_ids:
                     _refresh_library_images()
@@ -1076,10 +1081,16 @@ class AppWindowImagingPageMixin:
                     on_frame_done(0, 0)
                 self._window.statusBar().showMessage(summary, 6000)
                 if key in looping:
-                    if service.stop_requested or not _is_displayed(key):
+                    if not restart:
                         looping.discard(key)
                     else:
-                        QTimer.singleShot(0, lambda: do_capture(loop=True))
+                        # Stop pressed before this fires removes the key, so it must not restart.
+                        def _restart() -> None:
+                            if key in looping:
+                                do_capture(loop=True)
+                            if self._imaging_capture_threads.get(key) is None:
+                                _end_capture()      # stopped, or do_capture bailed out: release the buttons
+                        QTimer.singleShot(0, _restart)
 
             def on_capture_failed(message: str) -> None:
                 looping.discard(key)
@@ -1113,7 +1124,18 @@ class AppWindowImagingPageMixin:
             # UI thread.
             queued = Qt.ConnectionType.QueuedConnection
             if mosaic_mode:
-                thread = _MosaicCaptureThread(service, quantity, duration, filter_name, frame_type, page)
+                solver = None
+                if service.live_stack_enabled:
+                    # Solving each pane's first frame places it on the mosaic canvas by the sky, not
+                    # by where the mount was told to point. No usable solver just means planned places.
+                    try:
+                        from galileo.observatory import make_pier_solver
+                        solver = make_pier_solver(self._current_pier)
+                    except Exception:
+                        logger.info("No plate solver for placing mosaic panes; using planned positions.",
+                                    exc_info=True)
+                thread = _MosaicCaptureThread(service, quantity, duration, filter_name, frame_type, page,
+                                              solver=solver)
                 thread.slew_started.connect(on_slew_started, queued)
             else:
                 thread = _CaptureThread(service, quantity, duration, filter_name, frame_type, page)
@@ -1122,7 +1144,9 @@ class AppWindowImagingPageMixin:
             thread.finished_ok.connect(on_capture_finished, queued)
             thread.failed.connect(on_capture_failed, queued)
             self._imaging_capture_threads[key] = thread
+            countdown["thread"] = thread
             thread.start()
+            _tick_countdown()
 
         capture_btn.clicked.connect(lambda: do_capture())
         loop_btn.clicked.connect(lambda: do_capture(loop=True))

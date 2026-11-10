@@ -73,13 +73,14 @@ def register_polar_operations(registry: Registry, access: PolarAccess) -> None:
     registry.register(OperationSpec(
         "polar.start", "operate",
         (Arg("exposure_s", "float", required=False, default=5.0, minimum=0.001, maximum=600, unit="s"),
-         Arg("settle_s", "float", required=False, default=1.5, minimum=0, maximum=60, unit="s"),
-         Arg("step_deg", "float", required=False, default=30.0, minimum=5, maximum=60, unit="deg",
+         Arg("settle_s", "float", required=False, default=5.0, minimum=0, maximum=60, unit="s",
+             description="Pause once the mount has stopped, before each frame"),
+         Arg("step_deg", "float", required=False, default=15.0, minimum=5, maximum=60, unit="deg",
              description="How far the mount turns in RA between the three measuring solves"),
          Arg("direction", "enum", required=False, default="east", choices=("east", "west"),
              description="Which way the RA axis turns"),
          Arg("refraction", "bool", required=False, default=True),
-         Arg("slew_from_zenith", "bool", required=False, default=True,
+         Arg("slew_from_zenith", "bool", required=False, default=False,
              description="Go to the zenith and check the mount first; false measures from where it points now")),
         needs_lease=True, long_running=True, available=access.why_not,
         description="Measure the polar-alignment error with three plate solves, then keep it live while the "

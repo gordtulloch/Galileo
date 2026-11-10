@@ -53,7 +53,7 @@ What Slew to Target will aim at: the current object's name, or where the mount p
 
 ## Auto-Centre
 
-Captures, solves and slews back onto the Pier's current object straight away, then repeats every **Auto-Centre Cadence**, to correct drift while you watch or leave it running. Each pass always uses **Slew to Target**, whichever Solver Action is chosen, so it needs a current object (pick one in the Star Atlas), a connected camera and mount, and a working solver. A pass is skipped, and logged, if the previous one is still running or the equipment is missing. It uses the camera, so leave it off while imaging. **Stop**, or switching to another Pier, turns it off.
+Captures, solves and slews back onto the Pier's current object straight away, then repeats every **Auto-Centre Cadence**, to correct drift while you watch or leave it running. Each pass always uses **Slew to Target**, whichever Solver Action is chosen, so it needs a current object (pick one in the Star Atlas), a connected camera and mount, and a working solver. A pass is skipped, and logged, if the previous one is still running or the equipment is missing. It uses the camera and mount, so a pass is skipped, and logged, while a session is running or the Imaging screen is capturing on that Pier. While **guiding** is running the option is disabled and unticked, since slewing and exposing would wreck the guide; tick it again once guiding has stopped. **Stop**, or switching to another Pier, turns it off.
 
 ## Auto-Centre Cadence
 
@@ -77,7 +77,7 @@ How close, in arcseconds, a solution must be to the target for **Slew to Target*
 
 ## Settle
 
-How long to wait after a slew, in milliseconds, before taking the next frame, so vibrations die away.
+How long to wait after a slew, in milliseconds, before taking the next frame, so vibrations die away. Polar alignment also waits for the mount to report it has stopped and never pauses less than 5 seconds, whatever this is set to.
 
 ## Solution Coordinates (JNow)
 
@@ -137,7 +137,7 @@ Gain for solve frames, or the ISO value for a DSLR. **Camera** leaves it as the 
 
 ## Filter
 
-The filter to solve through. **Current** leaves the filter wheel where it is. The list comes from the connected filter wheel.
+The filter to solve through. The first entry reads **Current (*filter*)**, naming the filter in the beam now, and leaves the filter wheel where it is. Pick any other filter from the list — it comes from the connected filter wheel — and the wheel moves there before the solve exposure. With no wheel connected only **Current** is offered.
 
 ## Dark
 
@@ -189,7 +189,7 @@ Saves the results to a CSV file.
 
 ## Polar Alignment
 
-Helps you point the mount's polar axis exactly at the celestial pole. The scope can be anywhere to begin with. Galileo first slews it to the zenith and solves there; if the solution is not at the zenith (the mount has never been synced, say) it syncs the mount to the solution and slews to the zenith again. It then moves to about Dec 70° (a solve right at the pole is unreliable), solves three frames, turning the mount in RA between them, to find where the axis really points, then keeps solving so the error updates live as you turn the altitude and azimuth adjusters. The mount must be level and not near the meridian, where it would flip. It needs a camera, a mount, and the Observatory's latitude and longitude.
+Helps you point the mount's polar axis exactly at the celestial pole. The scope can be anywhere to begin with. Galileo first slews it to the zenith and solves there; if the solution is not at the zenith (the mount has never been synced, say) it syncs the mount to the solution and slews to the zenith again. It then solves three frames, starting at the zenith, turning the mount in RA between them, to find where the axis really points, then keeps solving so the error updates live as you turn the altitude and azimuth adjusters. The mount must be level and not near the meridian, where it would flip. It needs a camera, a mount, and the Observatory's latitude and longitude.
 
 ## Start Polar Alignment
 
@@ -197,7 +197,7 @@ Begins the procedure (the exposure is the one under Plate Solve Capture Options)
 
 ## Rotate
 
-How far the mount turns in RA between the three measuring frames, 10–90°. A bigger turn is more accurate but needs more clear sky. Beside it you choose the direction.
+How far the mount turns in RA between the three measuring frames, 10–90°. The default is 15°. A bigger turn is more accurate but needs more clear sky. Beside it you choose the direction.
 
 ## Direction
 
@@ -209,7 +209,7 @@ Allows for the atmosphere lifting stars, so the mount is aimed where it must poi
 
 ## Slew from Zenith
 
-Checked (the default): Galileo slews to the zenith and solves there to confirm the mount's position (syncing it if it is wrong), then moves to about Dec 70° and takes the three measuring frames. Unchecked: Galileo solves right where the mount points now and syncs the mount to the solution if it is off, then turns in RA for the second and third frames, at the same declination. Nothing moves the mount first, so it must already be pointing at a good, clear, non-polar field away from the meridian.
+Checked: Galileo slews to the zenith and solves there to confirm the mount's position (syncing it if it is wrong), then takes the first measuring frame there and turns in RA for the second and third. Unchecked (the default): Galileo solves right where the mount points now and syncs the mount to the solution if it is off, then turns in RA for the second and third frames, at the same declination. Nothing moves the mount first, so it must already be pointing at a good, clear, non-polar field away from the meridian.
 
 ## Polar alignment status
 

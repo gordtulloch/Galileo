@@ -5,6 +5,8 @@ Images lists every file in the Library as a tree: a row for each object (or date
 
 **Double-click** a frame to open it in your FITS viewer (set the viewer in Options › Library; otherwise the system default is used). **Right-click** a frame or object for more actions.
 
+Select several frames with **Shift**-click (a range) or **Ctrl**-click (individual frames). With more than one row selected, right-click offers only **Delete**, which hides all the selected frames after a single confirmation.
+
 ## Regenerate
 
 Rebuilds the Library database from the files already in your repository. It clears the current database, scans the repository, and records what it finds. It does *not* move or rename any file. Use it if the database and the files on disk have drifted apart. You are asked to confirm first.

@@ -95,6 +95,14 @@ def _ensure_tail_handler() -> None:
     _tail_handler_installed = True
 
 
+def get_current_log_file() -> Path | None:
+    """The log file this run is writing (the datestamped ``galileo_<date>.log``), or None if not set up."""
+    for handler in reversed(logging.getLogger().handlers):
+        if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename).name.startswith("galileo_"):
+            return Path(handler.baseFilename)
+    return None
+
+
 def get_recent_log_lines(n: int = 10) -> list[str]:
     """Return the last *n* formatted log lines written by any module (LOG-020)."""
     with _TAIL_LOCK:

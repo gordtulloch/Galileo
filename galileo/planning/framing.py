@@ -154,6 +154,14 @@ class Mosaic:
     rows: int
     overlap_pct: float
     panels: list[MosaicPanel] = field(default_factory=list)
+    # The geometry the grid was laid out with (set by FramingAssistant.create_mosaic): where it is
+    # centred, how it was turned, and one pane's field of view. A live stack needs them to put each
+    # pane at its place on the sky; a Mosaic built without them is composited on a plain grid.
+    center_ra_deg: float | None = None
+    center_dec_deg: float | None = None
+    rotation_deg: float = 0.0
+    fov_width_deg: float | None = None
+    fov_height_deg: float | None = None
 
     @property
     def total_panels(self) -> int:
@@ -399,7 +407,12 @@ class FramingAssistant:
 
         A nonzero *rotation_deg* turns the whole grid about its centre, in the same sense the
         Framing Assistant preview draws a rotated frame, so each pane keeps its place in the
-        tilted grid (FRAME-030/040)."""
+        tilted grid (FRAME-030/040).
+
+        The grid is laid out on the plane tangent to the sky at its centre, so a step of *d* degrees
+        east is *d* / cos(Dec) degrees of RA: panes keep their intended overlap at any declination
+        instead of crowding together towards the pole."""
+        from galileo.tangent import tangent_to_sky
         fov = self.compute_fov()
         step_ra = fov.width_deg * (1.0 - overlap_pct / 100.0)
         step_dec = fov.height_deg * (1.0 - overlap_pct / 100.0)
@@ -412,8 +425,8 @@ class FramingAssistant:
             for col in range(cols):
                 d_ra = (col - (cols - 1) / 2.0) * step_ra
                 d_dec = (row - (rows - 1) / 2.0) * step_dec
-                ra = center_ra + d_ra * cos_t - d_dec * sin_t
-                dec = center_dec + d_ra * sin_t + d_dec * cos_t
+                ra, dec = tangent_to_sky(d_ra * cos_t - d_dec * sin_t, d_ra * sin_t + d_dec * cos_t,
+                                         center_ra, center_dec)
                 panels.append(MosaicPanel(
                     pane_index=idx,
                     ra_deg=ra,
@@ -422,7 +435,9 @@ class FramingAssistant:
                 ))
                 idx += 1
 
-        return Mosaic(cols=cols, rows=rows, overlap_pct=overlap_pct, panels=panels)
+        return Mosaic(cols=cols, rows=rows, overlap_pct=overlap_pct, panels=panels,
+                      center_ra_deg=center_ra % 360.0, center_dec_deg=center_dec, rotation_deg=rotation_deg,
+                      fov_width_deg=fov.width_deg, fov_height_deg=fov.height_deg)
 
     def mosaic_footprint_deg(self, cols: int, rows: int, overlap_pct: float,
                              rotation_deg: float = 0.0) -> tuple[float, float]:

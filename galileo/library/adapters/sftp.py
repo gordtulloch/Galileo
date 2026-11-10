@@ -13,6 +13,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_SFTP_WINDOW = 32 * 1024 * 1024
+
 
 class SftpDownloadCancelled(Exception):
     """Raised from a transfer's progress callback to stop it part-way."""
@@ -82,8 +84,24 @@ class SftpSession:
             kwargs["key_filename"] = self.key_path
         if self.password:
             kwargs["password"] = self.password
+        if self.key_path or self.password:
+            # Explicit credentials: don't also probe the SSH agent and ~/.ssh keys first (slow login).
+            kwargs["allow_agent"] = False
+            kwargs["look_for_keys"] = False
         client.connect(**kwargs)
+        # A wide SFTP window lets the prefetching reader keep many 32 KB requests in flight, which is
+        # what sets throughput on a LAN (paramiko's default 2 MB window stalls it).
+        transport = client.get_transport()
+        if transport is not None:
+            transport.default_window_size = _SFTP_WINDOW
         self._sftp = client.open_sftp()
+
+    def is_alive(self) -> bool:
+        """True while the underlying SSH transport is still connected."""
+        if self._client is None or self._sftp is None:
+            return False
+        transport = self._client.get_transport()
+        return transport is not None and transport.is_active()
 
     def close(self) -> None:
         for resource in (self._sftp, self._client):

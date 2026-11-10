@@ -80,9 +80,10 @@ class _MosaicCaptureThread(_QThreadBase):
     frame_done = Signal(int, int)
 
     def __init__(self, service, exposures_per_pane: int, duration: float, filter_name: str, frame_type: str,
-                 parent=None) -> None:
+                 parent=None, solver=None) -> None:
         super().__init__(parent)
         self._service = service
+        self._solver = solver       # solves each pane's first frame to place it on the mosaic canvas
         self._exposures_per_pane = exposures_per_pane
         self._duration = duration
         self._filter_name = filter_name
@@ -95,6 +96,7 @@ class _MosaicCaptureThread(_QThreadBase):
                 self._exposures_per_pane, self._duration, self._filter_name, self._frame_type,
                 on_slew_start=self.slew_started.emit,
                 on_frame_start=self.frame_started.emit, on_frame_done=self.frame_done.emit,
+                solver=self._solver,
             ))
         except Exception as exc:
             if not self._service.stop_requested:
@@ -234,15 +236,34 @@ class _DarksThread(_QThreadBase):
     failed = Signal(str)
 
     def __init__(self, service, exposures: list, filter_name: str, count: int = 1,
-                 parent=None) -> None:
+                 parent=None, wheel=None) -> None:
         super().__init__(parent)
         self._service = service
         self._exposures = exposures
         self._filter_name = filter_name
         self._count = max(1, int(count))
+        self._wheel = wheel
+
+    def _select_filter(self) -> None:
+        """Put the chosen filter in the optical path before the first exposure (the frames are only
+        labelled with it otherwise). A name the wheel doesn't have, or no wheel, leaves it as a label."""
+        wheel = self._wheel
+        if wheel is None or not self._filter_name:
+            return
+        names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])]
+        if self._filter_name not in names:
+            return
+        index = names.index(self._filter_name)
+        if getattr(wheel, "position", None) != index:
+            _run_mount_coro(wheel.move_to(index))
 
     def run(self) -> None:
         import asyncio
+        try:
+            self._select_filter()
+        except Exception as exc:
+            self.failed.emit(f"Could not move the filter wheel to {self._filter_name!r}: {exc}")
+            return
         total = len(self._exposures)
         for i, exposure_s in enumerate(self._exposures):
             if self._service.stop_requested:

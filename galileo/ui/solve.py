@@ -48,7 +48,7 @@ from galileo.platesolve import (
     mount_frame_to_j2000,
     nearest_object_name,
 )
-from galileo.polaralign import PolarAlignProgress, PolarAlignSettings, PolarAlignWorkflow, format_angle
+from galileo.polaralign import POLAR_SETTLE_S, PolarAlignProgress, PolarAlignSettings, PolarAlignWorkflow, format_angle
 from galileo.ui.solve_widgets import (  # noqa: F401  (re-exported: these used to live in this module)
     SolveErrorPlot,
     SolveImageView,
@@ -112,6 +112,16 @@ def frame_size(path: str) -> tuple[int, int]:
 
 
 _UNSET = object()
+
+
+class _WheelByName:
+    """Lets the solve workflow select a filter by name on a device adapter that moves by slot."""
+
+    def __init__(self, wheel, names: list[str]) -> None:
+        self._wheel, self._names = wheel, names
+
+    async def move_to_filter(self, name: str) -> None:
+        await self._wheel.move_to(self._names.index(name))
 
 
 class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
@@ -231,6 +241,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             self._clear_for_pier_switch()
             self.auto_centre_check.setChecked(False)       # it was centring the previous Pier's mount
         self.refresh_target()
+        self.refresh_auto_centre_enabled()
         self.scope_ra.clear()
         self.scope_dec.clear()
         self._set_running(self._running.get(key, False), key)
@@ -270,20 +281,43 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     def _filter_wheel(self):
         return (self._window._device_pages.get("filter_wheel") or {}).get("adapter")
 
-    def refresh_filters(self) -> None:
-        """List the filter wheel's filters in the Filter box, keeping the choice if it is still there."""
-        wheel = self._filter_wheel()
+    @staticmethod
+    def _wheel_names(wheel) -> list[str]:
+        """The wheel's filter names. The connected device adapter holds them as ``filter_names``;
+        a controller offers ``get_filter_names()``."""
+        if wheel is None:
+            return []
         try:
-            names = list(wheel.get_filter_names()) if wheel is not None else []
+            names = getattr(wheel, "filter_names", None)
+            if not isinstance(names, (list, tuple)) and callable(getattr(wheel, "get_filter_names", None)):
+                names = wheel.get_filter_names()
+            return [str(n) for n in (names or [])]
         except Exception:
             logger.debug("Could not read the filter names", exc_info=True)
-            names = []
+            return []
+
+    def refresh_filters(self) -> None:
+        """List the filter wheel's filters in the Filter box, keeping the choice if it is still there.
+        The first entry reads "Current (<filter in the beam>)" when the wheel reports its position."""
+        wheel = self._filter_wheel()
+        names = self._wheel_names(wheel)
+        position = getattr(wheel, "position", None)
+        current = names[position] if isinstance(position, int) and 0 <= position < len(names) else ""
+        keep_current = self.filter_combo.currentIndex() <= 0
         chosen = self.filter_combo.currentText()
         self.filter_combo.clear()
-        self.filter_combo.addItem("Current")
+        self.filter_combo.addItem(f"Current ({current})" if current else "Current")
         self.filter_combo.addItems(names)
-        index = self.filter_combo.findText(chosen)
+        index = 0 if keep_current else self.filter_combo.findText(chosen)
         self.filter_combo.setCurrentIndex(max(index, 0))
+
+    def _wheel_for_workflow(self):
+        """What the solve workflow moves the wheel with: it asks for ``move_to_filter(name)``, which
+        the device adapter lacks (it moves by slot number), so adapt it."""
+        wheel = self._filter_wheel()
+        if wheel is None or callable(getattr(wheel, "move_to_filter", None)):
+            return wheel
+        return _WheelByName(wheel, self._wheel_names(wheel))
 
     # --- Bus (worker threads) ---------------------------------------------
 
@@ -391,6 +425,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
     def _on_run_finished(self, key) -> None:
         self._set_running(False, key)
         self._run_target_active[key] = False
+        self.refresh_filters()      # a solve through another filter moved the wheel: show where it is now
         workflow = self._workflows.get(key)
         slewed_to = getattr(workflow, "slewed_to", None)
         if slewed_to is not None and key == self._pier_key():
@@ -472,6 +507,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
 
     def poll_mount(self) -> None:
         """Read the mount's position on a worker thread (a blocking device call must never run on the UI thread)."""
+        self.refresh_auto_centre_enabled()
         key = self._pier_key()
         mount = self._mount()
         if mount is None:
@@ -565,7 +601,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             return
         workflow = self._workflows[key] = (make_workflow or SolveWorkflow)(
             solver, camera=self._camera(), mount=self._mount(), log=self._post,
-            frame_metadata=self._frame_metadata(), filter_wheel=self._filter_wheel())
+            frame_metadata=self._frame_metadata(), filter_wheel=self._wheel_for_workflow())
         workflow.on_exposure = lambda duration, label, key=key: self._emit("exposure_changed", key, duration, label)
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
@@ -611,6 +647,38 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         else:
             self._auto_centre_timer.stop()
 
+    def _guiding_active(self, key) -> bool:
+        """Is PHD2 guiding on this Pier? (``False`` when the Guider screen has not been opened.)"""
+        try:
+            service_for = (self._window._device_pages.get("guider") or {}).get("service_for")
+            service = service_for(key) if service_for is not None else None
+            return bool(service is not None and service.is_guiding)
+        except Exception:
+            logger.debug("Could not read the guiding state", exc_info=True)
+            return False
+
+    def _imaging_busy(self, key) -> str | None:
+        """Why the camera is spoken for on this Pier — a session is running, or the Imaging screen is
+        capturing — else ``None``."""
+        try:
+            from galileo.ui.session_runner import get_session_controller
+            if key in get_session_controller(self._window).progress_snapshot():
+                return "a session is running on this Pier"
+        except Exception:
+            logger.debug("Could not read the session state", exc_info=True)
+        threads = getattr(self._window, "_imaging_capture_threads", None) or {}
+        if threads.get(key) is not None:
+            return "the Imaging screen is capturing on this Pier"
+        return None
+
+    def refresh_auto_centre_enabled(self) -> None:
+        """Disable the Auto-Centre option while guiding runs on the displayed Pier (and untick it)."""
+        guiding = self._guiding_active(self._pier_key())
+        if guiding and self.auto_centre_check.isChecked():
+            self.auto_centre_check.setChecked(False)
+        self.auto_centre_check.setEnabled(not guiding)
+        self.auto_centre_cadence.setEnabled(not guiding)
+
     def _on_auto_centre_cadence_changed(self, minutes: int) -> None:
         if self._auto_centre_timer.isActive():
             self._auto_centre_timer.start(minutes * 60000)
@@ -619,6 +687,16 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         """Start a capture-and-solve that slews back to the current object, unless one is already
         running or the equipment isn't there. Nothing here may raise a dialog: it fires unattended."""
         key = self._pier_key()
+        if self._guiding_active(key):
+            # Slewing and exposing under a running guider would wreck both; it is switched off, not just
+            # skipped, so it does not start again by itself the moment guiding stops.
+            logger.info("Auto-Centre: guiding is running on this Pier; switching Auto-Centre off")
+            self.auto_centre_check.setChecked(False)
+            return
+        busy = self._imaging_busy(key)
+        if busy:
+            logger.info("Auto-Centre: %s; skipping this pass", busy)
+            return
         if self._running.get(key):
             logger.info("Auto-Centre: previous run still in progress; skipping this one")
             return
@@ -672,7 +750,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
                 "Polar alignment needs the site's latitude and longitude. Set them on the Observatory.")
             return
         settings = PolarAlignSettings(
-            exposure_s=self.exposure_spin.value(), settle_s=self.settle_spin.value() / 1000.0,
+            exposure_s=self.exposure_spin.value(),
+            settle_s=max(self.settle_spin.value() / 1000.0, POLAR_SETTLE_S),      # trailed stars do not solve
             scale_hint_arcsec_px=self._scale_hint(),
             step_deg=float(self.polar_step_spin.value()), direction=self.polar_direction.currentData(),
             refraction=self.polar_refraction.isChecked(),

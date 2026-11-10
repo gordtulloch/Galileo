@@ -77,6 +77,10 @@ Shrinks the picture by 20%.
 
 Opens this help window on the current screen. **F1** does the same for the control that has focus. For help on any single control, press **Shift+F1** (or "Point at a control…" in this window) and click it. Hovering a control also shows a short description.
 
+## View Log
+
+The page-of-text button at the bottom of the sidebar opens a window showing this run's full log file (`galileo_<date>.log`, reset each time Galileo starts), including debugging detail and error tracebacks, unlike the small log panes on each screen. Choose how much to show with the level box (Debug, Info, Warnings or Errors only; a traceback stays with its error line), type in the search box to show only matching lines, and leave **Auto-refresh** ticked to follow new lines as they are written. **Copy** puts the lines shown on the clipboard, handy when reporting a problem, and **Open Folder** opens the folder holding the log files.
+
 ## Community & support
 
 The speech-bubble button at the bottom of the sidebar, beside Help, opens a menu of community links in your web browser: **Ask the community** (a new question in GitHub Discussions), **Browse discussions**, **Suggest a feature**, and **Report a problem**. Report a problem opens the bug-report form with your Galileo version, operating system, Python version and the screen you were on already filled in. Nothing is sent from Galileo itself; you review and submit the form in your browser.

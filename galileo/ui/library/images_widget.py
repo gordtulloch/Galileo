@@ -4,7 +4,7 @@ import os
 import logging
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QLineEdit, QComboBox, QTreeWidget, QTreeWidgetItem,
                                QCheckBox, QProgressDialog, QApplication, QMessageBox,
                                QMenu, QDialog, QDialogButtonBox)
@@ -169,6 +169,9 @@ class ImagesWidget(QWidget):
         self.file_tree.setColumnWidth(8, 40)   # Local icon
         self.file_tree.setColumnWidth(9, 40)   # Cloud icon
         self.file_tree.setColumnWidth(10, 200) # Filename
+
+        # Shift selects a range, Ctrl toggles individual rows
+        self.file_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         # Enable context menu
         self.file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -337,6 +340,22 @@ class ImagesWidget(QWidget):
         if not item:
             return
 
+        # Several rows selected: the only action offered is Delete (applies to every selected file row).
+        selected = self.file_tree.selectedItems()
+        if len(selected) > 1 and item in selected:
+            files = [
+                it.text(10) for it in selected
+                if it.parent() is not None and it.text(10) and it.data(8, Qt.ItemDataRole.UserRole) != "on_master"
+            ]
+            if not files:
+                return
+            multi_menu = QMenu(self)
+            multi_delete = multi_menu.addAction(f"Delete ({len(files)} files)")
+            multi_delete.setToolTip("Delete the selected files")
+            if multi_menu.exec(self.file_tree.mapToGlobal(position)) == multi_delete:
+                self._delete_files(files)
+            return
+
         sort_mode = (self.sort_combo.currentText() or "").strip()
 
         # Determine object name (target) for this context.
@@ -467,6 +486,32 @@ class ImagesWidget(QWidget):
             logger.exception(f"Error viewing file {filename}")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{e!s}")
 
+    def _delete_files(self, filenames):
+        """Soft-delete several files after a single confirmation (same semantics as :meth:`_delete_file`)."""
+        try:
+            config = load_library_config()
+            if not config.getboolean('DEFAULT', 'suppress_delete_warnings', fallback=False):
+                reply, dont_ask_again = self._show_delete_confirmation_with_checkbox(
+                    filenames[0], count=len(filenames))
+                if dont_ask_again:
+                    config.set('DEFAULT', 'suppress_delete_warnings', 'True')
+                    save_library_config(config)
+                if not reply:
+                    return
+
+            updated = (FitsFileModel
+                       .update(fitsFileSoftDelete=True)
+                       .where(FitsFileModel.fitsFileName.in_(list(filenames)))
+                       .execute())
+            logger.info("Soft-deleted %d of %d selected files", updated, len(filenames))
+            self.load_fits_data()
+            if updated < len(filenames):
+                QMessageBox.warning(self, "Delete",
+                                    f"{len(filenames) - updated} of {len(filenames)} files were not found in the database.")
+        except Exception as e:
+            logger.exception("Error deleting selected files")
+            QMessageBox.critical(self, "Error", f"Failed to delete files:\n{e!s}")
+
     def _delete_file(self, filename):
         """Delete file from disk"""
         try:
@@ -532,16 +577,18 @@ class ImagesWidget(QWidget):
             logger.exception(f"Error deleting file {filename}")
             QMessageBox.critical(self, "Error", f"Failed to delete file:\n{e!s}")
 
-    def _show_delete_confirmation_with_checkbox(self, filename):
+    def _show_delete_confirmation_with_checkbox(self, filename, count=1):
         """Show delete confirmation dialog with 'Do not ask again' checkbox"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Delete File")
+        dialog.setWindowTitle("Delete File" if count == 1 else "Delete Files")
         dialog.setModal(True)
 
         layout = QVBoxLayout(dialog)
 
         # Message label
-        message = QLabel(f"Are you sure you want to delete this file?\n\n{os.path.basename(filename)}\n\nThe file will be marked as deleted but will remain on disk.\nYou can view deleted files using the 'Show Deleted' checkbox.")
+        subject = ("this file" if count == 1 else f"these {count} files")
+        shown = os.path.basename(filename) if count == 1 else f"{count} selected files"
+        message = QLabel(f"Are you sure you want to delete {subject}?\n\n{shown}\n\nThe file will be marked as deleted but will remain on disk.\nYou can view deleted files using the 'Show Deleted' checkbox.")
         message.setWordWrap(True)
         layout.addWidget(message)
 
@@ -909,7 +956,8 @@ class ImagesWidget(QWidget):
 
                 master_ids = fits_processor.registerMasters(
                     progress_callback=update_master_progress,
-                    source_folder=fits_processor.repoFolder,
+                    # Masters live in the repository's Masters folder; don't open every image's header to find them
+                    source_folder=os.path.join(fits_processor.repoFolder, "Masters"),
                     precount=False,
                 )
 

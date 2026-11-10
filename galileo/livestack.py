@@ -212,26 +212,31 @@ class MosaicStacker:
     """Live-stacks a mosaic capture (IMG-160, IMG-180): each pane gets its own :class:`LiveStacker`
     — so repeat exposures of the same pane still register onto each other and average down noise —
     and each pane's running result is composited onto one canvas sized to the whole mosaic's
-    footprint, at the grid position its pane index implies. The result is what the Imaging tab
-    shows as the capture runs: the full mosaic's extent from the first exposure on, filling in
-    pane by pane, rather than one pane's frame at a time replacing the last.
+    footprint. The result is what the Imaging tab shows as the capture runs: the full mosaic's
+    extent from the first exposure on, filling in pane by pane, rather than one pane's frame at a
+    time replacing the last.
 
-    Panels are placed edge-to-edge at ``pane size * (1 - overlap_pct / 100)`` spacing — the same
-    spacing :func:`galileo.planning.framing.FramingAssistant.create_mosaic` used to lay out the
-    panes' sky positions in the first place, assuming pane pixels and sky degrees scale the same
-    way (true whenever every pane comes from the optical train the mosaic was planned against,
-    which is the only case this drives). Pane index increases in the same row-major, left-to-right
-    order ``create_mosaic`` assigns increasing RA to; this does not correct for a camera train
-    that mirrors or rotates that sense on-sky, matching this codebase's existing, unvalidated
-    caveat on framing-overlay orientation (``galileo.ui.app_window._widgets._FramingCanvas``). The
-    overlap band itself is not blended: the most recently written pane's pixels win there, since
-    this composite is a live-capture preview, not the final stacked product — blending overlaps
-    for a deliverable mosaic is a separate, later job over the completed subs, not this class's."""
+    With the mosaic's sky geometry (*sky*, a :class:`galileo.mosaic_place.MosaicSky`) the panes are
+    placed by where they are on the sky, by :class:`galileo.mosaic_place.MosaicCanvas`: the canvas is
+    the tangent plane at the mosaic's centre, north up and east left (or as a solved pane shows
+    itself), a plate solve of a pane (:meth:`set_pane_solution`) moves it to its true position and
+    orientation, overlaps are feathered and their backgrounds matched, and :meth:`finish` trims the
+    canvas to the panes captured.
 
-    def __init__(self, cols: int, rows: int, overlap_pct: float) -> None:
+    Without it (a hand-built mosaic) the panes go on a plain grid: edge to edge at
+    ``pane size * (1 - overlap_pct / 100)`` spacing, pane index increasing row-major, which assumes
+    the mount pointed exactly and the camera is not mirrored or turned, and the most recently
+    written pane wins in an overlap."""
+
+    def __init__(self, cols: int, rows: int, overlap_pct: float, sky=None) -> None:
         self.cols = max(1, int(cols))
         self.rows = max(1, int(rows))
         self.overlap_pct = overlap_pct
+        self._sky = sky
+        self._placer = None
+        if sky is not None:
+            from galileo.mosaic_place import MosaicCanvas
+            self._placer = MosaicCanvas(sky, overlap_pct)
         self._panes: dict[int, LiveStacker] = {}
         self._pane_shape: tuple[int, ...] | None = None
         self._step: tuple[int, int] | None = None
@@ -239,7 +244,24 @@ class MosaicStacker:
 
     def reset(self) -> None:
         """Forget every pane's stack and the canvas, so the next frame starts a new mosaic."""
-        self.__init__(self.cols, self.rows, self.overlap_pct)
+        self.__init__(self.cols, self.rows, self.overlap_pct, self._sky)
+
+    @property
+    def places_by_sky(self) -> bool:
+        """Whether panes are placed by their sky positions (a mosaic with its geometry) rather than
+        on a plain grid by pane index."""
+        return self._placer is not None
+
+    def set_pane_solution(self, pane_index: int, ra_deg: float, dec_deg: float, cd=None) -> np.ndarray | None:
+        """A plate solve of pane *pane_index*: move it to where the sky says it is (and, from the
+        first one, adopt the solved orientation and scale). Does nothing on a plain-grid stacker."""
+        if self._placer is None:
+            return self._canvas
+        return self._placer.solve(pane_index, ra_deg, dec_deg, cd)
+
+    def finish(self) -> np.ndarray | None:
+        """End of the capture: trim the canvas to the panes actually captured."""
+        return self._placer.crop() if self._placer is not None else self._canvas
 
     async def add_async(self, pane_index: int, frame: np.ndarray | None, exposure_s: float = 0.0) -> np.ndarray | None:
         """Register *frame* onto pane *pane_index*'s own running stack (off the calling thread's
@@ -249,11 +271,15 @@ class MosaicStacker:
         added = await stacker.add_async(frame, exposure_s)
         if added and stacker.result is not None:
             self._composite(pane_index, stacker.result)
-        return self._canvas
+        return self.result
 
     def _composite(self, pane_index: int, pane_image: np.ndarray) -> None:
-        """Place *pane_image* — pane *pane_index*'s own stacked result — into the canvas at its
-        grid position, allocating the canvas from the first pane's shape if this is the first."""
+        """Place *pane_image* — pane *pane_index*'s own stacked result — into the canvas: at its
+        position on the sky when the mosaic's geometry is known, else at its grid position,
+        allocating the canvas from the first pane's shape if this is the first."""
+        if self._placer is not None:
+            self._placer.put(pane_index, pane_image)
+            return
         if self._pane_shape is None:
             self._pane_shape = pane_image.shape
             height, width = self._pane_shape[:2]
@@ -277,7 +303,7 @@ class MosaicStacker:
     @property
     def result(self) -> np.ndarray | None:
         """The mosaic canvas so far, or ``None`` before the first pane has a result."""
-        return self._canvas
+        return self._placer.canvas if self._placer is not None else self._canvas
 
     @property
     def frames(self) -> int:

@@ -180,16 +180,38 @@ def test_tc_frame_040_mosaic_rotation_turns_the_grid(framing_assistant):
     assert [(p.ra_deg, p.dec_deg) for p in turned.panels] != [(p.ra_deg, p.dec_deg) for p in flat.panels]
     # A quarter turn swaps the grid's RA and Dec extents.
     fov = framing_assistant.compute_fov()
-    ra_span = max(p.ra_deg for p in turned.panels) - min(p.ra_deg for p in turned.panels)
-    dec_span = max(p.dec_deg for p in turned.panels) - min(p.dec_deg for p in turned.panels)
+    from galileo.tangent import sky_to_tangent
+    offsets = [sky_to_tangent(p.ra_deg, p.dec_deg, 83.8, -5.4) for p in turned.panels]
+    ra_span = max(x for x, _ in offsets) - min(x for x, _ in offsets)
+    dec_span = max(y for _, y in offsets) - min(y for _, y in offsets)
     step_ra, step_dec = fov.width_deg * 0.9, fov.height_deg * 0.9
-    assert ra_span == pytest.approx(1 * step_dec)
-    assert dec_span == pytest.approx(2 * step_ra)
+    assert ra_span == pytest.approx(1 * step_dec, rel=1e-3)
+    assert dec_span == pytest.approx(2 * step_ra, rel=1e-3)
     # Zero rotation is unchanged, and the footprint is the tilted grid's bounding box.
     assert framing_assistant.create_mosaic(83.8, -5.4, 3, 2, 10.0, rotation_deg=0.0).panels[0].ra_deg == flat.panels[0].ra_deg
     w, h = framing_assistant.mosaic_footprint_deg(3, 2, 10.0, rotation_deg=90.0)
     w0, h0 = framing_assistant.mosaic_footprint_deg(3, 2, 10.0)
     assert (w, h) == pytest.approx((h0, w0))
+
+
+@pytest.mark.requirement("TC-FRAME-040")
+@pytest.mark.priority("P2")
+def test_tc_frame_040_mosaic_panes_keep_their_overlap_at_high_declination(framing_assistant):
+    """FRAME-040: panes are spaced on the sky, not in RA degrees — a step east of d degrees is
+    d / cos(Dec) of RA — so a mosaic at Dec +60 still overlaps by the overlap asked for."""
+    import math
+    from galileo.tangent import sky_to_tangent
+    mosaic = framing_assistant.create_mosaic(center_ra=10.0, center_dec=60.0, cols=2, rows=1, overlap_pct=10.0)
+    fov = framing_assistant.compute_fov()
+    a, b = mosaic.panels
+    xi_a, _ = sky_to_tangent(a.ra_deg, a.dec_deg, 10.0, 60.0)
+    xi_b, _ = sky_to_tangent(b.ra_deg, b.dec_deg, 10.0, 60.0)
+    assert xi_b - xi_a == pytest.approx(fov.width_deg * 0.9, rel=1e-4)
+    # In RA that is about twice the step at the equator, and RA stays within [0, 360).
+    assert (b.ra_deg - a.ra_deg) == pytest.approx(fov.width_deg * 0.9 / math.cos(math.radians(60.0)), rel=0.05)
+    wrapped = framing_assistant.create_mosaic(center_ra=0.0, center_dec=0.0, cols=3, rows=1, overlap_pct=10.0)
+    assert all(0.0 <= p.ra_deg < 360.0 for p in wrapped.panels)
+    assert mosaic.center_ra_deg == 10.0 and mosaic.fov_width_deg == pytest.approx(fov.width_deg)
 
 
 @pytest.mark.requirement("TC-FRAME-040")
@@ -200,14 +222,16 @@ def test_tc_frame_040_mosaic_footprint_matches_panel_spacing(framing_assistant):
     cols, rows, overlap_pct = 3, 2, 10.0
     mosaic = framing_assistant.create_mosaic(center_ra=83.8, center_dec=-5.4, cols=cols, rows=rows,
                                               overlap_pct=overlap_pct)
-    ra_span = max(p.ra_deg for p in mosaic.panels) - min(p.ra_deg for p in mosaic.panels)
-    dec_span = max(p.dec_deg for p in mosaic.panels) - min(p.dec_deg for p in mosaic.panels)
+    from galileo.tangent import sky_to_tangent
+    offsets = [sky_to_tangent(p.ra_deg, p.dec_deg, 83.8, -5.4) for p in mosaic.panels]
+    ra_span = max(x for x, _ in offsets) - min(x for x, _ in offsets)      # on the sky, not in RA degrees
+    dec_span = max(y for _, y in offsets) - min(y for _, y in offsets)
     fov = framing_assistant.compute_fov()
 
     width_deg, height_deg = framing_assistant.mosaic_footprint_deg(cols, rows, overlap_pct)
 
-    assert abs(width_deg - (ra_span + fov.width_deg)) < 1e-9
-    assert abs(height_deg - (dec_span + fov.height_deg)) < 1e-9
+    assert abs(width_deg - (ra_span + fov.width_deg)) < 1e-6
+    assert abs(height_deg - (dec_span + fov.height_deg)) < 1e-6
 
 
 @pytest.mark.requirement("TC-FRAME-040")

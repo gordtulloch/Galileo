@@ -157,6 +157,8 @@ class TelescopeDownloadWorker(QThread):
             if not self._stop_requested:
                 self.error_occurred.emit(f"Unexpected error during download: {e!s}")
                 logger.exception("Unexpected error during download")
+        finally:
+            smart_telescope_manager.close_sftp_sessions()
 
     def _fail(self, message: str) -> None:
         """Report *message* to the dialog and the log."""

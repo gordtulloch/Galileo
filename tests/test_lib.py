@@ -535,6 +535,9 @@ def _fake_sftp_server(tree, *, deleted=None, fail_on=()):
         def connect(self, **kwargs):
             SSHClient.connected_with = kwargs
 
+        def get_transport(self):
+            return types.SimpleNamespace(is_active=lambda: True)
+
         def open_sftp(self):
             return Sftp()
 

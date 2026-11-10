@@ -56,6 +56,28 @@ def test_tc_log_020_in_app_log_viewer_with_severity_filter(diag_service):
     assert len(all_entries) >= 3
 
 
+@pytest.mark.requirement("TC-LOG-020")
+@pytest.mark.priority("MVP")
+def test_tc_log_020_log_viewer_window_filters_file_text():
+    """LOG-020: the log viewer window filters the log file by severity and search text, keeping tracebacks with their record."""
+    from galileo.ui.log_viewer import filter_log_text
+
+    text = (
+        "2026-01-01 10:00:00,000 DEBUG a: noisy\n"
+        "2026-01-01 10:00:01,000 INFO a: started\n"
+        "2026-01-01 10:00:02,000 ERROR b: boom\n"
+        "Traceback (most recent call last):\n"
+        "ValueError: x\n"
+        "2026-01-01 10:00:03,000 WARNING c: careful"
+    )
+    errors = filter_log_text(text, ("ERROR", "CRITICAL"))
+    assert "boom" in errors and "ValueError" in errors and "started" not in errors
+    info = filter_log_text(text, ("INFO", "WARNING", "ERROR", "CRITICAL"))
+    assert "noisy" not in info and "careful" in info
+    assert filter_log_text(text, ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), "CAREFUL") == \
+        "2026-01-01 10:00:03,000 WARNING c: careful"
+
+
 # ---------------------------------------------------------------------------
 # TC-LOG-030
 # ---------------------------------------------------------------------------

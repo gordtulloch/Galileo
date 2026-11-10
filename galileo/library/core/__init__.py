@@ -138,7 +138,7 @@ class fitsProcessing:
         master_ids: list[str] = []
         try:
             master_ids = self.registerMasters(
-                progress_callback=progress_callback, source_folder=folder, precount=False,
+                progress_callback=progress_callback, source_folder=os.path.join(folder, "Masters"), precount=False,
                 recursive=scan_subdirectories,
             ) or []
         except Exception as exc:

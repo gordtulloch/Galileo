@@ -451,7 +451,8 @@ def test_tc_lib_130_register_existing_exit_code_follows_errors(library, cli, mon
 def _repo_with_existing_files(library):
     """A repository holding two light frames, a master dark, a generated cal_ light and one frame in a sub-folder."""
     write_light_frames(library.repo, count=2)
-    write_frame(library.repo, "master_dark.fits", "Master Dark", "Dark", 60, 40, level=100)
+    (library.repo / "Masters").mkdir(exist_ok=True)
+    write_frame(library.repo / "Masters", "master_dark.fits", "Master Dark", "Dark", 60, 40, level=100)
     write_frame(library.repo, "cal_light_9.fits", "Light Frame", "M42", 60, 9, filt="Ha", date="2026-09-16T23:59:00")
     (library.repo / "older").mkdir()
     write_frame(library.repo / "older", "light_old.fits", "Light Frame", "M31", 60, 50, filt="Ha", date="2026-08-01T22:00:00")
@@ -587,10 +588,10 @@ def test_tc_lib_130_reset_calibration_removes_outputs_and_clears_flags(ingested,
 @pytest.mark.requirement("TC-LIB-130")
 @pytest.mark.priority("P2")
 def test_tc_lib_130_stack_helpers(tmp_path):
-    """LIB-130: precalibrated detection (iTelescope / SeeStar), the best-reference pick (lowest HFR among files that exist) and the output name."""
+    """LIB-130: precalibrated detection (iTelescope only; Seestar frames are raw), the best-reference pick (lowest HFR among files that exist) and the output name."""
     from galileo.commands import stack
 
-    assert stack._is_precalibrated_session("iTelescope T11", None) and stack._is_precalibrated_session(None, "ZWO SeeStar S50")
+    assert stack._is_precalibrated_session("iTelescope T11", None) and not stack._is_precalibrated_session(None, "ZWO SeeStar S50")
     assert not stack._is_precalibrated_session("Home scope", "ASI294") and not stack._is_precalibrated_session(None, None)
 
     a, b, c = (tmp_path / n for n in ("a.fits", "b.fits", "c.fits"))
@@ -721,6 +722,9 @@ class FakeTelescopeManager:
 
     def get_itelescope_credentials(self):
         return "user", "pw"
+
+    def close_sftp_sessions(self):
+        pass
 
     def get_fits_files(self, telescope_type, ip, username=None, password=None):
         return self.files, None
@@ -853,7 +857,7 @@ def test_tc_lib_130_variable_star_photometry_helpers():
     json_path, csv_path = vsp._default_outputs(os.path.join("/data", "stack_RW AUR.fits"))
     assert Path(json_path).name == "varstar_stack_RW AUR.json" and Path(csv_path).name == "varstar_stack_RW AUR.csv"
     assert Path(json_path).parent == Path(csv_path).parent == Path("/data")
-    assert vsp._is_precalibrated_session("iTelescope T5", None) and vsp._is_precalibrated_session(None, "Seestar S30")
+    assert vsp._is_precalibrated_session("iTelescope T5", None) and not vsp._is_precalibrated_session(None, "Seestar S30")
     assert not vsp._is_precalibrated_session("Home", "ASI")
 
 

@@ -73,6 +73,8 @@ _KIND_BY_TAG = {
 _DEF_TAGS = {f"def{k}Vector": v for k, v in _KIND_BY_TAG.items()}
 _SET_TAGS = {f"set{k}Vector": v for k, v in _KIND_BY_TAG.items()}
 _TOP_LEVEL_TAGS = set(_DEF_TAGS) | set(_SET_TAGS) | {"delProperty", "message"}
+_RCV_BUF_BYTES = 4 * 1024 * 1024
+_RECV_CHUNK = 1024 * 1024
 _XML_BAD_BYTES = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _TOP_LEVEL_START = re.compile(
     rb"<(?:" + b"|".join(t.encode() for t in sorted(_TOP_LEVEL_TAGS)) + rb")[\s/>]")
@@ -165,6 +167,10 @@ class IndiClient:
             ) from exc
         sock.settimeout(None)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # A frame is tens of MB: a big receive buffer keeps the TCP window open over Wi-Fi (the
+        # default 64 KB window caps throughput at window / round-trip time).
+        with contextlib.suppress(OSError):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _RCV_BUF_BYTES)
         self._sock = sock
         self._alive = True
         self._last_def = time.monotonic()
@@ -224,7 +230,7 @@ class IndiClient:
                 sock = self._sock
                 if sock is None:
                     break
-                chunk = sock.recv(65536)
+                chunk = sock.recv(_RECV_CHUNK)
                 if not chunk:
                     self._fail("connection closed by server")
                     break
@@ -365,6 +371,10 @@ class IndiClient:
 
     def _handle_set(self, elem: ET.Element, kind: str) -> None:
         device, name = elem.get("device", ""), elem.get("name", "")
+        # Decode image payloads before taking the cache lock: base64 + zlib of a large frame takes
+        # a noticeable time, and every property read by the UI and the other drivers waits on it.
+        blobs = ({child.get("name", ""): self._decode_blob(child)
+                  for child in self._element_children(elem, kind)} if kind == "blob" else {})
         with self._cond:
             prop = self._props.get((device, name))
             if prop is None:
@@ -378,7 +388,7 @@ class IndiClient:
                 if el is None:
                     el = prop.elements[child.get("name", "")] = IndiElement(name=child.get("name", ""))
                 if kind == "blob":
-                    el.value, el.blob_format = self._decode_blob(child)
+                    el.value, el.blob_format = blobs[child.get("name", "")]
                 else:
                     el.value = self._parse_value(kind, child)
                 if kind == "number":
@@ -553,9 +563,12 @@ class IndiClient:
         body = "".join(f"<oneText name={quoteattr(k)}>{escape(str(v))}</oneText>" for k, v in values.items())
         self._send(f"<newTextVector device={quoteattr(device)} name={quoteattr(name)}>{body}</newTextVector>")
 
-    def enable_blob(self, device: str, mode: str = "Also") -> None:
-        """Ask the server to deliver BLOBs (images) for *device* to this client."""
-        self._send(f"<enableBLOB device={quoteattr(device)}>{mode}</enableBLOB>")
+    def enable_blob(self, device: str, mode: str = "Also", name: str | None = None) -> None:
+        """Ask the server to deliver BLOBs (images) for *device* to this client — only the
+        BLOB property *name* when given, so a camera's second chip or a driver's other
+        payloads are not sent over the network for nothing."""
+        scope = f" name={quoteattr(name)}" if name else ""
+        self._send(f"<enableBLOB device={quoteattr(device)}{scope}>{mode}</enableBLOB>")
 
 
 def _to_float(text: str | None) -> float | None:

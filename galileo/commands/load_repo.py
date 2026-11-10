@@ -316,6 +316,18 @@ Note:
         # Process files - always move files from source to repository
         logger.info("Starting new image processing...")
 
+        # Master calibration frames (IMAGETYP "Master Dark/Flat/Bias") are moved into <repo>/Masters and
+        # registered as masters; registerFitsImages below skips them.
+        try:
+            master_ids = processor.registerMasters(
+                source_folder=processor.sourceFolder,
+                moveFiles=True,
+                destination_folder=os.path.join(processor.repoFolder, "Masters"),
+            )
+            logger.info(f"Master calibration frames moved to Masters and registered: {len(master_ids)}")
+        except Exception:
+            logger.exception("Error registering master calibration frames")
+
         result = processor.registerFitsImages(
             moveFiles=True,  # Always move files from source to repository
             progress_callback=None  # Disabled for non-interactive use

@@ -322,6 +322,9 @@ def _fake_paramiko(files, *, connect_error=None, bad_files=()):
             if connect_error:
                 raise connect_error
 
+        def get_transport(self):
+            return types.SimpleNamespace(is_active=lambda: True)
+
         def open_sftp(self):
             return Sftp()
 

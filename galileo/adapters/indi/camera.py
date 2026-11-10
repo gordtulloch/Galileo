@@ -28,7 +28,7 @@ class IndiCameraAdapter(IndiAdapter):
 
     def _on_connected(self) -> None:
         # Without this the server never sends this client the image BLOB.
-        self._c().enable_blob(self.device_name, "Also")
+        self._c().enable_blob(self.device_name, "Also", "CCD1")
 
     def get_capabilities(self) -> DeviceCapabilities:
         if self._client is None:
@@ -134,7 +134,7 @@ class IndiCameraAdapter(IndiAdapter):
 
         from astropy.io import fits
         with fits.open(io.BytesIO(data), memmap=False) as hdul:
-            return hdul[0].data.copy()
+            return hdul[0].data      # memmap=False: already in memory, valid after the file closes
 
     async def set_temperature(self, temp_c: float) -> None:
         self._log_interaction("set_temperature", temp_c=temp_c)

@@ -286,3 +286,40 @@ def test_tc_cal_090_flats_thread_dispatches_panel_methods():
     svc.run_panel_flats_all_filters = AsyncMock(side_effect=FlatCalibrationError("unreachable"))
     thread.run()
     assert bad == ["unreachable"]
+
+
+@pytest.mark.requirement("TC-CAL-080")
+@pytest.mark.priority("MVP")
+def test_tc_cal_080_darks_move_the_filter_wheel_before_capturing():
+    """CAL-080: the Darks Assistant's chosen filter is moved into the optical path before the first dark,
+    not merely written into the frames' headers; a wheel already there is not moved, and a failed move stops the run."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from galileo.ui.app_window._threads import _DarksThread
+
+    def run(wheel, filter_name="Dark"):
+        order = []
+        service = MagicMock(stop_requested=False)
+        service.capture_series = AsyncMock(side_effect=lambda *a, **k: order.append("capture"))
+        thread = _DarksThread(service, [10.0], filter_name, 1, wheel=wheel)
+        failures = []
+        thread.failed.connect(failures.append)
+        if wheel is not None:
+            wheel.move_to = AsyncMock(side_effect=lambda i: order.append(f"move{i}"))
+        thread.run()
+        return order, failures
+
+    wheel = SimpleNamespace(filter_names=["L", "R", "Dark"], position=0)
+    assert run(wheel)[0] == ["move2", "capture"]
+    assert run(SimpleNamespace(filter_names=["L", "Dark"], position=1))[0] == ["capture"]
+    assert run(None)[0] == ["capture"]
+
+    broken = SimpleNamespace(filter_names=["L", "Dark"], position=0)
+    service = MagicMock(stop_requested=False)
+    service.capture_series = AsyncMock()
+    thread = _DarksThread(service, [10.0], "Dark", 1, wheel=broken)
+    broken.move_to = AsyncMock(side_effect=RuntimeError("stuck"))
+    failures = []
+    thread.failed.connect(failures.append)
+    thread.run()
+    assert failures and "stuck" in failures[0] and not service.capture_series.called

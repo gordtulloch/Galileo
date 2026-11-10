@@ -119,9 +119,8 @@ class fitsFile(BaseModel):
         Check if this file is from a telescope that provides pre-calibrated images.
 
         Returns:
-            bool: True if from Seestar or iTelescope
+            bool: True if from iTelescope (Seestar frames are raw)
         """
         if self.fitsFileTelescop:
-            telescope = self.fitsFileTelescop.lower()
-            return 'seestar' in telescope or 'itelescope' in telescope
+            return 'itelescope' in self.fitsFileTelescop.lower()
         return False

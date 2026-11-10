@@ -257,6 +257,17 @@ def _about(painter, r):
     painter.drawEllipse(QPointF(c.x(), c.y() - r.height() * 0.24), r.width() * 0.045, r.width() * 0.045)
 
 
+def _log(painter, r):
+    from PySide6.QtCore import QLineF
+    # A page of text lines with a short last line, for View Log.
+    w, h = r.width(), r.height()
+    painter.drawRoundedRect(r.adjusted(w * 0.12, h * 0.04, -w * 0.12, -h * 0.04), 2, 2)
+    for i in range(4):
+        y = r.top() + h * 0.24 + i * h * 0.17
+        x2 = r.right() - w * (0.32 if i == 3 else 0.24)
+        painter.drawLine(QLineF(r.left() + w * 0.26, y, x2, y))
+
+
 def _community(painter, r):
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QPolygonF
@@ -551,6 +562,7 @@ ICONS: dict[str, DrawFn] = {
     "theme": _theme,
     "manual": _manual,
     "about": _about,
+    "log": _log,
     "help": _help,
     "community": _community,
     "camera": _camera,

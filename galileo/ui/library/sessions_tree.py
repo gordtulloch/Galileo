@@ -116,13 +116,10 @@ def _calibration_session_status(session, masters_for, matched_masters) -> dict:
 
 
 def _precalibrated_status(session) -> dict | None:
-    """Resources cell for iTelescope / Seestar sessions (delivered already calibrated), else None."""
+    """Resources cell for iTelescope sessions (delivered already calibrated), else None."""
     telescope = session.fitsSessionTelescope or ""
-    instrument = session.fitsSessionImager or ""
     if 'itelescope' in telescope.lower():
         source_name = session.fitsSessionTelescope
-    elif 'seestar' in instrument.lower():
-        source_name = session.fitsSessionImager
     else:
         return None
     return {

@@ -20,9 +20,13 @@ DEFAULTS: dict[str, Any] = {
     # How much neighbouring mosaic panes overlap, as a percentage of a pane (FRAME-040). Shared by
     # both Framing Assistant entry points (the Imaging tab and the Session Image block).
     "mosaic_overlap_pct": 10.0,
+    # Seconds to wait after the mount reports a mosaic re-slew finished, before exposing: a mount
+    # stops reporting "slewing" while it is still ringing, and the first frame there is smeared.
+    "mosaic_settle_s": 5.0,
 }
 
 MOSAIC_OVERLAP_RANGE = (0.0, 50.0)
+MOSAIC_SETTLE_RANGE = (0.0, 120.0)
 
 
 NAMESPACE = "imaging"
@@ -39,6 +43,10 @@ def load_imaging_settings() -> dict[str, Any]:
     overlap = raw.get("mosaic_overlap_pct")
     if isinstance(overlap, (int, float)) and not isinstance(overlap, bool)             and MOSAIC_OVERLAP_RANGE[0] <= overlap <= MOSAIC_OVERLAP_RANGE[1]:
         settings["mosaic_overlap_pct"] = float(overlap)
+    settle = raw.get("mosaic_settle_s")
+    if (isinstance(settle, (int, float)) and not isinstance(settle, bool)
+            and MOSAIC_SETTLE_RANGE[0] <= settle <= MOSAIC_SETTLE_RANGE[1]):
+        settings["mosaic_settle_s"] = float(settle)
     return settings
 
 
@@ -47,7 +55,10 @@ def save_imaging_settings(settings: dict[str, Any]) -> None:
     bitpix = settings.get("bitpix", BITPIX_AUTO)
     overlap = settings.get("mosaic_overlap_pct", DEFAULTS["mosaic_overlap_pct"])
     low, high = MOSAIC_OVERLAP_RANGE
+    settle = settings.get("mosaic_settle_s", DEFAULTS["mosaic_settle_s"])
+    settle_low, settle_high = MOSAIC_SETTLE_RANGE
     set_namespace(NAMESPACE, {
         "bitpix": bitpix if bitpix in BITPIX_CHOICES else BITPIX_AUTO,
         "mosaic_overlap_pct": float(min(max(overlap, low), high)),
+        "mosaic_settle_s": float(min(max(settle, settle_low), settle_high)),
     })

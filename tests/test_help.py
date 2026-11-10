@@ -150,6 +150,15 @@ def test_tc_help_060_every_screen_and_control_is_documented(window):
 
     problems, screens = audit_window(window)
     assert screens > 30
+    # Third-party plugin screens ship their own help (PLUG-170); which plugins are installed depends on the
+    # machine, so this gate covers core screens only.
+    pm = getattr(window, "_plugin_manager", None)
+    plugin_ids = set()
+    if pm is not None:
+        reg = pm.get_ui_registry()
+        panels = [*reg.get_science_panels(), *reg.get_top_level_panels()]
+        plugin_ids = {type(p.plugin).__name__ for p in panels}
+    problems = [line for line in problems if line.split(":", 1)[0].rsplit(".", 1)[-1] not in plugin_ids]
     assert problems == [], "Undocumented controls (add a heading to the screen's file in galileo/help/content/):\n" + "\n".join(problems)
 
 

@@ -39,7 +39,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 def _is_precalibrated_session(telescope: str | None, instrument: str | None) -> bool:
     telescope = telescope or ""
     instrument = instrument or ""
-    return ("itelescope" in telescope.lower()) or ("seestar" in instrument.lower())
+    return "itelescope" in telescope.lower()
 
 
 def _default_outputs(stacked_fits_path: str) -> tuple[str, str]:

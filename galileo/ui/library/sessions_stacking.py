@@ -438,13 +438,9 @@ class SessionsStackingMixin(_MixinBase):
                 QMessageBox.information(self, "Not Applicable", "Stack is only available for light sessions.")
                 return
 
-            # Check if this is a precalibrated telescope/instrument (iTelescope or SeeStar)
+            # Check if this is a precalibrated telescope (iTelescope)
             telescope = session.fitsSessionTelescope or ""
-            instrument = session.fitsSessionImager or ""
-            is_precalibrated_session = (
-                ('itelescope' in telescope.lower()) or
-                ('seestar' in instrument.lower())
-            )
+            is_precalibrated_session = 'itelescope' in telescope.lower()
 
             if is_precalibrated_session:
                 # Precalibrated sessions should skip calibration entirely and stack the light frames as-is.
@@ -614,8 +610,7 @@ class SessionsStackingMixin(_MixinBase):
         Returns None when that calibration was cancelled or failed.
         """
         telescope = session.fitsSessionTelescope or ""
-        instrument = session.fitsSessionImager or ""
-        precalibrated = 'itelescope' in telescope.lower() or 'seestar' in instrument.lower()
+        precalibrated = 'itelescope' in telescope.lower()
 
         candidates = session_light_frames(session, calibrated_only=not precalibrated)
         if candidates or precalibrated:
