@@ -101,7 +101,7 @@ async def test_tc_lease_060_lease_operations_are_refused_to_non_holders_naming_t
     gw, registry, leases, _, calls = rig
     register_emergency(registry, stop_everything=lambda p: "stopped", park=lambda p: "p", close_dome=lambda p: "d")
     out = await gw.handle(req("camera.expose", args={"seconds": 1}))
-    assert out.status == "refused" and "lease" in out.reason
+    assert out.status == "refused" and "control of this Pier" in out.reason
     leases.acquire("p1", DESKTOP)
     out = await gw.handle(req("camera.expose", args={"seconds": 1}))
     assert out.status == "refused" and DESKTOP in out.reason and calls == []

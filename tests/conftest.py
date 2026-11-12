@@ -381,6 +381,34 @@ def event_bus():
     return bus
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _astropy_iers_offline():
+    """Never let astropy refuse (or try to download) Earth-orientation data in tests.
+
+    With the bundled IERS table older than 30 days astropy raises on any coordinate transform, which made the
+    sky/visibility tests depend on today's date and network access."""
+    try:
+        from astropy.utils.iers import conf as iers_conf
+    except ImportError:
+        yield
+        return
+    old = (iers_conf.auto_max_age, iers_conf.auto_download)
+    iers_conf.auto_max_age = None
+    iers_conf.auto_download = False
+    try:
+        yield
+    finally:
+        iers_conf.auto_max_age, iers_conf.auto_download = old
+
+
+@pytest.fixture(autouse=True)
+def _no_modal_quit_dialog(monkeypatch):
+    """Closing a test's main window must not open the modal Support Us dialog (it would block the run)."""
+    from galileo.ui.app_window._core import AppWindowCoreMixin
+
+    monkeypatch.setattr(AppWindowCoreMixin, "_exec_about_box", lambda self, title, *, farewell: None)
+
+
 @pytest.fixture(autouse=True)
 def _cpu_work_in_threads(monkeypatch):
     """Run ``galileo.core.compute.run_cpu`` work in a thread, not the worker pool.

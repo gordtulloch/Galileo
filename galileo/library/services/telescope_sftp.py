@@ -6,6 +6,7 @@
 import atexit
 import logging
 import threading
+from typing import ClassVar
 from galileo.library.config import get_sftp_settings
 
 logger = logging.getLogger(__name__)
@@ -17,8 +18,8 @@ class SftpMixin:
     # One open connection per host, shared by every download/delete of a batch. Opening an SSH
     # connection (key exchange + login) costs far more than it should on a Raspberry Pi, and used to be
     # paid once per file. Callers end a batch with close_sftp_sessions(); atexit is the safety net.
-    _sftp_sessions: dict = {}
-    _sftp_lock = threading.Lock()
+    _sftp_sessions: ClassVar[dict] = {}
+    _sftp_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @staticmethod
     def _open_sftp(host):

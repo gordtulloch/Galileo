@@ -791,7 +791,7 @@ def test_tc_head_080_engine_channel(tmp_path):
             await client.attach()
             assert (await client.invoke("test.look", "1"))["status"] == "ok"
             refused = await client.invoke("test.move", "1")
-            assert refused["status"] == "refused" and "lease" in refused["reason"]     # the Gateway's own rule
+            assert refused["status"] == "refused" and "control of this Pier" in refused["reason"]     # the Gateway's own rule
             assert (await client.acquire_lease("1"))["granted"]
             assert (await client.invoke("test.move", "1"))["status"] == "ok" and calls == ["1"]
             assert ("desktop", "op test.move", "ok") in audit.rows                       # audited as desktop

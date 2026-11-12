@@ -78,7 +78,7 @@ def main() -> None:
 
     if args.json:
         json.dump({"repo": args.repo, "total": total, "by_platform": by_platform,
-                   "assets": [dict(zip(("tag", "published", "file", "platform", "downloads"), r)) for r in rows]},
+                   "assets": [dict(zip(("tag", "published", "file", "platform", "downloads"), r, strict=True)) for r in rows]},
                   sys.stdout, indent=2)
         print()
         return

@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Test suite and lint pass again on CI.** Closing a test's main window opened the modal "Support Us" quit dialog and hung the run until the timeout (tests now stub it); two ruff findings (`RUF012` mutable class attributes in `telescope_sftp.py`, `B905` in `scripts/download_stats.py`) are fixed; `test_head`/`test_link_gateway` now match the Gateway's reworded "take control of this Pier" refusal; and the sky/visibility tests no longer fail when astropy's bundled Earth-orientation (IERS) data is older than 30 days. No user-visible change, so no help, wiki or design-doc update.
+
+
 ## Releases
 
 | Version | Date | Notes |
