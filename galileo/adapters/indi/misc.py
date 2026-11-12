@@ -173,38 +173,81 @@ class IndiAuxAdapter(IndiAdapter):
         return await asyncio.to_thread(self._get_property_groups_sync)
 
     def _get_property_groups_sync(self) -> list[AuxPropertyGroup]:
-        client = self._c()
-        groups: dict[str, AuxPropertyGroup] = {}
-        for prop in client.device_properties(self.device_name):
-            if prop.kind == "blob":
-                continue  # image/data payloads aren't a control-panel field
-            group_name = prop.group or "Main Control"
-            group = groups.setdefault(group_name, AuxPropertyGroup(name=group_name))
-            group.properties.append(AuxProperty(
-                name=prop.name, label=prop.label or prop.name, kind=prop.kind,
-                group=group_name, perm=prop.perm, rule=prop.rule, state=prop.state,
-                elements=[
-                    AuxElement(name=el.name, label=el.label or el.name, value=el.value,
-                               min=el.min, max=el.max, step=el.step)
-                    for el in prop.elements.values()
-                ],
-            ))
-        return list(groups.values())
+        return _device_groups(self._c(), self.device_name)
 
     async def write_property(self, name: str, values: dict[str, Any]) -> None:
         self._log_interaction("write_property", name=name, values=values)
         await asyncio.to_thread(self._write_property_sync, name, values)
 
     def _write_property_sync(self, name: str, values: dict[str, Any]) -> None:
+        _write_device_property(self._c(), self.device_name, name, values)
+
+
+def _device_groups(client: ic.IndiClient, device: str) -> list[AuxPropertyGroup]:
+    """One INDI device's properties as the groups (its own INDI tabs) the Aux panel renders."""
+    groups: dict[str, AuxPropertyGroup] = {}
+    for prop in client.device_properties(device):
+        if prop.kind == "blob":
+            continue  # image/data payloads aren't a control-panel field
+        group_name = prop.group or "Main Control"
+        group = groups.setdefault(group_name, AuxPropertyGroup(name=group_name))
+        group.properties.append(AuxProperty(
+            name=prop.name, label=prop.label or prop.name, kind=prop.kind,
+            group=group_name, perm=prop.perm, rule=prop.rule, state=prop.state,
+            elements=[
+                AuxElement(name=el.name, label=el.label or el.name, value=el.value,
+                           min=el.min, max=el.max, step=el.step)
+                for el in prop.elements.values()
+            ],
+        ))
+    return list(groups.values())
+
+
+def _write_device_property(client: ic.IndiClient, device: str, name: str, values: dict[str, Any]) -> None:
+    prop = client.get_property(device, name)
+    if prop is None:
+        raise DevicePropertyError(f"INDI property {name!r} is not defined on {device!r}.")
+    if prop.kind == "number":
+        client.send_number(device, name, {k: float(v) for k, v in values.items()})
+    elif prop.kind == "switch":
+        client.send_switch(device, name, {k: bool(v) for k, v in values.items()})
+    elif prop.kind == "text":
+        client.send_text(device, name, {k: str(v) for k, v in values.items()})
+    else:
+        raise DevicePropertyError(f"INDI property {name!r} ({prop.kind}) is not writable from the Aux panel.")
+
+
+class IndiServerPanel:
+    """Holds one connection to an INDI server and exposes every device it reports (EQP-AUX-020).
+
+    Unlike :class:`IndiAuxAdapter` it never sends ``CONNECTION`` to a device: the user does that
+    from each device's own Main Control tab, exactly as in the EKOS INDI Control Panel."""
+
+    def __init__(self, host: str = "localhost", port: int = ic.DEFAULT_PORT) -> None:
+        self.host = host
+        self.port = port
+        self._client: ic.IndiClient | None = None
+
+    async def connect(self) -> None:
+        self._client = await asyncio.to_thread(ic.acquire_client, self.host, self.port)
+
+    def _c(self) -> ic.IndiClient:
+        if self._client is None or not self._client.alive:
+            from galileo.exceptions import DeviceConnectionError
+            raise DeviceConnectionError(f"INDI server {self.host}:{self.port} is not connected.")
+        return self._client
+
+    async def list_devices(self) -> list[str]:
+        return self._c().device_names()
+
+    async def get_all_property_groups(self) -> dict[str, list[AuxPropertyGroup]]:
         client = self._c()
-        prop = client.get_property(self.device_name, name)
-        if prop is None:
-            raise DevicePropertyError(f"INDI property {name!r} is not defined on {self.device_name!r}.")
-        if prop.kind == "number":
-            client.send_number(self.device_name, name, {k: float(v) for k, v in values.items()})
-        elif prop.kind == "switch":
-            client.send_switch(self.device_name, name, {k: bool(v) for k, v in values.items()})
-        elif prop.kind == "text":
-            client.send_text(self.device_name, name, {k: str(v) for k, v in values.items()})
-        else:
-            raise DevicePropertyError(f"INDI property {name!r} ({prop.kind}) is not writable from the Aux panel.")
+        return {device: _device_groups(client, device) for device in client.device_names()}
+
+    async def write_property(self, device: str, name: str, values: dict[str, Any]) -> None:
+        await asyncio.to_thread(_write_device_property, self._c(), device, name, values)
+
+    async def disconnect(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            ic.release_client(client)

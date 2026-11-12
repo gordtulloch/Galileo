@@ -17,6 +17,9 @@ from galileo.ui.help import SCREEN_PROPERTY, HelpController, tag_help_screen
 
 logger = logging.getLogger(__name__)
 
+_PAYPAL_URL = ("https://www.paypal.com/donate/?business=gord.tulloch%40gmail.com"
+               "&amp;no_recurring=0&amp;item_name=Support+Starseekers.ca&amp;currency_code=USD")
+
 if TYPE_CHECKING:
     # See _state.py: every method below takes an explicit `self:
     # AppWindowState` type so mypy can resolve calls into every
@@ -92,6 +95,7 @@ class AppWindowCoreMixin:
         self._window = QMainWindow()
         self._window.setWindowTitle(f"Galileo {__version__}")
         self._window.resize(1400, 900)
+        cast("AppWindowState", self)._install_quit_dialog_hook()
         self._help = HelpController(self._window, _MANUAL_URL)
 
         # Set up before the Equipment page is built below, since building it
@@ -690,7 +694,30 @@ class AppWindowCoreMixin:
 
     def _request_quit(self: AppWindowState) -> None:
         from PySide6.QtWidgets import QApplication
+        self._show_quit_dialog_once()
         need(QApplication.instance()).quit()
+
+    def _show_quit_dialog_once(self: AppWindowState) -> None:
+        """Farewell dialog, shown at most once per run however the app is quit."""
+        if getattr(self, "_quit_dialog_shown", False):
+            return
+        self._quit_dialog_shown = True
+        self._confirm_quit_dialog()
+
+    def _install_quit_dialog_hook(self: AppWindowState) -> None:
+        """Show the farewell dialog when the window's close button is used too."""
+        from PySide6.QtCore import QEvent, QObject
+
+        owner = self
+
+        class _CloseWatcher(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.Close:
+                    owner._show_quit_dialog_once()
+                return False
+
+        self._close_watcher = _CloseWatcher(self._window)
+        self._window.installEventFilter(self._close_watcher)
 
     def _toggle_theme(self: AppWindowState) -> None:
         from galileo.ui.theme import Theme
@@ -736,12 +763,22 @@ class AppWindowCoreMixin:
         dialog.reload()
 
     def _show_about(self: AppWindowState) -> None:
-        from pathlib import Path
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QColor, QPalette, QPixmap
-        from PySide6.QtWidgets import QMessageBox
+        self._exec_about_box("About Galileo", farewell=False)
+
+    def _confirm_quit_dialog(self: AppWindowState) -> None:
+        """Show the farewell dialog (same layout as About, plus a "Do not show
+        this again" checkbox) unless the user has switched it off."""
         from galileo import __version__
-        from galileo.copyright import COPYRIGHT_NOTICE, LICENSE_NOTICE
+        from galileo.settings_store import get_setting
+        # The choice is remembered per version: a new release shows the dialog again.
+        if get_setting("ui", "hide_quit_dialog_version", "") == __version__:
+            return
+        self._exec_about_box("Support Us", farewell=True)
+
+    def _exec_about_box(self: AppWindowState, title: str, *, farewell: bool) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor, QPalette
+        from PySide6.QtWidgets import QMessageBox
         accent = self._theme.accent_color
         box = QMessageBox(self._window)
         # Qt's default link colour is dark purple once visited, unreadable on dark themes.
@@ -749,11 +786,41 @@ class AppWindowCoreMixin:
         pal.setColor(QPalette.ColorRole.Link, QColor(accent))
         pal.setColor(QPalette.ColorRole.LinkVisited, QColor(accent))
         box.setPalette(pal)
-        box.setWindowTitle("About Galileo")
+        box.setWindowTitle(title)
         box.setTextFormat(Qt.TextFormat.RichText)
+        patreon = (f"<a href='https://www.patreon.com/starseekersca' style='color:{accent}'>"
+                   f"https://www.patreon.com/starseekersca</a>")
+        if farewell:
+            # Inline size: the theme stylesheet overrides box.setFont(), so set it in the HTML.
+            base = box.font().pointSizeF()
+            if base <= 0:
+                base = 10.0
+            size = base + 4
+            box.setText(
+                f"<div style='font-size:{size:g}pt'>"
+                f"<p>This is a "
+                f"<a href='https://starseekers.ca' style='color:{accent}'>Starseekers.ca</a> project, "
+                f"providing free open-source software to the amateur astronomer.</p>"
+                f"<p>We hope you have enjoyed using this software. If you have found it useful, "
+                f"please consider supporting us through our Patreon page at {patreon}.</p>"
+                f"<p>One-time contributions can also be made via "
+                f"<a href='{_PAYPAL_URL}' style='color:{accent}'>Paypal</a>.</p>"
+                f"<p>This application is a labour of love but it costs real money to maintain the "
+                f"website, developer licenses, and test equipment. Please support us so we can "
+                f"continue developing new software!</p>"
+                f"</div>"
+            )
+        else:
+            self._set_about_text(box, accent)
+        self._finish_about_box(box, farewell)
+
+    def _set_about_text(self: AppWindowState, box, accent: str) -> None:
+        from galileo import __version__
+        from galileo.copyright import COPYRIGHT_NOTICE, LICENSE_NOTICE
+        intro = "<p>Cross-platform astrophotography imaging suite, built on INDI and ASCOM Alpaca.</p>"
         box.setText(
             f"<h3>Galileo {__version__}</h3>"
-            f"<p>Cross-platform astrophotography imaging suite, built on INDI and ASCOM Alpaca.</p>"
+            f"{intro}"
             f"<p style='font-size:large'>A <a href='https://starseekers.ca' style='color:{accent}'>Starseekers.ca</a> "
             f"project &mdash; software for the amateur astronomer.</p>"
             f"<p>This application is a labour of love but it costs real money to maintain the "
@@ -762,12 +829,42 @@ class AppWindowCoreMixin:
             f"https://www.patreon.com/starseekersca</a></p>"
             f"<p>{COPYRIGHT_NOTICE}<br>{LICENSE_NOTICE}</p>"
         )
+
+    def _finish_about_box(self: AppWindowState, box, farewell: bool) -> None:
+        """Add the logo (and, for Support Us, the checkbox beneath it), then run the box."""
+        from pathlib import Path
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
+        from PySide6.QtWidgets import QCheckBox, QGridLayout, QLabel, QSpacerItem
         logo = Path(__file__).resolve().parents[3] / "assets" / "images" / "starseekers.png"
         pixmap = QPixmap(str(logo))
         if not pixmap.isNull():
             box.setIconPixmap(pixmap.scaledToWidth(
-                256, Qt.TransformationMode.SmoothTransformation))
+                320, Qt.TransformationMode.SmoothTransformation))
+        dont_show = None
+        if farewell:
+            dont_show = QCheckBox("Do not show this again")
+            box.setCheckBox(dont_show)
+            grid = box.layout()
+            if isinstance(grid, QGridLayout):
+                # QMessageBox puts the checkbox under the text; move it under the logo.
+                grid.removeWidget(dont_show)
+                grid.addWidget(dont_show, 2, 0, Qt.AlignmentFlag.AlignHCenter)
+                grid.setHorizontalSpacing(60)     # wide gutter between logo and text
+                # Centre the text vertically against the logo (which spans rows 0-1).
+                text = box.findChild(QLabel, "qt_msgbox_label")
+                if text is not None:
+                    grid.removeWidget(text)
+                    grid.addWidget(text, 0, 1, 2, 1,
+                                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                # Slightly wider than natural so the text isn't squeezed into a narrow column.
+                width = int(box.sizeHint().width() * 0.9375)
+                grid.addItem(QSpacerItem(width, 0), grid.rowCount(), 0, 1, grid.columnCount())
         box.exec()
+        if dont_show is not None and dont_show.isChecked():
+            from galileo import __version__
+            from galileo.settings_store import set_setting
+            set_setting("ui", "hide_quit_dialog_version", __version__)
 
     def _build_submenu_page(
         self: AppWindowState, items: list, builders: dict, help_prefix: str = "",

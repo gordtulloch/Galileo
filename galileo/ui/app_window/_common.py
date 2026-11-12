@@ -145,7 +145,7 @@ EQUIPMENT_CATEGORIES = [
     ("flat_panel", "Flat Panel", "flat_panel"),
     ("weather", "Safety", "safety"),
     ("dome", "Dome", "dome"),
-    ("aux", "Aux", "aux"),
+    ("aux", "Control Panel", "aux"),
 ]
 
 

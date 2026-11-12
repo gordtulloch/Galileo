@@ -267,6 +267,17 @@ class _AuxBackend(Protocol):
     async def write_property(self, name: str, values: dict[str, Any]) -> None: ...
 
 
+class AuxServerPanel(Protocol):
+    """Server-level counterpart of the Aux backend (EQP-AUX-020): one connection to an INDI server
+    that exposes *every* device it reports, each as property groups, without connecting any device's
+    hardware. The Aux page renders one tab per device from it, like the EKOS INDI Control Panel."""
+
+    async def list_devices(self) -> list[str]: ...
+    async def get_all_property_groups(self) -> dict[str, list[AuxPropertyGroup]]: ...
+    async def write_property(self, device: str, name: str, values: dict[str, Any]) -> None: ...
+    async def disconnect(self) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # Device pool
 # ---------------------------------------------------------------------------

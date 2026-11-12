@@ -218,6 +218,25 @@ def test_tc_arch_090_settings_store_round_trips_namespaces_and_scopes(settings_d
 
 @pytest.mark.requirement("TC-ARCH-090")
 @pytest.mark.priority("MVP")
+def test_tc_arch_090_quit_dialog_do_not_show_again_is_stored_and_honoured(settings_db):
+    """ARCH-090: the Support Us quit dialog's "Do not show this again" choice lives in the settings database and is honoured."""
+    from types import SimpleNamespace
+    from galileo import __version__, settings_store as store
+    from galileo.ui.app_window._core import AppWindowCoreMixin
+    shown: list[str] = []
+    fake = SimpleNamespace(_exec_about_box=lambda title, farewell: shown.append(title))
+    AppWindowCoreMixin._confirm_quit_dialog(fake)
+    assert shown == ["Support Us"]                       # default: shown
+    store.set_setting("ui", "hide_quit_dialog_version", __version__)    # what the checkbox saves
+    AppWindowCoreMixin._confirm_quit_dialog(fake)
+    assert shown == ["Support Us"]                       # now suppressed
+    store.set_setting("ui", "hide_quit_dialog_version", "0.0.0-older")  # dismissed in an earlier release
+    AppWindowCoreMixin._confirm_quit_dialog(fake)
+    assert shown == ["Support Us", "Support Us"]         # a new version turns it back on
+
+
+@pytest.mark.requirement("TC-ARCH-090")
+@pytest.mark.priority("MVP")
 def test_tc_arch_090_settings_fall_back_to_defaults_without_a_database():
     """ARCH-090: with no database available, reads return defaults and writes are dropped instead of raising (early start-up, the watchdog)."""
     from galileo import settings_store as store

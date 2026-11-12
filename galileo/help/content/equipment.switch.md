@@ -5,7 +5,7 @@ The Switches page controls a power box or relay board: switch its USB and DC por
 
 Set-up: choose the **Driver**, **Server** and **Port**, press **Scan**, pick the **Device**, press **Connect**, then **Save** to remember it for this Pier. Panels contributed by plugins (for example a Kasa smart plug) sit above this section.
 
-INDI power boxes that follow INDI's standard power interface (Pegasus Pocket Powerbox Micro and Advanced, Ultimate Powerbox V3, Terrans PowerBoxGo V2 and PowerBoxPro V2, and others) need nothing extra. A box whose driver does not follow the standard, such as the Wanderer Astro boxes, needs its plugin installed; without it the device is listed under **Other** exactly as its driver defines it, and is also available on the Aux page.
+INDI power boxes that follow INDI's standard power interface (Pegasus Pocket Powerbox Micro and Advanced, Ultimate Powerbox V3, Terrans PowerBoxGo V2 and PowerBoxPro V2, and others) need nothing extra. A box whose driver does not follow the standard, such as the Wanderer Astro boxes, needs its plugin installed; without it the device is listed under **Other** exactly as its driver defines it, and is also available on the Control Panel page (INDI).
 
 ## Scan
 

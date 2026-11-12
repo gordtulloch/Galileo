@@ -110,6 +110,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-SAFE-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SAFE-010` |
 | `EQP-SAFE-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-SAFE-020` |
 | `EQP-AUX-010` | P2 | SDD 4.1 `galileo.core.devices`; SDD 4.2 `galileo.adapters.indi`; SDD 4.3 `galileo.adapters.alpaca`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-AUX-010` |
+| `EQP-AUX-020` | P2 | SDD 4.1 `galileo.core.devices` (`AuxServerPanel`); SDD 4.2 `galileo.adapters.indi` (`IndiServerPanel`); SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-AUX-020` |
 | `EQP-SW-020` | P2 | SDD 4.2 `galileo.adapters.indi` (`IndiSwitchAdapter` discovery) | Test | `TC-EQP-SW-020` |
 | `EQP-SW-030` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` (standard mapper) | Test | `TC-EQP-SW-030` |
 | `EQP-SW-040` | P2 | SDD 4.2a `galileo.adapters.indi.switch_map` (readings and global controls) | Test | `TC-EQP-SW-040` |

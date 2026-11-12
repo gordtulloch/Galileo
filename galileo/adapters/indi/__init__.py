@@ -22,7 +22,13 @@ from galileo.adapters.indi.dome import IndiDomeAdapter
 from galileo.adapters.indi.filter_wheel import IndiFWAdapter
 from galileo.adapters.indi.flat_panel import IndiFlatPanelAdapter
 from galileo.adapters.indi.focuser import IndiFocuserAdapter
-from galileo.adapters.indi.misc import IndiAuxAdapter, IndiGuiderAdapter, IndiSafetyMonitorAdapter, IndiSwitchAdapter
+from galileo.adapters.indi.misc import (
+    IndiAuxAdapter,
+    IndiGuiderAdapter,
+    IndiSafetyMonitorAdapter,
+    IndiServerPanel,
+    IndiSwitchAdapter,
+)
 from galileo.adapters.indi.mount import IndiMountAdapter
 from galileo.adapters.indi.rotator import IndiRotatorAdapter
 from galileo.adapters.indi.weather import IndiWeatherAdapter
@@ -42,6 +48,7 @@ __all__ = [
     "IndiMountAdapter",
     "IndiRotatorAdapter",
     "IndiSafetyMonitorAdapter",
+    "IndiServerPanel",
     "IndiSwitchAdapter",
     "IndiWeatherAdapter",
     "get_adapter_class",

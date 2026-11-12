@@ -238,6 +238,12 @@ class AppWindowImagingSupportMixin:
             kwargs["device_number"] = device_number
         return get_adapter_class(category)(host=server, port=port, **kwargs)
 
+    @staticmethod
+    def _make_aux_server_panel(server: str, port: int):
+        """A not-yet-connected server-level INDI browser for the Aux page (EQP-AUX-020)."""
+        from galileo.adapters.indi import IndiServerPanel
+        return IndiServerPanel(host=server, port=port)
+
     def _lookup_driver_info(self: AppWindowState, category, driver: str, server: str, port: int, device_name: str) -> dict:
         """Read one device's driver name/version *without connecting it* (see
         ``DeviceBackend.get_driver_info``), for the Equipment pages' "Driver

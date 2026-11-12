@@ -102,10 +102,37 @@ class AuxOps(DeviceOps):
             return None
 
 
+class AuxServerOps(DeviceOps):
+    """Commands against a server-level INDI panel (:class:`galileo.core.devices.AuxServerPanel`, EQP-AUX-020)."""
+
+    def write_property(self, device: str, name: str, values: dict) -> Outcome:
+        panel = self._get()
+        if panel is None:
+            return Outcome(False, NOT_CONNECTED)
+        try:
+            asyncio.run(panel.write_property(device, name, values))
+        except Exception:
+            logger.exception("Aux: writing %s.%s failed", device, name)
+            return Outcome(False, FAILED, f"Could not set {device} {name} — see log.")
+        logger.info("Aux: set %s.%s = %s", device, name, values)
+        return OK
+
+    def read_devices(self) -> dict[str, list] | None:
+        """Every device's property groups, or ``None`` when not connected or unreadable."""
+        panel = self._get()
+        if panel is None:
+            return None
+        try:
+            return asyncio.run(panel.get_all_property_groups())
+        except Exception:
+            logger.exception("Aux: could not refresh the INDI server panel")
+            return None
+
+
 def aux_needs_rebuild(shown_names: set[str], groups: list, have_tabs: bool) -> bool:
     """Whether the property tabs must be rebuilt (the device's set of properties changed) rather than refreshed."""
     return not have_tabs or shown_names != {p.name for g in groups for p in g.properties}
 
 
-__all__ = ["AuxOps", "FilterWheelOps", "FilterWheelView", "FlatPanelOps", "FlatPanelView", "aux_needs_rebuild",
+__all__ = ["AuxOps", "AuxServerOps", "FilterWheelOps", "FilterWheelView", "FlatPanelOps", "FlatPanelView", "aux_needs_rebuild",
            "describe_filter_wheel", "describe_flat_panel"]
