@@ -578,6 +578,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.load_btn.setEnabled(not running)
         self.polar_start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
+        self.polar_end_btn.setEnabled(running)
         self.busy.setVisible(running)
         if not running:
             self._exposures.pop(key, None)
@@ -610,12 +611,25 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._set_running(True, key)
 
         def work() -> None:
+            # Not asyncio.run(): on exit that waits for every worker thread the run started (a solver
+            # or camera call that cannot be interrupted), so after Stop the screen stayed "running" and
+            # Start did nothing until they finished. The screen is released as soon as the run ends.
+            loop = asyncio.new_event_loop()
             try:
-                asyncio.run(run(workflow))
+                loop.run_until_complete(run(workflow))
             except Exception:
                 logger.exception("Plate-solve run failed")
             finally:
                 self._emit("run_finished", key)
+                try:
+                    pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    logger.debug("Could not clean up the solve run's loop", exc_info=True)
+                loop.close()          # does not wait for abandoned worker threads
         threading.Thread(target=work, name="solve-run", daemon=True).start()
 
     def capture_and_solve(self) -> None:
@@ -799,6 +813,11 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         workflow = self._workflows.get(self._pier_key())
         if workflow is not None:
             workflow.stop()
+
+    def end_polar_alignment(self) -> None:
+        """The Polar Alignment tab's End Alignment button: aborts the run, same as Stop."""
+        self.polar_status.setText("Ending alignment…")
+        self.stop()
 
     # --- Results ----------------------------------------------------------
 

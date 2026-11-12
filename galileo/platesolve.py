@@ -240,7 +240,7 @@ class SolveWorkflow:
             if device is None:
                 continue
             try:
-                await getattr(device, method)()
+                await asyncio.wait_for(getattr(device, method)(), timeout=15.0)   # a hung abort must not hold the run open
             except Exception:
                 logger.debug("%s failed while stopping a solve", method, exc_info=True)
 

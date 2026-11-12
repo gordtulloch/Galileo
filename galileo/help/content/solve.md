@@ -193,7 +193,11 @@ Helps you point the mount's polar axis exactly at the celestial pole. The scope 
 
 ## Start Polar Alignment
 
-Begins the procedure (the exposure is the one under Plate Solve Capture Options). It then reads **Stop**; press that to end. It refuses a rotation that would carry the mount across the meridian.
+Begins the procedure (the exposure is the one under Plate Solve Capture Options). Press **End Alignment** (or **Stop**) to abort. It refuses a rotation that would carry the mount across the meridian.
+
+## End Alignment
+
+Aborts the polar alignment run immediately. Enabled only while a run is in progress.
 
 ## Rotate
 
