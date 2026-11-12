@@ -13,7 +13,7 @@
 3. Mark each step `P` (pass), `F` (fail), `B` (blocked by an earlier failure) or `N/A` (not applicable, with the reason).
    - A step that needs a device you marked **No** in A3 is `N/A` automatically. Don't count it as a failure.
    - Steps marked **(opt)** need an optional tool (ASTAP, PHD2, a notification channel); `N/A` if you don't use it.
-4. For every `F`, record the step ID, what you saw, the log file and any crash report in `reports/crash` (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/01.-Getting-Started-Guide#where-galileo-keeps-its-files)).
+4. For every `F`, record the step ID, what you saw, the log file and any crash report in `reports/crash` (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/02.-Getting-Started#where-galileo-keeps-its-files)).
 5. A ⛔ step is a **blocker**: if it fails, later sections depend on it. Raise it and restart from that section.
 6. **Safety first on real hardware.** Before any motion step (Sections 7, 9, 13) check the telescope's path, cables, dome slit and limits, and keep a hand on the power or the **Stop** button. Do not leave real equipment unattended during the first run of Sections 13 and 15.
 
@@ -111,7 +111,7 @@ For each device, say whether you have it, how it connects, and what it is called
 
 | ID | Action | Expected | Result |
 |---|---|---|---|
-| 1.1 ⛔ | Install Galileo using the method in the Getting Started Guide. | Installer completes without error. A shortcut or launcher exists. | |
+| 1.1 ⛔ | Install Galileo using the method in the wiki Installation article. | Installer completes without error. A shortcut or launcher exists. | |
 | 1.2 ⛔ | Start Galileo. | A splash screen shows a progress bar and operations list, then the main window opens. No error dialog. | |
 | 1.3 | Look at the sidebar. | Star Atlas, Planning, Imaging, Guiding, Focus, Solve, Library, Science, then Equipment and Options. Dashboard appears if more than one Pier exists. | |
 | 1.4 | Click the theme button three times. | Cycles light → dark → red night-vision → light. Every theme stays readable; red mode has no white or blue areas. | |

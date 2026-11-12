@@ -10,7 +10,7 @@
 
 1. Work through the sections **in order**. Each section depends on the ones before it (you cannot capture before a camera is saved, or review a session that never ran).
 2. For each step, do the **Action**, compare what happens with **Expected**, and mark the **Result** column `P` (pass), `F` (fail), `B` (blocked by an earlier failure) or `N/A` (not applicable to this rig, with the reason).
-3. For every `F`, record the step ID, what you saw, and attach the log file (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/01.-Getting-Started-Guide#where-galileo-keeps-its-files)) and any crash report from `reports/crash`.
+3. For every `F`, record the step ID, what you saw, and attach the log file (see [Where Galileo keeps its files](https://github.com/gordtulloch/Galileo/wiki/02.-Getting-Started#where-galileo-keeps-its-files)) and any crash report from `reports/crash`.
 4. A **blocker** failure (marked ⛔) stops the run: later sections depend on it. Raise it, fix it, and restart from that section.
 5. Steps marked **(SIM)** need the INDI simulators from the equipment setup below. Steps marked **(opt)** need an optional external tool (ASTAP, PHD2, a notification channel) — mark `N/A` if it is not installed.
 
@@ -46,7 +46,7 @@ Record this before starting.
 
 All devices in this script are the **INDI simulator drivers** served by one `indiserver`, so no real hardware is needed. **(SIM)** in a step means "needs the simulators running".
 
-Start the server on the test machine (or any machine Galileo can reach; see [Installing INDI](https://github.com/gordtulloch/Galileo/wiki/02.-Installing-INDI)):
+Start the server on the test machine (or any machine Galileo can reach; see [Installing INDI](https://github.com/gordtulloch/Galileo/wiki/01.-Installation#installing-indi-and-an-ascom-alpaca-bridge)):
 
 ```bash
 indiserver -v indi_simulator_telescope indi_simulator_ccd indi_simulator_guide \
@@ -72,7 +72,7 @@ The Star Atlas, Planning, Framing, Schedule, History and Library sections work w
 
 | ID | Action | Expected | Result |
 |---|---|---|---|
-| 1.1 ⛔ | Install Galileo using the method in the Getting Started Guide. | Installer completes without error. A shortcut or launcher exists. | |
+| 1.1 ⛔ | Install Galileo using the method in the wiki Installation article. | Installer completes without error. A shortcut or launcher exists. | |
 | 1.2 ⛔ | Start Galileo. | A splash screen shows a progress bar and a list of operations (database, plugins, each screen). The main window opens maximised. No error dialog. | |
 | 1.3 | Look at the sidebar. | Icons for Star Atlas, Planning, Imaging, Guiding, Focus, Solve, Library, Science, then Equipment and Options at the bottom. Dashboard is present if more than one Pier exists. | |
 | 1.4 | Click the theme button at the bottom of the sidebar three times. | Cycles light → dark → red night-vision → light. All text stays readable in each theme; red mode shows no white or blue areas. | |

@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Wiki reorganised for the user manual; links here updated.** The wiki's Getting Started Guide was split into `01.-Installation` (what you need, installing and starting Galileo, plus installing INDI and an ASCOM Alpaca bridge, which were separate articles) and `02.-Getting-Started` (window tour through first exposure). The Options article was removed and each settings page is now described in the article for the feature it configures (horizon in Star Atlas, autofocus defaults in Focus, solver settings in Plate Solving, Library folders and tabs in the Library, Connect Link and notifications in NodeConnect, outreach in WebConnect, plugin management in the new Plugins Documentation appendix). Equipment became `03.-Setting-up-Equipment`, the screen articles gained "Using ..." titles, the plugin articles became appendices (`A.-Plugin-Developers-Guide`, `B.-Plugins-Documentation` with `B1`/`B2`), and new articles cover WebConnect and MobileConnect. `README.md`, `docs/UAT.md` and `docs/UAT-generic.md` linked to the old page names and now point at the new ones. Documentation only, no code change.
+
 ### Fixed
 
 - **Test suite and lint pass again on CI.** Closing a test's main window opened the modal "Support Us" quit dialog and hung the run until the timeout (tests now stub it); two ruff findings (`RUF012` mutable class attributes in `telescope_sftp.py`, `B905` in `scripts/download_stats.py`) are fixed; `test_head`/`test_link_gateway` now match the Gateway's reworded "take control of this Pier" refusal; and the sky/visibility tests no longer fail when astropy's bundled Earth-orientation (IERS) data is older than 30 days. No user-visible change, so no help, wiki or design-doc update.
