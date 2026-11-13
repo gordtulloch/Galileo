@@ -149,7 +149,7 @@ How fast the N/S/E/W buttons move the mount, from **1** (slowest) to **9** (fast
 
 ## N S E W
 
-Hold a button to move the mount north, south, east or west (or diagonally with NW, NE, SW and SE, which drive both axes) at the chosen **Rate**; it stops when you release the button (or if the window loses focus). **Stop** also halts it. Directions can be flipped with the *reversed* options below.
+Hold an arrow button to move the mount north (↑), south (↓), east (→) or west (←), or diagonally (↖ ↗ ↙ ↘, which drive both axes) at the chosen **Rate**; it stops when you release the button (or if the window loses focus). **Stop** also halts it. Directions can be flipped with the *reversed* options below.
 
 ## Stop
 

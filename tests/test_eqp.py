@@ -1330,7 +1330,7 @@ def test_tc_eqp_mnt_010_jog_pad_lists_the_drivers_slew_rates_and_mirrors_its_rev
     jog = state["jog_controller"]
     jog.flush()
     mount.set_slew_rate.assert_awaited_with(3)
-    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E")
+    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "→")
     east.pressed.emit()
     jog.flush()
     east.released.emit()
@@ -1356,7 +1356,7 @@ def test_tc_eqp_mnt_010_jog_pad_has_a_rate_selector_at_the_faster_speeds(window)
     mount.move_axis = AsyncMock()
     window._device_pages["mount"]["adapter"] = mount
     rate.setCurrentIndex(rate.findData(10.0))
-    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "E")
+    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "→")
     east.pressed.emit()
     window._device_pages["mount"]["jog_controller"].flush()
     mount.move_axis.assert_awaited_once_with(0, 10.0)   # held: still moving

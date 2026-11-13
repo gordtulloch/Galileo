@@ -208,14 +208,15 @@ class AppWindowImagingPageMixin:
         nudge_group = QGroupBox("Mount Nudge")
         nudge_layout = QVBoxLayout(nudge_group)
         nudge_grid = QGridLayout()
-        nudge_north_btn, nudge_west_btn = QPushButton("N"), QPushButton("W")
+        nudge_north_btn, nudge_west_btn = QPushButton("↑"), QPushButton("←")
         nudge_stop_btn = QPushButton("Stop")
-        nudge_east_btn, nudge_south_btn = QPushButton("E"), QPushButton("S")
+        nudge_east_btn, nudge_south_btn = QPushButton("→"), QPushButton("↓")
         nudge_dir_buttons = {"N": nudge_north_btn, "S": nudge_south_btn, "E": nudge_east_btn, "W": nudge_west_btn,
-                             "NW": QPushButton("NW"), "NE": QPushButton("NE"),
-                             "SW": QPushButton("SW"), "SE": QPushButton("SE")}
+                             "NW": QPushButton("↖"), "NE": QPushButton("↗"),
+                             "SW": QPushButton("↙"), "SE": QPushButton("↘")}
         for _key, btn in nudge_dir_buttons.items():
             btn.setProperty("helpKey", "n s e w")
+            btn.setToolTip({"N": "North", "S": "South", "E": "East", "W": "West"}.get(_key, _key))
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
             btn.setObjectName("AccentButton")
             btn.setFixedSize(44, 44)

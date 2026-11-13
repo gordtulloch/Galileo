@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The mount jog pad and the Imaging nudge pad now use arrows (↑ ↓ ← → and ↖ ↗ ↙ ↘) instead of N/S/E/W letters, and the Mount page's Rate box is wide enough to read.** The Rate drop-down sat beside its label squeezed to about one character; it now sits below the jog pad at a usable width. Hovering a button still names the direction. No change to what the buttons do. The wiki's Imaging table was updated.
+
 - **Test suite and lint pass again on CI.** Closing a test's main window opened the modal "Support Us" quit dialog and hung the run until the timeout (tests now stub it); two ruff findings (`RUF012` mutable class attributes in `telescope_sftp.py`, `B905` in `scripts/download_stats.py`) are fixed; `test_head`/`test_link_gateway` now match the Gateway's reworded "take control of this Pier" refusal; and the sky/visibility tests no longer fail when astropy's bundled Earth-orientation (IERS) data is older than 30 days. No user-visible change, so no help, wiki or design-doc update.
 
 

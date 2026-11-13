@@ -30,6 +30,9 @@ if TYPE_CHECKING:
     from ._state import AppWindowState
 
 
+_DIAGONAL_ARROWS = {"NW": "↖", "NE": "↗", "SW": "↙", "SE": "↘"}
+
+
 class AppWindowMountPageMixin:
     def _build_mount_page(self: AppWindowState) -> QWidget:
         """Mount device-category page: a live ASCOM/INDI status display
@@ -306,30 +309,19 @@ class AppWindowMountPageMixin:
         tracking_onoff_row.addStretch(1)
         controls_col.addLayout(tracking_onoff_row)
 
-        rates_form = QFormLayout()
-        rates_form.setVerticalSpacing(2)
-        from galileo.mount_limits import JOG_RATE_LEVELS
-        jog_rate_combo = QComboBox()
-        for level, rate_value in JOG_RATE_LEVELS.items():
-            jog_rate_combo.addItem(str(level), rate_value)
-        jog_rate_combo.setCurrentIndex(4)
-        jog_rate_combo.setToolTip("How fast the N/S/E/W buttons move the mount. With an INDI mount this lists "
-                                  "the driver's own slew rates; otherwise levels 1 (slowest) to 9 (fastest).")
-        rates_form.addRow("Rate", jog_rate_combo)
-        controls_col.addLayout(rates_form)
-
         pad_row = QHBoxLayout()
         pad_grid = QGridLayout()
-        north_btn = QPushButton("N")
-        west_btn = QPushButton("W")
+        north_btn = QPushButton("↑")
+        west_btn = QPushButton("←")
         stop_btn = QPushButton("Stop")
-        east_btn = QPushButton("E")
-        south_btn = QPushButton("S")
-        for btn in (north_btn, west_btn, stop_btn, east_btn, south_btn):
+        east_btn = QPushButton("→")
+        south_btn = QPushButton("↓")
+        for btn, tip in ((north_btn, "North"), (west_btn, "West"), (stop_btn, ""), (east_btn, "East"), (south_btn, "South")):
             btn.setObjectName("AccentButton")
             btn.setFixedSize(44, 44)
-            if len(btn.text()) == 1:
+            if tip:
                 btn.setProperty("helpKey", "n s e w")
+                btn.setToolTip(tip)
         pad_grid.addWidget(north_btn, 0, 1)
         pad_grid.addWidget(west_btn, 1, 0)
         pad_grid.addWidget(stop_btn, 1, 1)
@@ -337,7 +329,8 @@ class AppWindowMountPageMixin:
         pad_grid.addWidget(south_btn, 2, 1)
         diagonal_btns = {}
         for key, (row, col) in {"NW": (0, 0), "NE": (0, 2), "SW": (2, 0), "SE": (2, 2)}.items():
-            diagonal_btns[key] = btn = QPushButton(key)
+            diagonal_btns[key] = btn = QPushButton(_DIAGONAL_ARROWS[key])
+            btn.setToolTip(key)
             btn.setObjectName("AccentButton")
             btn.setFixedSize(44, 44)
             btn.setProperty("helpKey", "n s e w")
@@ -363,6 +356,19 @@ class AppWindowMountPageMixin:
         home_park_col.addStretch(1)
         pad_row.addLayout(home_park_col)
         controls_col.addLayout(pad_row)
+
+        rates_form = QFormLayout()
+        rates_form.setVerticalSpacing(2)
+        from galileo.mount_limits import JOG_RATE_LEVELS
+        jog_rate_combo = QComboBox()
+        for level, rate_value in JOG_RATE_LEVELS.items():
+            jog_rate_combo.addItem(str(level), rate_value)
+        jog_rate_combo.setCurrentIndex(4)
+        jog_rate_combo.setToolTip("How fast the N/S/E/W buttons move the mount. With an INDI mount this lists "
+                                  "the driver's own slew rates; otherwise levels 1 (slowest) to 9 (fastest).")
+        rates_form.addRow("Rate", jog_rate_combo)
+        jog_rate_combo.setMinimumWidth(180)
+        controls_col.addLayout(rates_form)
 
         reversed_row = QHBoxLayout()
         primary_reversed_check = QCheckBox("Primary reversed")

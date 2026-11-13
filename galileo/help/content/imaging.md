@@ -97,7 +97,7 @@ Nudges the telescope while you are looking at the preview — to centre a star, 
 
 ## N S E W
 
-Hold a button to move the mount north, south, east or west (or diagonally with NW, NE, SW and SE, which drive both axes) at the chosen **Speed**; it stops the moment you release the button (or if the window loses focus).
+Hold an arrow button to move the mount north (↑), south (↓), east (→) or west (←), or diagonally (↖ ↗ ↙ ↘, which drive both axes) at the chosen **Speed**; it stops the moment you release the button (or if the window loses focus).
 
 ## Mount Nudge Stop
 
