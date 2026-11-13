@@ -283,7 +283,7 @@ class TelescopeDownloadWorker(QThread):
         # Modify FITS headers based on folder name
         self._modify_fits_headers(local_path, folder_name, self.telescope_type)
 
-        if self._register_download(local_path, file_name):
+        if self._register_download(local_path, file_name, self.telescope_type == "SeeStar"):
             tally.registered += 1
 
         if self.delete_files:
@@ -307,12 +307,13 @@ class TelescopeDownloadWorker(QThread):
         return local_path
 
     @staticmethod
-    def _register_download(local_path: str, file_name: str) -> bool:
+    def _register_download(local_path: str, file_name: str, precalibrated: bool = False) -> bool:
         """Register the downloaded FITS in the database (moving it into the repository); True if registered."""
         try:
             processor = fitsProcessing()
             registered_id = processor.registerFitsImage(
-                os.path.dirname(local_path), os.path.basename(local_path), moveFiles=True)
+                os.path.dirname(local_path), os.path.basename(local_path), moveFiles=True,
+                precalibrated=precalibrated)
             if registered_id:
                 logger.info(f"Successfully registered {file_name} in database with ID {registered_id}")
                 return True

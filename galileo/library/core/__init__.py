@@ -85,9 +85,10 @@ class fitsProcessing:
         """Calculate hash for file - delegates to FileProcessor."""
         return self.file_processor.calculateFileHash(filePath)
 
-    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
-        """Register FITS image - original signature from astrofiler_file."""
-        return self.file_processor.registerFitsImage(root, file, moveFiles)
+    def registerFitsImage(self, root: str, file: str, moveFiles: bool,
+                          precalibrated: bool = False) -> str | Literal[False]:
+        """Register FITS image - original signature from astrofiler_file (+ *precalibrated*)."""
+        return self.file_processor.registerFitsImage(root, file, moveFiles, precalibrated)
 
     def registerMasters(
         self,

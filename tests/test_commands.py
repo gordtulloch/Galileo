@@ -773,6 +773,8 @@ def test_tc_lib_130_download_files_registers_what_it_fetches(library, monkeypatc
     assert download.download_files("SeeStar", "seestar.local", None, str(dest), delete_files=True) is True
     assert fitsFile.select().count() == 2
     assert fake.deleted == ["a.fits", "b.fits"]
+    # Frames downloaded from a Seestar arrive already calibrated, unlike Seestar frames captured as BLOBs.
+    assert all(f.fitsFileCalibrated == 1 for f in fitsFile.select())
 
 
 @pytest.mark.requirement("TC-LIB-130")

@@ -33,7 +33,11 @@ SURVEY_CREDIT = "Mellinger color optical survey - (c) Axel Mellinger, via CDS"
 MAX_ORDER = 4                         # the survey's finest: about 25 arcsec per pixel, as fine as the mosaic is
 TILE_SIDE = 512
 FETCH_ABOVE_FOV_DEG = 3.0             # a view narrower than this fetches nothing: it draws what is already held
-_MIRRORS = ("https://alasky.cds.unistra.fr/MellingerRGB", "https://alaskybis.cds.unistra.fr/MellingerRGB")
+# Tried in turn; the first that answers is remembered. The first two are CDS's own pair, the third is CDS's older host
+# name (a separate DNS entry), the last is the registry's independent mirror at IAS Orsay (a different institution, so it
+# survives a CDS-wide outage).
+_MIRRORS = ("https://alasky.cds.unistra.fr/MellingerRGB", "https://alaskybis.cds.unistra.fr/MellingerRGB",
+            "https://alasky.u-strasbg.fr/MellingerRGB", "https://healpix.ias.u-psud.fr/CDS_P_Mellinger_color")
 _ORDER0_DEG_PER_PIXEL = 58.63 / TILE_SIDE
 _MEMORY_TILES = 128                   # decoded, at 0.75 MB each
 _MAX_VIEW_TILES = 96                  # never ask for more than memory can hold at once

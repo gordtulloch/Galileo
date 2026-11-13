@@ -450,7 +450,8 @@ class FileProcessor:
 
         return None
 
-    def submitFileToDB(self, fileName: str, hdr: Any, fileHash: str | None = None) -> str | None:
+    def submitFileToDB(self, fileName: str, hdr: Any, fileHash: str | None = None,
+                       precalibrated: bool = False) -> str | None:
         """
         Submit FITS file to database after processing.
 
@@ -524,11 +525,15 @@ class FileProcessor:
             telescope = hdr.get("TELESCOP", "Unknown")
             instrument = hdr.get("INSTRUME", "Unknown")
 
-            # iTelescope delivers calibrated frames; Seestar frames are raw FITS and are not
+            # iTelescope delivers calibrated frames, and so do frames downloaded from a Seestar
+            # (*precalibrated*, set by the download paths). Seestar frames captured as BLOBs are raw.
             is_precalibrated = False
             if telescope and "itelescope" in telescope.lower():
                 is_precalibrated = True
                 logger.debug(f"Marking file as pre-calibrated from iTelescope: {telescope}")
+            elif precalibrated:
+                is_precalibrated = True
+                logger.debug(f"Marking file as pre-calibrated (downloaded from a Seestar): {fileName}")
 
             # Create new file record
             if hdr.get("OBJECT"):
@@ -587,7 +592,8 @@ class FileProcessor:
                 error_code="DB_UNEXPECTED_ERROR"
             ) from e
 
-    def registerFitsImage(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
+    def registerFitsImage(self, root: str, file: str, moveFiles: bool,
+                          precalibrated: bool = False) -> str | Literal[False]:
         """
         Register a FITS image file, process headers, and move to repository structure.
 
@@ -595,6 +601,7 @@ class FileProcessor:
             root: Directory containing the file
             file: Filename
             moveFiles: Whether to move files to repository structure
+            precalibrated: The file arrived already calibrated (downloaded from a Seestar)
 
         Returns:
             File ID if successful, False if failed
@@ -606,7 +613,7 @@ class FileProcessor:
             DatabaseError: If database operations fail
         """
         try:
-            return self._register_fits_image_internal(root, file, moveFiles)
+            return self._register_fits_image_internal(root, file, moveFiles, precalibrated)
         except (FileProcessingError, ValidationError, FitsHeaderError, DatabaseError):
             logger.exception(f"Error processing {os.path.join(root, file)}")
             return False
@@ -618,7 +625,8 @@ class FileProcessor:
                 error_code="UNEXPECTED_REGISTRATION_ERROR"
             ) from e
 
-    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool) -> str | Literal[False]:
+    def _register_fits_image_internal(self, root: str, file: str, moveFiles: bool,
+                                      precalibrated: bool = False) -> str | Literal[False]:
         """Internal implementation of FITS image registration with proper error handling."""
         # Read configuration
         config = load_library_config()
@@ -656,7 +664,7 @@ class FileProcessor:
 
         # Submit file to database (use the potentially compressed file path)
         fileHash = self.calculateFileHash(current_file_path)
-        newFitsFileId = self.submitFileToDB(current_file_path, hdr, fileHash)
+        newFitsFileId = self.submitFileToDB(current_file_path, hdr, fileHash, precalibrated)
 
         # Cleanup source gzip only after successful DB registration
         if newFitsFileId and cleanup_source_path and os.path.exists(cleanup_source_path):

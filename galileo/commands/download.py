@@ -303,7 +303,8 @@ def download_files(telescope_type, hostname, network, destination, username=None
                 root_dir = os.path.dirname(local_path)
                 file_name_only = os.path.basename(local_path)
 
-                registered_id = processor.registerFitsImage(root_dir, file_name_only, moveFiles=True)
+                registered_id = processor.registerFitsImage(
+                    root_dir, file_name_only, moveFiles=True, precalibrated=telescope_type == 'SeeStar')
                 if registered_id:
                     registered_count += 1
                     logger.info(f"Registered in database: {file_name_only}")
