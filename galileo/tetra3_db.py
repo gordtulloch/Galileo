@@ -21,6 +21,7 @@ import multiprocessing
 import queue
 import sys
 import time
+import urllib.error
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,6 +206,18 @@ def build_databases(plans: list[DatabasePlan], emit: Callable[..., None], folder
                         star_catalog=plan.catalog, star_max_magnitude=CATALOGS[plan.catalog][2])
                 partial_path(plan).replace(plan.path)
             emit("built", index, str(plan.path))
+        except OSError as exc:
+            # Network failures (URLError, timeouts) are OSErrors; a traceback adds nothing for them.
+            if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+                reason = ("Could not download the star catalogue — check your internet connection and try "
+                          f"again ({getattr(exc, 'reason', None) or exc}).")
+                logger.warning("Could not download the catalogue for %s: %s", plan.path.name, exc)
+                (folder / CATALOGS[plan.catalog][0]).with_suffix(".part").unlink(missing_ok=True)
+            else:
+                reason = f"{type(exc).__name__}: {exc}"
+                logger.exception("Could not build the tetra3 database %s", plan.path.name)
+            partial_path(plan).unlink(missing_ok=True)
+            emit("failed", index, reason)
         except Exception as exc:
             logger.exception("Could not build the tetra3 database %s", plan.path.name)
             partial_path(plan).unlink(missing_ok=True)

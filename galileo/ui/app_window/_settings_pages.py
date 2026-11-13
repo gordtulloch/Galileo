@@ -669,6 +669,9 @@ class AppWindowSettingsPagesMixin:
             summary = f"Built {build['built']} database(s) and selected them for their Piers." if build["built"] else "No database was built."
             build_status.setText(summary + ("\n" + "\n".join(failures) if failures else ""))
             refresh()
+            if failures:
+                QMessageBox.warning(self._window, "tetra3 databases",
+                                    "Some databases could not be built:\n\n" + "\n".join(failures))
 
         def poll_build() -> None:
             from galileo.library.models.observatory import PierRecord

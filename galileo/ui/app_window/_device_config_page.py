@@ -134,19 +134,58 @@ class AppWindowDeviceConfigMixin:
             port = port_spin.value()
             driver = driver_combo.currentText()
             category = _CATEGORY_ENUM[cat_id]
-            try:
-                import asyncio
-                if driver == "INDI":
+            import asyncio
+
+            def _scan(drv: str, prt: int) -> list:
+                if drv == "INDI":
                     from galileo.adapters.indi import get_adapter_class
-                    adapter = get_adapter_class(category)(host=server, port=port)
                 else:
                     from galileo.adapters.alpaca import get_adapter_class
-                    adapter = get_adapter_class(category)(host=server, port=port)
-                devices = asyncio.run(adapter.list_available_devices(category))
-            except Exception as exc:
-                logger.exception("Device scan failed for %s on %s:%s", cat_id, server, port)
-                results.addItem(f"Scan failed: {exc}")
-                return
+                adapter = get_adapter_class(category)(host=server, port=prt)
+                return asyncio.run(adapter.list_available_devices(category))
+
+            try:
+                devices = _scan(driver, port)
+            except Exception as first_exc:
+                # The usual cause is a server entered with the protocol
+                # dropdown left on the wrong value (typically Alpaca for an
+                # INDI server), so try the other protocol before giving up.
+                other = "INDI" if driver == "Alpaca" else "Alpaca"
+                other_port = _DEFAULT_PORTS[other] if port == _DEFAULT_PORTS[driver] else port
+                logger.info(
+                    "%s scan of %s:%s failed (%s); retrying as %s on port %s",
+                    driver, server, port, first_exc, other, other_port,
+                )
+                try:
+                    devices = _scan(other, other_port)
+                except Exception as second_exc:
+                    logger.warning(
+                        "Device scan failed for %s on %s: %s: %s; %s: %s",
+                        cat_id, server, driver, first_exc, other, second_exc,
+                    )
+                    results.addItem(f"Server {server} not found as Alpaca or INDI.")
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(
+                        self._window,
+                        "Server not found",
+                        f"No server was found at {server} using either the Alpaca "
+                        f"or the INDI protocol.\n\nCheck the server name or IP "
+                        f"address, the port, and that the server is running.",
+                    )
+                    return
+                driver, port = other, other_port
+                driver_combo.blockSignals(True)
+                port_spin.blockSignals(True)
+                try:
+                    driver_combo.setCurrentText(driver)
+                    port_spin.setValue(port)
+                finally:
+                    driver_combo.blockSignals(False)
+                    port_spin.blockSignals(False)
+                self._window.statusBar().showMessage(
+                    f"No response as {'INDI' if driver == 'Alpaca' else 'Alpaca'}; "
+                    f"switched protocol to {driver}.", 6000
+                )
             if not devices:
                 results.addItem(f"No {driver} devices found for {label.lower()} at {server}:{port}.")
                 return
