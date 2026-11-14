@@ -3,7 +3,7 @@
 
 Search searches Galileo's catalogs of stars, galaxies, nebulae and clusters, and shows each result as a tile you can act on. Fill in any of the criteria on the left and press **Search**; blank or "Any" criteria are ignored.
 
-Each result tile shows a thumbnail, the object's name and type, its brightness, size, constellation and coordinates, when it rises, transits and sets, and a small chart of its altitude through tonight. The chart and times need the Observatory's latitude and longitude (top bar). Right-click a tile and choose **Save** to keep the object on the Targets screen. Click the thumbnail for a full-size view; it is read from the local image cache (see **Download Catalog Images** in Options > Planning) and only fetched from the survey service if it is not there.
+Each result tile shows a thumbnail, the object's name and type, its brightness, size, constellation and coordinates, when it rises, transits and sets, and a small chart of its altitude through tonight. The chart and times need the Observatory's latitude and longitude (top bar). Press **Save** on a tile to keep the object on the Targets screen. Click the thumbnail for a full-size view; it is read from the local image cache (see **Download Catalog Images** in Options > Planning) and only fetched from the survey service if it is not there.
 
 ## Search Criteria
 
@@ -11,7 +11,7 @@ The filters used by **Search**.
 
 ## Object name
 
-Search by name, such as M31 or NGC 7000. When a name is entered the search ignores the other criteria and looks the name up (also online, if it is not in the bundled catalog).
+Search by name, such as M31 or NGC 7000. When a name is entered the search ignores the other criteria and looks the name up (also online, if it is not in the bundled catalog). An object found online is added to the database, so it is kept and always shown here, in What's Up Tonight and in the Star Atlas, whatever the catalog and magnitude settings.
 
 ## Object type
 
@@ -23,7 +23,7 @@ Only objects inside this IAU constellation.
 
 ## Catalog
 
-Only objects in the ticked catalogs (Messier, Caldwell, NGC). With none ticked, every catalog is searched.
+Only objects in the ticked catalogs (Messier, Caldwell, NGC, IC). With none ticked, every catalog is searched.
 
 ## Max magnitude
 
@@ -63,7 +63,7 @@ One tile per object found. Use the buttons on the right of a tile: **Select**, *
 
 ## Save
 
-Right-click a tile and choose Save to add the object to Planning › Targets, your list of saved targets. Saving an object that is already there does nothing.
+The button on a tile that adds the object to Planning › Targets, your list of saved targets. Saving an object that is already there does nothing.
 
 ## Select
 

@@ -65,6 +65,14 @@ class _Stopped(Exception):
     """Raised inside the run when the user stopped it; never escapes ``run``."""
 
 
+class _Skipped(Exception):
+    """Raised inside a block when the operator skipped it; caught by ``_run_node`` and never escapes it."""
+
+
+class SkipRefused(Exception):
+    """A skip that must not happen; the message says why, in words a person can act on."""
+
+
 # Blocks whose failure ends the run (see module docstring).
 _FATAL_BLOCKS = frozenset({
     "TargetBlock", "PlateSolveBlock", "MeridianFlipBlock", "ParkMountBlock", "UnparkMountBlock",
@@ -322,6 +330,7 @@ class SessionExecutor:
         self._stop = threading.Event()
         self._resume = threading.Event()
         self._resume.set()
+        self._skip = threading.Event()          # the operator asked to skip the current (or, between blocks, the next) block
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_services: list[Any] = []   # whatever is mid-run and can be asked to stop
         # Run-scoped state the blocks share.
@@ -366,6 +375,38 @@ class SessionExecutor:
         if self.state == RunState.PAUSED:
             self._set_state(RunState.RUNNING, "Resumed.")
             self._resume.set()
+
+    def skip(self) -> str:
+        """Skip the block that is running — or, between blocks or while paused, the next one — and carry on with the
+        one after it (CSURF-360). What is in flight is ended exactly as Stop ends it (the exposure is aborted, the
+        slew halted, the running service asked to stop), so devices are left as a stopped block leaves them; the run
+        itself continues. Shutdown blocks (park, dome close, stop guiding, warm the camera, notify) put the equipment
+        in a safe state and are never skipped. Returns the display text of the block being skipped; safe from any
+        thread. Raises :class:`SkipRefused` when there is nothing to skip."""
+        if self.state not in (RunState.RUNNING, RunState.PAUSED) or self._stop.is_set():
+            raise SkipRefused("no session is running")
+        block = self._current_block
+        name = type(block).__name__ if block is not None else ""
+        label = getattr(block, "display_text", name) if block is not None else "the next block"
+        if name in _SHUTDOWN_BLOCKS:
+            raise SkipRefused(f"{label} puts the equipment in a safe state, so it cannot be skipped")
+        if self._skip.is_set():
+            raise SkipRefused("a skip is already under way")
+        self._skip.set()
+        self._record(f"Skip requested: {label}")
+        for service in list(self._active_services):
+            for method in ("request_stop", "cancel", "stop"):
+                fn = getattr(service, method, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        logger.debug("Could not ask %r to stop for a skip", service, exc_info=True)
+                    break
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._abort_hardware(), loop)
+        return label
 
     @property
     def is_stopping(self) -> bool:
@@ -502,12 +543,17 @@ class SessionExecutor:
         except Exception:
             logger.exception("Could not send the session outcome notification")
 
-    async def _checkpoint(self) -> None:
-        """Between blocks and frames: honour Stop and Pause."""
+    async def _checkpoint(self, skippable: bool = False) -> None:
+        """Between blocks and frames: honour Stop and Pause. A block's own checkpoints (``skippable``) also honour a
+        skip; the boundary ones leave it for the next block to take (``_run_node``)."""
+        if skippable and self._skip.is_set():
+            raise _Skipped
         while not self._resume.is_set():
             await asyncio.sleep(_POLL_S)
         if self._stop.is_set():
             raise _Stopped
+        if skippable and self._skip.is_set():
+            raise _Skipped
 
     async def _run_nodes(self, nodes: list[_Node]) -> None:
         for node in nodes:
@@ -536,6 +582,11 @@ class SessionExecutor:
                 await self._notify_unsafe()
             self._emit(f"Skipped (unsafe): {label}")
             return
+        if self._skip.is_set() and name not in _SHUTDOWN_BLOCKS:     # asked between blocks or while paused: this one
+            self._skip.clear()
+            self._record(f"Skipped block {node.index}/{self._block_total}: {label}")
+            self._emit(f"Skipped: {label}")
+            return
         self._record(f"Block {node.index}/{self._block_total}: {label}")
         self._emit(label)
         try:
@@ -543,11 +594,22 @@ class SessionExecutor:
                 await self._run_loop(node)
             else:
                 await self._dispatch(block)
+            if self._skip.is_set() and name not in _LOOP_BLOCKS:      # asked as it finished: nothing left to skip
+                self._skip.clear()
         except (_Stopped, SessionAbort, asyncio.CancelledError):
             raise
+        except _Skipped:
+            self._skip.clear()
+            self._record(f"Skipped: {label}")
+            self._emit(f"Skipped: {label}")
         except Exception as exc:
             if self._stop.is_set():
                 raise _Stopped from exc
+            if self._skip.is_set():                                   # the abort that ended the block made it fail
+                self._skip.clear()
+                self._record(f"Skipped: {label} ({exc})")
+                self._emit(f"Skipped: {label}")
+                return
             if name in _FATAL_BLOCKS and getattr(exc, "fatal", True):
                 raise SessionAbort(f"{label} failed: {exc}") from exc
             self._record(f"{label} failed: {exc} — continuing.", error=True)
@@ -702,7 +764,7 @@ class SessionExecutor:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + COOL_TIMEOUT_S
         while loop.time() < deadline:
-            await self._checkpoint()
+            await self._checkpoint(skippable=True)
             try:
                 temp = float(camera.get_temperature())
             except Exception:
@@ -766,7 +828,7 @@ class SessionExecutor:
             return
         failures = 0
         for i in range(1, int(block.count) + 1):
-            await self._checkpoint()
+            await self._checkpoint(skippable=True)
             ok = await self._expose(svc, block.exposure, filter_name, block.frame_type, block.gain, block.offset)
             failures = 0 if ok else failures + 1
             if failures >= MAX_CONSECUTIVE_FRAME_FAILURES:
@@ -803,7 +865,7 @@ class SessionExecutor:
             await panel.close_cover()
         try:
             for exposure in block.exposures:
-                await self._checkpoint()
+                await self._checkpoint(skippable=True)
                 await self._expose(svc, exposure, block.filter or self.current_filter or "", "Dark")
         finally:
             if panel is not None:

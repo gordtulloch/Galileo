@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 def _brief(obj: Any) -> dict[str, Any]:
+    from galileo.planning.sky_atlas import catalogs_of
     return {"name": obj.primary_name, "designations": list(obj.designations), "ra_deg": obj.ra_deg,
             "dec_deg": obj.dec_deg, "type": str(obj.object_type), "magnitude": obj.magnitude,
-            "size_arcmin": obj.size_arcmin}
+            "size_arcmin": obj.size_arcmin,
+            "catalogs": sorted(catalogs_of(obj)), "user_added": obj.user_added}
 
 
 class EngineSky:
@@ -37,9 +39,18 @@ class EngineSky:
             self._atlas = SkyAtlas()
         return self._atlas
 
-    def search(self, query: str, limit: int) -> tuple[list[dict[str, Any]], int]:
-        found = self._catalogue().search(query)
+    def search(self, query: str, limit: int, catalog: str | None = None) -> tuple[list[dict[str, Any]], int]:
+        import asyncio
+        found = asyncio.run(self._catalogue().search_online(query))     # unknown names are stored in the database
+        wanted = {c.strip() for c in (catalog or "").split(",") if c.strip()}   # one or several, e.g. "NGC,IC"
+        if wanted:
+            from galileo.planning.sky_atlas import catalogs_of
+            found = [o for o in found if o.user_added or catalogs_of(o) & wanted]
         return [_brief(o) for o in found[:limit]], len(found)
+
+    def catalogues(self) -> list[str]:
+        from galileo.planning.sky_atlas import DSO_CATALOGS
+        return list(DSO_CATALOGS)
 
     def detail(self, pier: str, name: str) -> dict[str, Any] | None:
         atlas = self._catalogue()

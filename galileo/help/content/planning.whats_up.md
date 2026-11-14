@@ -19,7 +19,7 @@ An object that never climbs above this many degrees tonight is ranked down and a
 
 ## Catalog
 
-Only rank objects in the ticked catalogs (Messier, Caldwell, NGC). With none ticked, every catalog is included.
+Only rank objects in the ticked catalogs (Messier, Caldwell, NGC, IC). With none ticked, every catalog is included.
 
 ## Rank Tonight
 
@@ -37,6 +37,10 @@ Which optical train's field of view the ranking used. Objects too large or too s
 
 Tonight's forecast: weather (cloud, wind, temperature), aurora activity (Kp index) and smoke (air-quality index). Poor values lower the confidence of the ranking.
 
+## Astrospheric forecast
+
+With an Astrospheric API key entered in Options > Planning, rows appear under the day/night band: Cloud, Seeing, Transparency, Temp °C, Dew point °C and Wind. Two more, **Smoke AQI** and **Aurora Kp**, come from NOAA and need no key: Aurora is NOAA's 3-hour Kp forecast (green quiet, yellow/orange active, red storm), and Smoke is today's NOAA smoke rating as one block across the night (shown for today only; North America only), coloured by AQI category. Each cell is one hour of Astrospheric's forecast, lined up with the same hour on the band above and coloured the way Astrospheric rates it, with its value inside (temperature and dew point converted to °C; the others as Astrospheric reports them, wind in Astrospheric's own unit). A dew point close to the temperature means dew is likely on the optics. Hours outside the forecast are left blank. If Astrospheric can't be reached, the line below the band says why (for example the key was rejected or the location is outside its North American/UK/Irish coverage). Informational only; it does not change the ranking.
+
 ## Image note
 
 States how many result thumbnails were loaded. What's Up Tonight never downloads images (that made it slow to open); it only shows thumbnails already cached on this computer. To load them all in one go, use **Download Catalog Images** in Options > Planning, or browse the objects on the Targets page. Clicking a thumbnail opens a larger view, read from the same cache (the download includes those larger images, so it works offline).
@@ -47,7 +51,7 @@ One tile per ranked object, with its rank, name, type, brightness, size, constel
 
 ## Save
 
-Right-click a tile and choose Save to add the object to Planning › Targets, your list of saved targets.
+The button on a tile that adds the object to Planning › Targets, your list of saved targets. Saving an object that is already there does nothing.
 
 ## Select
 

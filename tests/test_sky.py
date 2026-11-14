@@ -806,16 +806,18 @@ async def test_tc_sky_100_catalog_first_search_with_simbad_fallback(sky_atlas):
         results = await sky_atlas.search_online("Not In Catalog")
         assert results == [simbad_hit]
         mock_search.assert_called_once_with("Not In Catalog")
+    # ...and it is now part of the catalog, so a repeat search is answered offline.
+    assert simbad_hit.user_added and sky_atlas.search("Not In Catalog") == [simbad_hit]
 
     # Offline catalog has no match, Simbad unreachable (no internet) -> no results,
     # never an exception, and NFR-OFFLINE-010's no-internet guarantee still holds.
     with patch.object(sky_mod, "_search_simbad_sync", side_effect=OSError("no network")):
-        results = await sky_atlas.search_online("Not In Catalog")
+        results = await sky_atlas.search_online("Nowhere Object")
         assert results == []
 
     # Offline catalog has no match, Simbad reachable but also finds nothing -> no results.
     with patch.object(sky_mod, "_search_simbad_sync", return_value=[]):
-        results = await sky_atlas.search_online("Not In Catalog")
+        results = await sky_atlas.search_online("Nowhere Object")
         assert results == []
 
     # Empty query never touches Simbad -> returns the full local catalog directly.

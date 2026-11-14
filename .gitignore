@@ -1,3 +1,6 @@
+# Local music files
+assets/music/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

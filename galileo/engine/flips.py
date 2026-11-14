@@ -13,6 +13,10 @@ stays put has not flipped. It is refused while a session runs (that session's ow
 slew would fight it), while the mount is parked or not tracking, and from the east side of the pier. The engine does
 not flip on its own: ``due`` is reported and a person or client decides. Re-slaving a dome and restarting guiding
 follow once the engine has those services.
+
+``defer`` (CSURF-350) holds back the *automatic* flip the desktop's Mount-page monitor performs, for a few minutes, while
+the flip is pending or imminent. It is recorded in ``galileo.mount_limits.deferrals`` (shared with that monitor), never
+silences a limit, and ends early near the hour-angle limit so the flip still happens in time. The status reports it.
 """
 
 from __future__ import annotations
@@ -22,7 +26,14 @@ import time
 from typing import Any
 
 from galileo.control_surface.flips import FlipRefused
-from galileo.mount_limits import flip_phase, minutes_to_flip, pier_side_text
+from galileo.mount_limits import (
+    DEFER_DEFAULT_MINUTES,
+    defer_refusal,
+    deferrals,
+    flip_phase,
+    minutes_to_flip,
+    pier_side_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +63,42 @@ class EngineFlips:
             return "a session is running on this Pier; its Meridian Flip block does the flip"
         return None
 
+    def why_not_defer(self, pier: str) -> str | None:
+        """Why the flip cannot be deferred on *pier* from what is known without asking the mount, or ``None``."""
+        mount = self._devices.controller(pier, "mount")
+        if mount is None:
+            return "this Pier has no mount"
+        if not getattr(mount, "is_connected", True):
+            return "the mount is not connected"
+        if pier in self._flipping:
+            return "a flip is already under way on this Pier"
+        if self._runner.is_running(pier):
+            return "a session is running on this Pier; its Meridian Flip block does the flip"
+        if not self.limits(pier).flip_enabled:
+            return "automatic flips are off in this Pier's Mount settings, so there is no flip to defer"
+        return None
+
+    async def defer(self, pier: str, minutes: float = DEFER_DEFAULT_MINUTES) -> dict[str, Any]:
+        """Hold the pending flip back for *minutes*; raises :class:`FlipRefused` when it must not wait."""
+        reason = self.why_not_defer(pier)
+        if reason:
+            raise FlipRefused(reason)
+        mount = self._devices.controller(pier, "mount")
+        limits = self.limits(pier)
+        status = await mount.get_status() or {}
+        lst, ra = status.get("sidereal_time"), status.get("right_ascension")
+        from galileo.mount_limits import hour_angle_hours
+        ha = hour_angle_hours(lst, ra) if lst is not None and ra is not None else None
+        reason = defer_refusal(limits, ha, status.get("side_of_pier"))
+        if reason:
+            raise FlipRefused(reason)
+        until = deferrals.defer(mount, minutes)
+        logger.info("Pier %s: the meridian flip was deferred until %s", pier, time.strftime("%H:%M:%S", time.localtime(until)))
+        return {"deferred": True, "deferred_until": until, "minutes": round((until - time.time()) / 60.0, 1)}
+
     async def state(self, pier: str) -> dict[str, Any]:
         out: dict[str, Any] = {"flipping": pier in self._flipping, "last": self._last.get(pier),
-                               "why_not": self.why_not(pier) or ""}
+                               "why_not": self.why_not(pier) or "", "deferred": False, "deferred_until": None}
         mount = self._devices.controller(pier, "mount")
         if mount is None or not getattr(mount, "is_connected", True):
             return {**out, "phase": "unavailable"}
@@ -67,6 +111,9 @@ class EngineFlips:
         phase = flip_phase(limits, ha, side, tracking=bool(status.get("tracking")),
                            slewing=bool(status.get("slewing")), flipping=pier in self._flipping)
         minutes = minutes_to_flip(limits, ha, side)
+        until = deferrals.active(mount, limits, ha)
+        if until is not None:
+            out["deferred"], out["deferred_until"] = True, until
         return {**out, "phase": phase, "enabled": bool(limits.flip_enabled), "limit_deg": limits.flip_ha_deg,
                 "hour_angle_hours": ha, "pier_side": side, "pointing": pier_side_text(side),
                 "minutes_to_flip": None if minutes is None else round(minutes, 1)}

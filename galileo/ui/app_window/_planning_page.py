@@ -54,7 +54,7 @@ class AppWindowPlanningPageMixin:
 
         With *saved_mode* the same tiles list the user's saved targets (Planning > Targets) instead
         of search results: no criteria panel, the list is reloaded each time the page is shown, and
-        a tile's context menu offers Remove rather than Save."""
+        a tile's Save button becomes Remove."""
         from PySide6.QtWidgets import (
             QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QComboBox,
             QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem,
@@ -190,20 +190,26 @@ class AppWindowPlanningPageMixin:
                                    "object (SES-160).")
             session_btn.clicked.connect(lambda _=None, o=obj: _add_result_to_new_session(o))
             button_col.addWidget(session_btn)
+
+            if saved_mode:
+                keep_btn = QPushButton("Remove")
+                keep_btn.setToolTip("Take this object off your saved targets.")
+                keep_btn.clicked.connect(lambda _=None, o=obj: self._remove_saved_target(o))
+            else:
+                keep_btn = QPushButton("Save")
+                keep_btn.setToolTip("Keep this object on the Planning > Targets list.")
+                keep_btn.clicked.connect(lambda _=None, o=obj: self._save_target(o))
+            button_col.addWidget(keep_btn)
             button_col.addStretch(1)
 
             # Size every button to fit its own text (a hardcoded fixed width previously clipped
             # "Add to Session", the longest label) — all made uniform to the widest one's
             # actual sizeHint, not a guessed constant, so this stays correct across fonts/platforms.
-            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn))
-            for b in (select_btn, slew_btn, centre_btn, session_btn):
+            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn, keep_btn))
+            for b in (select_btn, slew_btn, centre_btn, session_btn, keep_btn):
                 b.setFixedWidth(button_width)
 
             row.addLayout(button_col)
-
-            card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            card.customContextMenuRequested.connect(
-                lambda pos, o=obj, c=card: self._show_target_tile_menu(c, pos, o, saved=saved_mode))
 
             return card, thumb_label
 
@@ -539,7 +545,12 @@ class AppWindowPlanningPageMixin:
                 atlas = SkyAtlas()
                 name = name_edit.text().strip()
                 if name:
+                    before = len(atlas._catalog)
                     matches = asyncio.run(atlas.search_online(name))
+                    if len(atlas._catalog) > before:      # a new object was stored: show it in the Star Atlas too
+                        reload_atlas = getattr(self, "_star_atlas_reload_catalogs", None)
+                        if callable(reload_atlas):
+                            reload_atlas()
                 else:
                     object_types = None
                     if type_combo.currentText() != "Any":

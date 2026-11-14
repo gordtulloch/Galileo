@@ -149,6 +149,10 @@ class EngineSessions:
     def stop(self, pier: str) -> bool:
         return bool(self._runner.stop(pier))
 
+    def skip(self, pier: str) -> str | None:
+        """Skip the block the Pier's session is on (CSURF-360); its display text, or ``None`` with no session."""
+        return self._runner.skip(pier)
+
     # -- templates and starting ------------------------------------------------------------------
     def templates(self) -> list[str]:
         return template_names()

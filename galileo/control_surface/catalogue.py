@@ -41,6 +41,12 @@ class DeviceAccess(Protocol):
     def stop_session(self, pier: str) -> Any:
         """Stop the Pier's running session, if any (used by the emergency stop)."""
 
+    async def connect_category(self, pier: str, category: str) -> bool:
+        """Connect the Pier's configured devices of *category*; ``LookupError`` if it has none (CSURF-320)."""
+
+    async def disconnect_category(self, pier: str, category: str) -> int:
+        """Disconnect the Pier's devices of *category*; ``RuntimeError`` while a session runs (CSURF-320)."""
+
 
 def _device(handler: Callable[..., Awaitable[Any] | Any]) -> Callable[..., Awaitable[Any]]:
     """Run a controller call and turn the device layer's own refusals into typed outcomes."""
@@ -95,6 +101,30 @@ def register_device_operations(registry: Registry, access: DeviceAccess, holds: 
     add("mount.park", "mount", "mount", lambda c, a: ctrl(c, "mount").park(), cls="confirm",
         description="Park the mount (asks for a second confirmation)")
     add("mount.unpark", "mount", "mount", lambda c, a: ctrl(c, "mount").unpark())
+
+    # -- connecting and disconnecting a device (CSURF-320) ---------------------------------------------------------
+    device_choices = ("mount", "camera", "filter_wheel", "focuser", "rotator", "dome", "flat_panel", "switch", "weather")
+
+    async def device_connect(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        try:
+            ok = await access.connect_category(ctx.pier, args["device"])
+        except LookupError as exc:
+            raise Refused(str(exc)) from exc
+        if not ok:
+            raise Unreachable(f"the {args['device'].replace('_', ' ')} did not connect: see the Master's log for the reason")
+        return {"device": args["device"], "connected": True}
+
+    async def device_disconnect(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        try:
+            held = await access.disconnect_category(ctx.pier, args["device"])
+        except (LookupError, RuntimeError) as exc:
+            raise Refused(str(exc)) from exc
+        return {"device": args["device"], "connected": False, "was_connected": bool(held)}
+
+    registry.register(OperationSpec("device.connect", "operate", (Arg("device", "enum", choices=device_choices),), needs_lease=True,
+                                    description="Connect this Pier's saved device of that kind"), device_connect)
+    registry.register(OperationSpec("device.disconnect", "operate", (Arg("device", "enum", choices=device_choices),), needs_lease=True,
+                                    description="Disconnect this Pier's device of that kind (not while a session runs)"), device_disconnect)
 
     # -- camera ----------------------------------------------------------------------------------------------
     add("camera.status", "camera", "camera",

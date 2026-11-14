@@ -362,6 +362,32 @@ class AppWindowStarAtlasPageMixin:
                 "Create a new session pre-populated with a Target block for this object (SES-160). "
                 "A plain click only selects it — this is the explicit way to build a session from it."
             )
+            # Park when the scope is unparked, Unpark when it is parked. Always present so it can be found;
+            # disabled (with the reason) when no mount is connected. A mount that doesn't report its park
+            # state is offered as "Park".
+            from galileo.mount_ops import MountOps
+            mount_ops = MountOps(lambda: (self._device_pages.get("mount") or {}).get("adapter"))
+            mount_status = mount_ops.status()
+            at_park = bool((mount_status or {}).get("at_park"))
+            logger.info("Star Atlas menu: mount status %s, at_park=%s",
+                        "unavailable" if mount_status is None else "read", at_park)
+            menu.addSeparator()
+            park_action = menu.addAction("Unpark" if at_park else "Park")
+            park_action.setEnabled(mount_status is not None)
+            park_action.setToolTip(
+                ("Unpark" if at_park else "Park") + " the current Pier's mount" if mount_status is not None
+                else "No mount is connected — connect it on Equipment > Mount")
+
+            def do_park() -> None:
+                outcome = mount_ops.unpark() if at_park else mount_ops.park()
+                verb = "Unpark" if at_park else "Park"
+                if outcome.ok:
+                    self._window.statusBar().showMessage(f"Mount {verb.lower()} requested.", 4000)
+                else:
+                    self._window.statusBar().showMessage(
+                        f"{verb}: {outcome.message or 'failed — see log.'}", 6000)
+
+            park_action.triggered.connect(do_park)
             is_satellite = obj is not None and obj.get("type") == "Satellite"
             goto.setEnabled((obj is not None or sky_point is not None) and not is_satellite)
             goto_centre.setEnabled(goto.isEnabled())
@@ -429,6 +455,7 @@ class AppWindowStarAtlasPageMixin:
         marker_timer.start(_POINTING_POLL_MS)
 
         self._star_atlas_refresh_site = refresh_site
+        self._star_atlas_reload_catalogs = view.load_catalogs
         self._star_atlas_set_horizon = view.set_horizon
         self._star_atlas_refresh_markers = refresh_markers
         refresh_markers()

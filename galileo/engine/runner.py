@@ -148,6 +148,14 @@ class SessionRunner:
         run.executor.stop()
         return True
 
+    def skip(self, pier: str) -> str | None:
+        """Skip the block the Pier's session is on (CSURF-360); returns its display text, ``None`` when no session runs.
+        Raises ``SkipRefused`` when the block must not be skipped."""
+        run = self._run(pier)
+        if run is None:
+            return None
+        return run.executor.skip()
+
     def pause(self, pier: str) -> bool:
         run = self._run(pier)
         if run is None:

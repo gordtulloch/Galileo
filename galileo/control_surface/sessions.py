@@ -6,7 +6,7 @@
 The operations call the same runner the desktop and the scheduler use, so a remote client gets the same
 behaviour: stopping asks the executor to stop at the next block or frame boundary and aborts the running
 device call, exactly as the Stop button does. Starting a session and listing saved ones are not here yet
-(see the SDD), and neither is skipping a step, which the executor does not support.
+(see the SDD). ``session.skip`` (CSURF-360) skips the block the session is on, or the next one when it is paused or between blocks.
 
 ``register_session_operations(registry, access)`` takes a :class:`SessionAccess` so this module imports no
 runner, screen or adapter.
@@ -25,7 +25,7 @@ class SessionRefused(Exception):
 
 
 class SessionAccess(Protocol):
-    """How the catalogue reaches a Pier's session run."""
+    """How the catalogue reaches a Pier's session run. An access that also has ``skip(pier)`` offers ``session.skip``."""
 
     def progress(self, pier: str) -> dict[str, Any] | None:
         """The Pier's running session as plain data, or ``None`` when nothing is running."""
@@ -87,6 +87,9 @@ class RunnerSessions:
     def stop(self, pier: str) -> bool:
         return bool(self._runner.stop(pier))
 
+    def skip(self, pier: str) -> str | None:
+        return self._runner.skip(pier)
+
 
 def register_session_operations(registry: Registry, access: SessionAccess) -> None:
     def running(pier: str) -> str | None:
@@ -108,6 +111,21 @@ def register_session_operations(registry: Registry, access: SessionAccess) -> No
     control("session.pause", access.pause, "Pause the running session at the next block or frame boundary")
     control("session.resume", access.resume, "Resume a paused session")
     control("session.stop", access.stop, "Stop the running session")
+    if hasattr(access, "skip"):
+        async def skip(ctx: OperationContext, args: dict[str, Any]) -> Any:
+            from galileo.session_exec import SkipRefused
+            try:
+                label = access.skip(ctx.pier)
+            except SkipRefused as exc:
+                raise Refused(str(exc)) from exc
+            if label is None:
+                raise Refused("no session is running on this Pier")
+            return {"skipped": label, **(access.progress(ctx.pier) or {})}
+
+        registry.register(OperationSpec(
+            "session.skip", "operate", (), needs_lease=True, available=running,
+            description="Skip the block the session is on (or the next one if paused) and carry on; shutdown blocks are never skipped"),
+            skip)
     if hasattr(access, "start") and hasattr(access, "templates"):
         register_start_operations(registry, access)           # type: ignore[arg-type]
 

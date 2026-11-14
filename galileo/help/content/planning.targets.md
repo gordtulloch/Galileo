@@ -1,15 +1,15 @@
 <!-- order: 14 -->
 # Targets
 
-Targets is your list of saved objects. Add to it by right-clicking a tile on Search or What's Up Tonight and choosing **Save**. Each tile looks and works the same as on Search: thumbnail, name and type, brightness, size, constellation, coordinates, rise, transit and set, and tonight's altitude chart. The list is kept between sessions, newest first, and is redrawn every time you open the screen.
+Targets is your list of saved objects. Add to it with the **Save** button on a tile on Search or What's Up Tonight. Each tile looks and works the same as on Search: thumbnail, name and type, brightness, size, constellation, coordinates, rise, transit and set, and tonight's altitude chart. The list is kept between sessions, newest first, and is redrawn every time you open the screen.
 
 ## Results
 
-One tile per saved object, with the same buttons as Search: **Select**, **Slew To**, **Goto and Centre** and **Add to Session**. Right-click a tile and choose **Remove** to take it off the list.
+One tile per saved object, with the same buttons as Search: **Select**, **Slew To**, **Goto and Centre** and **Add to Session**, plus **Remove** (in place of Save) to take it off the list.
 
 ## Remove
 
-Right-click a tile and choose Remove to delete the object from your saved targets. It does not affect the catalog.
+The button on a tile that deletes the object from your saved targets. It does not affect the catalog.
 
 ## Select
 

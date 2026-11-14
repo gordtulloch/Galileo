@@ -12,6 +12,9 @@ the slew guard and the tests all apply the same rules. The Mount page's backgrou
 from __future__ import annotations
 
 import math
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 #: The Mount page's jog speed levels 1 (slowest) to 9 (fastest), in deg/s. They follow LX200 OnStep's
@@ -103,6 +106,76 @@ def minutes_to_flip(limits: MountLimits, ha_hours: float | None, side_of_pier: s
     return max(0.0, (limits.flip_ha_deg / 15.0 - ha_hours) * 60.0 * SIDEREAL_DAY_RATIO)
 
 
+#: How long one deferral holds the flip back, by default and at most (CSURF-350).
+DEFER_DEFAULT_MINUTES = 10
+DEFER_MAX_MINUTES = 30
+#: A flip is "imminent", and so may be deferred, from this many minutes before it is due.
+DEFER_IMMINENT_MINUTES = 30.0
+#: A deferral never outlives the safety margin: it ends (the flip goes ahead) once the hour angle is within this many
+#: hours of the Mount page's hour-angle limit, and it is not offered once the mount is this many (sidereal) minutes
+#: past the flip limit. A deferred flip must still happen before the mount's limits stop it.
+DEFER_HA_MARGIN_HOURS = 0.25
+DEFER_MAX_PAST_MINUTES = 60.0
+
+
+def defer_refusal(limits: MountLimits, ha_hours: float | None, side_of_pier: str | None) -> str | None:
+    """Why a flip cannot be deferred now, in words a person can act on, or ``None`` when it can (CSURF-350)."""
+    if not limits.flip_enabled:
+        return "automatic flips are off in this Pier's Mount settings, so there is no flip to defer"
+    if ha_hours is None or side_of_pier != "West":
+        return "no flip is pending: the mount is not on the west side of the pier"
+    minutes = minutes_to_flip(limits, ha_hours, side_of_pier)
+    if minutes is not None and minutes > DEFER_IMMINENT_MINUTES:
+        return f"the flip is {minutes:.0f} minutes away; it can be deferred once it is within {DEFER_IMMINENT_MINUTES:.0f}"
+    past = (ha_hours * 15.0 - limits.flip_ha_deg) * 4.0
+    if past >= DEFER_MAX_PAST_MINUTES:
+        return f"the mount is already {past:.0f} minutes past the flip limit; the flip cannot wait any longer"
+    if limits.ha_limits_enabled and abs(ha_hours) >= limits.max_ha_hours - DEFER_HA_MARGIN_HOURS:
+        return "the mount is too close to its hour-angle limit to defer the flip"
+    return None
+
+
+class FlipDeferrals:
+    """Flips an operator has held back for a while (CSURF-350), by mount. Process-wide, so the desktop's Mount-page
+    monitor, which performs the automatic flip, and the engine's ``flip.defer`` see the same answer. A deferral
+    never silences a limit: :func:`evaluate` still stops the mount, and :meth:`active` ends it early near the hour-angle
+    limit, so the flip still happens in time."""
+
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._until: dict[int, float] = {}
+
+    def defer(self, mount: object, minutes: float = DEFER_DEFAULT_MINUTES) -> float:
+        """Hold the flip back for *minutes* (at most :data:`DEFER_MAX_MINUTES`); returns the time it ends (epoch s)."""
+        minutes = min(max(float(minutes), 1.0), float(DEFER_MAX_MINUTES))
+        until = self._clock() + minutes * 60.0
+        with self._lock:
+            self._until[id(mount)] = until
+        return until
+
+    def clear(self, mount: object) -> None:
+        with self._lock:
+            self._until.pop(id(mount), None)
+
+    def active(self, mount: object, limits: MountLimits, ha_hours: float | None) -> float | None:
+        """When the deferral ends, if the flip is being held back right now; ``None`` if it was never deferred, has
+        run out, or must not be held any longer (the mount is close to its hour-angle limit)."""
+        with self._lock:
+            until = self._until.get(id(mount))
+        if until is None:
+            return None
+        if self._clock() >= until or (limits.ha_limits_enabled and ha_hours is not None
+                                       and abs(ha_hours) >= limits.max_ha_hours - DEFER_HA_MARGIN_HOURS):
+            self.clear(mount)
+            return None
+        return until
+
+
+#: The one the desktop's monitor and the engine share.
+deferrals = FlipDeferrals()
+
+
 def flip_phase(limits: MountLimits, ha_hours: float | None, side_of_pier: str | None, *,
                tracking: bool, slewing: bool, flipping: bool) -> str:
     """Where the Mount page's "Meridian Flip" section would say the flip stands (EQP-MNT-060, CSURF-170):
@@ -125,12 +198,15 @@ def evaluate(
     side_of_pier: str | None,
     tracking: bool,
     slewing: bool,
+    flip_deferred: bool = False,
 ) -> MountAction:
     """Decide what to do about a mount's live state.
 
     Limits only matter while the mount is moving under its own power: tracking or slewing. With
     "Tracking only" set the altitude limits also leave a slew alone. A parked or idle mount is
-    never acted on, so a stop doesn't re-trigger on every poll."""
+    never acted on, so a stop doesn't re-trigger on every poll.
+
+    ``flip_deferred`` holds back only the *flip* (CSURF-350, ``FlipDeferrals.active``): a limit is still a stop."""
     if not (tracking or slewing):
         return MountAction()
     found = violations(limits, alt_deg, ha_hours)
@@ -138,7 +214,7 @@ def evaluate(
         found = [r for r in found if not r.startswith("altitude")]
     if found:
         return MountAction(stop=True, reasons=tuple(found))
-    if tracking and not slewing and flip_due(limits, ha_hours, side_of_pier):
+    if tracking and not slewing and not flip_deferred and flip_due(limits, ha_hours, side_of_pier):
         return MountAction(flip=True, reasons=(f"hour angle {ha_hours:+.2f} h is past the flip limit of {limits.flip_ha_deg:.2f}°",))
     return MountAction()
 

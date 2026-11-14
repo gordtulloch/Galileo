@@ -187,7 +187,7 @@ class AppWindowSettingsPagesMixin:
     def _build_planning_settings_page(self: AppWindowState) -> QWidget:
         """Options > Planning: whether slews into the Star Atlas horizon
         obstructions are refused, and downloading the catalog image pack."""
-        from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+        from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
         from galileo.planning.settings import load_planning_settings, save_planning_settings
 
         page = QWidget()
@@ -219,6 +219,40 @@ class AppWindowSettingsPagesMixin:
             self._apply_horizon()
 
         block.toggled.connect(changed)
+
+        astro_heading = QLabel("Astrospheric")
+        astro_heading.setObjectName("PageSubtitle")
+        layout.addWidget(astro_heading)
+        astro_row = QHBoxLayout()
+        astro_row.addWidget(QLabel("API key"))
+        astro_key = QLineEdit(settings["astrospheric_api_key"])
+        astro_key.setEchoMode(QLineEdit.EchoMode.Password)
+        astro_key.setPlaceholderText("Astrospheric API key")
+        astro_key.setToolTip("Your Astrospheric Professional API key. Leave empty to turn the Astrospheric "
+                             "line off in What's Up Tonight.")
+        astro_row.addWidget(astro_key, 1)
+        astro_save = QPushButton("Save")
+        astro_save.setToolTip("Save the Astrospheric API key.")
+        astro_row.addWidget(astro_save)
+        layout.addLayout(astro_row)
+        astro_hint = QLabel("With a key, What's Up Tonight adds Astrospheric's hourly cloud, seeing, transparency, "
+                            "temperature, dew point and wind forecast under the day/night bar (North America, Greenland, Iceland, Ireland "
+                            "and the UK). Needs an Astrospheric Professional membership; each forecast "
+                            "uses API credits.")
+        astro_hint.setObjectName("StatusHint")
+        astro_hint.setWordWrap(True)
+        layout.addWidget(astro_hint)
+
+        def save_key() -> None:
+            settings["astrospheric_api_key"] = astro_key.text().strip()
+            save_planning_settings(settings)
+            self._window.statusBar().showMessage(
+                "Astrospheric API key saved." if settings["astrospheric_api_key"]
+                else "Astrospheric API key cleared.", 5000)
+
+        astro_save.clicked.connect(save_key)
+        astro_key.returnPressed.connect(save_key)
+
         images_heading = QLabel("Catalog images")
         images_heading.setObjectName("PageSubtitle")
         layout.addWidget(images_heading)

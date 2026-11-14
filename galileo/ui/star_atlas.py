@@ -177,6 +177,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self._lines: sa.ConstellationLines = sa.ConstellationLines.empty()
         self._dso_ra = self._dso_dec = self._dso_mag = np.empty(0)
         self._dso_members: dict[str, np.ndarray] = {}
+        self._dso_user = np.zeros(0, dtype=bool)        # objects the user added by searching: always drawn
         self._bodies: list[dict[str, Any]] = []
         self._sun_alt = -30.0
         self._lst = 0.0
@@ -241,12 +242,14 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         member_sets = [catalogs_of(d) for d in dsos]
         # An object with no known magnitude is dropped, unless it is in a curated
         # list (Messier / Caldwell — e.g. the Coalsack), where it is always shown.
-        keep = [i for i, d in enumerate(dsos) if d.magnitude < 90.0 or member_sets[i] & {"Messier", "Caldwell"}]
+        keep = [i for i, d in enumerate(dsos)
+                if d.magnitude < 90.0 or d.user_added or member_sets[i] & {"Messier", "Caldwell"}]
         self._dsos = [dsos[i] for i in keep]
         self._dso_ra = np.array([d.ra_deg for d in self._dsos])
         self._dso_dec = np.array([d.dec_deg for d in self._dsos])
         self._dso_mag = np.array([d.magnitude if d.magnitude < 90.0 else 0.0 for d in self._dsos])
         self._dso_members = {cat: np.array([cat in member_sets[i] for i in keep], dtype=bool) for cat in DSO_CATALOGS}
+        self._dso_user = np.array([self._dsos[j].user_added for j in range(len(self._dsos))], dtype=bool)
         self._recompute()
         self.update()
 
@@ -260,7 +263,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self.update()
 
     def _dso_selected(self) -> np.ndarray:
-        selected = np.zeros(len(self._dsos), dtype=bool)
+        selected = self._dso_user.copy() if len(self._dso_user) == len(self._dsos) else np.zeros(len(self._dsos), dtype=bool)
         for cat in self.dso_catalogs:
             if cat in self._dso_members:
                 selected |= self._dso_members[cat]

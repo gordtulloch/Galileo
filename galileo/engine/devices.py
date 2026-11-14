@@ -81,6 +81,7 @@ class DeviceService:
         self._default_stopper: Callable[[str], Any] | None = None
         self.problems: dict[str, list[str]] = {}                    # pier -> devices that would not connect
         self._cancel = threading.Event()
+        self.busy: Callable[[str], bool] | None = None              # whether a session is running on a Pier (set by the engine)
 
     # -- Piers --------------------------------------------------------------------------------
     def load_piers(self, observatory: str | None = None) -> list[str]:
@@ -118,6 +119,45 @@ class DeviceService:
             results[f"{cfg.category}/{cfg.slot}"] = ok
         await self._push_context(pier)
         return results
+
+    async def connect_category(self, pier: str, category: str) -> bool:
+        """Connect the device(s) the Pier's saved profile has in *category* (a Control Surface name such as ``mount``);
+        ``True`` when every one is connected afterwards. Raises ``KeyError`` for an unknown Pier and ``LookupError``
+        when the profile has no configured device of that category (CSURF-320)."""
+        record = self._piers.get(pier)
+        if record is None:
+            raise KeyError(f"unknown Pier {pier!r}")
+        wanted = self._category_of(category)
+        if wanted is None:
+            raise LookupError(f"there is no device category {category!r}")
+        from galileo.observatory import list_device_configs
+        configs = [c for c in list_device_configs(record) if c.driver and c.server and c.device_name != ""
+                   and self._category_of(c.category) == wanted]
+        if not configs:
+            raise LookupError(f"this Pier has no {wanted.value} configured (Equipment > {wanted.value})")
+        outcomes = await asyncio.gather(*(self._connect_one(pier, c) for c in configs))
+        await self._push_context(pier)
+        return all(outcomes)
+
+    async def disconnect_category(self, pier: str, category: str) -> int:
+        """Disconnect and release the Pier's devices in *category*; returns how many were held. Refused with
+        ``RuntimeError`` while a session is running on the Pier (CSURF-320)."""
+        wanted = self._category_of(category)
+        if wanted is None:
+            raise LookupError(f"there is no device category {category!r}")
+        if self.busy is not None and self.busy(pier):
+            raise RuntimeError("a session is running on this Pier: stop it before disconnecting a device")
+        with self._lock:
+            keys = [k for k in self._adapters if k[0] == pier and self._category_of(k[1]) == wanted]
+            adapters = [(k, self._adapters.pop(k)) for k in keys]
+            self._manual.pop(pier, None)
+        for key, adapter in adapters:
+            try:
+                await adapter.disconnect()
+            except Exception:
+                logger.exception("Pier %s: %s did not disconnect cleanly", pier, key[1])
+            self._bus.publish(DeviceDisconnectedEvent(source=key[1], pier=pier, slot=key[2]))
+        return len(adapters)
 
     async def connect_startup_piers(self, retry_limit: int = 0, retry_interval_s: float = 0.0) -> dict[str, dict[str, bool]]:
         """Auto-connect every Pier whose profile says *connect on startup* (HEAD-040). A Pier whose devices did not

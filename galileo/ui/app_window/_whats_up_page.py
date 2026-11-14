@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ._common import QWidget
-from ._widgets import _AltitudeChart, _ClickableThumbnail, _DayNightBandChart
+from ._widgets import _AltitudeChart, _AstrosphericStrip, _ClickableThumbnail, _DayNightBandChart
 
 logger = logging.getLogger(__name__)
 
@@ -365,16 +365,17 @@ class AppWindowWhatsUpPageMixin:
             session_btn.setToolTip("Create a new session pre-populated with a Target block for this object (SES-160).")
             session_btn.clicked.connect(lambda _=None, o=obj: _add_result_to_new_session(o))
             button_col.addWidget(session_btn)
+
+            save_btn = QPushButton("Save")
+            save_btn.setToolTip("Keep this object on the Planning > Targets list.")
+            save_btn.clicked.connect(lambda _=None, o=obj: self._save_target(o))
+            button_col.addWidget(save_btn)
             button_col.addStretch(1)
 
-            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn))
-            for b in (select_btn, slew_btn, centre_btn, session_btn):
+            button_width = max(b.sizeHint().width() for b in (select_btn, slew_btn, centre_btn, session_btn, save_btn))
+            for b in (select_btn, slew_btn, centre_btn, session_btn, save_btn):
                 b.setFixedWidth(button_width)
             row.addLayout(button_col)
-
-            card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            card.customContextMenuRequested.connect(
-                lambda pos, o=obj, c=card: self._show_target_tile_menu(c, pos, o))
 
             return card, thumb_label
 
@@ -444,6 +445,16 @@ class AppWindowWhatsUpPageMixin:
         day_night_chart.setProperty("helpKey", "day night band")
         band_col.addWidget(day_night_chart)
 
+        astro_strip = _AstrosphericStrip()
+        astro_strip.setProperty("helpKey", "astrospheric forecast")
+        astro_strip.setVisible(False)
+        band_col.addWidget(astro_strip)
+        astro_status = QLabel("")
+        astro_status.setObjectName("StatusHint")
+        astro_status.setWordWrap(True)
+        astro_status.setVisible(False)
+        band_col.addWidget(astro_status)
+
         legend_grid = QGridLayout()
         legend_grid.setContentsMargins(4, 2, 4, 4)
         legend_grid.setHorizontalSpacing(18)
@@ -453,6 +464,63 @@ class AppWindowWhatsUpPageMixin:
         band_col.addWidget(legend_widget)
 
         content_layout.addLayout(band_col)
+
+        astro_state = {"generation": 0}
+
+        def _refresh_astrospheric(location, window_start, window_end) -> None:
+            """Fetch Astrospheric (with a key), NOAA Kp and NOAA smoke off the UI thread and draw them as rows of
+            cells under the day/night bar. Aurora/smoke need no key; an Astrospheric failure shows its reason."""
+            from PySide6.QtCore import QThread, Signal
+            from galileo.planning import astrospheric
+            from galileo.planning.settings import load_planning_settings
+
+            astro_state["generation"] += 1
+            generation = astro_state["generation"]
+            astro_strip.setVisible(False)
+            key = load_planning_settings()["astrospheric_api_key"]
+            if window_start is None:
+                astro_status.setVisible(False)
+                return
+            astro_status.setText("Loading hourly forecast…")
+            astro_status.setVisible(True)
+
+            class _Fetch(QThread):
+                done = Signal(object, str)
+
+                def run(self) -> None:
+                    from galileo.planning import sky_conditions
+                    import datetime as _dt
+                    hours: dict = {}
+                    error = ""
+                    if key:
+                        data, error = astrospheric.fetch_forecast(key, location.latitude, location.longitude)
+                        hours = astrospheric.hourly(data) if data else {}
+                    hours["Aurora"] = sky_conditions.fetch_kp_cells()
+                    if window_start.astimezone().date() == _dt.datetime.now().astimezone().date():
+                        hours["Smoke"] = sky_conditions.fetch_smoke_cell(
+                            location.latitude, location.longitude, window_start, window_end)
+                    self.done.emit(hours, error)
+
+            def on_done(hours, error) -> None:
+                if generation != astro_state["generation"]:
+                    return   # the date/location changed while this was in flight
+                astro_strip.set_data(hours, window_start, window_end)
+                if not astro_strip.isVisible():
+                    astro_status.setText(f"Astrospheric: {error}" if error else "No forecast hours fall inside this night.")
+                    return
+                notes = ["Hourly forecast: Astrospheric (cloud, seeing, transparency, temperature, dew point, "
+                         "wind), NOAA Kp (aurora, 3-hour) and NOAA smoke rating (today)."]
+                if not key:
+                    notes = ["Aurora (NOAA Kp, 3-hour) and smoke (NOAA, today). Enter an Astrospheric API key in "
+                             "Options > Planning for the hourly cloud, seeing and weather rows."]
+                elif error:
+                    notes.append(f"Astrospheric: {error}")
+                astro_status.setText(" ".join(notes))
+
+            thread = _Fetch(page)
+            thread.done.connect(on_done, Qt.ConnectionType.QueuedConnection)
+            self._astrospheric_thread = thread   # keep a reference until it finishes
+            thread.start()
 
         def _refresh_day_night_band() -> None:
             """Recomputed independently of Rank Tonight (WUT-110) — this graphic
@@ -469,6 +537,9 @@ class AppWindowWhatsUpPageMixin:
             location = _current_location()
             if location is None:
                 day_night_chart.set_data({})
+                astro_state["generation"] += 1
+                astro_strip.setVisible(False)
+                astro_status.setVisible(False)
                 placeholder = QLabel("Set the active Observatory's latitude/longitude (top bar) "
                                       "to show day/night for this date.")
                 placeholder.setObjectName("StatusHint")
@@ -479,6 +550,7 @@ class AppWindowWhatsUpPageMixin:
             night_date = date_edit.date().toString(Qt.DateFormat.ISODate)
             day_data = day_night_bands(location, night_date)
             day_night_chart.set_data(day_data)
+            _refresh_astrospheric(location, day_night_chart._window_start, day_night_chart._window_end)
 
             def _fmt(iso: str) -> str:
                 import datetime as _dt
@@ -623,7 +695,7 @@ class AppWindowWhatsUpPageMixin:
                 # Single stars aren't imaging targets here (double stars are); drop them before the cap.
                 from galileo.planning.sky_atlas import ObjectType
                 candidates = [o for o in candidates if o.object_type != ObjectType.STAR]
-                candidates = candidates[:_MAX_CANDIDATES]
+                candidates = sorted(candidates, key=lambda o: not o.user_added)[:_MAX_CANDIDATES]  # searched objects first
                 searching_dlg = _show_searching_dialog(len(candidates))
 
                 forecast, aurora, smoke = _fetch_advisories(night_date)
@@ -727,6 +799,19 @@ class AppWindowWhatsUpPageMixin:
         rank_btn.clicked.connect(run_rank)
         date_edit.dateChanged.connect(lambda _=None: _refresh_day_night_band())
         _refresh_day_night_band()
+
+        # Re-run whenever the screen is shown, so a newly entered Astrospheric key or a changed
+        # Observatory location takes effect without restarting.
+        from PySide6.QtCore import QEvent, QObject
+
+        class _ShowWatcher(QObject):
+            def eventFilter(self, obj, event) -> bool:
+                if event.type() == QEvent.Type.Show:
+                    _refresh_day_night_band()
+                return False
+
+        self._whats_up_show_watcher = _ShowWatcher(page)
+        page.installEventFilter(self._whats_up_show_watcher)
 
         layout.addWidget(criteria)
         layout.addWidget(content, 1)

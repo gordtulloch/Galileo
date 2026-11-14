@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 DEFAULTS: dict[str, Any] = {
     # Refuse slews into the horizon obstructions drawn on the Star Atlas.
     "block_obstructed_slews": False,
+    # Astrospheric Professional API key (What's Up Tonight cloud/seeing/transparency); empty = off.
+    "astrospheric_api_key": "",
 }
 
 

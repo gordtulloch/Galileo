@@ -5,7 +5,7 @@ The Star Atlas is a planetarium: a live map of the sky as seen from your observa
 
 **Left:** the time, site and display options. **Centre:** the sky map. **Right:** details of the object you have selected, with buttons to act on it.
 
-**On the map:** click an object to identify it; double-click to centre and track it; drag to pan; scroll to zoom. Right-click an object to *Goto*, *Sync* or *Add to Session*, or right-click empty sky to Goto that point.
+**On the map:** click an object to identify it; double-click to centre and track it; drag to pan; scroll to zoom. Right-click an object to *Goto*, *Sync*, *Add to Session* or *Park*/*Unpark* the mount, or right-click empty sky to Goto that point.
 
 The site follows the Observatory selected in the top bar; edit it there for a permanent change.
 
@@ -15,7 +15,7 @@ The controls on the left that change what the map shows and when.
 
 ## Sky map
 
-The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session menu.
+The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session / Park-Unpark menu.
 
 ## Find
 
@@ -115,7 +115,7 @@ Draws a marker for where each Pier's telescope is pointing right now, so you can
 
 ## Catalogs
 
-Which deep-sky catalogs are drawn: Messier, Caldwell and NGC, with the number of objects in each. Press **+** to add one, or **×** beside a catalog to remove it.
+Which deep-sky catalogs are drawn: Messier, Caldwell, NGC and IC, with the number of objects in each. Press **+** to add one, or **×** beside a catalog to remove it.
 
 ## Add catalog
 

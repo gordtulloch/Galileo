@@ -259,6 +259,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `WUT-090` | P2 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up` | Test | `TC-WUT-090` |
 | `WUT-100` | P3 | SDD 4.8a `galileo.planning.recommend`; SDD 4.8b `galileo.ui.whats_up`; SDD 4.16 `galileo.safety` | Test | `TC-WUT-100` |
 | `WUT-110` | MVP | SDD 4.8b `galileo.ui.whats_up` (`galileo.planning.visibility.day_night_bands`) | Test | `TC-WUT-110` |
+| `WUT-120` | P3 | SDD 4.8b `galileo.ui.whats_up` (`galileo.planning.astrospheric`, `galileo.planning.settings`) | Test | `TC-WUT-120` |
 
 ### `FRAME` — Framing Assistant
 
@@ -531,6 +532,11 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CSURF-260` | P3 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-260` |
 | `CSURF-300` | MVP | SDD 4.29 `control_surface.emergency` | Test | `TC-CSURF-300` |
 | `CSURF-310` | P2 | SDD 4.29 `control_surface.node`, `galileo.node_health` | Test | `TC-CSURF-310` |
+| `CSURF-330` | MVP | SDD 4.29 `control_surface.mounthold`, `engine.main` | Test | `TC-CSURF-330` |
+| `CSURF-320` | P2 | SDD 4.29 `control_surface.catalogue`, `engine.devices` | Test | `TC-CSURF-320` |
+| `CSURF-340` | MVP | SDD 4.29 `control_surface.autofocus`, `engine.autofocus` | Test | `TC-CSURF-340` |
+| `CSURF-350` | P2 | SDD 4.29 `control_surface.flips`, `engine.flips`, `mount_limits.FlipDeferrals` | Test | `TC-CSURF-350` |
+| `CSURF-360` | P2 | SDD 4.29 `control_surface.sessions`, `engine.sessions`, `engine.runner`, `session_exec.SessionExecutor.skip` | Test | `TC-CSURF-360` |
 | `CSURF-400` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-400` |
 | `CSURF-410` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-410` |
 | `CSURF-420` | MVP | SDD 4.29 `control_surface.holds` | Test | `TC-CSURF-420` |

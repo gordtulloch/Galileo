@@ -1000,10 +1000,13 @@ async def test_tc_csurf_130_sky_search_and_object_details(registry, monkeypatch)
     rise, transit and set at the Pier's site; an unknown object is refused."""
     _sky_world(registry, monkeypatch)
     cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("sky.")}
-    assert set(cat) == {"sky.search", "sky.object", "sky.framing"} and cat["sky.search"]["class"] == "read"
+    assert set(cat) == {"sky.search", "sky.catalogues", "sky.object", "sky.framing"} and cat["sky.search"]["class"] == "read"
 
     found = (await registry.invoke("sky.search", {"query": "m31"}, "p1", "web")).value
     assert found["total"] == 1 and found["objects"][0]["name"] == "Andromeda Galaxy"
+    cats = (await registry.invoke("sky.catalogues", {}, "p1", "web")).value
+    assert cats["catalogues"] == ["Messier", "Caldwell", "NGC", "IC"]
+
     both = (await registry.invoke("sky.search", {"query": "", "limit": 1}, "p1", "web")).value
     assert both["total"] == 2 and len(both["objects"]) == 1                      # cut to the limit, total kept
     assert (await registry.invoke("sky.search", {"query": "x", "limit": 0}, "p1", "web")).status == "invalid"

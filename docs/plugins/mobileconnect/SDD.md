@@ -323,6 +323,7 @@ All routes require an authenticated principal from Connect Link. "Paired" routes
 | `GET /frame/{id}/tiles/{z}/{x}/{y}` | paired | Pyramid tile | `610`, `670` |
 | `GET /frame/{id}/fits` | paired (Operator) | Full FITS, size reported first | `620` |
 | `GET /sky/catalog`, `/sky/ephemeris`, `/sky/site` | paired | Sky streaming (Section 3.11) | `640`, `660` |
+| `GET /targets`, `DELETE /targets?name=` | paired (`DELETE`: Operator, checked in the handler, as every route registers `view`) | The saved targets list (core `SKY-130`, replicated between nodes): name, designations, J2000 position, type, magnitude, size and a `version`; `DELETE` removes one entry. An older Galileo with no list answers an empty list with a reason. Acting on an entry uses the existing `mount.slew` and `solve.centre` operations. | `1340` |
 | `GET /audit` | Master UI only | Audit query for the plugin page | `190` |
 | `POST /connect/v1/outreach/enrol` (the facility's own route, `LINK-130`) | none (event secret, subnet-checked) | Exchange the event secret for a guest token | `1220`, `1230` |
 | `GET /outreach/piers`, `WS /outreach/stream`, `POST /outreach/switch` | guest | Allowlist (Section 3.14) | `1240`, `1250`, `1260` |

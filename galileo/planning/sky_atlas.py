@@ -62,6 +62,7 @@ class DeepSkyObject:
     magnitude: float
     size_arcmin: float = 0.0
     description: str = ""
+    user_added: bool = False      # found by a search and stored in the database; always shown, whatever the filters
 
     def as_sequence_target(self) -> dict:
         return {
@@ -94,11 +95,12 @@ class LocationManager:
 
 # The catalogs a user can pick between on the Star Atlas. An object belongs to
 # one if any of its designations is in that catalog's numbering.
-DSO_CATALOGS: tuple[str, ...] = ("Messier", "Caldwell", "NGC")
+DSO_CATALOGS: tuple[str, ...] = ("Messier", "Caldwell", "NGC", "IC")
 _CATALOG_PATTERNS = {
     "Messier": re.compile(r"^M\s?\d+$", re.IGNORECASE),
     "Caldwell": re.compile(r"^(?:C|Caldwell)\s?\d+$", re.IGNORECASE),
     "NGC": re.compile(r"^NGC\s?\d+", re.IGNORECASE),
+    "IC": re.compile(r"^IC\s?\d+", re.IGNORECASE),
 }
 
 
@@ -590,6 +592,68 @@ def _obj_from_dict(d: dict) -> DeepSkyObject:
 
 
 # ---------------------------------------------------------------------------
+# Objects added by searching (database-backed)
+# ---------------------------------------------------------------------------
+
+_MAX_REMEMBERED = 25
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[\s_]+", "", name).upper()
+
+
+def _match_existing(catalog: list[DeepSkyObject], obj: DeepSkyObject) -> DeepSkyObject | None:
+    """The catalog entry that is the same object as *obj* — by designation, or within 1 arcmin."""
+    keys = {_norm(n) for n in (obj.primary_name, *obj.designations)}
+    for o in catalog:
+        if keys & {_norm(n) for n in (o.primary_name, *o.designations)}:
+            return o
+        if abs(o.dec_deg - obj.dec_deg) < 1 / 60:
+            dra = abs(o.ra_deg - obj.ra_deg)
+            dra = min(dra, 360 - dra) * math.cos(math.radians(obj.dec_deg))
+            if dra < 1 / 60:
+                return o
+    return None
+
+
+def _store_user_object(obj: DeepSkyObject) -> None:
+    from galileo.library.models.user_object import UserObjectRecord
+    UserObjectRecord.get_or_create(
+        name=obj.primary_name,
+        defaults={
+            "designations_json": json.dumps(list(obj.designations)),
+            "ra_deg": obj.ra_deg, "dec_deg": obj.dec_deg, "object_type": obj.object_type.value,
+            "magnitude": obj.magnitude, "size_arcmin": obj.size_arcmin,
+        },
+    )
+
+
+def _load_user_objects(catalog: list[DeepSkyObject]) -> list[DeepSkyObject]:
+    """The objects stored by earlier searches that the bundled catalog doesn't already hold."""
+    try:
+        from galileo.library.models.user_object import UserObjectRecord
+        rows = list(UserObjectRecord.select())
+    except Exception:
+        logger.debug("User objects unavailable (database not open)", exc_info=True)
+        return []
+    out: list[DeepSkyObject] = []
+    known = {_norm(n) for o in catalog for n in (o.primary_name, *o.designations)}
+    for r in rows:
+        try:
+            otype = ObjectType(r.object_type)
+        except ValueError:
+            otype = ObjectType.OTHER
+        obj = DeepSkyObject(
+            primary_name=r.name, designations=json.loads(r.designations_json or "[]") or [r.name],
+            ra_deg=r.ra_deg, dec_deg=r.dec_deg, object_type=otype, magnitude=r.magnitude,
+            size_arcmin=r.size_arcmin, user_added=True,
+        )
+        if _norm(obj.primary_name) not in known:
+            out.append(obj)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Sky atlas
 # ---------------------------------------------------------------------------
 
@@ -601,6 +665,7 @@ class SkyAtlas:
             self._catalog = catalog
         else:
             self._catalog = _load_catalog()
+            self._catalog.extend(_load_user_objects(self._catalog))
         self._cache_dir: Path | None = None
         self._target_list: list[DeepSkyObject] = []
         self._telescopius_api_key: str | None = None
@@ -649,6 +714,7 @@ class SkyAtlas:
                 results = []
             if results:
                 logger.info("Simbad search for %r found %d object(s)", q, len(results))
+                results = self._remember(results)
             else:
                 logger.info("Simbad search for %r found no results", q)
 
@@ -665,6 +731,24 @@ class SkyAtlas:
                     results.append(obj)
 
         return results
+
+    def _remember(self, found: list[DeepSkyObject]) -> list[DeepSkyObject]:
+        """Add *found* objects missing from the catalog to the database and the live catalog; returns the
+        catalog's own instance for each (so a repeat or equivalent designation never duplicates)."""
+        out: list[DeepSkyObject] = []
+        for obj in found[:_MAX_REMEMBERED]:
+            existing = _match_existing(self._catalog, obj)
+            if existing is not None:
+                out.append(existing)
+                continue
+            obj.user_added = True
+            try:
+                _store_user_object(obj)
+            except Exception:
+                logger.warning("Could not store %s in the database", obj.primary_name, exc_info=True)
+            self._catalog.append(obj)
+            out.append(obj)
+        return out
 
     def set_telescopius_api_key(self, api_key: str | None) -> None:
         """Configure (or clear, with ``None``) the user-supplied Telescopius API
@@ -745,14 +829,15 @@ class SkyAtlas:
         for o in self._catalog:
             if object_types and o.object_type not in object_types:
                 continue
-            if o.magnitude > max_magnitude:
-                continue
-            if o.size_arcmin < min_size_arcmin:
-                continue
-            if max_size_arcmin > 0 and o.size_arcmin > max_size_arcmin:
-                continue
-            if catalogs and not (catalogs_of(o) & catalogs):
-                continue
+            if not o.user_added:      # an object the user searched for is never filtered out by these
+                if o.magnitude > max_magnitude:
+                    continue
+                if o.size_arcmin < min_size_arcmin:
+                    continue
+                if max_size_arcmin > 0 and o.size_arcmin > max_size_arcmin:
+                    continue
+                if catalogs and not (catalogs_of(o) & catalogs):
+                    continue
             if visible_tonight and location and not is_observable_tonight(
                 o.ra_deg, o.dec_deg, location, date_str, min_altitude_deg, min_duration_hours,
             ):

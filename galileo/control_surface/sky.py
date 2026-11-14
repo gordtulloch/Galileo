@@ -3,7 +3,7 @@
 
 """Sky and framing, read-only (CSURF-130): find a target, see when it is up, and see how it frames on this Pier's rig.
 
-``sky.search`` looks a name up in the bundled catalogue (offline, no Simbad); ``sky.object`` gives one object's
+``sky.search`` looks a name up in the bundled catalogue, falling back to an online lookup whose result is added to the database; ``sky.object`` gives one object's
 details and its rise, transit and set from the Pier's Observatory tonight; ``sky.framing`` works out the field of view
 of the Pier's telescope and camera around a position, at a chosen rotation, and the panels of a mosaic that covers it.
 Going to a target is the existing ``mount.slew``, and centring on it with a plate solve is ``solve.centre``, so a
@@ -15,6 +15,7 @@ and the Telescopius and AAVSO lists stay on the desktop: they are pictures or ne
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Protocol
 
 from galileo.control_surface.registry import OperationContext, OperationSpec, Refused, Registry
@@ -24,8 +25,12 @@ MAX_RESULTS = 50                                # a short list a phone can show;
 
 
 class SkyAccess(Protocol):
-    def search(self, query: str, limit: int) -> tuple[list[dict[str, Any]], int]:
-        """Up to *limit* matching objects, and how many matched in all."""
+    def search(self, query: str, limit: int, catalog: str | None = None) -> tuple[list[dict[str, Any]], int]:
+        """Up to *limit* matching objects (of one catalog, if given), and how many matched in all. An object
+        found only by an online lookup is added to the database, so it is kept for the desktop's Star Atlas too."""
+
+    def catalogues(self) -> list[str]:
+        """The catalogues the Master supports (Messier, Caldwell, NGC, IC), for ``sky.search``'s ``catalog``."""
 
     def detail(self, pier: str, name: str) -> dict[str, Any] | None:
         """One object (exact name or designation) with rise/transit/set for the Pier's site; ``None`` if unknown."""
@@ -37,8 +42,15 @@ class SkyAccess(Protocol):
 
 def register_sky_operations(registry: Registry, access: SkyAccess) -> None:
     async def search(ctx: OperationContext, args: dict[str, Any]) -> Any:
-        found, total = access.search(args["query"], int(args["limit"]))
+        catalog = args.get("catalog") or None
+        if catalog:
+            found, total = await asyncio.to_thread(access.search, args["query"], int(args["limit"]), catalog)
+        else:
+            found, total = await asyncio.to_thread(access.search, args["query"], int(args["limit"]))
         return {"query": args["query"], "objects": found, "total": total}
+
+    async def catalogues(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        return {"catalogues": access.catalogues()}
 
     async def detail(ctx: OperationContext, args: dict[str, Any]) -> Any:
         found = access.detail(ctx.pier, args["name"])
@@ -54,8 +66,15 @@ def register_sky_operations(registry: Registry, access: SkyAccess) -> None:
 
     registry.register(OperationSpec(
         "sky.search", "read",
-        (Arg("query", "str"), Arg("limit", "int", required=False, default=20, minimum=1, maximum=MAX_RESULTS)),
-        needs_lease=False, description="Find catalogue objects by name or designation"), search)
+        (Arg("query", "str"), Arg("limit", "int", required=False, default=20, minimum=1, maximum=MAX_RESULTS),
+         Arg("catalog", "str", required=False, default="")),
+        needs_lease=False,
+        description="Find catalogue objects by name or designation (Messier, Caldwell, NGC, IC); an unknown name "
+                    "is looked up online and added to the catalogue"), search)
+    registry.register(OperationSpec(
+        "sky.catalogues", "read", (), needs_lease=False,
+        description="The catalogues the Master supports; pass one or several (comma-separated) to sky.search"),
+        catalogues)
     registry.register(OperationSpec(
         "sky.object", "read", (Arg("name", "str"),), needs_lease=False,
         description="One object's details and its rise, transit and set tonight at the Pier's site"), detail)

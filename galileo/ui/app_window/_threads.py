@@ -391,7 +391,7 @@ class _MountGuardThread(_QThreadBase):
         self.finished_with.emit(result)
 
     async def _guard(self, result: dict) -> None:
-        from galileo.mount_limits import evaluate, hour_angle_hours
+        from galileo.mount_limits import deferrals, evaluate, hour_angle_hours
         status = await self._mount.get_status() or {}
         result["status"] = status
         lst, ra = status.get("sidereal_time"), status.get("right_ascension")
@@ -400,6 +400,7 @@ class _MountGuardThread(_QThreadBase):
             self._limits, alt_deg=status.get("altitude"), ha_hours=ha,
             side_of_pier=status.get("side_of_pier"),
             tracking=bool(status.get("tracking")), slewing=bool(status.get("slewing")),
+            flip_deferred=deferrals.active(self._mount, self._limits, ha) is not None,   # CSURF-350: a phone deferred it
         )
         result["reasons"] = action.reasons
         if action.stop:

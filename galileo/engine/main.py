@@ -55,6 +55,9 @@ class Engine:
         self.config: Any = None
         self.guard: Any = None
         self.node: Any = None
+        self.holds: Any = None
+        self._holds_task: Any = None
+        self._holds_safety: Any = None
         self.observatory: str | None = None
         self._connecting: threading.Thread | None = None
         self._started = False
@@ -89,6 +92,7 @@ class Engine:
 
         self.devices = self._shared_devices if self._shared_devices is not None else DeviceService()
         self.runner = SessionRunner()                       # HEAD-050
+        self.devices.busy = self.runner.is_running          # CSURF-320: no disconnecting under a running session
         self.devices.set_default_session_stopper(self.runner.stop)
         from galileo.engine.config import load_config, resolve_observatory
         from galileo.observatory import list_observatories
@@ -101,7 +105,11 @@ class Engine:
 
         self.state = ObservableState()
         self.registry = Registry()
-        register_device_operations(self.registry, self.devices)
+        from galileo.control_surface.holds import HoldManager
+        from galileo.control_surface.mounthold import register_mount_hold_operations
+        self.holds = HoldManager()                                                                # CSURF-330: held jog and focus
+        register_device_operations(self.registry, self.devices, self.holds)
+        register_mount_hold_operations(self.registry, self.devices, self.holds)                   # CSURF-330
         from galileo.control_surface.sessions import register_session_operations
         from galileo.engine.sessions import EngineSessions
         from galileo.engine.guiding import EngineGuiding
@@ -128,6 +136,10 @@ class Engine:
         polar = EnginePolar(self.devices, self.runner, self.state, busy=solve.running, frames=solve_frame)
         register_solve_operations(self.registry, solve)                                           # CSURF-140
         register_polar_operations(self.registry, polar)                                           # CSURF-145
+        from galileo.control_surface.autofocus import register_autofocus_operations
+        from galileo.engine.autofocus import EngineAutofocus
+        register_autofocus_operations(self.registry, EngineAutofocus(                              # CSURF-340
+            self.devices, self.runner, self.state, busy=lambda pier: solve.running(pier) or polar.running(pier)))
         from galileo.control_surface.guiding import register_guiding_operations
         register_guiding_operations(self.registry, self.guiding)                                  # CSURF-160
         from galileo.control_surface.sky import register_sky_operations
@@ -191,6 +203,10 @@ class Engine:
 
         bus = get_bus()
         self.leases = LeaseBroker(bus=bus)
+        self.leases.add_listener(self.holds.on_lease_changed)                  # LEASE-080: losing the lease stops its motion
+        from galileo.bus import SafetyUnsafeEvent
+        self._holds_safety = lambda event: self.holds.cancel_pier(event.pier, "safety stop")   # CSURF-410
+        bus.subscribe(SafetyUnsafeEvent, self._holds_safety)
         self.gateway = Gateway(self.registry, self.leases, AuditLog())
         self.channel = EngineChannel(
             registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state, devices=self.devices,
@@ -199,6 +215,7 @@ class Engine:
         self._channel_loop = loop
         self._channel_thread = threading.Thread(target=loop.run_forever, name="engine-channel", daemon=True)
         self._channel_thread.start()
+        loop.call_soon_threadsafe(lambda: setattr(self, "_holds_task", loop.create_task(self.holds.run())))   # the deadman
         info = asyncio.run_coroutine_threadsafe(self.channel.start(), loop).result(30)
         self.lock.update(channel=info)
         from galileo.control_surface.feed import EventFeed
@@ -232,6 +249,15 @@ class Engine:
 
     def _stop_channel(self) -> None:
         loop, self._channel_loop = self._channel_loop, None
+        if self.holds is not None:
+            from galileo.bus import SafetyUnsafeEvent, get_bus
+            if self._holds_safety is not None:
+                get_bus().unsubscribe(SafetyUnsafeEvent, self._holds_safety)
+                self._holds_safety = None
+            self.holds.cancel_all("engine stopping")        # nothing keeps moving once the engine is going
+            task, self._holds_task = self._holds_task, None
+            if task is not None and loop is not None:
+                loop.call_soon_threadsafe(task.cancel)
         from galileo.control_surface.service import withdraw_control_surface
         withdraw_control_surface()
         sources, self.frame_sources = self.frame_sources, None

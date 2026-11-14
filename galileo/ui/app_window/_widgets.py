@@ -429,6 +429,68 @@ class _DayNightBandChart(_QWidgetBase):
         painter.end()
 
 
+class _AstrosphericStrip(_QWidgetBase):
+    """Astrospheric's hourly Cloud / Seeing / Transparency forecast, drawn as three rows of one-hour cells
+    on the same time scale as the `_DayNightBandChart` above it (so each cell sits under the hour it
+    describes). Cell colour is the one Astrospheric supplies; the number is its raw value."""
+
+    _ROWS = ("Cloud", "Seeing", "Transparency", "Temperature", "DewPoint", "Wind", "Smoke", "Aurora")
+    _ROW_H = 14
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(self._ROW_H * len(self._ROWS) + 2)
+        self._data: dict = {}
+        self._start = None
+        self._end = None
+
+    def set_data(self, hourly_data: dict, window_start, window_end) -> None:
+        """*window_start*/*window_end* are the band's datetimes (naive = system local)."""
+        # Only rows that have data are drawn; cells are (start, value, colour[, hours]), 1 hour by default.
+        self._data = {var: hourly_data[var] for var in self._ROWS if hourly_data and hourly_data.get(var)}
+        self.setFixedHeight(self._ROW_H * max(len(self._data), 1) + 2)
+        self._start = window_start.astimezone() if window_start else None
+        self._end = window_end.astimezone() if window_end else None
+        self.setVisible(bool(self._data and self._start and self._end))
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        from PySide6.QtCore import QRectF, Qt as _Qt
+        from PySide6.QtGui import QColor, QFont, QPainter
+        from galileo.planning.astrospheric import ROW_LABELS, display_value
+
+        if not (self._data and self._start and self._end):
+            return
+        painter = QPainter(self)
+        font = QFont(painter.font())
+        font.setPointSizeF(7.0)
+        painter.setFont(font)
+        left, width = 4.0, self.width() - 8.0
+        total = (self._end - self._start).total_seconds() or 1.0
+        for row, var in enumerate(self._data):
+            top = 1.0 + row * self._ROW_H
+            for cell_data in self._data[var]:
+                when, value, color = cell_data[:3]
+                hours = cell_data[3] if len(cell_data) > 3 else 1.0
+                x0 = left + (when.astimezone() - self._start).total_seconds() / total * width
+                x1 = x0 + hours * 3600.0 / total * width
+                if x1 < left or x0 > left + width:
+                    continue
+                x0, x1 = max(x0, left), min(x1, left + width)
+                fill = QColor(color) if QColor.isValidColorName(color) else QColor("#555555")
+                painter.setPen(_Qt.PenStyle.NoPen)
+                painter.setBrush(fill)
+                cell = QRectF(x0, top, max(1.0, x1 - x0 - 1.0), self._ROW_H - 2)
+                painter.drawRect(cell)
+                if cell.width() >= 18:
+                    painter.setPen(QColor("#000000") if fill.lightness() > 128 else QColor("#ffffff"))
+                    painter.drawText(cell, _Qt.AlignmentFlag.AlignCenter, f"{display_value(var, value):.0f}")
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(QRectF(left + 3, top, 90, self._ROW_H - 2),
+                             _Qt.AlignmentFlag.AlignVCenter | _Qt.AlignmentFlag.AlignLeft, ROW_LABELS[var])
+        painter.end()
+
+
 class _ClickableThumbnail(_QLabelBase):
     """A ``QLabel`` that emits ``clicked`` on a left-button press — used for
     the Targets page's result-tile thumbnails (SKY-080), so clicking one opens
