@@ -270,6 +270,7 @@ Outreach lets visitors on their own phones or tablets watch live images without 
 | MCON-1310 | (needs OF) The system shall provide, and persist in Galileo's database (`PLUG-150`), these outreach options: the outreach SSID and optional passphrase, the outreach subnet(s), the default duration, the concurrent-guest cap, the guest preview size and quality, and which Piers are offered. Values shall be validated and clamped; the passphrase shall be stored as a secret and never logged or audited. | MVP |
 | MCON-1320 | The handshake (`MCON-930`) shall tell an app whether an outreach event is open and the limits that apply, so a guest app can show a closed, full or ended state with a reason. | P2 |
 | MCON-1330 | The iOS/iPadOS and Android apps shall offer a **guest entry**, reached by scanning the event QR code or opening the app on the outreach network, that shows only the Pier switcher and the live image, stores the guest token only for the event, offers no other screen, and tells the visitor when the event ends. A headset shall not be a guest client in v1. | MVP |
+| MCON-1340 | The plugin shall serve core's saved targets list (`SKY-130`, replicated between nodes) to every paired app at `GET /mobileconnect/v1/targets` — name, designations, J2000 position, type, magnitude, size and a `version` that changes with the list — and let an app with control remove an entry with `DELETE`; the apps shall show the list as a Targets screen with Slew To and Goto and Centre (the existing `mount.slew` and `solve.centre` operations) and Remove. | P2 |
 
 ---
 

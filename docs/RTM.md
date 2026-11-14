@@ -242,6 +242,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKY-100` | MVP | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-100` |
 | `SKY-110` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-110` |
 | `SKY-120` | P2 | SDD 4.8 `galileo.planning.sky_atlas` | Test | `TC-SKY-120` |
+| `SKY-130` | P2 | SDD 4.8 `galileo.planning.saved_targets` | Test | `TC-SKY-130` |
 
 ### `WUT` — What's Up Tonight
 

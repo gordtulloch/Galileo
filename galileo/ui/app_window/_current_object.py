@@ -91,6 +91,43 @@ class AppWindowCurrentObjectMixin:
         except Exception:
             logger.debug("Could not add %s to the target list", obj.primary_name, exc_info=True)
 
+    def _show_target_tile_menu(self: AppWindowState, card, pos, obj: DeepSkyObject, *, saved: bool = False) -> None:
+        """Right-click menu of a result tile (Search, What's Up Tonight, Targets): **Save** adds the
+        object to the saved Targets list; on the Targets screen itself (*saved*) it is **Remove**."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(card)
+        if saved:
+            menu.addAction("Remove", lambda: self._remove_saved_target(obj))
+        else:
+            menu.addAction("Save", lambda: self._save_target(obj))
+        menu.exec(card.mapToGlobal(pos))
+
+    def _save_target(self: AppWindowState, obj: DeepSkyObject) -> None:
+        """"Save" (tile context menu): keep *obj* on the Planning > Targets list."""
+        from galileo.planning.saved_targets import save_target
+        try:
+            created = save_target(obj)
+        except Exception:
+            logger.exception("Could not save target %s", obj.primary_name)
+            self._window.statusBar().showMessage(f"Could not save {obj.primary_name} — see log.", 6000)
+            return
+        self._window.statusBar().showMessage(
+            f"Saved {obj.primary_name} to Targets." if created else f"{obj.primary_name} is already in Targets.", 4000)
+
+    def _remove_saved_target(self: AppWindowState, obj: DeepSkyObject) -> None:
+        """"Remove" (Targets tile context menu): drop *obj* from the saved list and redraw it."""
+        from galileo.planning.saved_targets import remove_target
+        try:
+            remove_target(obj.primary_name)
+        except Exception:
+            logger.exception("Could not remove saved target %s", obj.primary_name)
+            self._window.statusBar().showMessage(f"Could not remove {obj.primary_name} — see log.", 6000)
+            return
+        refresh = getattr(self, "_saved_targets_refresh", None)
+        if refresh is not None:
+            refresh()
+        self._window.statusBar().showMessage(f"Removed {obj.primary_name} from Targets.", 4000)
+
     def _show_full_image(self: AppWindowState, obj: DeepSkyObject) -> None:
         """Clicking a Targets-page result tile's thumbnail (SKY-080) opens a
         larger view of the same survey-image field — fetched at

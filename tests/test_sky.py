@@ -926,3 +926,25 @@ async def test_tc_sky_120_import_telescopius_observing_list_requires_api_key(sky
 
     assert len(imported) == 2
     assert {t["name"] for t in imported} == {"M42", "M31"}
+
+
+# ---------------------------------------------------------------------------
+# TC-SKY-130
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SKY-130")
+@pytest.mark.priority("P2")
+def test_tc_sky_130_save_and_remove_targets(settings_db):
+    """SKY-130: Save a catalog object to a persistent targets list (no duplicates), list it, and remove it."""
+    from galileo.planning.saved_targets import list_targets, remove_target, save_target
+    from galileo.planning.sky_atlas import DeepSkyObject, ObjectType
+    m31 = DeepSkyObject("M31", ["NGC 224"], 10.68, 41.27, ObjectType.GALAXY, 3.4, 178.0)
+    m42 = DeepSkyObject("M42", [], 83.82, -5.39, ObjectType.NEBULA, 4.0, 65.0)
+    assert list_targets() == []
+    assert save_target(m31) is True
+    assert save_target(m31) is False            # already saved: not duplicated
+    assert save_target(m42) is True
+    assert {t.primary_name for t in list_targets()} == {"M31", "M42"}
+    assert next(t for t in list_targets() if t.primary_name == "M31") == m31
+    remove_target("M31")
+    assert [t.primary_name for t in list_targets()] == ["M42"]

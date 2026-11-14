@@ -100,6 +100,7 @@ def _from_pier(row: Row) -> Row:
 _SPECS: dict[str, dict[str, Any]] = {
     "observatories": {"key": ("name",), "exprs": ["OLD.name"], "deps": ()},
     "session_templates": {"key": ("name",), "exprs": ["OLD.name"], "deps": ()},
+    "saved_targets": {"key": ("name",), "exprs": ["OLD.name"], "deps": ()},
     "piers": {"key": ("observatory", "name"), "exprs": [OBS_REF, "OLD.name"], "deps": ("observatories",),
               "to": _via_observatory, "from": _from_observatory},
     "horizon_points": {"key": ("observatory", "azimuth_deg"), "exprs": [OBS_REF, "OLD.azimuth_deg"],
@@ -130,6 +131,8 @@ PAYLOAD_COLUMNS: dict[str, tuple[str, ...]] = {
     "observatories": ("latitude", "longitude", "timezone", "physical_address", "owner", "elevation_m",
                       "notification_type", "email_address", "cell_number"),
     "session_templates": ("blocks_json",),
+    "saved_targets": ("designations_json", "ra_deg", "dec_deg", "object_type", "magnitude", "size_arcmin",
+                      "description", "saved_at"),
     "piers": ("connect_on_startup",),
     "horizon_points": ("altitude_deg",),
     "observatory_safety_rules": ("label", "unit", "safety_related", "operator", "threshold"),
@@ -149,7 +152,8 @@ PAYLOAD_COLUMNS: dict[str, tuple[str, ...]] = {
 
 NATURAL_KEYS = {t: d["key"] for t, d in _SPECS.items()}
 TOMBSTONE_KEY_EXPRS = {t: d["exprs"] for t, d in _SPECS.items()}
-#: Tables that have been put under tracking by migration 037 (``app_settings`` was done by 034).
+#: Tables put under tracking by migrations 037 and 038 (``app_settings`` was done by 034); 038 created and tracked
+#: ``saved_targets`` in one step.
 TRACKED_BY_037 = tuple(_SPECS)
 
 

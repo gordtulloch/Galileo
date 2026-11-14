@@ -421,7 +421,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     ids = [s[0] for s in PRIMARY_SECTIONS]
     assert ids == ["dashboard", "star_atlas", "planning", "imaging", "guiding", "focus", "solve", "library", "science", "equipment"]
     assert [i[:2] for i in PLANNING_ITEMS] == [
-        ("whats_up", "What's Up Tonight"), ("targets", "Targets"), ("sessions", "Sessions"),
+        ("whats_up", "What's Up Tonight"), ("search", "Search"), ("targets", "Targets"), ("sessions", "Sessions"),
         ("schedule", "Schedule"), ("history", "History"),
     ]
     # Science has no built-in items; Variable Stars comes only from the VSTarget plugin.
@@ -440,7 +440,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     ]
     # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
     # Science), so check that the core items come first rather than that the menu is exactly them.
-    assert ["What's Up Tonight", "Targets", "Sessions", "Schedule", "History"] in menus
+    assert ["What's Up Tonight", "Search", "Targets", "Sessions", "Schedule", "History"] in menus
     assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 

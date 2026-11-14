@@ -188,6 +188,7 @@ This RTM seeds a row for every requirement in [this plugin's SRS](SRS.md) with a
 | `MCON-1310` | MVP | provide, and persist in Galileo's database (PLUG-150), these outreach opt… | SDD 3.15 `ui, config`; SDD 3.14 `outreach` | OF | Test | `TC-MCON-1310` |
 | `MCON-1320` | P2 | The handshake (MCON-930) shall tell an app whether an outreach event is open and the limit… | SDD 3.16 `wire` | — | Test | `TC-MCON-1320` |
 | `MCON-1330` | MVP | The iOS/iPadOS and Android apps shall offer a **guest entry**, reached by scanning the eve… | SDD 3.17 `client apps (app repo)` | — | Test (app repo) | `TC-MCON-1330` |
+| `MCON-1340` | P2 | serve core's saved targets list to the apps and let one with control remove an entry | SDD 3.3 `routes` | — | Test | `TC-MCON-1340` |
 
 ---
 

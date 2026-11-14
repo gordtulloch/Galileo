@@ -372,6 +372,10 @@ class AppWindowWhatsUpPageMixin:
                 b.setFixedWidth(button_width)
             row.addLayout(button_col)
 
+            card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            card.customContextMenuRequested.connect(
+                lambda pos, o=obj, c=card: self._show_target_tile_menu(c, pos, o))
+
             return card, thumb_label
 
         page = QWidget()

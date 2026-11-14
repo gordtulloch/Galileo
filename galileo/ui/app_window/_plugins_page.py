@@ -21,7 +21,7 @@ class AppWindowPluginsPageMixin:
     def _build_plugins_settings_page(self: AppWindowState) -> QWidget:  # type: ignore[return]
         """Options > Plugins: installed list, Install from file, and Marketplace tab."""
         try:
-            from PySide6.QtCore import Qt, QThread, Signal
+            from PySide6.QtCore import QObject, Qt, Signal
             from PySide6.QtGui import QPixmap
             from PySide6.QtWidgets import (
                 QCheckBox, QFileDialog, QFrame, QHBoxLayout,
@@ -280,7 +280,32 @@ class AppWindowPluginsPageMixin:
         refresh_btn = QPushButton("Refresh")
         market_layout.addWidget(refresh_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        class _FetchThread(QThread):
+        class _NetThread(QObject):
+            """A background network worker that is a daemon Python thread, not a ``QThread``.
+
+            A ``QThread`` still running when the interpreter exits makes Qt abort the process
+            ("QThread: Destroyed while thread is still running" - the macOS "Python quit
+            unexpectedly" dialog), which happened whenever the window was built and torn down
+            while a marketplace request was mid-handshake (tests, the help audit, quitting).
+            A daemon thread is simply dropped at exit. Subclasses declare their signals and
+            implement ``run``; results reach the UI through queued signal connections.
+            """
+
+            def start(self) -> None:
+                import threading
+                threading.Thread(target=self._guarded_run, name=type(self).__name__,
+                                 daemon=True).start()
+
+            def _guarded_run(self) -> None:
+                try:
+                    self.run()
+                except RuntimeError:
+                    pass   # the QObject was deleted while the request was in flight
+
+            def run(self) -> None:
+                raise NotImplementedError
+
+        class _FetchThread(_NetThread):
             done = Signal(list, str)
 
             def __init__(self, client: MarketplaceClient, force: bool = False) -> None:
@@ -408,7 +433,7 @@ class AppWindowPluginsPageMixin:
 
             market_scroll.setWidget(container)
 
-        class _DownloadInstallThread(QThread):
+        class _DownloadInstallThread(_NetThread):
             progress = Signal(int, int)
             done = Signal(bool, str)
 
@@ -492,7 +517,7 @@ class AppWindowPluginsPageMixin:
 
         refresh_btn.clicked.connect(lambda: _fetch_thread_start(force=True))
 
-        class _LatestThread(QThread):
+        class _LatestThread(_NetThread):
             """Looks up the latest marketplace versions in the background so the Installed tiles
             can be tagged without opening the Marketplace tab (PLUG-190)."""
             done = Signal(list, str)

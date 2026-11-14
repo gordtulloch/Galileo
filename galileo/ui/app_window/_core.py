@@ -315,7 +315,8 @@ class AppWindowCoreMixin:
             "star_atlas": self._build_star_atlas_page,
             "planning": lambda: self._build_submenu_page(
                 PLANNING_ITEMS, {"whats_up": self._build_whats_up_page,
-                                  "targets": self._build_sky_atlas_page,
+                                  "search": self._build_sky_atlas_page,
+                                  "targets": lambda: self._build_sky_atlas_page(saved_mode=True),
                                   "sessions": self._build_sessions_page,
                                   "schedule": self._build_schedule_page,
                                   "history": self._build_history_page}, help_prefix="planning"),

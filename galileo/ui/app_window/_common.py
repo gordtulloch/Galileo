@@ -102,6 +102,7 @@ OPTIONS_ITEMS = [*PRIMARY_SECTIONS, ("notifications", "Notifications", "notifica
 # galileo.planning.recommend and _whats_up_page.py.
 PLANNING_ITEMS = [
     ("whats_up", "What's Up Tonight", "whats_up"),
+    ("search", "Search", "sky_atlas"),
     ("targets", "Targets", "sky_atlas"),
     ("sessions", "Sessions", "sequencer"),
     ("schedule", "Schedule", "schedule"),

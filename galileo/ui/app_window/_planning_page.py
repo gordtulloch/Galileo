@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class AppWindowPlanningPageMixin:
-    def _build_sky_atlas_page(self: AppWindowState) -> QWidget:
+    def _build_sky_atlas_page(self: AppWindowState, saved_mode: bool = False) -> QWidget:
         """Planning page — the catalog lookup formerly labelled Sky Atlas
         (SKY-010 … SKY-120): search criteria on the left, one result tile
         per row filling the rest of the page — no separate details panel,
@@ -50,7 +50,11 @@ class AppWindowPlanningPageMixin:
         200 results measure at ~1s. Thumbnails stay individually fetched and
         capped, unlike the chart/rise-set data — each is a real network
         request (hips2fits), not a local computation, so the same batching
-        approach doesn't apply and the existing bound still holds."""
+        approach doesn't apply and the existing bound still holds.
+
+        With *saved_mode* the same tiles list the user's saved targets (Planning > Targets) instead
+        of search results: no criteria panel, the list is reloaded each time the page is shown, and
+        a tile's context menu offers Remove rather than Save."""
         from PySide6.QtWidgets import (
             QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QComboBox,
             QDoubleSpinBox, QPushButton, QListWidget, QListWidgetItem,
@@ -197,6 +201,10 @@ class AppWindowPlanningPageMixin:
 
             row.addLayout(button_col)
 
+            card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            card.customContextMenuRequested.connect(
+                lambda pos, o=obj, c=card: self._show_target_tile_menu(c, pos, o, saved=saved_mode))
+
             return card, thumb_label
 
         page = QWidget()
@@ -331,7 +339,7 @@ class AppWindowPlanningPageMixin:
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 20, 24, 20)
 
-        heading = QLabel("Planning")
+        heading = QLabel("Targets" if saved_mode else "Search")
         heading.setObjectName("PageTitle")
         content_layout.addWidget(heading)
 
@@ -443,50 +451,15 @@ class AppWindowPlanningPageMixin:
             finally:
                 progress_dlg.close()
 
-        def _run_search(asyncio, progress) -> None:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            location = _current_location()
-            try:
-                from galileo.planning.sky_atlas import SkyAtlas, ObjectType
-                atlas = SkyAtlas()
-                name = name_edit.text().strip()
-                if name:
-                    matches = asyncio.run(atlas.search_online(name))
-                else:
-                    object_types = None
-                    if type_combo.currentText() != "Any":
-                        object_types = [ObjectType(type_combo.currentText())]
-                    if (visible_tonight_check.isChecked() or min_moon_sep.value() > 0) and location is None:
-                        self._window.statusBar().showMessage(
-                            "Visible tonight/Moon separation need the Observatory's latitude/longitude "
-                            "set (top bar) — showing all matches instead.", 6000)
-                    selected_catalogs = {cat for cat, cb in catalog_checks.items() if cb.isChecked()} or None
-                    selected_constellation = constellation_combo.currentText()
-                    if selected_constellation == "Any":
-                        selected_constellation = None
-                    matches = atlas.filter(
-                        object_types=object_types,
-                        max_magnitude=max_mag.value(),
-                        min_size_arcmin=min_size.value(),
-                        max_size_arcmin=max_size.value(),
-                        location=location,
-                        visible_tonight=visible_tonight_check.isChecked() and location is not None,
-                        min_altitude_deg=min_altitude.value(),
-                        min_duration_hours=min_duration.value(),
-                        min_moon_separation_deg=min_moon_sep.value(),
-                        catalogs=selected_catalogs,
-                        constellation=selected_constellation,
-                    )
-            except Exception:
-                logger.exception("Sky Atlas search failed")
-                results.addItem("Search failed — see log for details.")
-                self._window.statusBar().showMessage("Planning search failed — see log.", 6000)
-                return
-            finally:
-                QApplication.restoreOverrideCursor()
+        def _render_results(asyncio, atlas, matches, location, progress) -> None:
+            """Fill the list with a tile per object in *matches* (search hits or saved targets)."""
             if not matches:
-                results.addItem("No matching objects.")
-                self._window.statusBar().showMessage("No matching objects.", 4000)
+                if saved_mode:
+                    results.addItem("No saved targets yet — right-click a tile in Search or What's Up "
+                                    "Tonight and choose Save.")
+                else:
+                    results.addItem("No matching objects.")
+                    self._window.statusBar().showMessage("No matching objects.", 4000)
                 return
 
             shown = matches[:200]
@@ -557,6 +530,78 @@ class AppWindowPlanningPageMixin:
                             ))
                 finally:
                     QApplication.restoreOverrideCursor()
+
+        def _run_search(asyncio, progress) -> None:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            location = _current_location()
+            try:
+                from galileo.planning.sky_atlas import SkyAtlas, ObjectType
+                atlas = SkyAtlas()
+                name = name_edit.text().strip()
+                if name:
+                    matches = asyncio.run(atlas.search_online(name))
+                else:
+                    object_types = None
+                    if type_combo.currentText() != "Any":
+                        object_types = [ObjectType(type_combo.currentText())]
+                    if (visible_tonight_check.isChecked() or min_moon_sep.value() > 0) and location is None:
+                        self._window.statusBar().showMessage(
+                            "Visible tonight/Moon separation need the Observatory's latitude/longitude "
+                            "set (top bar) — showing all matches instead.", 6000)
+                    selected_catalogs = {cat for cat, cb in catalog_checks.items() if cb.isChecked()} or None
+                    selected_constellation = constellation_combo.currentText()
+                    if selected_constellation == "Any":
+                        selected_constellation = None
+                    matches = atlas.filter(
+                        object_types=object_types,
+                        max_magnitude=max_mag.value(),
+                        min_size_arcmin=min_size.value(),
+                        max_size_arcmin=max_size.value(),
+                        location=location,
+                        visible_tonight=visible_tonight_check.isChecked() and location is not None,
+                        min_altitude_deg=min_altitude.value(),
+                        min_duration_hours=min_duration.value(),
+                        min_moon_separation_deg=min_moon_sep.value(),
+                        catalogs=selected_catalogs,
+                        constellation=selected_constellation,
+                    )
+            except Exception:
+                logger.exception("Sky Atlas search failed")
+                results.addItem("Search failed — see log for details.")
+                self._window.statusBar().showMessage("Planning search failed — see log.", 6000)
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
+            _render_results(asyncio, atlas, matches, location, progress)
+
+        def load_saved() -> None:
+            """Targets screen: redraw the list from the saved targets."""
+            import asyncio
+            from galileo.planning.saved_targets import list_targets
+            from galileo.planning.sky_atlas import SkyAtlas
+            results.clear()
+            try:
+                matches = list_targets()
+            except Exception:
+                logger.exception("Could not load saved targets")
+                results.addItem("Could not load saved targets — see log for details.")
+                return
+            _render_results(asyncio, SkyAtlas(), matches, _current_location(), lambda *a, **k: None)
+
+        if saved_mode:
+            from PySide6.QtCore import QEvent, QObject
+
+            class _ReloadOnShow(QObject):
+                def eventFilter(self, _obj, event):
+                    if event.type() == QEvent.Type.Show:
+                        load_saved()
+                    return False
+
+            reload_filter = _ReloadOnShow(page)
+            page.installEventFilter(reload_filter)
+            self._saved_targets_refresh = load_saved
+            layout.addWidget(content, 1)
+            return page
 
         search_btn.clicked.connect(run_search)
         name_edit.returnPressed.connect(run_search)

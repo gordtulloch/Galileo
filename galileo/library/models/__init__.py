@@ -21,6 +21,7 @@ from galileo.library.models.horizon import HorizonPointRecord
 from galileo.library.models.masters import Masters
 from galileo.library.models.observatory import ObservatoryRecord, PierRecord
 from galileo.library.models.optical_tube import OpticalTubeRecord
+from galileo.library.models.saved_target import SavedTargetRecord
 from galileo.library.models.solver_settings import SolverSettingsRecord
 from galileo.library.models.variable_stars import VariableStars
 from galileo.library.models.weather_safety_rule import SafetyDeviceConfigRecord, WeatherSafetyRuleRecord
@@ -37,6 +38,7 @@ __all__ = [
     "OpticalTubeRecord",
     "PierRecord",
     "SafetyDeviceConfigRecord",
+    "SavedTargetRecord",
     "SolverSettingsRecord",
     "VariableStars",
     "WeatherSafetyRuleRecord",

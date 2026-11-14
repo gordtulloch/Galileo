@@ -45,6 +45,10 @@ States how many result thumbnails were loaded. What's Up Tonight never downloads
 
 One tile per ranked object, with its rank, name, type, brightness, size, constellation, best altitude tonight, and the reasons it scored as it did. A "Reduced confidence" badge means some inputs (horizon profile, weather forecast, aurora, smoke, Moon position) were unavailable; hover it to see which. If you already have data on the object, the tile shows the hours integrated.
 
+## Save
+
+Right-click a tile and choose Save to add the object to Planning › Targets, your list of saved targets.
+
 ## Select
 
 Makes this the Pier's current object and adds it to the target list.

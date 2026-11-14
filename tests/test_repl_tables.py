@@ -187,3 +187,20 @@ def test_tc_repl_070_migration_037_survives_a_replay(settings_db):
     run_migrations()
     db.execute_sql("INSERT INTO session_templates (name, blocks_json) VALUES ('again', '[]')")
     assert _one("SELECT dirty FROM session_templates WHERE name = 'again'")[0] == 1
+
+
+@pytest.mark.requirement("TC-SKY-130")
+@pytest.mark.priority("P2")
+def test_tc_sky_130_saved_targets_replicate(settings_db):
+    """SKY-130: the saved targets list is a tracked, registered configuration table: a save is dirty, a removal leaves
+    a tombstone keyed by the object's name, and the wire form carries the object without local ids."""
+    register_defaults()
+    from galileo.planning.saved_targets import remove_target, save_target
+    from galileo.planning.sky_atlas import DeepSkyObject, ObjectType
+    save_target(DeepSkyObject("M31", ["NGC 224"], 10.68, 41.27, ObjectType.GALAXY, 3.4, 178.0))
+    assert _one("SELECT dirty FROM saved_targets WHERE name = 'M31'")[0] == 1
+    row = dict(zip([c.name for c in db.get_columns("saved_targets")], _one("SELECT * FROM saved_targets"), strict=True))
+    wire = global_registry.get("saved_targets").wire(row)
+    assert wire["name"] == "M31" and "id" not in wire and wire["ra_deg"] == 10.68
+    remove_target("M31")
+    assert _one("SELECT natural_key FROM repl_tombstones WHERE table_name = 'saved_targets'")[0] == json.dumps(["M31"])
