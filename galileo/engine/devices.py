@@ -79,6 +79,9 @@ class DeviceService:
         self._manual: dict[str, Any] = {}
         self._stoppers: dict[str, Callable[[], Any]] = {}
         self._default_stopper: Callable[[str], Any] | None = None
+        # The Observatory whose Pier(s) connect on their own at start-up. The engine loads the Piers of every
+        # Observatory (so a client can choose any of them); the others connect when a client asks.
+        self.home_observatory: str | None = None
         self.problems: dict[str, list[str]] = {}                    # pier -> devices that would not connect
         self._cancel = threading.Event()
         self.busy: Callable[[str], bool] | None = None              # whether a session is running on a Pier (set by the engine)
@@ -95,6 +98,13 @@ class DeviceService:
     def pier_name(self, pier: str) -> str:
         record = self._piers.get(pier)
         return str(getattr(record, "name", pier))
+
+    def observatory_name(self, pier: str) -> str:
+        """The name of the Observatory Pier *pier* belongs to, or ``""``."""
+        try:
+            return str(self._piers[pier].observatory.name)
+        except Exception:
+            return ""
 
     def pier_record(self, pier: str) -> Any | None:
         """The database record of Pier *pier*, or ``None`` if the engine does not run it."""
@@ -165,7 +175,8 @@ class DeviceService:
         *retry_interval_s* apart (HEAD-140); ``cancel_retries`` ends the waiting."""
         self._cancel.clear()
         out: dict[str, dict[str, bool]] = {}
-        pending = [pid for pid, rec in self._piers.items() if getattr(rec, "connect_on_startup", True)]
+        pending = [pid for pid, rec in self._piers.items() if getattr(rec, "connect_on_startup", True)
+                   and (self.home_observatory is None or self.observatory_name(pid) == self.home_observatory)]
         for attempt in range(retry_limit + 1):
             if attempt:
                 logger.warning("Retrying the devices of Pier(s) %s (try %d of %d)", ", ".join(pending), attempt, retry_limit)

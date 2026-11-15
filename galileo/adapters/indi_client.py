@@ -604,11 +604,11 @@ def acquire_client(host: str, port: int = DEFAULT_PORT, settle: bool = True) -> 
             client = IndiClient(address, port)
             client.open()
             _registry[key] = client
-            fresh = True
-        else:
-            fresh = False
         client.refcount += 1
-    if fresh and settle:
+    if settle:
+        # Every caller waits, not only the one that opened the connection: a second device connecting to the same
+        # server while the first is still waiting for the server's property burst would otherwise see no devices at
+        # all ("has no device named X (available: none)"). Cheap once the burst is over.
         client.wait_settled()
     return client
 

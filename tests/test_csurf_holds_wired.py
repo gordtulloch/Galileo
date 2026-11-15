@@ -85,6 +85,20 @@ def test_tc_csurf_330_a_diagonal_drives_both_axes():
 
 @pytest.mark.requirement("TC-CSURF-330")
 @pytest.mark.priority("MVP")
+async def test_tc_csurf_330_a_held_jog_can_name_its_speed_level():
+    """CSURF-330: hold_start takes an optional jog level 1-9 (the Mount page's), at that level's rate."""
+    from galileo.mount_limits import JOG_RATE_LEVELS
+    mount = JogMount()
+    registry, holds = rig(mount)
+    started = await registry.invoke("mount.hold_start", {"direction": "east", "level": 3}, "p1", "c1")
+    assert started.ok and mount.axes == [(0, JOG_RATE_LEVELS[3])]
+    holds.stop(started.value, "c1", "test")
+    await asyncio.sleep(0.05)
+    assert (await registry.invoke("mount.hold_start", {"direction": "east", "level": 10}, "p1", "c1")).status != "ok"
+
+
+@pytest.mark.requirement("TC-CSURF-330")
+@pytest.mark.priority("MVP")
 async def test_tc_csurf_330_a_held_jog_moves_while_beaten_and_stops_on_release_or_silence():
     """CSURF-330: hold_start moves the axis, a beat keeps it going, no beat stops it by the deadman, and hold_stop
     stops it at once."""

@@ -104,3 +104,44 @@ def test_tc_csurf_320_catalogue_lists_both(restore_observatory):
     for name in ("device.connect", "device.disconnect"):
         assert entries[name]["class"] == "operate" and entries[name]["needs_lease"]
         assert "filter_wheel" in entries[name]["args"][0]["choices"]
+
+
+@pytest.mark.requirement("TC-CSURF-320")
+@pytest.mark.priority("P2")
+def test_tc_csurf_320_connect_all_brings_up_every_configured_device(restore_observatory):
+    """CSURF-320: device.connect_all connects everything the Pier has configured, names what would not connect, and
+    refuses a Pier with nothing configured."""
+    svc = make_service([cfg("Mount"), cfg("Camera"), cfg("Camera", "guide")])
+    registry = Registry()
+    register_device_operations(registry, svc)
+    out = asyncio.run(registry.invoke("device.connect_all", {}, PIER, "tester"))
+    assert out.status == "ok", out
+    assert out.value["connected"] == ["camera/guide", "camera/primary", "mount/primary"]
+    assert svc.controller(PIER, "mount").is_connected
+    empty = Registry()
+    register_device_operations(empty, make_service([]))
+    out = asyncio.run(empty.invoke("device.connect_all", {}, PIER, "tester"))
+    assert out.status == "refused" and "no devices configured" in out.reason
+    bad = Registry()
+    register_device_operations(bad, make_service([cfg("Camera")], ok=False))
+    out = asyncio.run(bad.invoke("device.connect_all", {}, PIER, "tester"))
+    assert out.status == "unreachable" and "camera/primary" in out.reason
+
+
+@pytest.mark.requirement("TC-CSURF-320")
+@pytest.mark.priority("P2")
+def test_tc_csurf_320_only_the_home_observatory_connects_at_start_up(restore_observatory):
+    """HEAD-140: every Observatory's Piers are known, so a client can choose any, but only the home Observatory's
+    connect by themselves at start-up; the others wait for a client (device.connect_all)."""
+    svc = DeviceService(bus=EventBus(), factory=lambda cat, *a: FakeAdapter(True))
+    obs = lambda name: SimpleNamespace(name=name)                      # noqa: E731
+    svc._piers = {"1": SimpleNamespace(configs=[cfg("Mount")], observatory=obs("Home")),
+                  "2": SimpleNamespace(configs=[cfg("Mount")], observatory=obs("Away"))}
+    svc.home_observatory = "Home"
+    assert svc.observatory_name("2") == "Away"
+    asyncio.run(svc.connect_startup_piers())
+    assert svc.controller("1", "mount") is not None and svc.controller("2", "mount") is None
+    registry = Registry()
+    register_device_operations(registry, svc)
+    assert asyncio.run(registry.invoke("device.connect_all", {}, "2", "tester")).status == "ok"
+    assert svc.controller("2", "mount").is_connected

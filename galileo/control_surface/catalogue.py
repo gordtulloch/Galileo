@@ -47,6 +47,9 @@ class DeviceAccess(Protocol):
     async def disconnect_category(self, pier: str, category: str) -> int:
         """Disconnect the Pier's devices of *category*; ``RuntimeError`` while a session runs (CSURF-320)."""
 
+    async def connect_pier(self, pier: str) -> dict[str, bool]:
+        """Connect every device the Pier has configured; ``{"category/slot": connected}`` (CSURF-320). Optional."""
+
 
 def _device(handler: Callable[..., Awaitable[Any] | Any]) -> Callable[..., Awaitable[Any]]:
     """Run a controller call and turn the device layer's own refusals into typed outcomes."""
@@ -121,6 +124,24 @@ def register_device_operations(registry: Registry, access: DeviceAccess, holds: 
             raise Refused(str(exc)) from exc
         return {"device": args["device"], "connected": False, "was_connected": bool(held)}
 
+    async def device_connect_all(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        connect = getattr(access, "connect_pier", None)
+        if not callable(connect):
+            raise Refused("this Galileo cannot connect a whole Pier at once")
+        try:
+            results = await connect(ctx.pier)
+        except KeyError as exc:
+            raise Refused(str(exc)) from exc
+        if not results:
+            raise Refused("this Pier has no devices configured (Equipment)")
+        results = {str(name).lower(): ok for name, ok in results.items()}
+        failed = sorted(name for name, ok in results.items() if not ok)
+        if failed:
+            raise Unreachable("did not connect: " + ", ".join(failed) + " (see the Master's log for the reasons)")
+        return {"connected": sorted(results)}
+
+    registry.register(OperationSpec("device.connect_all", "operate", (), needs_lease=True,
+                                    description="Connect every device this Pier has configured"), device_connect_all)
     registry.register(OperationSpec("device.connect", "operate", (Arg("device", "enum", choices=device_choices),), needs_lease=True,
                                     description="Connect this Pier's saved device of that kind"), device_connect)
     registry.register(OperationSpec("device.disconnect", "operate", (Arg("device", "enum", choices=device_choices),), needs_lease=True,

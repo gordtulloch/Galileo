@@ -108,11 +108,17 @@ def register_mount_hold_operations(registry: Registry, access: DeviceAccess, hol
         return None
 
     async def start(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        level = args.get("level")
+        rate = DEFAULT_JOG_RATE_DEG_S if level is None else JOG_RATE_LEVELS[int(level)]
         return await start_mount_hold(holds, access.controller(ctx.pier, "mount"), ctx.pier, args["direction"],
-                                      ctx.principal, origin="control_surface")
+                                      ctx.principal, rate=rate, origin="control_surface")
 
     registry.register(OperationSpec(
-        "mount.hold_start", "operate", (Arg("direction", "enum", choices=DIRECTIONS),), needs_lease=True,
+        "mount.hold_start", "operate",
+        (Arg("direction", "enum", choices=DIRECTIONS),
+         Arg("level", "int", required=False, minimum=1, maximum=9,
+             description="Jog speed, the Mount page's levels 1 (slowest) to 9 (fastest); 7 (0.2 deg/s) when omitted")),
+        needs_lease=True,
         available=available, description="Move the mount while held; keep it alive with mount.hold_beat"), _device(start))
     registry.register(OperationSpec(
         "mount.hold_beat", "operate", (Arg("hold_id", "str"),), needs_lease=False, available=available,

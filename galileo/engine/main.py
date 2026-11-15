@@ -99,7 +99,8 @@ class Engine:
 
         self.config = load_config()                         # HEAD-130: from the database
         self.observatory = resolve_observatory(self.config, [o.name for o in list_observatories()])
-        self.devices.load_piers(self.observatory)           # HEAD-140
+        self.devices.home_observatory = self.observatory    # HEAD-140: this one connects on its own at start-up
+        self.devices.load_piers(None)                       # every Observatory's Piers, so a client can choose any
         from galileo.control_surface import ObservableState
         from galileo.engine.helpers import Helpers
 

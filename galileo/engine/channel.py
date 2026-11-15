@@ -178,6 +178,7 @@ class EngineChannel:
         out = []
         for pier in self._devices.pier_ids():
             out.append({"id": pier, "name": self._devices.pier_name(pier),
+                        "observatory": getattr(self._devices, "observatory_name", lambda _p: "")(pier),
                         "connected": self._devices.connected(pier), "lease": self._leases.holder(pier)})
         return out
 

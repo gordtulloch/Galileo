@@ -825,7 +825,7 @@ def test_tc_head_070_engine_client(tmp_path):
         try:
             await client.attach()
             piers = await client.piers()
-            assert piers == [{"id": "1", "name": "North", "connected": ["mount/primary"], "lease": ""}]
+            assert piers == [{"id": "1", "name": "North", "observatory": "", "connected": ["mount/primary"], "lease": ""}]
             assert any(o["name"] == "test.move" for o in (await client.catalogue("1"))["operations"])
             await client.start_events()
             await aio.sleep(0.2)

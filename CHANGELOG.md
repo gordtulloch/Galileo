@@ -10,7 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The engine now knows the Piers of every Observatory, not just the one it runs (`HEAD-140`).** Its Pier list (and `pier.list`) carries each Pier's Observatory name, so a mobile app can show "Observatory - Pier" and let the person choose any Pier. Only the home Observatory's Piers still connect on their own at start-up; the others stay disconnected until a client connects them (`device.connect_all`). Sessions, schedules and safety now also see the other Observatories' Piers, though nothing runs on a Pier that is not connected. `test_head.py`'s Pier-list test expects the new `observatory` field. Note: 8 tests in `test_head.py` fail on this machine regardless ("AF_UNIX path too long"); run them with a short `TMPDIR` such as `/tmp/g`.
+
 ### Added
+
+- **`device.connect_all` (`CSURF-320`).** Connects every device the Pier has configured in one call (what the desktop does when a Pier connects), refusing a Pier with nothing configured and naming any device that would not connect. For the mobile apps' new Connect All Devices button on Overview. New test `test_tc_csurf_320_connect_all_brings_up_every_configured_device`. Restart Galileo.
+
+- **Held mount jog takes a speed (`CSURF-330`).** `mount.hold_start` accepts an optional `level` 1-9, the Mount page's jog speeds (0.002 to 10 deg/s; 7, 0.2 deg/s, when omitted), for the mobile apps' new speed slider. New test `test_tc_csurf_330_a_held_jog_can_name_its_speed_level`. Restart Galileo.
 
 - **Plate solves can use any of the Pier's cameras (`CSURF-140`).** `solve.capture`, `solve.sync` and `solve.centre` take an optional `camera_slot` (the primary camera when omitted), and a new read operation `solve.cameras` lists the Pier's cameras as `slot`, `name` and `connected`, so a mobile app can let the person choose. A slot that is not connected is refused with the usual "the camera is not connected". New test `test_tc_csurf_140_solve_uses_the_camera_slot_asked_for_and_lists_the_cameras`; the existing solve-catalogue test now expects `solve.cameras`. Restart Galileo for the apps to see it.
 
@@ -44,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Solve: the "Dark" checkbox.** It took a new dark frame after each solve exposure and subtracted it before solving; it is gone from Plate Solve Capture Options (the new **Subtract dark** box, which only affects the picture, remains), and its help entry and wiki mention were removed. Solves no longer capture a dark frame. The `SolveSettings.subtract_dark` option in `galileo.platesolve` is left in place, unused by the UI.
 
 ### Fixed
+
+- **Connecting all of a Pier's INDI devices at once reported that none of them were available (`EQP-040`).** Connect All Devices (and the engine's start-up connect) brings up a Pier's devices at the same time. They share one connection to the INDI server, and only the device that opened it waited for the server to finish announcing its devices; the others read the device list too early, saw nothing, and failed with "INDI server has no device named X (available: none)". The desktop connects its devices one after another, which is why the same Pier worked there. Every caller now waits for the server's property burst (immediate once it is over). New test `test_tc_eqp_040_a_second_connect_waits_for_the_servers_first_property_burst`, which fails without the change. Restart Galileo.
 
 - **Library > Sessions now shows masters created by Auto-Calibration straight away.** The Sessions tree was reloaded after the Auto-Calibration dialog only if it returned "accepted", but the dialog never accepts (Close and the window X both count as rejected), so new masters didn't appear until you regenerated sessions. It now reloads whenever the dialog closes. No control changes, so inline help and wiki are unchanged; recorded in `docs/Astrofiler Back Propogation.md`.
 

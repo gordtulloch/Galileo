@@ -784,3 +784,56 @@ async def test_tc_eqp_rot_010_alpaca_rotator_status_and_commands():
     rot._put.assert_awaited_with("halt")
     with pytest.raises(DevicePropertyError, match="backlash"):
         await rot.set_backlash(1.0)
+
+
+@pytest.mark.requirement("TC-EQP-040")
+@pytest.mark.priority("MVP")
+def test_tc_eqp_040_a_second_connect_waits_for_the_servers_first_property_burst(monkeypatch):
+    """EQP-040: devices connecting to one INDI server at the same time (Connect All Devices) must all see its devices;
+    a caller that finds the shared client already open still waits for the server's property burst."""
+    import threading
+
+    class SlowClient:
+        def __init__(self, host, port):
+            self.host, self.port, self.refcount, self.ready = host, port, 0, threading.Event()
+            self.alive = True
+
+        def open(self):
+            pass
+
+        def wait_settled(self, **_):
+            time.sleep(0.3)
+            self.ready.set()
+
+        def device_names(self):
+            return ["CCD Simulator"] if self.ready.is_set() else []
+
+        def close(self):
+            self.alive = False
+
+    monkeypatch.setattr(indi_client, "IndiClient", SlowClient)
+    seen: list[list[str]] = []
+    opened = threading.Event()
+
+    def first():
+        client = indi_client.acquire_client("srv", 7624)
+        seen.append(client.device_names())
+
+    def second():
+        opened.wait(2)
+        client = indi_client.acquire_client("srv", 7624)
+        seen.append(client.device_names())
+        indi_client.release_client(client)
+
+    a, b = threading.Thread(target=first), threading.Thread(target=second)
+    a.start()
+    while not indi_client._registry:           # the first caller has opened the client and is settling
+        time.sleep(0.01)
+    opened.set()
+    b.start()
+    a.join(5)
+    b.join(5)
+    assert seen == [["CCD Simulator"]] * 2
+    for client in list(indi_client._registry.values()):
+        indi_client.release_client(client)
+    assert indi_client._registry == {}
