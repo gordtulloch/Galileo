@@ -538,7 +538,7 @@ class AppWindowMountPageMixin:
             nudge_combo = (getattr(self, "_imaging_ui", None) or {}).get("nudge_rate")
             if nudge_combo is not None:
                 sync_rate_combo(nudge_combo, status,
-                                [(f"{level} ({rate:g}°/s)", rate) for level, rate in JOG_RATE_LEVELS.items()], 6)
+                                [(str(level), rate) for level, rate in JOG_RATE_LEVELS.items()], 6)
             state["last_status"] = status
             driver_reversed = status.get("axis_reversed")
             state["driver_reversal"] = driver_reversed is not None

@@ -65,6 +65,10 @@ The camera gain used for the focus exposures. It starts at the camera's **Defaul
 
 The camera offset used for the focus exposures. It starts at the camera's **Default offset** from Equipment › Camera and behaves like **Gain**.
 
+## Subtract dark
+
+Subtracts the Library's dark master from the frame shown here, when one exists for this camera and optics at the same exposure and binning. It applies to frames taken after you tick it, and the status line says which master was used or why none was. Only the picture changes — the star measurements (HFR) always use the raw frame.
+
 ## Exp
 
 The exposure time of each frame in the sweep. Choose it long enough to show plenty of stars well above the noise but short enough that bright stars do not saturate — a saturated star's measured size stops changing with focus.
@@ -111,7 +115,7 @@ The last frame measured, stretched so faint stars show. Stars used for measureme
 
 ## V-Curve
 
-A graph of star size against focuser position. Blue points are the measured HFR at each position; the orange line is the fitted V-curve; the green marker is the best-focus position the fit found. A clean, symmetric V with the green marker at the bottom means a trustworthy result. A flat or ragged curve means the sweep range, exposure or seeing needs adjusting.
+A graph of star size against focuser position. Blue points are the measured HFR at each position; the orange line is the fitted V-curve; the green marker is the best-focus position the fit found. A clean, symmetric V with the green marker at the bottom means a trustworthy result. A flat or ragged curve means the sweep range, exposure or seeing needs adjusting. A reading with very few stars and a low HFR (more likely a hot pixel than a sharp focus) is left out of the fit, though its dot is still drawn, and the log says which; if too few readings remain the run fails, and a longer exposure or smaller step size usually cures it.
 
 ## Statistics
 

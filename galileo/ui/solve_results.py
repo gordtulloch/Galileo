@@ -108,7 +108,8 @@ class SolveResultsMixin(_MixinBase):
             return
         import os
         state = {"solving": "solving…", "solved": "solved", "failed": "failed"}[latest.status]
-        self.frame_label.setText(f"{os.path.basename(latest.fits_path)} — {state}")
+        note = f" — {self._preview_note}" if self._preview_note else ""
+        self.frame_label.setText(f"{os.path.basename(latest.fits_path)} — {state}{note}")
 
     def _show_latest_frame(self) -> None:
         """Bring the image up to date after being hidden."""

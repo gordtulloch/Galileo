@@ -2714,3 +2714,39 @@ def test_tc_img_050_status_follows_a_running_session(window):
         controller._runs.pop(key, None)
     controller.changed.emit(key)
     assert ui["status"].text() == "Idle"
+
+
+# --- Subtract dark (shared by the Imaging, Focus and Solve screens) -------------------------------------
+
+
+def test_dark_master_subtract_is_float_and_shape_checked():
+    """galileo.dark_master.subtract: float32 result (no unsigned wrap); a different shape is left alone."""
+    import numpy as np
+
+    from galileo.dark_master import subtract
+    frame = np.array([[10, 5], [3, 200]], dtype=np.uint16)
+    dark = np.array([[20, 1], [3, 100]], dtype=np.float32)
+    out = subtract(frame, dark)
+    assert out.dtype == np.float32 and out[0, 0] == -10 and out[1, 1] == 100
+    assert subtract(frame, None) is frame
+    assert subtract(frame, np.zeros((3, 3), dtype=np.float32)) is frame
+
+
+def test_dark_master_dark_for_frame_notes(monkeypatch, caplog):
+    """dark_for_frame reports which master was used, or why none was, and never raises."""
+    import numpy as np
+
+    from galileo import dark_master
+    shape = (4, 6)
+    monkeypatch.setattr(dark_master, "find_dark_master_path", lambda *a: None)
+    data, note = dark_master.dark_for_frame("T", "C", 30.0, 1, 1, shape)
+    assert data is None and "no dark master" in note
+    assert dark_master.dark_for_frame("T", "C", None, 1, 1, shape)[0] is None
+    monkeypatch.setattr(dark_master, "find_dark_master_path", lambda *a: "/x/Master-Dark.fits")
+    monkeypatch.setattr(dark_master, "load_master_data", lambda path: np.zeros(shape, dtype=np.float32))
+    with caplog.at_level("INFO", logger="galileo.dark_master"):
+        data, note = dark_master.dark_for_frame("T", "C", 30.0, 1, 1, shape)
+    assert data is not None and "Master-Dark.fits" in note
+    assert any("Master-Dark.fits" in r.getMessage() for r in caplog.records)   # the master's name is logged
+    data, note = dark_master.dark_for_frame("T", "C", 30.0, 1, 1, (5, 5))
+    assert data is None and "not subtracted" in note

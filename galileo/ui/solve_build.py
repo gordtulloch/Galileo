@@ -276,10 +276,12 @@ class SolveBuildMixin(_MixinBase):
             "where it is; pick another to move the wheel there first.")
         form.addRow("Filter:", self.filter_combo)
         layout.addLayout(form)
-        self.dark_check = QCheckBox("Dark")
-        self.dark_check.setToolTip("Take a dark frame of the same exposure after each solve frame and subtract it, "
-                                   "which removes hot pixels that can confuse the solver.")
-        layout.addWidget(self.dark_check)
+        self.subtract_dark_check = QCheckBox("Subtract dark")
+        self.subtract_dark_check.setToolTip(
+            "Show the frame with the Library's dark master subtracted, when one exists for this camera and "
+            "optics at the same exposure and binning. This only changes the picture; the solver gets the "
+            "frame as saved. The line under the picture says which master was used, or why none was.")
+        layout.addWidget(self.subtract_dark_check)
         box.addWidget(options)
 
         # Solver Mode ------------------------------------------------------

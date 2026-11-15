@@ -29,7 +29,7 @@ A moving bar that shows a solve is running.
 
 ## Exposure Progress
 
-Shown under the buttons while the camera is exposing for a solve (including each exposure of a polar-alignment run, and the dark frame when **Subtract dark** is on): a bar filling over the exposure time with the seconds elapsed, then "downloading…" while the frame is read from the camera. Hidden otherwise.
+Shown under the buttons while the camera is exposing for a solve (including each exposure of a polar-alignment run): a bar filling over the exposure time with the seconds elapsed, then "downloading…" while the frame is read from the camera. Hidden otherwise.
 
 ## Solver Action
 
@@ -139,9 +139,9 @@ Gain for solve frames, or the ISO value for a DSLR. **Camera** leaves it as the 
 
 The filter to solve through. The first entry reads **Current (*filter*)**, naming the filter in the beam now, and leaves the filter wheel where it is. Pick any other filter from the list — it comes from the connected filter wheel — and the wheel moves there before the solve exposure. With no wheel connected only **Current** is offered.
 
-## Dark
+## Subtract dark
 
-Takes a dark frame of the same exposure after each solve frame and subtracts it, removing hot pixels that can confuse the solver.
+Shows the frame on this screen with the Library's dark master subtracted, when one exists for the frame's telescope and camera at the same binning and an exposure within 1%. The line under the picture says which master was used, or why none was. It changes only the picture: the solver is always given the frame as saved. Ticking or unticking it redraws the frame on show.
 
 ## Solver Mode
 

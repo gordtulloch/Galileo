@@ -43,6 +43,9 @@ class AutofocusResult:
     failure_reason: str = ""
     sample_points: list[tuple[int, float]] | None = None
     curve_coefficients: tuple | None = None
+    # Focuser positions whose HFR was left out of the fit because the reading looked unreliable (see
+    # :func:`unreliable_points`); they are still in ``sample_points``.
+    rejected_positions: list[int] | None = None
 
 
 @dataclass
@@ -73,6 +76,33 @@ def fit_parabola(positions: list[int], hfr_values: list[float]) -> tuple:
     import numpy as np
     coeffs = np.polyfit(positions, hfr_values, 2)
     return tuple(float(c) for c in coeffs)
+
+
+# A reading with fewer than this fraction of the sweep's best star count, and a below-median HFR, is
+# treated as unreliable.
+MIN_STAR_FRACTION = 0.5
+# The fewest readings the parabola fit may be left with after unreliable ones are dropped.
+MIN_FIT_POINTS = 4
+
+
+def unreliable_points(hfr_values: list[float], star_counts: list[int]) -> list[bool]:
+    """For each reading, whether its HFR should be left out of the fit.
+
+    The star count says how much to trust an HFR. Genuinely defocused frames also lose stars, but
+    their HFR is *high*; a *low* HFR from few stars is what a hot pixel, a noise speck or a couple of
+    leftover bright stars looks like, and it drags the V-curve out of shape. So a reading is dropped
+    when it has no stars at all (its HFR is only the "nothing found" placeholder), or when it has less
+    than ``MIN_STAR_FRACTION`` of the sweep's highest star count *and* an HFR below the sweep's median.
+    A negative count means "not measured" and is never judged."""
+    if not hfr_values:
+        return []
+    ordered = sorted(hfr_values)
+    median_hfr = ordered[len(ordered) // 2]
+    best_count = max(star_counts) if star_counts else 0
+    return [
+        count == 0 or (0 <= count < MIN_STAR_FRACTION * best_count and hfr < median_hfr)
+        for hfr, count in zip(hfr_values, star_counts, strict=True)
+    ]
 
 
 def vertex_of_parabola(coeffs: tuple) -> float:
@@ -122,6 +152,7 @@ class AutofocusService:
         self._filter_offsets: dict[str, int] = dict(filter_offsets or {})
         self._current_position: int = 5000
         self._last_best_position: int | None = None
+        self._last_star_count: int = -1     # stars found in the most recent measurement (-1: not measured)
         self._cancelled = False
         self.last_run: AutofocusResult | None = None
 
@@ -164,11 +195,13 @@ class AutofocusService:
 
     async def _sweep(self, initial_position: int, positions: list[int]) -> AutofocusResult:
         hfr_values: list[float] = []
+        star_counts: list[int] = []
 
         for pos in positions:
             await self._move_to(pos)
             hfr = await self._measure_hfr()
             hfr_values.append(hfr)
+            star_counts.append(self._last_star_count)
             if self._cancelled:
                 await self._move_to(initial_position)
                 result = AutofocusResult(
@@ -192,7 +225,18 @@ class AutofocusService:
             return result
 
         try:
-            coeffs = fit_parabola(positions, hfr_values)
+            # Leave out readings the star count says to distrust, and say so in the log.
+            drop = unreliable_points(hfr_values, star_counts)
+            rejected = [p for p, bad in zip(positions, drop, strict=True) if bad]
+            for p, h, n, bad in zip(positions, hfr_values, star_counts, drop, strict=True):
+                if bad:
+                    logger.warning("Autofocus: ignoring position %d (HFR %.2f from %d stars) — too few stars "
+                                   "for that HFR to be trusted.", p, h, n)
+            kept = [(p, h) for p, h, bad in zip(positions, hfr_values, drop, strict=True) if not bad]
+            if len(kept) < MIN_FIT_POINTS:
+                raise ValueError(f"Only {len(kept)} of {len(positions)} readings had enough stars to trust — "
+                                 f"try a longer exposure or a smaller step size")
+            coeffs = fit_parabola([p for p, _ in kept], [h for _, h in kept])
             if coeffs[0] <= 0:
                 # HFR must be a V/U-shaped (concave-up) function of position; a downward parabola
                 # has a maximum, not a focus point, so moving to its vertex would be worst focus.
@@ -218,6 +262,7 @@ class AutofocusService:
             best_position=best,
             sample_points=list(zip(positions, hfr_values, strict=False)),
             curve_coefficients=coeffs,
+            rejected_positions=rejected,
         )
         self.last_run = result
         return result
@@ -305,6 +350,7 @@ class AutofocusService:
         than a sweep sample, so a listener (the Focus screen) can show it
         without folding it into the V-curve."""
         if self._camera is None:
+            self._last_star_count = -1      # nothing measured, so no star count to judge it by
             return 2.0
         self._publish(FocusExposureStartedEvent(
             source="autofocus", duration_s=self.exposure_s, pier_key=self.pier_key,
@@ -312,10 +358,12 @@ class AutofocusService:
         await self._camera.start_exposure(duration=self.exposure_s, **self._exposure_options())
         frame = await self._camera.get_image_array()
         if frame is None:
+            self._last_star_count = 0
             return float("nan")
         # SEP holds the GIL for the whole extraction (seconds on a full frame), so a thread would
         # still freeze the UI — it has to be a worker process (NFR-PERF-020).
         hfr, star_count = await run_cpu(_measure_stars, frame)
+        self._last_star_count = star_count
         logger.info("Focuser position %d: %d stars, HFR %.2f.", self._current_position, star_count, hfr)
         self._publish(FocusFrameEvent(
             source="autofocus", position=self._current_position, frame=frame,
@@ -408,15 +456,27 @@ def _measure_stars(frame) -> tuple[float, int]:
         data = np.ascontiguousarray(array, dtype=np.float64)
         bkg = sep.Background(data)
         data_sub = data - bkg
-        objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
+        # deblend_cont=1.0 turns deblending off. With it on, a defocused donut is split into several
+        # fragments that each read as a small star, so HFR collapses at exactly the positions that
+        # are furthest out of focus. A higher threshold and a minimum area keep noise and hot pixels
+        # out of the sample, which would otherwise swing the median wildly from frame to frame.
+        objects = sep.extract(data_sub, 3.0, err=bkg.globalrms, minarea=5, deblend_cont=1.0)
         if len(objects) == 0:
             return 2.0, 0
         height, width = data_sub.shape
+        # Only isolated stars: SEP flags objects merged with or biased by a neighbour (bit 1), and
+        # a big aperture round a crowded star would count the neighbour's flux as its own. Fall back
+        # to every detection if the field is so crowded that nothing is left.
+        isolated = objects[(objects["flag"] & 1) == 0]
+        sample = isolated if len(isolated) >= 5 else objects
+        # Brightest first and capped: the best signal-to-noise, and a bounded cost per frame.
+        sample = sample[np.argsort(sample["flux"])[::-1][:150]]
         radii = []
-        for x, y, a in zip(objects["x"], objects["y"], objects["a"], strict=True):
-            # A defocused star's detected 'a' only covers its brightest part, so scale the aperture
-            # generously and keep a floor; the same aperture rule at every focus position.
-            r_outer = min(max(8.0 * float(a), 12.0), 60.0)
+        for x, y, npix in zip(sample["x"], sample["y"], sample["npix"], strict=True):
+            # The aperture follows the star's own detected area (a radius equivalent to its npix),
+            # tripled to take in the wings, so it grows as the star defocuses and the same rule
+            # applies at every focus position.
+            r_outer = min(max(3.0 * math.sqrt(float(npix) / math.pi), 8.0), 80.0)
             x0, x1 = max(0, int(x - r_outer)), min(width, int(x + r_outer) + 1)
             y0, y1 = max(0, int(y - r_outer)), min(height, int(y + r_outer) + 1)
             yy, xx = np.mgrid[y0:y1, x0:x1]

@@ -441,3 +441,52 @@ async def test_tc_foc_130_a_held_move_runs_while_beats_arrive_and_stops_on_the_d
         await asyncio.sleep(0)
     assert f.position < settled
     assert holds.cancel_pier("p1", "lease changed") == 1 and inward
+
+
+@pytest.mark.requirement("TC-FOC-010")
+@pytest.mark.priority("MVP")
+def test_tc_foc_010_hfr_rises_monotonically_with_defocus():
+    """FOC-010: the HFR measured from a crowded star field must rise steadily as the stars defocus, so the
+    sweep's V-curve is a V. Regression: deblending split defocused donuts into small fragments and noise
+    detections swung the median, so HFR was huge at moderate defocus and tiny when far out of focus."""
+    from itertools import pairwise
+
+    import numpy as np
+
+    from galileo.autofocus import _measure_stars
+    rng = np.random.default_rng(3)
+    size, n = 700, 90
+    xs, ys = rng.uniform(70, size - 70, n), rng.uniform(70, size - 70, n)
+    flux = rng.uniform(3000, 40000, n)
+    noise = rng.normal(500, 8, (size, size))
+
+    def frame(radius: float):
+        img = noise.copy()
+        r = int(max(radius * 2.5, 6)) + 2
+        yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+        for x, y, f in zip(xs, ys, flux, strict=True):
+            ix, iy = int(x), int(y)
+            d = np.hypot(xx - (x - ix), yy - (y - iy))
+            p = np.exp(-d ** 2 / (2 * 1.3 ** 2)) if radius < 1 else 1 / (1 + np.exp((d - radius) / 0.8))
+            img[iy - r:iy + r + 1, ix - r:ix + r + 1] += p / p.sum() * f
+        return img
+
+    hfrs = [_measure_stars(frame(r))[0] for r in (0.5, 3, 6, 9, 12, 15)]
+    assert all(b > a for a, b in pairwise(hfrs)), hfrs
+    assert hfrs[0] < 2.5 and hfrs[-1] > 8
+
+
+@pytest.mark.requirement("TC-FOC-010")
+@pytest.mark.priority("MVP")
+def test_tc_foc_010_low_hfr_from_few_stars_is_ignored():
+    """FOC-010: a low HFR backed by few stars (a hot pixel, a noise speck) is left out of the V-curve fit,
+    while a high HFR with few stars (really defocused) and any reading with plenty of stars are kept."""
+    from galileo.autofocus import unreliable_points
+    #            far out        far out       near focus  focus  near focus  bogus      far out
+    hfr =    [9.0, 7.0, 5.0, 3.0, 1.5, 3.0, 5.0, 0.9, 8.0]
+    counts = [40,  90,  150, 260, 280, 250, 140, 12,  35]
+    drop = unreliable_points(hfr, counts)
+    assert drop == [False] * 7 + [True, False]       # only the 0.9-from-12-stars reading goes
+    assert unreliable_points([2.0], [0]) == [True]    # no stars at all: only the placeholder HFR
+    assert unreliable_points([2.0, 3.0], [-1, -1]) == [False, False]   # not measured: not judged
+    assert unreliable_points([], []) == []

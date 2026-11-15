@@ -27,6 +27,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
@@ -58,12 +59,14 @@ _FIT_COLOR = QColor("#ffa040")
 _BEST_COLOR = QColor("#31c24a")
 
 
-def _preview(frame, bayer_pattern: str | None = None) -> np.ndarray | None:
+def _preview(frame, bayer_pattern: str | None = None, dark=None) -> np.ndarray | None:
     """An 8-bit, auto-stretched, decimated copy of *frame* for display — ``(h, w)``
     or ``(h, w, 3)`` — or ``None`` if it isn't an image. With *bayer_pattern* a mono mosaic is
     shown in colour (a half-resolution superpixel debayer, before any decimation, which would
-    otherwise destroy the mosaic). Star measurements are always made on the raw frame."""
-    arr = np.asarray(frame)
+    otherwise destroy the mosaic). With *dark* (a dark master of the frame's shape) it is subtracted
+    first, before any debayering or decimation. Star measurements are always made on the raw frame."""
+    from galileo.dark_master import subtract
+    arr = subtract(np.asarray(frame), dark)
     if arr.ndim == 3:
         arr = arr if arr.shape[2] == 3 else arr[..., 0]
     elif arr.ndim != 2:
@@ -192,6 +195,11 @@ class VCurvePlot(_PlotBase):
         painter.end()
 
 
+def _note(payload: dict) -> str:
+    """The dark-subtraction note of a frame payload, set off for the end of a status line."""
+    return f" {payload['note']}" if payload.get("note") else ""
+
+
 def _heading(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("CriteriaHeading")
@@ -238,6 +246,13 @@ class FocusPage(QWidget):
         # The camera's Bayer pattern per Pier (None = mono), read when a run starts, so frames
         # are shown in colour; used from the run's worker thread, hence a plain dict.
         self._bayer: dict = {}
+        # "Subtract dark" (preview only): the box's state, and per Pier the rig's (telescope, camera)
+        # names and the exposure in seconds, which pick the dark master. The names are read on the UI
+        # thread when a run or capture starts; the exposure follows each frame's own exposure event.
+        # Plain dicts because frames are previewed on the run's worker thread.
+        self._subtract_dark = False
+        self._dark_rig: dict = {}
+        self._dark_exposure: dict = {}
         self._exposure_timer = QTimer(self)
         self._exposure_timer.timeout.connect(self._update_exposure_bar)
         # True while ``reload()`` is setting the step/points/exposure/backlash spin boxes from a
@@ -414,6 +429,14 @@ class FocusPage(QWidget):
         self.exposure_bar.setProperty("helpKey", "exposure progress")
         grid.addWidget(self.exposure_bar, 3, 0, 1, 4)
         self.exposure_bar.setFormat("—")
+        self.subtract_dark_check = QCheckBox("Subtract dark")
+        self.subtract_dark_check.setToolTip(
+            "Subtract the Library's dark master from the frame shown here when one exists for this camera "
+            "and optics, at the same exposure and binning. Applies to frames taken after you tick it; the "
+            "status line says which master was used, or why none was. Only the picture changes — the "
+            "star measurements (HFR) always use the raw frame.")
+        self.subtract_dark_check.toggled.connect(self._set_subtract_dark)
+        grid.addWidget(self.subtract_dark_check, 4, 0, 1, 4)
         box.addWidget(camera)
 
         manual = QGroupBox("Manual Focus")
@@ -529,7 +552,34 @@ class FocusPage(QWidget):
         self._receiving[key] = True
         self._started.emit(key, dict(event.payload))
 
+    def _set_subtract_dark(self, on: bool) -> None:
+        self._subtract_dark = bool(on)
+        if on:
+            self._remember_rig(self._pier_key())
+
+    def _remember_rig(self, key) -> None:
+        """Note the selected Pier's telescope and camera names, for matching a dark master (UI thread)."""
+        if key != self._pier_key():
+            return
+        try:
+            context = self._window._imaging_frame_context()
+        except Exception:
+            logger.exception("Could not read the rig names for dark subtraction")
+            return
+        self._dark_rig[key] = (context.get("telescope"), context.get("instrument"))
+
+    def _dark_for(self, key, frame) -> tuple:
+        """``(dark array or None, note)`` to subtract from *frame*; ``(None, "")`` when the box is off."""
+        if not self._subtract_dark:
+            return None, ""
+        rig = self._dark_rig.get(key)
+        if rig is None:
+            return None, "Subtract dark: the telescope and camera are not known."
+        from galileo.dark_master import dark_for_frame
+        return dark_for_frame(rig[0], rig[1], self._dark_exposure.get(key), 1, 1, np.shape(frame))
+
     def _on_exposure_started_event(self, event) -> None:
+        self._dark_exposure[event.payload.get("pier_key")] = float(event.payload.get("duration_s", 0.0))
         self._exposure_started.emit(event.payload.get("pier_key"), float(event.payload.get("duration_s", 0.0)))
 
     def _on_frame_event(self, event) -> None:
@@ -537,10 +587,11 @@ class FocusPage(QWidget):
         if not self._receiving.get(key):
             return  # a frame outside a run entirely (nothing is displaying it) is not shown
         payload = event.payload
+        dark, note = self._dark_for(key, payload["frame"])
         self._frame.emit(key, {
             "position": payload["position"], "hfr": payload["hfr"], "fwhm": payload["fwhm"],
-            "star_count": payload["star_count"], "preview": _preview(payload["frame"], self._bayer.get(key)),
-            "confirm": payload.get("confirm", False),
+            "star_count": payload["star_count"], "preview": _preview(payload["frame"], self._bayer.get(key), dark),
+            "confirm": payload.get("confirm", False), "note": note,
         })
 
     def _on_complete_event(self, event) -> None:
@@ -580,6 +631,8 @@ class FocusPage(QWidget):
             self._exposure_timer.stop()
 
     def _on_started(self, key, payload: dict) -> None:
+        if self._subtract_dark:
+            self._remember_rig(key)
         self._active[key] = True
         self._last_run[key] = {
             "points": [], "fit": None, "stats": _NO_STATS, "preview": None, "position": None,
@@ -602,10 +655,10 @@ class FocusPage(QWidget):
         if payload["confirm"]:
             # The post-move confirmation exposure at the computed best position: shown
             # so focus can be checked visually, but it isn't a sweep sample for the curve.
-            run["status"] = f"Focus complete — confirming at position {payload['position']}…"
+            run["status"] = f"Focus complete — confirming at position {payload['position']}…{_note(payload)}"
         else:
             run["points"].append((payload["position"], payload["hfr"]))
-            run["status"] = f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…"
+            run["status"] = f"Focusing — position {payload['position']}, HFR {payload['hfr']:.2f}…{_note(payload)}"
         if key != self._pier_key():
             return
         if payload["preview"] is not None:
@@ -746,6 +799,8 @@ class FocusPage(QWidget):
                 f"Connect a {' and a '.join(missing)} on the Equipment pages first.",
             )
             return
+        if self._subtract_dark:
+            self._remember_rig(key)
         from galileo.autofocus import AutofocusService
         service = self._services[key] = AutofocusService(
             camera=camera, focuser=focuser, exposure_s=self.exposure_spin.value(),
@@ -878,6 +933,8 @@ class FocusPage(QWidget):
             camera=camera, exposure_s=self.exposure_spin.value(), pier_key=key,
             gain=self.gain_spin.value(), offset=self.offset_spin.value(),
         )
+        if self._subtract_dark:
+            self._remember_rig(key)
         self._manual_stop[key] = threading.Event()
         self._manual_active[key] = True
         self._sync_buttons()
@@ -900,9 +957,11 @@ class FocusPage(QWidget):
                 if result is not None:
                     frame, hfr, fwhm, star_count = result
                     position = getattr(focuser, "position", None) if focuser is not None else None
+                    self._dark_exposure[key] = float(getattr(service, "exposure_s", 0.0))
+                    dark, note = self._dark_for(key, frame)
                     self._manual_frame.emit(key, {
                         "position": position, "hfr": hfr, "fwhm": fwhm,
-                        "star_count": star_count, "preview": _preview(frame, pattern),
+                        "star_count": star_count, "preview": _preview(frame, pattern, dark), "note": note,
                     })
                 if not loop or stop_event.is_set():
                     break
@@ -926,7 +985,7 @@ class FocusPage(QWidget):
         run["stats"] = f"Stars: {payload['star_count']}  HFR: {payload['hfr']:.2f}  FWHM: {payload['fwhm']:.2f}"
         run["position"] = payload["position"]
         position_text = "—" if payload["position"] is None else str(payload["position"])
-        run["status"] = f"Manual focus — position {position_text}, HFR {payload['hfr']:.2f}."
+        run["status"] = f"Manual focus — position {position_text}, HFR {payload['hfr']:.2f}.{_note(payload)}"
         if key != self._pier_key():
             return
         if payload["preview"] is not None:

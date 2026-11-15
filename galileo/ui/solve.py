@@ -75,12 +75,15 @@ _POLAR_GOOD_ARCSEC = 60.0        # polar error readout: green below this,
 _POLAR_FAIR_ARCSEC = 300.0       # amber below this, red above
 
 
-def load_preview(path: str, bayer_pattern: str | None = None) -> np.ndarray | None:
+def load_preview(path: str, bayer_pattern: str | None = None, subtract_dark: bool = False,
+                 notes: list | None = None) -> np.ndarray | None:
     """The frame at *path* as an auto-stretched 8-bit array ``(h, w)`` or ``(h, w, 3)``, sub-sampled
     if very large. A mono mosaic is debayered first (a half-resolution superpixel debayer, before
     sub-sampling, which would otherwise destroy the mosaic) using the frame's own ``BAYERPAT``
-    header if it has one, else *bayer_pattern* (what the camera reports). ``None`` if it can't be
-    read (the frame may be gone or half written)."""
+    header if it has one, else *bayer_pattern* (what the camera reports). With *subtract_dark* the
+    Library's dark master for the frame's own TELESCOP/INSTRUME/EXPTIME/binning headers is subtracted
+    first (preview only — the solver always gets the file as it is), and what happened is appended to
+    *notes*. ``None`` if it can't be read (the frame may be gone or half written)."""
     try:
         from astropy.io import fits
 
@@ -88,7 +91,16 @@ def load_preview(path: str, bayer_pattern: str | None = None) -> np.ndarray | No
         from galileo.ui.imaging import _auto_stretch
         with fits.open(path) as hdul:
             data = np.asarray(hdul[0].data)
-            header_pattern = str(hdul[0].header.get("BAYERPAT", "")).strip().upper()
+            header = hdul[0].header
+            header_pattern = str(header.get("BAYERPAT", "")).strip().upper()
+        if subtract_dark:
+            from galileo.dark_master import dark_for_frame, subtract
+            exposure = header.get("EXPTIME", header.get("EXPOSURE"))
+            dark, note = dark_for_frame(header.get("TELESCOP"), header.get("INSTRUME"), exposure,
+                                        header.get("XBINNING", 1), header.get("YBINNING", 1), data.shape)
+            if notes is not None:
+                notes.append(note)
+            data = subtract(data, dark)
         if data.ndim == 3:                           # FITS stores colour plane-first
             data = np.moveaxis(data[:3], 0, -1) if data.shape[0] >= 3 else data[0]
         pattern = header_pattern if header_pattern in BAYER_PATTERNS else bayer_pattern
@@ -154,6 +166,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._latest_path: str | None = None
         self._shown_path: str | None = None
         self._loading_path: str | None = None
+        self._preview_note = ""                  # what dark subtraction did to the frame on show, if it is on
         self._mount_busy: dict = {}
         self._exposures: dict = {}               # pier key -> (monotonic start, duration_s, label) while exposing
         self._displayed_pier = _UNSET            # which Pier the results above belong to
@@ -173,6 +186,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.solve_started.connect(self._on_solve_started)
         self.solve_finished.connect(self._on_solve_finished)
         self.preview_ready.connect(self._on_preview_ready)
+        self.subtract_dark_check.toggled.connect(self._on_subtract_dark_toggled)
         self.mount_position.connect(self._on_mount_position)
         self.run_finished.connect(self._on_run_finished)
         self.polar_progress.connect(self._on_polar_progress)
@@ -353,12 +367,15 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             return
         self._loading_path = path
         camera = self._camera()
+        subtract_dark = self.subtract_dark_check.isChecked()
 
         def work() -> None:
             # A colour camera's frames are shown debayered; the frame's own BAYERPAT header (read
             # in load_preview) wins over what the connected camera reports.
             from galileo.debayer import camera_pattern
-            self._emit("preview_ready", {"path": path, "array": load_preview(path, camera_pattern(camera))})
+            notes: list = []
+            array = load_preview(path, camera_pattern(camera), subtract_dark, notes)
+            self._emit("preview_ready", {"path": path, "array": array, "note": " ".join(notes)})
         threading.Thread(target=work, name="solve-preview", daemon=True).start()
 
     # --- UI-thread slots --------------------------------------------------
@@ -404,7 +421,17 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             self.image_view.show_array(payload["array"])
             self.layout_choice.set_frame(payload["array"])
             self._shown_path = payload["path"]
+            self._preview_note = payload.get("note", "")
             self._update_frame_label()
+
+    def _on_subtract_dark_toggled(self, _on: bool) -> None:
+        """Redraw the frame on show with or without the dark master."""
+        if not self.subtract_dark_check.isChecked():
+            self._preview_note = ""
+            self._update_frame_label()
+        if self._latest_path:
+            self._loading_path = None
+            self._load_preview_async(self._latest_path)
 
     def _on_mount_position(self, key, payload) -> None:
         """*payload* is the mount's position, or empty if there is no mount or it couldn't be read.
@@ -649,7 +676,6 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             scale_hint_arcsec_px=self._scale_hint(), binning=self.bin_combo.currentIndex() + 1,
             gain=self.gain_spin.value(),
             filter_name="" if self.filter_combo.currentIndex() <= 0 else self.filter_combo.currentText(),
-            subtract_dark=self.dark_check.isChecked(),
         )
 
     # --- Auto-Centre ------------------------------------------------------

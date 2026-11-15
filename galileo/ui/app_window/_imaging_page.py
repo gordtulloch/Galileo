@@ -240,7 +240,7 @@ class AppWindowImagingPageMixin:
         nudge_rate_combo = QComboBox()
         from galileo.mount_limits import JOG_RATE_LEVELS
         for level, rate in JOG_RATE_LEVELS.items():
-            nudge_rate_combo.addItem(f"{level} ({rate:g}°/s)", rate)
+            nudge_rate_combo.addItem(str(level), rate)
         nudge_rate_combo.setCurrentIndex(6)
         nudge_rate_combo.setToolTip("How fast the mount moves while a button is held. Matches the Mount page's Rate: "
                                     "the driver's own slew rates for an INDI mount, otherwise levels 1 (slowest) to 9.")
