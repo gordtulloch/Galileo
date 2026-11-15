@@ -75,6 +75,10 @@ How the preview is displayed. None of these change what is saved. A one-shot-col
 
 Shows the preview in colour by debayering the camera's mosaic. It is ticked automatically when the camera reports a Bayer pattern; tick or untick it yourself to override. If the camera reports no pattern but you tick it, the pattern saved on Equipment › Camera is used (wrong colours mean that pattern is wrong). Only the preview changes — statistics, the histogram and **Save Frame** keep the camera's raw data.
 
+## Subtract dark
+
+Subtracts the Library's dark master from the preview when one exists for this camera and optics. A master matches when it was made with the same telescope and camera, at the same binning and an exposure within 1% of the frame's. The newest match is used; the status line says which master was applied, or why none was (no match, a different frame size, or no frame yet). Only the preview changes — statistics, the histogram and **Save Frame** keep the camera's raw data. The setting lasts for the session.
+
 ## Live Stack
 
 Builds the frames of one **Capture** into a single image instead of each replacing the last: each frame is aligned to the first and added to a running mean, so the preview, statistics and histogram improve as the run goes on. Needs a run of several frames. Each frame still goes to the Library on its own; use **Save Stack** for the stacked image.

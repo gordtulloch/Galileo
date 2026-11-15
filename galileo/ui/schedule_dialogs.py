@@ -94,7 +94,7 @@ class _LogDialog(QDialog):
         text.setReadOnly(True)
         text.setPlainText(
             "\n".join(job.run_log) if job.run_log
-            else "No log entries yet — execution isn't wired up for this build."
+            else "No log entries yet — this entry has not run."
         )
         layout.addWidget(text)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

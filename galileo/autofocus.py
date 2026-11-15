@@ -193,6 +193,11 @@ class AutofocusService:
 
         try:
             coeffs = fit_parabola(positions, hfr_values)
+            if coeffs[0] <= 0:
+                # HFR must be a V/U-shaped (concave-up) function of position; a downward parabola
+                # has a maximum, not a focus point, so moving to its vertex would be worst focus.
+                raise ValueError("HFR curve is inverted (no minimum in the sampled range) — "
+                                 "widen the step size or check the star measurements")
             best = round(vertex_of_parabola(coeffs))
             self._last_best_position = best
         except Exception as exc:
@@ -409,15 +414,26 @@ def _measure_stars(frame) -> tuple[float, int]:
         height, width = data_sub.shape
         radii = []
         for x, y, a in zip(objects["x"], objects["y"], objects["a"], strict=True):
-            r_outer = min(max(6.0 * float(a), 6.0), 40.0)
+            # A defocused star's detected 'a' only covers its brightest part, so scale the aperture
+            # generously and keep a floor; the same aperture rule at every focus position.
+            r_outer = min(max(8.0 * float(a), 12.0), 60.0)
             x0, x1 = max(0, int(x - r_outer)), min(width, int(x + r_outer) + 1)
             y0, y1 = max(0, int(y - r_outer)), min(height, int(y + r_outer) + 1)
             yy, xx = np.mgrid[y0:y1, x0:x1]
             dist = np.hypot(xx - x, yy - y)
-            values = np.clip(data_sub[y0:y1, x0:x1][dist <= r_outer], 0.0, None)
+            inside = dist <= r_outer
+            # Background-subtracted noise averages to zero, so don't clip it to positive: clipping
+            # adds a noise pedestal at large radius that inflates HFR for sharp stars.
+            values = data_sub[y0:y1, x0:x1][inside]
+            d = dist[inside]
             total = values.sum()
-            if total > 0:
-                radii.append(float((values * dist[dist <= r_outer]).sum() / total))
+            if total <= 0:
+                continue
+            # True half-flux radius: the radius enclosing half the total flux.
+            order = np.argsort(d)
+            cum = np.cumsum(values[order])
+            idx = int(np.searchsorted(cum, 0.5 * total))
+            radii.append(float(d[order][min(idx, len(d) - 1)]))
         if not radii:
             return 2.0, len(objects)
         return float(np.median(radii)), len(objects)

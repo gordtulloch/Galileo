@@ -11,6 +11,19 @@ Status values: `Pending` (not yet applied to AstroFiler), `Applied` (with the As
 
 ---
 
+## 2026-11-14 — Sessions view refreshes after Auto-Calibration — Status: Pending
+
+**Change:** `SessionsRegenerateMixin.run_auto_calibration` called `self.load_sessions_data()` only when
+`AutoCalibrationDialog.exec()` returned `QDialog.DialogCode.Accepted`. The dialog never calls `accept()` (its Close
+button and the window X both end as Rejected), so the Sessions tree never showed newly created masters until
+sessions were regenerated. It now reloads unconditionally after the dialog closes (masters may also exist after a
+cancelled run). The now-unused `QDialog` import is removed.
+
+**Galileo-specific to translate:** none (module path only).
+**Files:** `galileo/ui/library/sessions_regenerate.py`.
+
+---
+
 ## 2026-11-10 — Multi-select delete on the Images tab — Status: Pending
 
 **Change:** Library > Images lets you select several frames (Shift = range, Ctrl = toggle) and delete them

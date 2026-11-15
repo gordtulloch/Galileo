@@ -32,11 +32,10 @@ pier operation are the same ``SchedulerJob`` underneath (``kind``
 distinguishes them) and both render as one block, positioned by start time
 and sized to ``duration_minutes``.
 
-Execution — actually opening the dome, actually running a session's blocks —
-is not implemented here, same scope boundary ``galileo.ui.sessions`` and
-``galileo.scheduler`` (SDD 4.9b) already draw: this screen only places jobs
-on the calendar and displays whatever ``run_state``/``run_log`` a (future)
-execution engine has recorded against them.
+Execution is not done by this screen: ``galileo.ui.session_runner``'s
+``SessionRunController`` ticks the queue and runs due jobs. This screen only
+places jobs on the calendar, starts that controller's timer, and displays the
+``run_state``/``run_log`` it records.
 """
 
 from __future__ import annotations
@@ -160,7 +159,12 @@ class SchedulePageWidget(QWidget):
         self.reload()
         try:
             from galileo.ui.session_runner import get_session_controller
-            get_session_controller(window).changed.connect(self._on_controller_changed)
+            controller = get_session_controller(window)
+            controller.changed.connect(self._on_controller_changed)
+            # Pages are built lazily: without this, jobs placed on the calendar never fire
+            # unless the Sessions page happened to be opened first.
+            if hasattr(window, "_scheduler_for_pier"):
+                controller.start_ticking()
         except Exception:               # a window without a session controller (tests, stubs)
             logger.debug("No session controller to follow", exc_info=True)
 

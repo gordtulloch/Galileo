@@ -184,6 +184,13 @@ class AppWindowImagingPageMixin:
             "statistics, the histogram and saved frames keep the raw data.")
         view_form.addRow(debayer_check)
 
+        subtract_dark_check = QCheckBox("Subtract dark")
+        subtract_dark_check.setToolTip(
+            "Subtract the Library's dark master from the preview when one exists for this camera and "
+            "optics, at the same exposure and binning. The status line says which master was used, or why "
+            "none was. Only the preview changes — statistics, the histogram and saved frames keep the raw data.")
+        view_form.addRow(subtract_dark_check)
+
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
             "By default the page lays itself out for the shape of the frame: a portrait frame gets the "
@@ -587,8 +594,19 @@ class AppWindowImagingPageMixin:
             service.set_debayer_override(checked, rebuild=False)
             _render_stretch_preview()
 
+        def _subtract_dark_toggled(checked: bool) -> None:
+            service = _current_service()
+            if not service.frame_context:
+                service.frame_context = self._imaging_frame_context()   # telescope/camera names for the lookup
+            service.set_subtract_dark(checked, rebuild=False)
+            status_label.setText(service.preview_note)
+            _render_stretch_preview()
+
         def _refresh_preview(service) -> None:
             _sync_debayer_check(service)
+            subtract_dark_check.blockSignals(True)
+            subtract_dark_check.setChecked(service.subtract_dark)
+            subtract_dark_check.blockSignals(False)
             data = service.display_preview
             if data is None:
                 # This Pier has no frame yet: don't leave the previously shown Pier's on screen.
@@ -621,7 +639,7 @@ class AppWindowImagingPageMixin:
             preview_renders.discard(thread)
             if service.apply_preview(rendered):
                 _refresh_preview(service)
-                status_label.setText(service.debayer_note)
+                status_label.setText(service.preview_note)
 
         self._imaging_preview_renders = preview_renders
 
@@ -699,6 +717,7 @@ class AppWindowImagingPageMixin:
 
         stretch_slider.valueChanged.connect(_stretch_slider_changed)
         debayer_check.toggled.connect(_debayer_toggled)
+        subtract_dark_check.toggled.connect(_subtract_dark_toggled)
         self._imaging_stretch_slider = stretch_slider
 
         def _orientation_choice_changed(*_args) -> None:
@@ -841,8 +860,8 @@ class AppWindowImagingPageMixin:
         def _series_summary(service) -> str:
             done, total = service.series_done, service.series_total
             text = ("Stopped" if service.stop_requested else "Complete") + (f" — {done} of {total} frames" if total > 1 or service.stop_requested else "")
-            if service.debayer_note:
-                text += f" — {service.debayer_note}"
+            if service.preview_note:
+                text += f" — {service.preview_note}"
             if service.auto_save_to_library:
                 added = len(service.library_ids)
                 text += f" — {added} added to the Library" if added else " — none added to the Library"
@@ -1350,7 +1369,7 @@ class AppWindowImagingPageMixin:
 
         save_stack_btn.clicked.connect(save_stack)
         self._imaging_ui.update({
-            "live_stack": live_stack_check, "debayer": debayer_check, "save_stack_button": save_stack_btn,
+            "live_stack": live_stack_check, "debayer": debayer_check, "subtract_dark": subtract_dark_check,"save_stack_button": save_stack_btn,
             "save_stack_to_library": save_stack_to_library, "save_stack_to_file": save_stack_to_file,
         })
 

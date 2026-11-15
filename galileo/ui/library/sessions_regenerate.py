@@ -112,15 +112,15 @@ class SessionsRegenerateMixin(_MixinBase):
         """Run the auto-calibration workflow with customizable operation selection"""
         try:
             from .auto_calibration_dialog import AutoCalibrationDialog
-            from PySide6.QtWidgets import QDialog
 
             # Create and show the workflow selection dialog
             dialog = AutoCalibrationDialog(self)
-            result = dialog.exec()
+            dialog.exec()
 
-            # Refresh the sessions display if workflow completed
-            if result == QDialog.DialogCode.Accepted:
-                self.load_sessions_data()
+            # Always refresh: the dialog never calls accept() (Close and the window X both end as
+            # "rejected"), and masters may have been created even if the user cancelled part-way,
+            # so keying the refresh on Accepted meant the Sessions view never showed new masters.
+            self.load_sessions_data()
 
         except Exception as e:
             logger.exception("Error running auto-calibration workflow")

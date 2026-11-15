@@ -108,6 +108,15 @@ class ImagingService:
         self.debayer_override: bool | None = None
         self.fallback_bayer_pattern: str | None = None
         self.debayer_note: str = ""                # what the last preview did, for the UI to show
+        # The View > Subtract dark checkbox: when ticked and the Library holds a dark master for this
+        # camera and optics (same exposure and binning), the preview shows the frame with it subtracted.
+        # Preview-only, like debayering: current_frame, statistics, histogram and saved files stay raw.
+        # The master is looked up on the calling thread (see resolve_dark_master) because previews
+        # render on worker threads and the database is not touched from them.
+        self.subtract_dark: bool = False
+        self.dark_note: str = ""                   # whether a dark was used, or why not, for the UI to show
+        self._dark_path: str | None = None
+        self._dark_data = None                     # the loaded master for ``_dark_path``
         # Auto-stretch strength (IMG-190), set by the slider above the histogram. Preview-only —
         # never affects current_frame, frame_stats, frame_histogram or a saved file.
         self.stretch_level: int = DEFAULT_STRETCH_LEVEL
@@ -740,6 +749,8 @@ class ImagingService:
         self.last_saved_array = data
 
         if data is not None and analyse:
+            if self.subtract_dark:
+                self.resolve_dark_master()   # the new frame may need a different dark (exposure changed)
             await self._detect_bayer_pattern()
             await self._analyse_current_frame()
 
@@ -843,9 +854,66 @@ class ImagingService:
         if self.current_frame is not None:
             self.current_preview, self.debayer_note = self._render_preview(self.current_frame)
 
+    # --- Dark subtraction ---------------------------------------------------
+
+    @property
+    def preview_note(self) -> str:
+        """What the last preview did (debayer, dark subtraction), as one line for the status text."""
+        return " ".join(n for n in (self.debayer_note, self.dark_note) if n)
+
+    def set_subtract_dark(self, enabled: bool, rebuild: bool = True) -> None:
+        """Turn dark-master subtraction of the preview on or off, looking the master up now."""
+        self.subtract_dark = bool(enabled)
+        self.resolve_dark_master()
+        self._preview_generation += 1
+        if rebuild:
+            self._rebuild_preview()
+
+    def resolve_dark_master(self) -> str | None:
+        """Find the dark master for the camera and optics of the frame on screen and load it, setting
+        :attr:`dark_note` to say what happened. Call from the UI/event-loop thread, not a render thread.
+
+        A master matches when it was made with the same telescope and camera as the frame, at the same
+        binning and an exposure within 1% of it. Returns the master's path, or ``None``."""
+        self._dark_path, self._dark_data = None, None
+        if not self.subtract_dark:
+            self.dark_note = ""
+            return None
+        frame = self.current_frame
+        shot = self.last_shot
+        if frame is None or not shot:
+            self.dark_note = "Subtract dark: capture a frame first." if frame is None else \
+                "Subtract dark: the frame's exposure is unknown."
+            return None
+        meta = self.frame_metadata()
+        try:
+            path = _find_dark_master_path(meta.get("telescope"), meta.get("instrument"),
+                                          float(shot["duration"]), meta.get("binning_x", 1),
+                                          meta.get("binning_y", 1))
+            if path is None:
+                self.dark_note = "Subtract dark: no dark master for this camera, optics and exposure."
+                return None
+            data = _load_master_data(path)
+        except Exception:
+            logger.exception("Could not load a dark master")
+            self.dark_note = "Subtract dark: the dark master could not be read."
+            return None
+        if getattr(frame, "shape", None) != data.shape:
+            self.dark_note = (f"Subtract dark: the master is {data.shape[1]}x{data.shape[0]} but the frame is "
+                              f"{frame.shape[-1]}x{frame.shape[0]} — not subtracted.")
+            return None
+        self._dark_path, self._dark_data = path, data
+        self.dark_note = f"Dark subtracted ({Path(path).name})."
+        return path
+
     def _render_preview(self, data) -> tuple:
         """``(preview, debayer note)`` for *data*: the 8-bit stretch, debayered if asked to."""
         shown, note = data, ""
+        dark = self._dark_data if self.subtract_dark else None
+        if dark is not None and getattr(shown, "shape", None) == dark.shape:
+            import numpy as np
+            # Subtract on the raw mosaic, before debayering, as calibration does; float so it can't wrap.
+            shown = np.asarray(shown, dtype=np.float32) - dark
         if self.debayer_enabled:
             shown, note = self._debayered(data)
         return _auto_stretch(shown, self.stretch_level), note
@@ -932,6 +1000,38 @@ class ImagingService:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _find_dark_master_path(telescope, instrument, exposure_s: float, binning_x, binning_y) -> str | None:
+    """Path of the newest dark master in the Library made with *telescope* and *instrument* at this
+    binning and an exposure within 1% of *exposure_s*, or ``None``."""
+    from galileo.library.models.masters import Masters
+
+    def number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    wanted_bin = (number(binning_x), number(binning_y))
+    for master in Masters.get_masters_for_equipment(telescope, instrument):   # newest first
+        if master.master_type != "dark" or not Path(master.master_path).is_file():
+            continue
+        exposure = number(master.exposure_time)
+        if exposure is None or abs(exposure - exposure_s) > 0.01 * max(exposure_s, 1e-6):
+            continue
+        # A master with no binning recorded is taken as unbinned.
+        if (number(master.binning_x) or 1.0, number(master.binning_y) or 1.0) != (wanted_bin[0] or 1.0, wanted_bin[1] or 1.0):
+            continue
+        return master.master_path
+    return None
+
+
+def _load_master_data(path: str):
+    """The 2-D float32 image of a master FITS file."""
+    from galileo.library.core.light_calibration import _read_master_array
+    import numpy as np
+    return np.asarray(_read_master_array(path)[0], dtype=np.float32)
+
 
 def _auto_stretch(data, stretch_level: int = DEFAULT_STRETCH_LEVEL):
     """Return an 8-bit auto-stretched preview array — ``(height, width)`` for
