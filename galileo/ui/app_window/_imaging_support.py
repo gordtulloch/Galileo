@@ -205,6 +205,8 @@ class AppWindowImagingSupportMixin:
         target = f"{device_name or category} at {server}:{port}"
         startup_progress.begin_detail(f"Connecting to {target}")
         try:
+            if not self._server_reachable(server, port):
+                raise RuntimeError(f"{server}:{port} did not answer")
             if desktop_devices.enabled() and self._current_pier is not None:
                 adapter = desktop_devices.connect(self._current_pier, category, slot, driver, server, port,
                                                   device_name, configure)
@@ -222,6 +224,31 @@ class AppWindowImagingSupportMixin:
         startup_progress.end_detail(f"Connected to {target}", True)
         self._push_context_to_devices([adapter])
         return adapter
+
+    def _server_reachable(self: AppWindowState, server: str, port: int) -> bool:
+        """Quick TCP probe (2 s) before a device connect. A Pier switch connects every device of the Pier on the UI
+        thread, and an unreachable host that drops packets makes each one wait out the full connect timeout (10 s for
+        INDI) — a Pier with nine devices on one such host froze the window for over a minute. During a switch the
+        answer is remembered per server so only the first device pays; outside one every connect is probed afresh.
+        A localhost/empty server is not probed (the adapters report their own errors there)."""
+        import socket
+        if not server or not port:
+            return True
+        cache = self.__dict__.setdefault("_probe_cache", {})
+        if not getattr(self, "_pier_switching", False):
+            cache.clear()
+        key = (server, int(port))
+        if key in cache:
+            return cache[key]
+        try:
+            with socket.create_connection(key, timeout=2.0):
+                ok = True
+        except OSError:
+            ok = False
+            logger.warning("%s:%s is not reachable; skipping its devices for now", server, port)
+        if getattr(self, "_pier_switching", False):
+            cache[key] = ok
+        return ok
 
     @staticmethod
     def _make_adapter(category, driver: str, server: str, port: int, device_name: str):

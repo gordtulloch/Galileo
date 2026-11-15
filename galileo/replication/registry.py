@@ -25,6 +25,8 @@ from typing import Any
 NOT_CONFIGURATION = frozenset({
     "fitsfile", "fitssession", "mapping", "Masters", "VariableStars",          # the Library catalog
     "link_peers", "link_audit",                                                # node-local: peers and audit
+    "saved_sessions",                                                          # node-local: sessions built on this Pier
+    "user_objects",                                                            # catalog data found by name search
     "migratehistory", "sqlite_sequence",                                       # schema bookkeeping
     "repl_state", "repl_revisions", "repl_tombstones",                         # replication bookkeeping
     "sync_outbox", "sync_inbox", "sync_snapshots", "sync_run_reports", "sync_transfer_queue",

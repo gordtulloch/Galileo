@@ -737,8 +737,9 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
 
     menu = captured["menu"]
     actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
-    assert list(actions) == ["Goto", "Goto and Centre", "Sync", "Add to Session"]
+    assert list(actions) == ["Goto", "Goto and Centre", "Sync", "Add to Session", "Park"]
     assert actions["Add to Session"].isEnabled()
+    assert not actions["Park"].isEnabled()        # no mount is connected in this test: Park/Unpark is offered but off
 
     actions["Add to Session"].trigger()
     mock_create.assert_called_once_with("Vega", 279.2347, 38.7837)

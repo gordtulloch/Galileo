@@ -46,7 +46,9 @@ def template_names() -> list[str]:
 
 
 def load_template(name: str, target: dict[str, Any] | None) -> list:
-    """The template's blocks, its placeholder Target replaced by *target* (``name``, ``ra_deg``, ``dec_deg``)."""
+    """The template's blocks, its Target replaced by *target* (``name``, ``ra_deg``, ``dec_deg``) when one is given.
+    A template made from a session keeps that session's target, so with none given it runs on that; only an older
+    template saved with a placeholder Target insists on one."""
     from galileo.library.models.session_template import SessionTemplateRecord
     from galileo.ui.session_blocks import TargetBlock, block_from_dict
     record = SessionTemplateRecord.get_or_none(SessionTemplateRecord.name == name)
@@ -54,11 +56,13 @@ def load_template(name: str, target: dict[str, Any] | None) -> list:
         raise SessionRefused(f"There is no session template named {name!r}.")
     blocks = [block_from_dict(d) for d in json.loads(record.blocks_json)]
     for i, block in enumerate(blocks):
-        if isinstance(block, TargetBlock) and block.is_placeholder_target:
-            if not target:
+        if isinstance(block, TargetBlock):
+            if target:                  # a chosen target always replaces the template's (a saved one is a real target)
+                blocks[i] = replace(block, name=str(target["name"]), ra_deg=float(target["ra_deg"]),
+                                    dec_deg=float(target["dec_deg"]), is_placeholder_target=False)
+            elif block.is_placeholder_target:      # an older template saved with a placeholder
                 raise SessionRefused(f"{name!r} needs a target: give a name, ra_deg and dec_deg.")
-            blocks[i] = replace(block, name=str(target["name"]), ra_deg=float(target["ra_deg"]),
-                                dec_deg=float(target["dec_deg"]), is_placeholder_target=False)
+            break                       # only the first Target is the session's target
     return blocks
 
 

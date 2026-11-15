@@ -23,8 +23,6 @@ from galileo.ui.qt_helpers import layout_widget, take_widget
 import hashlib
 import json
 import logging
-from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -80,14 +78,6 @@ from galileo.ui.session_blocks import (
 )
 
 logger = logging.getLogger(__name__)
-
-_SESSION_SUFFIX = ".gses"
-
-
-def _safe_filename(text: str) -> str:
-    cleaned = "".join(c if c.isalnum() or c in "-_ " else "_" for c in text).strip()
-    return cleaned or "session"
-
 
 # ---------------------------------------------------------------------------
 # Action blocks (SES-130, SES-140)
@@ -152,6 +142,7 @@ class SessionRegion:
         self._job: Any = None
         self._screen: SessionsScreen | None = None
         self._pier_name: str | None = None
+        self._record_id: int | None = None      # its saved_sessions row once saved or scheduled
         # The camera (a Camera DeviceConfigRecord slot id) this session images with. A session
         # belongs to one camera: every action of its run uses it, whatever the top bar is on.
         self.camera_slot: str = "primary"
@@ -248,30 +239,38 @@ class SessionRegion:
 
     # --- Persistence (SES-060, SES-180, SES-190) ---------------------------
 
-    def _store_path(self) -> Path:
-        from galileo.platform import get_data_dir
-        pier_dir = get_data_dir() / "sessions" / _safe_filename(self._pier_name or "unassigned")
-        return pier_dir / f"{_safe_filename(self.name)}{_SESSION_SUFFIX}"
-
     def save(self) -> None:
-        """Persist this region for reuse (SES-060) — not run until Schedule is used."""
-        path = self._store_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"name": self.name, "camera_slot": self.camera_slot,
-                "blocks": [_block_to_dict(b) for b in self.blocks]}
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        """Keep this session (SES-060): it stays on the Sessions screen, across restarts, until it completes or is
+        deleted. Stored as a ``saved_sessions`` row in the shared database; not run until Schedule is used."""
+        from galileo.library.models.saved_session import SavedSessionRecord
+        fields = {"pier_name": self._pier_name or "", "name": self.name, "camera_slot": self.camera_slot,
+                  "blocks_json": json.dumps([_block_to_dict(b) for b in self.blocks])}
+        record = SavedSessionRecord.get_or_none(SavedSessionRecord.id == self._record_id) if self._record_id else None
+        if record is None:
+            self._record_id = SavedSessionRecord.create(**fields).id
+        else:
+            for key, value in fields.items():
+                setattr(record, key, value)
+            record.save()
+
+    def autosave(self) -> None:
+        """Re-save after an edit, once the session has been saved or scheduled — an edit to a kept session must
+        not be lost on restart. A session that was never saved stays unsaved."""
+        if self._record_id is None:
+            return
+        try:
+            self.save()
+        except Exception:
+            logger.exception("Could not save session %r", self.name)
 
     def save_as_template(self, name: str) -> None:
         """Save this region's blocks as a reusable template (SES-180), under *name*
-        in the shared database (overwriting any existing template of that name):
-        its Target block, if it's the first block, is stored as a generic
-        placeholder."""
+        in the shared database (overwriting any existing template of that name).
+        The Target block keeps its target, so a template made from a session is
+        valid as it stands; Load from Template substitutes the session's own
+        target, and running a template with a chosen target replaces it."""
         from galileo.library.models.session_template import SessionTemplateRecord
-        blocks_out = []
-        for i, block in enumerate(self.blocks):
-            if i == 0 and isinstance(block, TargetBlock):
-                block = replace(block, is_placeholder_target=True)
-            blocks_out.append(_block_to_dict(block))
+        blocks_out = [_block_to_dict(block) for block in self.blocks]
         blocks_json = json.dumps(blocks_out)
         SessionTemplateRecord.delete().where(SessionTemplateRecord.name == name).execute()
         SessionTemplateRecord.create(name=name, blocks_json=blocks_json)
@@ -318,6 +317,10 @@ class SessionRegion:
             self._job = self._make_job()
             self._scheduler.add_job(self._job)
         self.is_scheduled = True
+        try:
+            self.save()             # a scheduled session is kept until it completes or is deleted
+        except Exception:
+            logger.exception("Could not save scheduled session %r", self.name)
 
     def deschedule(self) -> None:
         if self._scheduler is not None and self._job is not None:
@@ -345,6 +348,49 @@ class SessionRegion:
     def delete(self) -> None:
         if self._screen is not None:
             self._screen._remove_region(self)
+        if self._record_id is not None:
+            from galileo.library.models.saved_session import SavedSessionRecord
+            try:
+                SavedSessionRecord.delete().where(SavedSessionRecord.id == self._record_id).execute()
+            except Exception:
+                logger.exception("Could not remove the stored copy of session %r", self.name)
+            self._record_id = None
+
+
+def restore_regions(pier_name: str | None, scheduler: Any) -> list[SessionRegion]:
+    """The sessions kept for *pier_name* (saved or scheduled, not yet completed or deleted), rebuilt from the
+    database, with each scheduled one re-attached to its job in *scheduler*. Scheduled jobs are stored without
+    their blocks, so without this a restart left jobs that could neither run nor be seen. A job is matched to its
+    session by name; a job with no stored session stays as it was (it cannot run). Called as the Pier's scheduler
+    is first loaded, so even a Pier that is never shown has its due sessions run."""
+    from galileo.library.models.saved_session import SavedSessionRecord
+    regions: list[SessionRegion] = []
+    try:
+        records = list(SavedSessionRecord.select().where(SavedSessionRecord.pier_name == (pier_name or ""))
+                       .order_by(SavedSessionRecord.id))
+    except Exception:
+        logger.exception("Could not read the saved sessions of Pier %r", pier_name)
+        return regions
+    for record in records:
+        try:
+            blocks = [_block_from_dict(d) for d in json.loads(record.blocks_json)]
+        except Exception:
+            logger.exception("Saved session %r of Pier %r could not be read; it is left out", record.name, pier_name)
+            continue
+        region = SessionRegion(record.name, scheduler=scheduler)
+        region.blocks = blocks
+        region._normalize_indents()
+        region.camera_slot = record.camera_slot
+        region._record_id = record.id
+        region._pier_name = pier_name
+        job = next((j for j in scheduler.jobs
+                    if j.kind == "session" and j.sequence is None and j.name == record.name), None)
+        if job is not None:
+            job.sequence = region
+            region._job = job
+            region.is_scheduled = True
+        regions.append(region)
+    return regions
 
 
 # ---------------------------------------------------------------------------
@@ -578,12 +624,25 @@ class BlockListWidget(QListWidget):
         block = item.data(_BLOCK_ROLE)
         if not self._region.is_editable:
             return
-        from galileo.ui.session_block_dialogs import has_parameters, open_block_parameter_dialog
+        from galileo.ui.session_block_dialogs import has_parameters
         if not has_parameters(type(block)):
+            return
+        # Open the dialog once this mouse event has finished. exec() here ran a nested event loop inside the
+        # right-click's press handling, which on macOS left Qt routing later clicks to the stale press target:
+        # buttons highlighted when pressed but never fired (the window looked frozen after editing a block).
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._edit_block(block))
+
+    def _edit_block(self, block: SessionBlock) -> None:
+        from galileo.ui.session_block_dialogs import open_block_parameter_dialog
+        item = next((self.item(row) for row in range(self.count())
+                     if self.item(row).data(_BLOCK_ROLE) is block), None)
+        if item is None or not self._region.is_editable:
             return
         if open_block_parameter_dialog(self, block, self._region, self._window):
             item.setText(block.display_text)
             self._set_item_widget(item, block)
+            self._region.autosave()
 
     def _fit_height_to_contents(self) -> None:
         height = 2 * self.frameWidth()
@@ -705,11 +764,20 @@ class BlockListWidget(QListWidget):
             else:
                 return
         except (BlockOrderError, RegionLockedError) as exc:
-            QMessageBox.warning(self, "Can't add block", str(exc))
-            self._on_changed(str(exc))
+            message = str(exc)
+            event.ignore()
+            self._after_drag(lambda: (QMessageBox.warning(self, "Can't add block", message),
+                                      self._on_changed(message)))
             return
         event.acceptProposedAction()
-        self._on_changed(None)
+        self._after_drag(lambda: self._on_changed(None))
+
+    def _after_drag(self, action) -> None:
+        """Run *action* once the drag has finished. dropEvent runs inside the drag's nested event loop (and
+        macOS holds the mouse for the drag): a modal warning there, or rebuilding the list (which deletes the
+        very item being dragged), left the window unresponsive. The model is already updated by then."""
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, action)
 
 
 class _RegionWidget(QFrame):
@@ -805,8 +873,10 @@ class _RegionWidget(QFrame):
         slot = self._camera_combo.itemData(index)
         if slot and self._region.is_editable:
             self._region.camera_slot = slot
+            self._region.autosave()
 
     def _on_block_change(self, error: str | None) -> None:
+        self._region.autosave()
         self._blocks_list.refresh()
         if error:
             self._on_reload(error)
@@ -1040,6 +1110,11 @@ class SessionsPageWidget(QWidget):
         pier_name = self._active_pier_name()
         self._scheduler_for(pier_name).reap_completed_jobs()
         self.sessions_screen.set_active_pier(pier_name)
+        # Sessions restored from the database when this Pier's scheduler was first loaded (see
+        # ``AppWindow._scheduler_for_pier``): show them. Handed over once; after that the screen owns them.
+        restored = getattr(self._window, "__dict__", {}).get("_restored_sessions", {}).pop(pier_name or "", [])
+        for region in restored:
+            self.sessions_screen.add_session(region, pier_name)
         self._rebuild_regions()
 
     def _on_run_changed(self, _pier_key=None) -> None:
