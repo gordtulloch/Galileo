@@ -16,9 +16,22 @@ class IndiFWAdapter(IndiAdapter):
 
     def __init__(self, host: str = "localhost", port: int = 7624, **kwargs) -> None:
         super().__init__(DeviceCategory.FILTER_WHEEL, host, port, **kwargs)
-        self.filter_names: list[str] = []
+        self._filter_names: list[str] = []
         self.position = 0
         self.is_moving = False
+
+    @property
+    def filter_names(self) -> list[str]:
+        """The wheel's filter names. They are read when the device connects, but a driver can publish
+        ``FILTER_NAME`` a moment after that, leaving the list empty for good — so an empty list is re-read from
+        the live property (a local lookup, no device I/O) each time it is asked for."""
+        if not self._filter_names:
+            self._refresh()
+        return self._filter_names
+
+    @filter_names.setter
+    def filter_names(self, value: list[str]) -> None:
+        self._filter_names = value
 
     def _on_connected(self) -> None:
         self._refresh()
@@ -26,7 +39,7 @@ class IndiFWAdapter(IndiAdapter):
     def _refresh(self) -> None:
         names = self._client.find_property(self.device_name, lambda p: p.name == "FILTER_NAME") if self._client else None
         if names is not None:
-            self.filter_names = [str(el.value) for el in names.elements.values()]
+            self._filter_names = [str(el.value) for el in names.elements.values()]
         slot = self._num("FILTER_SLOT", "FILTER_SLOT_VALUE")
         if slot is not None:
             self.position = int(slot) - 1

@@ -63,6 +63,10 @@ class AppWindowMiscDevicePagesMixin:
             scheduler = ObservatoryScheduler()
             scheduler.set_persistence(key)
             scheduler.load()
+            # Re-attach each scheduled job to its stored session (jobs are saved without their blocks) so it can
+            # run after a restart; the Sessions screen picks the regions up when it shows this Pier.
+            from galileo.ui.sessions import restore_regions
+            self.__dict__.setdefault("_restored_sessions", {})[key] = restore_regions(pier_name, scheduler)
             # Gate jobs on this window's connected safety devices (SCHED-060). The monitor
             # re-reads the Safety page on every check, so connecting/disconnecting a device
             # needs no re-registration.

@@ -267,6 +267,11 @@ class AppWindowWeatherPageMixin:
                 readings = read_device(adapter, device_type)
             except Exception:
                 logger.exception("Could not poll %s", kind_label.lower())
+                # Remember the failed attempt: the scheduler asks for the Observatory's safety verdict on the UI
+                # thread every few seconds for every Pier, and an unreachable station made each ask block for the
+                # whole connect/read timeout again (the window froze while the Sessions screen was open).
+                state["read_at"] = time.monotonic()
+                state["latest_readings"] = None
                 return None
             state["read_at"] = time.monotonic()
             _apply_readings(readings)
@@ -282,7 +287,7 @@ class AppWindowWeatherPageMixin:
                 return False, []
             read_at = state.get("read_at")
             if read_at is not None and time.monotonic() - read_at < poll_spin.value():
-                readings = state.get("latest_readings", {})
+                readings = state.get("latest_readings", {})      # None = the last attempt failed; not retried yet
             else:
                 readings = _poll_once()
             if readings is None:
@@ -507,7 +512,7 @@ class AppWindowWeatherPageMixin:
             "poll_once": _poll_once,
             "evaluate_one": _evaluate_one,
             "get_rules": _current_rules,
-            "get_latest_readings": lambda: state.get("latest_readings", {}),
+            "get_latest_readings": lambda: state.get("latest_readings") or {},
             "device_type": device_type, "slot": slot,
         }
         reload_page()

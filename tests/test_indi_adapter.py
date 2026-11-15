@@ -468,6 +468,20 @@ async def test_tc_eqp_fw_010_names_and_zero_based_position(server):
 
 @pytest.mark.requirement("TC-EQP-FW-010")
 @pytest.mark.priority("MVP")
+async def test_tc_eqp_fw_010_names_read_again_when_published_after_connect(server):
+    """EQP-FW-010: a driver that publishes FILTER_NAME just after connect must not leave the names empty
+    (the block dialogs' Filter box was intermittently blank)."""
+    wheel = make(indi.IndiFWAdapter, server, WHEEL)
+    await wheel.connect()
+    try:
+        wheel._filter_names = []          # as if the read at connect had run before the property existed
+        assert wheel.filter_names == ["L", "R", "Ha"]
+    finally:
+        await wheel.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-FW-010")
+@pytest.mark.priority("MVP")
 async def test_tc_eqp_fw_010_move_waits_for_a_slow_driver_to_acknowledge(server):
     """EQP-FW-010: ``move_to`` returns only once the change is done, even if the driver's Busy reply
     arrives late (a loaded machine or a slow network). Before the fix it saw the old Ok state and

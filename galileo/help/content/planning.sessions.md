@@ -21,7 +21,7 @@ Adds a new empty session to this Pier's list.
 
 ## Add Session from Template
 
-Lists your saved templates and adds a new session containing all of the chosen template's blocks. Its Target is a placeholder: replace it with a real target before scheduling.
+Lists your saved templates and adds a new session containing all of the chosen template's blocks. Its Target is the target the template was made from (a template saved by an older version has a placeholder Target instead: replace it with a real target before scheduling).
 
 ## Palette
 
@@ -29,7 +29,7 @@ The blocks you can add. Drag one into a session. A block that needs a Target bef
 
 ## Save
 
-Saves this session to disk so you can keep it and reuse it later.
+Keeps this session. A saved (or scheduled) session stays on this screen, with any later edits, even after you close Galileo, until it has completed or you delete it. A session you never saved or scheduled is not kept.
 
 ## Save as Template
 
@@ -37,7 +37,7 @@ Saves this session's blocks under a name you give it, to reuse in other sessions
 
 ## Load from Template
 
-Fills this session from a saved template. The session must already contain a **Slew To** block with a real target: the template's own Slew To is stored as a generic placeholder, and your target takes its place. Templates are listed by name.
+Fills this session from a saved template. The session must already contain a **Slew To** block with a real target: the template's own Slew To is not used, and your target takes its place. Templates are listed by name.
 
 ## Schedule
 
@@ -65,7 +65,7 @@ Stops the running session and abandons the current exposure or slew.
 
 ## Delete
 
-Removes this session from the list.
+Removes this session from the list, and from what Galileo keeps. A session that completes is removed the same way.
 
 ## Slew To
 

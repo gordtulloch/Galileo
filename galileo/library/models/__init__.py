@@ -21,6 +21,7 @@ from galileo.library.models.horizon import HorizonPointRecord
 from galileo.library.models.masters import Masters
 from galileo.library.models.observatory import ObservatoryRecord, PierRecord
 from galileo.library.models.optical_tube import OpticalTubeRecord
+from galileo.library.models.saved_session import SavedSessionRecord
 from galileo.library.models.saved_target import SavedTargetRecord
 from galileo.library.models.solver_settings import SolverSettingsRecord
 from galileo.library.models.user_object import UserObjectRecord
@@ -39,6 +40,7 @@ __all__ = [
     "OpticalTubeRecord",
     "PierRecord",
     "SafetyDeviceConfigRecord",
+    "SavedSessionRecord",
     "SavedTargetRecord",
     "SolverSettingsRecord",
     "UserObjectRecord",

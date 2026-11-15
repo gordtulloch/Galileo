@@ -61,6 +61,52 @@ def test_tc_ses_060_persist_session_for_reuse(sessions_screen):
     assert hasattr(ui_mod.SessionRegion(name="x"), "save")
 
 
+@pytest.mark.requirement("TC-SES-060")
+@pytest.mark.priority("MVP")
+def test_tc_ses_060_saved_and_scheduled_sessions_survive_a_restart(tmp_path):
+    """SES-060/SES-210: a saved or scheduled session is kept (with its edits) until it completes or is deleted: it
+    is rebuilt after a restart, and a scheduled one is re-attached to its job so it can still run."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.library.database import db, init_db
+    from galileo.scheduler import ObservatoryScheduler
+    init_db(tmp_path / "ses060.db")
+    try:
+        scheduler = ObservatoryScheduler()
+        scheduler.set_persistence("P")
+        kept = ui_mod.SessionRegion(name="Kept", scheduler=scheduler)
+        kept._pier_name = "P"
+        kept.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+        kept.save()
+        later = ui_mod.SessionRegion(name="Later", scheduler=scheduler)
+        later._pier_name = "P"
+        later.insert_block(ui_mod.TargetBlock(name="M31", ra_deg=10.7, dec_deg=41.3))
+        later.schedule()                                           # scheduling keeps it too
+        unsaved = ui_mod.SessionRegion(name="Unsaved", scheduler=scheduler)
+        unsaved._pier_name = "P"
+        kept.insert_block(ui_mod.ImageBlock(exposure=60.0, count=3))
+        kept.autosave()                                            # an edit to a kept session is kept
+
+        # "Restart": a fresh scheduler loaded from the database, then the sessions restored into it.
+        fresh = ObservatoryScheduler()
+        fresh.set_persistence("P")
+        fresh.load()
+        regions = {r.name: r for r in ui_mod.restore_regions("P", fresh)}
+        assert set(regions) == {"Kept", "Later"}                   # the unsaved one is gone
+        assert [type(b).__name__ for b in regions["Kept"].blocks] == ["TargetBlock", "ImageBlock"]
+        assert not regions["Kept"].is_scheduled
+        assert regions["Later"].is_scheduled and regions["Later"]._job.sequence is regions["Later"]
+
+        regions["Kept"].delete()                                   # deleted: gone for good
+        assert [r.name for r in ui_mod.restore_regions("P", fresh)] == ["Later"]
+        fresh.reap_completed_jobs()
+        regions["Later"]._job._frames_captured = regions["Later"]._job.total_required or 1
+        regions["Later"]._job.total_required = regions["Later"]._job._frames_captured
+        fresh.reap_completed_jobs()                                # completed: gone for good
+        assert ui_mod.restore_regions("P", fresh) == []
+    finally:
+        db.close()
+
+
 @pytest.mark.requirement("TC-SES-070")
 @pytest.mark.priority("MVP")
 def test_tc_ses_070_per_frame_session_metadata():
@@ -270,8 +316,8 @@ def test_tc_ses_170_block_ordering_integrity_enforced():
 
 @pytest.mark.requirement("TC-SES-180")
 @pytest.mark.priority("P2")
-def test_tc_ses_180_save_as_template_generalizes_target(tmp_path):
-    """SES-180: Allow a session's blocks to be saved to a reusable template, storing its Target block as a generic placeholder rather than a specific target."""
+def test_tc_ses_180_save_as_template_keeps_the_target(tmp_path):
+    """SES-180: Allow a session's blocks to be saved to a reusable template; its Target block keeps its target, so the template is valid as it stands."""
     ui_mod = pytest.importorskip("galileo.ui.sessions")
     from galileo.library.database import db, init_db
     init_db(tmp_path / "ses180.db")
@@ -284,7 +330,8 @@ def test_tc_ses_180_save_as_template_generalizes_target(tmp_path):
         assert "HaSession" in ui_mod.SessionTemplate.list_names()
 
         template = ui_mod.SessionTemplate.load("HaSession")
-        assert template.blocks[0].is_placeholder_target
+        assert not template.blocks[0].is_placeholder_target
+        assert (template.blocks[0].name, template.blocks[0].ra_deg) == ("M42", 83.8)
         assert len(template.blocks) == 2
     finally:
         db.close()
@@ -308,7 +355,7 @@ def test_tc_ses_180_add_session_from_template(tmp_path):
         assert region in screen.visible_sessions
         assert region.name == "HaSession Session"
         assert len(region.blocks) == 2
-        assert region.blocks[0].is_placeholder_target
+        assert not region.blocks[0].is_placeholder_target and region.blocks[0].name == "M42"
     finally:
         db.close()
 
@@ -644,6 +691,7 @@ def test_right_click_opens_parameter_dialog_directly_with_no_menu(qapp, monkeypa
 
     monkeypatch.setattr(QDialog, "exec", fake_exec)
     block_list._on_right_click(block_list.visualItemRect(block_list.item(1)).center())
+    qapp.processEvents()      # the dialog opens after the click event, not inside it
     assert region.blocks[1].filter == "L"
     assert block_list.item(1).text() == region.blocks[1].display_text
 
@@ -669,6 +717,7 @@ def test_right_click_does_nothing_on_a_scheduled_locked_session(qapp, monkeypatc
 
     monkeypatch.setattr(QDialog, "exec", fail_if_opened)
     block_list._on_right_click(block_list.visualItemRect(block_list.item(0)).center())
+    qapp.processEvents()
     assert dialog_opened["count"] == 0
 
 
@@ -703,11 +752,17 @@ def test_dropping_a_block_that_violates_ordering_shows_a_visible_warning(qapp, m
         def acceptProposedAction(self):
             pass
 
+        def ignore(self):
+            pass
+
     warned = {}
     monkeypatch.setattr(ui_mod.QMessageBox, "warning",
                         lambda *a, **k: warned.setdefault("called", True))
 
     block_list.dropEvent(_FakeDropEvent())
+    # The dialog is deferred until the drag has finished (a modal inside Qt's drag loop hung the window).
+    assert warned.get("called") is None
+    qapp.processEvents()
     assert warned.get("called") is True
     assert region.blocks == []   # rejected, not silently inserted
 
@@ -1099,10 +1154,9 @@ def test_dragging_a_body_block_left_unindents_it_out_of_the_loop(qapp):
 
 @pytest.mark.requirement("TC-SES-115")
 @pytest.mark.priority("MVP")
-def test_tc_ses_115_a_session_belongs_to_one_camera(qapp, monkeypatch):
+def test_tc_ses_115_a_session_belongs_to_one_camera(qapp, tmp_path):
     """SES-115: a session is bound to one camera; its run uses that camera whatever the
     top-bar selector is on, and the camera is saved with the session and shown while it runs."""
-    import json
     from types import SimpleNamespace
     ui_mod = pytest.importorskip("galileo.ui.sessions")
     runner = pytest.importorskip("galileo.ui.session_runner")
@@ -1110,12 +1164,14 @@ def test_tc_ses_115_a_session_belongs_to_one_camera(qapp, monkeypatch):
     region = ui_mod.SessionRegion(name="Wide")
     assert region.camera_slot == "primary"
     region.camera_slot = "camera_2"
-    saved = {}
-    monkeypatch.setattr(ui_mod.SessionRegion, "_store_path", lambda self: SimpleNamespace(
-        parent=SimpleNamespace(mkdir=lambda **k: None),
-        write_text=lambda text, encoding=None: saved.update(json.loads(text))))
-    region.save()
-    assert saved["camera_slot"] == "camera_2"
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "ses115.db")
+    try:
+        region.save()
+        restored = ui_mod.restore_regions(None, SimpleNamespace(jobs=[]))
+        assert [r.camera_slot for r in restored] == ["camera_2"]
+    finally:
+        db.close()
 
     primary, wide = object(), object()
     window = SimpleNamespace(
@@ -1161,3 +1217,30 @@ def test_run_blocking_works_without_a_running_loop():
         return 7
 
     assert _run_blocking(poll) == 7
+
+
+@pytest.mark.requirement("TC-SES-190")
+@pytest.mark.priority("P2")
+def test_tc_ses_190_engine_template_uses_its_saved_target_or_the_chosen_one(tmp_path):
+    """SES-190: a template made from a session keeps its target, so the engine runs it on that by default; a target
+    chosen at run time replaces it. An older template saved with a placeholder still insists on a chosen target."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.engine.sessions import SessionRefused, load_template
+    from galileo.library.database import db, init_db
+    init_db(tmp_path / "ses190e.db")
+    try:
+        region = ui_mod.SessionRegion(name="M42 Session")
+        region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+        region.insert_block(ui_mod.ImageBlock(exposure=60.0, count=2))
+        region.save_as_template("T")
+        assert load_template("T", None)[0].name == "M42"
+        chosen = load_template("T", {"name": "M31", "ra_deg": 10.7, "dec_deg": 41.3})[0]
+        assert (chosen.name, chosen.ra_deg) == ("M31", 10.7) and not chosen.is_placeholder_target
+
+        from galileo.library.models.session_template import SessionTemplateRecord
+        SessionTemplateRecord.create(name="Old", blocks_json=SessionTemplateRecord.get(name="T").blocks_json.replace(
+            '"is_placeholder_target": false', '"is_placeholder_target": true'))
+        with pytest.raises(SessionRefused):
+            load_template("Old", None)
+    finally:
+        db.close()

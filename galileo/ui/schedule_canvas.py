@@ -474,6 +474,11 @@ class _CalendarCanvas(QWidget):
                 self._blocks.append(widget)
 
         self.update()
+        # Whenever the blocks are redrawn the "upcoming sessions" text under the calendar must agree with them: a
+        # moved block used to leave it showing the old start time. (Absent while the page is still being built.)
+        refresh_upcoming = getattr(self._page, "_refresh_upcoming", None)
+        if refresh_upcoming is not None and getattr(self._page, "_upcoming_list", None) is not None:
+            refresh_upcoming()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

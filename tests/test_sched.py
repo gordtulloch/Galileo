@@ -764,3 +764,46 @@ def test_tc_sched_110_removing_an_entry_already_gone_is_not_an_error():
     scheduler.remove_job(job)
     scheduler.remove_job(job)
     assert scheduler.jobs == []
+
+
+@pytest.mark.requirement("TC-SCHED-110")
+@pytest.mark.priority("MVP")
+def test_tc_sched_110_set_time_dialog_keeps_local_wall_clock():
+    """SCHED-110: the Set Time dialog works in local time. Moving a job one hour later in the dialog must move it
+    one hour later, not by the machine's UTC offset (the job used to land hours early and vanish from the night)."""
+    import datetime
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from galileo.scheduler import SchedulerJob
+    from galileo.ui.schedule_dialogs import _EditTimeDialog, _format_utc, _parse_utc
+
+    job = SchedulerJob(name="x")
+    start = datetime.datetime(2026, 11, 14, 22, 0).astimezone()
+    job.scheduled_start_utc = _format_utc(start)
+    dialog = _EditTimeDialog(job)
+    dialog.start_edit.setDateTime(dialog.start_edit.dateTime().addSecs(3600))
+    dialog.apply()
+    assert _parse_utc(job.scheduled_start_utc) == start + datetime.timedelta(hours=1)
+
+
+@pytest.mark.requirement("TC-SCHED-110")
+@pytest.mark.priority("MVP")
+def test_tc_sched_110_upcoming_text_follows_a_moved_block(window):
+    """SCHED-110: the upcoming-sessions text under the calendar is refreshed whenever a block is repositioned."""
+    import datetime
+    from galileo.scheduler import SchedulerJob
+    from galileo.ui.schedule import SchedulePageWidget
+    from galileo.ui.schedule_dialogs import _format_utc
+
+    page = SchedulePageWidget(window)
+    scheduler = page._scheduler()
+    job = SchedulerJob(name="Moved Job")
+    soon = datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=2)
+    job.scheduled_start_utc = _format_utc(soon)
+    scheduler.jobs.append(job)
+    page.reload()
+    before = page._upcoming_list.toPlainText()
+    assert "Moved Job" in before
+    job.scheduled_start_utc = _format_utc(soon + datetime.timedelta(hours=3))
+    page._canvas.commit_and_refresh()                      # what repositioning a block ends with
+    assert page._upcoming_list.toPlainText() != before

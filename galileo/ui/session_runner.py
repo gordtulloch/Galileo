@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 TICK_INTERVAL_MS = 15_000
 SAFETY_INTERVAL_MS = 5_000
+# A scheduled session's devices are connected this long before it starts, so that connecting (which can take a
+# while with a slow or unreachable host) does not delay the start itself.
+CONNECT_LEAD_S = 180.0
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +221,8 @@ class SessionRunController(QObject):
         self._takeover: dict[Any, Any] = {}         # Pier key -> session whose Run is waiting for a scheduled run to stop
         self._blocked: dict[Any, str] = {}          # Pier key -> why the safety monitor holds its jobs
         self._safety_paused: set[Any] = set()       # runs we paused for unsafe conditions
+        self._preconnected: set[int] = set()        # ids of scheduled jobs whose Pier was connected ahead of their start
+        self._armed_start: Any = None               # the start time a one-shot tick is already armed for
         self._safety_timer = QTimer(self)
         self._safety_timer.setInterval(SAFETY_INTERVAL_MS)
         self._safety_timer.timeout.connect(self._enforce_safety)
@@ -443,11 +448,61 @@ class SessionRunController(QObject):
                 # One Pier's trouble (a safety read, a bad job) must not stop the others being serviced.
                 logger.exception("Could not service the scheduled sessions of Pier %r", getattr(pier, "name", pier))
 
+    def _prepare_next_start(self, pier: Any, scheduler: Any, selected: bool) -> None:
+        """Make the next scheduled start happen on the minute it is set for. The tick only runs every
+        ``TICK_INTERVAL_MS``, so a start could be up to that late, and connecting the Pier's devices once a job is
+        due delays it further. So: connect the devices a few minutes ahead (selected Pier only, see
+        ``_connect_pier_devices``), and arm a one-shot tick for the exact start when it falls before the next
+        regular tick."""
+        import datetime
+        from PySide6.QtCore import QTimer
+        now = datetime.datetime.now(datetime.UTC)
+        soonest: datetime.datetime | None = None
+        for job in scheduler.get_ordered_jobs():
+            if job.kind != "session" or job.sequence is None or job.run_state != "pending":
+                continue
+            window = job.effective_window()
+            if window is None or window[0] <= now:
+                continue
+            seconds = (window[0] - now).total_seconds()
+            if selected and seconds <= CONNECT_LEAD_S and id(job) not in self._preconnected:
+                self._preconnected.add(id(job))
+                self._connect_pier_devices(pier, job)
+            if soonest is None or window[0] < soonest:
+                soonest = window[0]
+        if soonest is None:
+            return
+        wait_ms = int((soonest - datetime.datetime.now(datetime.UTC)).total_seconds() * 1000) + 250
+        if 0 < wait_ms < TICK_INTERVAL_MS and soonest != self._armed_start:
+            self._armed_start = soonest
+            QTimer.singleShot(wait_ms, self._tick)
+
+    def _connect_pier_devices(self, pier: Any, job: Any) -> None:
+        """Connect every device of *pier* before its scheduled job starts. A job used to start against whatever
+        happened to be connected, so a Pier that does not connect on start-up (or lost a device) failed the session
+        with "no connected devices". The window's own Connect routine does the work: it skips slots that are already
+        connected, shows the progress splash and, with the splash pumping events, may let this timer fire again —
+        hence the guard. Only the Pier on screen can be connected this way (the Equipment pages hold its devices);
+        a Pier that is not selected is still held until its equipment is connected."""
+        connect = getattr(self._window, "_connect_all_pier_devices", None)
+        if connect is None or getattr(self, "_connecting_pier", False):
+            return
+        self._connecting_pier = True
+        try:
+            logger.info("Scheduled session %r is due: connecting the devices of Pier %r", job.name,
+                        getattr(pier, "name", pier))
+            connect()
+        except Exception:
+            logger.exception("Could not connect the devices of Pier %r for scheduled session %r",
+                             getattr(pier, "name", pier), job.name)
+        finally:
+            self._connecting_pier = False
+
     def _tick_pier(self, pier: Any) -> None:
         """Start *pier*'s next due scheduled job, if the Pier is idle and conditions are safe."""
         from galileo.current_object import pier_key
         key = pier_key(pier)
-        if key in self._runs:
+        if key in self._runs or getattr(self, "_connecting_pier", False):
             return
         scheduler_for = getattr(self._window, "_scheduler_for_pier", None)
         if scheduler_for is None:
@@ -460,8 +515,11 @@ class SessionRunController(QObject):
             self._set_blocked(key, reason)
             return
         self._set_blocked(key, "")
+        self._prepare_next_start(pier, scheduler, selected)
         for job in scheduler.due_jobs():
             region = job.sequence
+            if selected and id(job) not in self._preconnected:
+                self._connect_pier_devices(pier, job)
             context = build_session_context(self._window, None if selected else pier,
                                             camera_slot=getattr(region, "camera_slot", None))
             if not selected and context.camera is None and context.mount is None:

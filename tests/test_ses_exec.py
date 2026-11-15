@@ -574,3 +574,60 @@ def test_tc_ses_030_run_terminates_a_running_scheduled_session(window, monkeypat
         _wait(controller, 1.0)
     assert scheduled._job.run_state == "stopped"
     assert other not in page.sessions_screen.visible_sessions      # it ran to completion and was removed
+
+
+@pytest.mark.requirement("TC-SES-030")
+@pytest.mark.priority("MVP")
+def test_tc_ses_030_due_scheduled_session_connects_the_pier_devices_first(window, monkeypatch):
+    """SES-030: before a scheduled session starts, every device of its Pier is connected — the session is not
+    started against whatever happened to be connected (it used to fail with "no connected devices")."""
+    from galileo.ui import session_runner
+    page = _page(window)
+    ctx, _frames = make_context(imaging={"delay": 0.2})
+    order: list[str] = []
+    monkeypatch.setattr(window, "_connect_all_pier_devices", lambda: order.append("connect"), raising=False)
+
+    def build(_w, *a, **k):
+        order.append("context")
+        return ctx
+
+    monkeypatch.setattr(session_runner, "build_session_context", build)
+    controller = page._controller
+    region = page.sessions_screen.add_session_from_context_menu()
+    region._scheduler = page._scheduler_for(region._pier_name)
+    region.insert_block(sessions.ImageBlock(exposure=5.0, count=1))
+    region.run_now()                                       # on the Schedule, due now
+    controller._tick_pier(window._current_pier)
+    assert order[:2] == ["connect", "context"]             # connected first, then the context is read
+    _wait(controller)
+
+
+@pytest.mark.requirement("TC-SES-030")
+@pytest.mark.priority("MVP")
+def test_tc_ses_030_next_start_is_prepared_ahead_so_it_begins_on_time(window, monkeypatch):
+    """SES-030: a scheduled session that starts soon has its Pier's devices connected ahead of time and a tick armed
+    for its exact start (the regular tick is 15 s apart and connecting at the start delayed it further). It does
+    not start before its time."""
+    import datetime
+    from galileo.ui import session_runner
+    page = _page(window)
+    ctx, _frames = make_context(imaging={"delay": 0.2})
+    connects: list[str] = []
+    monkeypatch.setattr(window, "_connect_all_pier_devices", lambda: connects.append("connect"), raising=False)
+    monkeypatch.setattr(session_runner, "build_session_context", lambda _w, *a, **k: ctx)
+    armed: list[int] = []
+    from PySide6.QtCore import QTimer
+    monkeypatch.setattr(QTimer, "singleShot", staticmethod(lambda ms, fn: armed.append(ms)))
+    controller = page._controller
+    region = page.sessions_screen.add_session_from_context_menu()
+    region._scheduler = page._scheduler_for(region._pier_name)
+    region.insert_block(sessions.ImageBlock(exposure=5.0, count=1))
+    region.schedule()
+    start = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=10)
+    region._job.scheduled_start_utc = start.isoformat()
+    controller._tick_pier(window._current_pier)
+    assert connects == ["connect"]                          # connected ahead of the start
+    assert armed and 5_000 < armed[0] < 15_000              # a tick armed for ~10 s from now
+    assert not controller.is_running(region)                # and it has not started early
+    controller._tick_pier(window._current_pier)
+    assert connects == ["connect"]                          # not connected again for the same job

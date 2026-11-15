@@ -77,8 +77,13 @@ class _EditTimeDialog(QDialog):
 
     def apply(self) -> None:
         job = self._job
-        job.scheduled_start_utc = _format_utc(self.start_edit.dateTime().toPython()) if self.start_check.isChecked() else None
-        job.scheduled_end_utc = _format_utc(self.end_edit.dateTime().toPython()) if self.end_check.isChecked() else None
+        # The pickers hold local wall-clock time; toPython() gives a naive datetime, which _format_utc would read
+        # as UTC and shift the job by the machine's UTC offset (a 22:00 edit landed six hours early and the block
+        # fell off the night shown). astimezone() on a naive value attaches the local zone first.
+        job.scheduled_start_utc = (
+            _format_utc(self.start_edit.dateTime().toPython().astimezone()) if self.start_check.isChecked() else None)
+        job.scheduled_end_utc = (
+            _format_utc(self.end_edit.dateTime().toPython().astimezone()) if self.end_check.isChecked() else None)
         job.duration_minutes = self.duration_spin.value()
 
 
