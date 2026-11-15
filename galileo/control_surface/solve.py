@@ -56,6 +56,10 @@ class SolveAccess(Protocol):
 
     def status(self, pier: str) -> dict[str, Any]: ...
 
+    def cameras(self, pier: str) -> list[dict[str, Any]]:
+        """The Pier's cameras, each ``{"slot", "name", "connected"}``, for a client that lets the person choose one.
+        Optional: an access without it answers an empty list."""
+
 
 _COMMON = (
     Arg("exposure_s", "float", required=False, default=5.0, minimum=0.001, maximum=600, unit="s"),
@@ -64,17 +68,21 @@ _COMMON = (
     Arg("binning", "int", required=False, default=1, minimum=1, maximum=8),
     Arg("gain", "int", required=False, default=0, minimum=0, maximum=10000),
     Arg("filter", "str", required=False),
+    Arg("camera_slot", "str", required=False,
+        description="Which of the Pier's cameras to use, from solve.cameras; the primary camera by default"),
 )
 
 
 def register_solve_operations(registry: Registry, access: SolveAccess) -> None:
     async def run(ctx: OperationContext, args: dict[str, Any], action: str,
                   target: tuple[float, float, str] | None) -> Any:
+        slot = args.get("camera_slot") or "primary"
+        extra = {} if slot == "primary" else {"camera_slot": slot}        # an access that has no slots is not asked
         return await access.run(
             ctx.pier, action=action, exposure_s=float(args["exposure_s"]),
             accuracy_arcsec=float(args["accuracy_arcsec"]), max_iterations=int(args["max_iterations"]),
             binning=int(args["binning"]), gain=int(args["gain"]), filter_name=args.get("filter") or "",
-            target=target, progress=lambda message: ctx.progress(None, message))
+            target=target, progress=lambda message: ctx.progress(None, message), **extra)
 
     async def capture(ctx: OperationContext, args: dict[str, Any]) -> Any:
         return await run(ctx, args, args["action"], None)
@@ -91,6 +99,10 @@ def register_solve_operations(registry: Registry, access: SolveAccess) -> None:
 
     async def centre(ctx: OperationContext, args: dict[str, Any]) -> Any:
         return await run(ctx, args, "slew", (float(args["ra_deg"]), float(args["dec_deg"]), args.get("name") or ""))
+
+    async def cameras(ctx: OperationContext, args: dict[str, Any]) -> Any:
+        lister = getattr(access, "cameras", None)
+        return {"cameras": lister(ctx.pier) if callable(lister) else []}
 
     async def stop(ctx: OperationContext, args: dict[str, Any]) -> Any:
         if not await access.stop(ctx.pier):
@@ -124,6 +136,8 @@ def register_solve_operations(registry: Registry, access: SolveAccess) -> None:
          Arg("name", "str", required=False), *_COMMON),
         needs_lease=True, long_running=True, available=lambda pier: access.why_not(pier, mount=True),
         description="Slew to a J2000 position and correct with solved frames until within the accuracy"), centre)
+    registry.register(OperationSpec("solve.cameras", "read", (), needs_lease=False,
+                                    description="The Pier's cameras: slot, name and whether each is connected"), cameras)
     registry.register(OperationSpec("solve.stop", "operate", (), needs_lease=True,
                                     description="Cancel the plate solve in progress"), stop)
     registry.register(OperationSpec("solve.status", "read", (), needs_lease=False,

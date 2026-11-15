@@ -28,7 +28,7 @@ from galileo.mount_limits import JOG_RATE_LEVELS
 
 logger = logging.getLogger(__name__)
 
-DIRECTIONS = ("north", "south", "east", "west")
+DIRECTIONS = ("north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest")
 
 #: The speed of a held jog: level 7 of the Mount page's nine, 0.2 degrees a second, which is what the Imaging screen's
 #: nudge pad starts on. An INDI mount snaps it to the nearest slower rate the driver offers.
@@ -48,6 +48,17 @@ def axis_command(direction: str, rate: float = DEFAULT_JOG_RATE_DEG_S) -> tuple[
     return axis, sign * abs(rate)
 
 
+def axis_commands(direction: str, rate: float = DEFAULT_JOG_RATE_DEG_S) -> list[tuple[int, float]]:
+    """Every ``(axis, signed rate)`` that moves the mount *direction*: one for a cardinal direction, both axes for a
+    diagonal (``northeast`` is north and east together), each at *rate*."""
+    name = direction.lower()
+    if name not in DIRECTIONS:
+        raise ValueError(f"unknown direction {direction!r}")
+    vertical = "north" if name.startswith("north") else "south"
+    parts = [name] if name in ("north", "south", "east", "west") else [vertical, name[len(vertical):]]
+    return [axis_command(part, rate) for part in parts]
+
+
 async def start_mount_hold(holds: HoldManager, mount: Any, pier: str, direction: str, holder: str, *,
                            rate: float = DEFAULT_JOG_RATE_DEG_S, origin: str = "") -> str:
     """Start the jog and register the hold that ends it; returns the hold id the client keeps beating.
@@ -57,17 +68,18 @@ async def start_mount_hold(holds: HoldManager, mount: Any, pier: str, direction:
     move_axis = getattr(mount, "move_axis", None)
     if not callable(move_axis):
         raise Refused("this mount's driver has no manual motion, so it cannot be jogged from here")
-    axis, signed = axis_command(direction, rate)
+    commands = axis_commands(direction, rate)
     loop = asyncio.get_running_loop()
     tasks: set[asyncio.Task] = set()
 
     def halt() -> None:
         def spawn() -> None:
             async def run() -> None:
-                try:
-                    await move_axis(axis, 0.0)
-                except Exception:
-                    logger.exception("Pier %s: could not stop the held jog", pier)
+                for axis, _ in commands:                  # every axis the hold moved, so a diagonal stops fully
+                    try:
+                        await move_axis(axis, 0.0)
+                    except Exception:
+                        logger.exception("Pier %s: could not stop the held jog", pier)
             task = loop.create_task(run())
             tasks.add(task)
             task.add_done_callback(tasks.discard)
@@ -78,7 +90,8 @@ async def start_mount_hold(holds: HoldManager, mount: Any, pier: str, direction:
     except HoldError as exc:
         raise Refused(str(exc)) from exc
     try:
-        await move_axis(axis, signed)
+        for axis, signed in commands:
+            await move_axis(axis, signed)
     except BaseException:
         holds.stop(hold_id, holder, "move refused")       # nothing moved, but stopping an axis is always harmless
         raise
@@ -109,4 +122,4 @@ def register_mount_hold_operations(registry: Registry, access: DeviceAccess, hol
         description="End a held mount move"), _device(lambda c, a: holds.stop(a["hold_id"], c.principal, "stopped")))
 
 
-__all__ = ["DEFAULT_JOG_RATE_DEG_S", "DIRECTIONS", "axis_command", "register_mount_hold_operations", "start_mount_hold"]
+__all__ = ["DEFAULT_JOG_RATE_DEG_S", "DIRECTIONS", "axis_command", "axis_commands", "register_mount_hold_operations", "start_mount_hold"]

@@ -10,7 +10,7 @@ import pytest
 
 from galileo.control_surface import HoldManager, Registry
 from galileo.control_surface.catalogue import register_device_operations
-from galileo.control_surface.mounthold import DEFAULT_JOG_RATE_DEG_S, axis_command, register_mount_hold_operations
+from galileo.control_surface.mounthold import DEFAULT_JOG_RATE_DEG_S, axis_command, axis_commands, register_mount_hold_operations
 from galileo.exceptions import MountParkedError
 
 
@@ -67,6 +67,20 @@ def test_tc_csurf_330_directions_drive_the_axes_the_desktop_pad_drives():
     for name, letter in (("north", "N"), ("south", "S"), ("east", "E"), ("west", "W")):
         axis, signed = nudge_command(letter, rate)
         assert axis_command(name, rate) == (axis, signed)
+
+
+@pytest.mark.requirement("TC-CSURF-330")
+@pytest.mark.priority("MVP")
+def test_tc_csurf_330_a_diagonal_drives_both_axes():
+    """CSURF-330: northeast, northwest, southeast and southwest drive the Dec and RA axes together."""
+    rate = DEFAULT_JOG_RATE_DEG_S
+    assert axis_commands("north", rate) == [(1, rate)]
+    assert axis_commands("northeast", rate) == [(1, rate), (0, rate)]
+    assert axis_commands("northwest", rate) == [(1, rate), (0, -rate)]
+    assert axis_commands("southeast", rate) == [(1, -rate), (0, rate)]
+    assert axis_commands("southwest", rate) == [(1, -rate), (0, -rate)]
+    with pytest.raises(ValueError):
+        axis_commands("up")
 
 
 @pytest.mark.requirement("TC-CSURF-330")

@@ -855,7 +855,7 @@ async def test_tc_csurf_140_solve_captures_syncs_and_centres(registry, bus):
     solve, made = _solve_world(registry)
     cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("solve.")}
     assert set(cat) == {"solve.capture", "solve.sync", "solve.centre", "solve.stop", "solve.status", "solve.load",
-                        "solve.frames"}
+                        "solve.frames", "solve.cameras"}
     assert cat["solve.capture"]["long_running"] and cat["solve.capture"]["needs_lease"]
     assert cat["solve.status"]["class"] == "read"
 
@@ -878,6 +878,34 @@ async def test_tc_csurf_140_solve_captures_syncs_and_centres(registry, bus):
     assert wf.settings.max_iterations == 3
     status = (await registry.invoke("solve.status", {}, "p1", "web")).value
     assert status["running"] is False and status["last"]["solved"] is True
+
+
+@pytest.mark.requirement("TC-CSURF-140")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_140_solve_uses_the_camera_slot_asked_for_and_lists_the_cameras(registry, bus):
+    """CSURF-140: solve.cameras lists the Pier's cameras by slot, and a capture names the slot it wants; the
+    primary camera is used, and the workflow factory is asked in the old way, when none is named."""
+    from types import SimpleNamespace
+
+    from galileo.control_surface.solve import register_solve_operations
+    from galileo.engine.solve import EngineSolve
+
+    cams = {"primary": SimpleNamespace(is_connected=True, name="Main"), "guide": SimpleNamespace(is_connected=True, name="Guide")}
+    devices = SimpleNamespace(
+        controller=lambda pier, cat, slot="primary": (cams.get(slot) or cams["primary"]) if cat == "camera" else None,
+        controllers=lambda pier, cat: dict(cams) if cat == "camera" else {})
+    asked: list = []
+
+    async def factory(pier, log, camera_slot="primary"):
+        asked.append(camera_slot)
+        return _FakeSolveWorkflow(log, True, None)
+
+    register_solve_operations(registry, EngineSolve(devices, SimpleNamespace(is_running=lambda pier: False), factory=factory))
+    listed = (await registry.invoke("solve.cameras", {}, "p1", "web")).value["cameras"]
+    assert listed == [{"slot": "guide", "name": "Guide", "connected": True}, {"slot": "primary", "name": "Main", "connected": True}]
+    await _finish(registry, bus, "solve.capture", {})
+    await _finish(registry, bus, "solve.capture", {"camera_slot": "guide"})
+    assert asked == ["primary", "guide"]
 
 
 @pytest.mark.requirement("TC-CSURF-140")

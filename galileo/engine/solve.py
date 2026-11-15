@@ -26,9 +26,10 @@ ARCSEC_PER_RAD_UM_MM = 206.265       # image scale (″/px) = this x pixel size 
 Factory = Callable[[str, Callable[[str], None]], Awaitable[Any]]
 
 
-async def build_workflow(devices: Any, pier: str, log: Callable[[str], None]) -> Any:
-    """The Pier's ``SolveWorkflow``; a solver that is not set up is refused in the solver's own words."""
-    context = await build_context(devices, pier)
+async def build_workflow(devices: Any, pier: str, log: Callable[[str], None], camera_slot: str = "primary") -> Any:
+    """The Pier's ``SolveWorkflow`` on its *camera_slot* camera; a solver that is not set up is refused in the solver's
+    own words."""
+    context = await (build_context(devices, pier) if camera_slot == "primary" else build_context(devices, pier, camera_slot))
     try:
         workflow = context.make_solve_workflow(log=log)
     except RuntimeError as exc:
@@ -48,12 +49,12 @@ class EngineSolve:
         self._points: dict[str, list[list[float]]] = {}
         self._frames = frames                              # takes each frame captured for solving, so it can be previewed
         self._busy = busy or (lambda pier: False)          # whether polar alignment holds the camera and mount
-        self._factory: Factory = factory or (lambda pier, log: build_workflow(devices, pier, log))
+        self._factory: Factory = factory or (lambda pier, log, camera_slot="primary": build_workflow(devices, pier, log, camera_slot))
         self._workflows: dict[str, Any] = {}
         self._last: dict[str, dict[str, Any]] = {}
 
-    def why_not(self, pier: str, mount: bool = False, camera: bool = True) -> str | None:
-        device = self._devices.controller(pier, "camera")
+    def why_not(self, pier: str, mount: bool = False, camera: bool = True, camera_slot: str = "primary") -> str | None:
+        device = self._devices.controller(pier, "camera", camera_slot)       # falls back to any camera of the Pier
         if camera and device is None:
             return "this Pier has no camera"
         if camera and not getattr(device, "is_connected", True):
@@ -72,8 +73,8 @@ class EngineSolve:
 
     async def run(self, pier: str, *, action: str, exposure_s: float, accuracy_arcsec: float, max_iterations: int,
                   binning: int, gain: int, filter_name: str, target: tuple[float, float, str] | None,
-                  progress: Callable[[str], None]) -> dict[str, Any]:
-        reason = self.why_not(pier, mount=action != "nothing")
+                  progress: Callable[[str], None], camera_slot: str = "primary") -> dict[str, Any]:
+        reason = self.why_not(pier, mount=action != "nothing", camera_slot=camera_slot)
         if reason:
             raise Refused(reason)
         from galileo.platesolve import SolveAction, SolveSettings
@@ -100,7 +101,7 @@ class EngineSolve:
             action={"nothing": SolveAction.NOTHING, "sync": SolveAction.SYNC,
                     "slew": SolveAction.SLEW_TO_TARGET}[action])
         return await self._execute(pier, progress, configure, lambda workflow: workflow.capture_and_solve(settings),
-                                   size, accuracy_arcsec)
+                                   size, accuracy_arcsec, camera_slot)
 
     async def load(self, pier: str, *, frame_id: str, progress: Callable[[str], None]) -> dict[str, Any]:
         """Load & Slew: solve a Library frame and slew the mount to where it points."""
@@ -118,13 +119,21 @@ class EngineSolve:
                                    lambda workflow: workflow.solve_file(str(path), slew=True), {"width": 0, "height": 0},
                                    None)
 
+    def cameras(self, pier: str) -> list[dict[str, Any]]:
+        """The Pier's cameras by slot, for the apps' camera choice."""
+        out = []
+        for slot, adapter in sorted(self._devices.controllers(pier, "camera").items()):
+            name = getattr(adapter, "name", None) or getattr(adapter, "device_name", None) or slot
+            out.append({"slot": slot, "name": str(name), "connected": bool(getattr(adapter, "is_connected", True))})
+        return out
+
     def frames(self) -> list[dict[str, Any]]:
         from galileo.control_surface.frames import recent_library_frames
         return recent_library_frames(30)
 
     async def _execute(self, pier: str, progress: Callable[[str], None], configure: Callable[[Any], None],
                        start: Callable[[Any], Awaitable[Any]], size: dict[str, int],
-                       accuracy_arcsec: float | None) -> dict[str, Any]:
+                       accuracy_arcsec: float | None, camera_slot: str = "primary") -> dict[str, Any]:
         log: list[str] = []
 
         def note(message: str) -> None:
@@ -137,7 +146,8 @@ class EngineSolve:
         if accuracy_arcsec is not None:
             self._publish(pier, "solve.accuracy_arcsec", accuracy_arcsec)
         try:
-            workflow = await self._factory(pier, note)
+            workflow = await (self._factory(pier, note) if camera_slot == "primary"
+                              else self._factory(pier, note, camera_slot))
             self._workflows[pier] = workflow
             configure(workflow)
             results = await start(workflow)
