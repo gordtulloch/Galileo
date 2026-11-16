@@ -5,7 +5,7 @@ The Star Atlas is a planetarium: a live map of the sky as seen from your observa
 
 **Left:** the time, site and display options. **Centre:** the sky map. **Right:** details of the object you have selected, with buttons to act on it.
 
-**On the map:** click an object to identify it; double-click to centre and track it; drag to pan; scroll to zoom. Right-click an object to *Goto*, *Sync*, *Add to Session* or *Park*/*Unpark* the mount, or right-click empty sky to Goto that point.
+**On the map:** click an object to identify it; double-click to centre and track it; drag to pan; scroll to zoom. Right-click an object to *Goto*, *Sync*, *Add to Session*, *Save to Targets* or *Park*/*Unpark* the mount, or right-click empty sky to Goto that point.
 
 The site follows the Observatory selected in the top bar; edit it there for a permanent change.
 
@@ -15,11 +15,11 @@ The controls on the left that change what the map shows and when.
 
 ## Sky map
 
-The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session / Park-Unpark menu.
+The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session / Save to Targets / Park-Unpark menu. Every object on your Targets list is always plotted, in orange with its name, whatever catalogs, magnitude limit and Show choices are set; saving or removing a target updates the map at once.
 
 ## Find
 
-Type the name of a star, planet or deep-sky object (for example Vega, Jupiter or M31) and press Enter. The map centres on it and selects it. If nothing matches, the status bar says so; if it is below the horizon at the chosen time and place, it tells you that too.
+Type the name of a star, planet or deep-sky object (for example Vega, Jupiter or M31) and press Enter. Every object the text could mean is plotted on the map as an object of its type, in yellow with its name, however faint it is and whatever catalogs are switched on, so you can see which is which. The best match is centred and selected; click any other yellow object to select it instead, and use its buttons (Add to Session, Save, set as the current object) to designate the one you meant. Searching again replaces them, and pressing Enter on an empty box clears them. If nothing matches, the status bar says so; if the best match is below the horizon at the chosen time and place, it tells you that too.
 
 ## Time (Local)
 
@@ -172,3 +172,11 @@ Tells the current Pier's mount that it is pointing at the selected object. Use i
 ## Add to Session
 
 Creates a new session on Planning › Sessions that already contains a Target block for the selected object.
+
+## Save to Targets
+
+Keeps the selected star or deep-sky object on Planning › Targets. A saved target is always plotted on the map (orange, with its name) whatever catalogs and magnitude limit are set, and on the mobile apps' atlases. Greyed out for planets, comets, asteroids and satellites, which move, so a saved position would be wrong.
+
+## Remove from Targets
+
+Shown instead of Save to Targets when the object is already on the Targets list; takes it off the list and off the map's always-plotted objects.

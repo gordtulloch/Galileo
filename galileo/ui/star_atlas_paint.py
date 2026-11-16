@@ -41,6 +41,8 @@ _CONSTELLATION_LABEL_COLOR = QColor(190, 140, 215, 200)
 
 
 _DSO_COLOR = QColor(120, 200, 150)
+_FOUND_COLOR = QColor(255, 235, 90)       # what Find matched
+_SAVED_COLOR = QColor(255, 170, 90)       # a saved target
 
 
 _BODY_COLOR = QColor(255, 214, 120)
@@ -119,6 +121,7 @@ class StarAtlasPaintMixin(_MixinBase):
             self._draw_obstructions(p, vp)
         self._draw_horizon(p, vp)
         self._draw_labels(p, vp, sets)
+        self._draw_marked(p, vp)
         self._draw_selection(p, vp)
         self._draw_pier_markers(p, vp)
         self._draw_overlay(p)
@@ -219,23 +222,33 @@ class StarAtlasPaintMixin(_MixinBase):
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
             d = self._dsos[i]
             r = float(min(40.0, max(3.5, d.size_arcmin * px_per_arcmin / 2.0)))
-            kind = d.object_type.value
-            if kind == "Galaxy":
-                p.drawEllipse(QPointF(x, y), r * 1.3, r * 0.7)
-            elif kind in ("OpenCluster", "GlobularCluster", "Cluster"):
-                pen = QPen(_DSO_COLOR, 1, Qt.PenStyle.DashLine if kind == "OpenCluster" else Qt.PenStyle.SolidLine)
-                p.setPen(pen)
-                p.drawEllipse(QPointF(x, y), r, r)
-                if kind == "GlobularCluster":
-                    p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
-                    p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
-                p.setPen(QPen(_DSO_COLOR, 1))
-            elif kind == "PlanetaryNebula":
-                p.drawEllipse(QPointF(x, y), r * 0.6, r * 0.6)
-                p.drawLine(QPointF(x - r, y), QPointF(x - r * 0.6, y))
-                p.drawLine(QPointF(x + r * 0.6, y), QPointF(x + r, y))
-            else:
-                p.drawRect(QRectF(x - r, y - r, 2 * r, 2 * r))
+            self._draw_dso_icon(p, x, y, d.object_type.value, r)
+        p.setPen(QPen(_DSO_COLOR, 1))
+
+    @staticmethod
+    def _draw_dso_icon(p: QPainter, x: float, y: float, kind: str, r: float, color: QColor = _DSO_COLOR) -> None:
+        """The icon for a deep-sky type: an ellipse for a galaxy, a dashed circle for an open cluster, a circle with a
+        cross for a globular one, a circle for another cluster, a ringed dot for a planetary nebula, a square else.
+        The mobile Star Atlases draw the same shapes."""
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(color, 1))
+        if kind == "Galaxy":
+            p.drawEllipse(QPointF(x, y), r * 1.3, r * 0.7)
+        elif kind in ("OpenCluster", "GlobularCluster", "Cluster"):
+            p.setPen(QPen(color, 1, Qt.PenStyle.DashLine if kind == "OpenCluster" else Qt.PenStyle.SolidLine))
+            p.drawEllipse(QPointF(x, y), r, r)
+            if kind == "GlobularCluster":
+                p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
+                p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+        elif kind == "PlanetaryNebula":
+            p.drawEllipse(QPointF(x, y), r * 0.6, r * 0.6)
+            p.drawLine(QPointF(x - r, y), QPointF(x - r * 0.6, y))
+            p.drawLine(QPointF(x + r * 0.6, y), QPointF(x + r, y))
+        elif kind == "Star":
+            p.setBrush(color)
+            p.drawEllipse(QPointF(x, y), 3.0, 3.0)
+        else:
+            p.drawRect(QRectF(x - r, y - r, 2 * r, 2 * r))
 
     def _draw_bodies(self, p: QPainter, body_set) -> None:
         idx, xs, ys = body_set
@@ -355,8 +368,10 @@ class StarAtlasPaintMixin(_MixinBase):
                 p.drawText(QPointF(x + self._star_radius(self._stars.mag[i]) + 3, y - 2), text)
         p.setPen(_DSO_COLOR)
         idx, xs, ys = sets["dsos"]       # every drawn deep-sky object is labelled
+        marked = {o["name"].lower() for o, _ in self._marked_objects()}     # these are labelled by _draw_marked
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
-            p.drawText(QPointF(x + 7, y - 4), self._dsos[i].primary_name)
+            if self._dsos[i].primary_name.lower() not in marked:
+                p.drawText(QPointF(x + 7, y - 4), self._dsos[i].primary_name)
         p.setPen(_BODY_COLOR)
         idx, xs, ys = sets["bodies"]
         for i, x, y in zip(idx.tolist(), xs.tolist(), ys.tolist(), strict=True):
@@ -383,6 +398,27 @@ class StarAtlasPaintMixin(_MixinBase):
             if 0 <= x[i] <= vp.width and 0 <= y[i] <= vp.height:
                 text = self._bounds.codes[i] if self.abbreviate_constellations else name.upper()
                 p.drawText(QPointF(x[i] - metrics.horizontalAdvance(text) / 2.0, y[i]), text)
+
+    def _draw_marked(self, p: QPainter, vp) -> None:
+        """Saved targets and Find matches, plotted as objects with the icon of their type and their name whatever
+        the catalog, magnitude and Show settings (and above the ground), so each can be seen and clicked."""
+        marked = self._marked_objects()
+        if not marked:
+            return
+        font = QFont(p.font())
+        font.setPointSizeF(8.5)
+        font.setBold(True)
+        p.setFont(font)
+        px_per_arcmin = vp.scale * 2.0 * math.tan(math.radians(1.0 / 60.0) / 2.0)
+        for obj, why in marked:
+            x, y, vis = vp.project(np.array([obj["alt"]]), np.array([obj["az"]]))
+            if not vis[0] or not (-20 < x[0] < vp.width + 20 and -20 < y[0] < vp.height + 20):
+                continue
+            color = _FOUND_COLOR if why == "found" else _SAVED_COLOR
+            r = float(min(40.0, max(6.0, float(obj.get("size_arcmin") or 0.0) * px_per_arcmin / 2.0)))
+            self._draw_dso_icon(p, float(x[0]), float(y[0]), str(obj.get("type", "")), r, color)
+            p.setPen(color)
+            p.drawText(QPointF(float(x[0]) + r + 4, float(y[0]) - 4), obj["name"])
 
     def _draw_selection(self, p: QPainter, vp) -> None:
         for obj, color in ((self.selected, _SELECT_COLOR), (self.tracked, QColor(255, 255, 255, 120))):

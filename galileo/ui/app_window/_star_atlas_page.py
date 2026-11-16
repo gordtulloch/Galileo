@@ -254,13 +254,22 @@ class AppWindowStarAtlasPageMixin:
         def find_object() -> None:
             query = find_edit.text().strip()
             if not query:
+                view.set_found([])          # an empty Find clears what the last one plotted
                 return
-            obj = view.find_object(query)
-            if obj is None:
+            matches = view.find_matches(query)
+            if not matches:
+                view.set_found([])
                 self._window.statusBar().showMessage(f"Nothing called {query!r} in the loaded catalogs.", 6000)
                 return
+            # Every candidate is plotted as an object, so the right one can be seen and clicked to designate it;
+            # the best match is selected and centred to begin with.
+            view.set_found(matches)
+            obj = matches[0]
             view.select(obj)
             view.center_on(obj)
+            if len(matches) > 1:
+                self._window.statusBar().showMessage(
+                    f"{len(matches)} objects match {query!r}, all plotted: click the one you mean.", 8000)
             if obj["alt"] < 0:
                 self._window.statusBar().showMessage(f"{obj['name']} is below the horizon at this time and place.", 6000)
 
@@ -362,6 +371,17 @@ class AppWindowStarAtlasPageMixin:
                 "Create a new session pre-populated with a Target block for this object (SES-160). "
                 "A plain click only selects it — this is the explicit way to build a session from it."
             )
+            # Keep the object on Planning > Targets, which also plots it on every Star Atlas (SKYMAP-120). Offered for
+            # fixed objects only: a planet or comet moves, so a saved position would be wrong tomorrow.
+            savable = obj is not None and obj.get("kind") in ("dso", "star")
+            already = savable and any(t.primary_name.lower() == obj["name"].lower() for t in view.saved_targets)
+            save_target = menu.addAction("Remove from Targets" if already else "Save to Targets")
+            save_target.setEnabled(bool(savable))
+            save_target.setToolTip(
+                "Take this object off the Targets list" if already else
+                "Keep this object on Planning > Targets; saved targets are always plotted on the Star Atlas"
+                if savable else "Only stars and deep-sky objects can be saved: planets, comets and satellites move")
+            menu.addSeparator()
             # Park when the scope is unparked, Unpark when it is parked. Always present so it can be found;
             # disabled (with the reason) when no mount is connected. A mount that doesn't report its park
             # state is offered as "Park".
@@ -418,6 +438,24 @@ class AppWindowStarAtlasPageMixin:
             add_to_session.triggered.connect(
                 lambda: self._add_to_session(obj["name"], obj["ra_deg"], obj["dec_deg"])
             )
+
+            def do_save_target() -> None:
+                from galileo.planning.sky_atlas import DeepSkyObject, ObjectType
+                try:
+                    kind = ObjectType(obj.get("type", "Other"))
+                except ValueError:
+                    kind = ObjectType.OTHER
+                designations = [d.strip() for d in str(obj.get("designation") or "").split(",") if d.strip()]
+                target = DeepSkyObject(
+                    primary_name=obj["name"], designations=designations, ra_deg=float(obj["ra_deg"]),
+                    dec_deg=float(obj["dec_deg"]), object_type=kind,
+                    magnitude=float(obj.get("mag", 99.0)), size_arcmin=float(obj.get("size_arcmin") or 0.0))
+                if already:
+                    self._remove_saved_target(target)
+                else:
+                    self._save_target(target)       # publishes SavedTargetsChangedEvent, which replots the atlas
+
+            save_target.triggered.connect(do_save_target)
             menu.exec(global_pos)
 
         view.contextMenuRequested.connect(show_context_menu)
@@ -446,6 +484,7 @@ class AppWindowStarAtlasPageMixin:
             view.set_pier_markers(self.pier_markers())
 
         def poll_markers() -> None:
+            view.reload_saved_targets()       # a target saved on another node arrives by replication, not the bus
             self._poll_pier_pointing(on_done=refresh_markers)
             slewing = any(m.get("slewing") for m in view.pier_markers)
             marker_timer.setInterval(_SLEWING_POLL_MS if slewing else _POINTING_POLL_MS)

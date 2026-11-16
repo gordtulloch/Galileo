@@ -531,7 +531,20 @@ class AppWindowObservatoryPierMixin:
             for page_id, connect in connectors:
                 startup_progress.report(f"Connecting {page_id} devices")
                 connect()
+        self._adopt_held_devices()
         self._refresh_pier_connect_controls()
+
+    def _adopt_held_devices(self: AppWindowState) -> None:
+        """Make the device service hold what the screens connected for the current Pier, so the Control Surface (the
+        phone) sees it without a separate connect."""
+        if self._current_pier is None:
+            return
+        from galileo import desktop_devices
+        try:
+            desktop_devices.adopt_held(self._current_pier, self._device_pages,
+                                       getattr(self, "_camera_backends", None))
+        except Exception:
+            logger.exception("Could not hand the connected devices to the device service")
 
     def _disconnect_all_pier_devices(self: AppWindowState) -> None:
         """Top bar Disconnect button: tear down every registered Equipment
@@ -556,6 +569,7 @@ class AppWindowObservatoryPierMixin:
         check.blockSignals(False)
         check.setEnabled(pier is not None)
 
+        self._adopt_held_devices()
         for state in self._device_pages.values():
             sync = state.get("sync_connect")
             if sync is not None:

@@ -737,7 +737,8 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
 
     menu = captured["menu"]
     actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
-    assert list(actions) == ["Goto", "Goto and Centre", "Sync", "Add to Session", "Park"]
+    assert list(actions) == ["Goto", "Goto and Centre", "Sync", "Add to Session", "Save to Targets", "Park"]
+    assert not actions["Save to Targets"].isEnabled()     # no "kind": not known to be a fixed object
     assert actions["Add to Session"].isEnabled()
     assert not actions["Park"].isEnabled()        # no mount is connected in this test: Park/Unpark is offered but off
 
@@ -749,6 +750,53 @@ def test_star_atlas_context_menu_offers_add_to_session(window, monkeypatch):
     menu = captured["menu"]
     add_to_session = next(a for a in menu.actions() if a.text() == "Add to Session")
     assert not add_to_session.isEnabled()
+
+
+@pytest.mark.requirement("TC-SKYMAP-120")
+@pytest.mark.priority("P2")
+def test_tc_skymap_120_context_menu_saves_and_removes_a_target(window, monkeypatch):
+    """SKYMAP-120: right-clicking a star or deep-sky object offers Save to Targets, which saves it with its position
+    and type; once it is on the list the item reads Remove from Targets; a planet can't be saved (it moves)."""
+    from unittest.mock import MagicMock
+    from PySide6 import QtCore, QtWidgets
+    from galileo.planning import saved_targets
+    from galileo.ui.star_atlas import StarAtlasView
+
+    captured = {}
+
+    class _NoExecMenu(QtWidgets.QMenu):
+        def exec(self, pos=None):
+            captured["menu"] = self
+            return None
+
+    monkeypatch.setattr(QtWidgets, "QMenu", _NoExecMenu)
+    saved, removed = MagicMock(return_value=True), MagicMock()
+    monkeypatch.setattr(saved_targets, "save_target", saved)
+    monkeypatch.setattr(saved_targets, "remove_target", removed)
+    page = window._build_star_atlas_page()
+    view = page.findChildren(StarAtlasView)[0]
+
+    def actions():
+        return {a.text(): a for a in captured["menu"].actions() if not a.isSeparator()}
+
+    m31 = {"kind": "dso", "name": "M 31", "designation": "NGC 224", "type": "Galaxy", "ra_deg": 10.68,
+           "dec_deg": 41.27, "mag": 3.4, "size_arcmin": 178.0, "alt": 60.0}
+    view.contextMenuRequested.emit(m31, QtCore.QPoint(10, 10), None)
+    assert actions()["Save to Targets"].isEnabled() and "Remove from Targets" not in actions()
+    actions()["Save to Targets"].trigger()
+    target = saved.call_args.args[0]
+    assert (target.primary_name, target.object_type.value, target.ra_deg, target.size_arcmin) == ("M 31", "Galaxy", 10.68, 178.0)
+    assert target.designations == ["NGC 224"]
+
+    view.set_saved_targets([target])
+    view.contextMenuRequested.emit(m31, QtCore.QPoint(10, 10), None)
+    assert "Save to Targets" not in actions()
+    actions()["Remove from Targets"].trigger()
+    removed.assert_called_once_with("M 31")
+
+    jupiter = {"kind": "body", "name": "Jupiter", "type": "Planet", "ra_deg": 1.0, "dec_deg": 1.0, "mag": -2.0, "alt": 30.0}
+    view.contextMenuRequested.emit(jupiter, QtCore.QPoint(10, 10), None)
+    assert not actions()["Save to Targets"].isEnabled()
 
 
 @pytest.mark.requirement("TC-SKYMAP-020")

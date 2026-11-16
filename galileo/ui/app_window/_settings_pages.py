@@ -620,10 +620,16 @@ class AppWindowSettingsPagesMixin:
 
         downsample_spin = QSpinBox()
         downsample_spin.setRange(0, 8)
-        downsample_spin.setSpecialValueText("Off")
+        downsample_spin.setSpecialValueText("Auto")
         downsample_spin.setToolTip("Downsample the frame by this factor before solving, for a faster "
-                                   "but less precise solve (0 solves at full resolution).")
+                                   "but less precise solve. Auto lets the solver choose; 1 solves at full resolution.")
         form.addRow("Downsample", downsample_spin)
+
+        astap_args_edit = QLineEdit()
+        astap_args_edit.setPlaceholderText("e.g. -d /path/to/star/database -s 500")
+        astap_args_edit.setToolTip("Extra command-line options sent to ASTAP, after the ones Galileo adds. "
+                                   "An option repeated here replaces Galileo's own. -f and -o cannot be changed.")
+        form.addRow("ASTAP options", astap_args_edit)
 
         scope_combo = QComboBox()
         scope_combo.addItem("Current Pier", "current")
@@ -773,6 +779,7 @@ class AppWindowSettingsPagesMixin:
             fov_spin.setValue(params.fov_hint_deg)
             radius_spin.setValue(params.search_radius_deg)
             downsample_spin.setValue(params.downsample)
+            astap_args_edit.setText(params.extra_args)
             backend, astrometry_exe, api_key = get_solver_backend(pier)
             backend_combo.setCurrentIndex(max(backend_combo.findData(backend), 0))
             astrometry_edit.setText(astrometry_exe)
@@ -782,7 +789,8 @@ class AppWindowSettingsPagesMixin:
                            else "Select a Pier first — these settings are saved per Pier.")
             save_btn.setEnabled(pier is not None)
             for widget in (backend_combo, exe_edit, browse_btn, astrometry_edit, astrometry_browse_btn,
-                           tetra3_edit, tetra3_browse_btn, api_key_edit, fov_spin, radius_spin, downsample_spin):
+                           tetra3_edit, tetra3_browse_btn, api_key_edit, fov_spin, radius_spin, downsample_spin,
+                           astap_args_edit):
                 widget.setEnabled(pier is not None)
 
         def save() -> None:
@@ -790,7 +798,7 @@ class AppWindowSettingsPagesMixin:
                 return
             params = SolverParams(
                 fov_hint_deg=fov_spin.value(), search_radius_deg=radius_spin.value(),
-                downsample=downsample_spin.value(),
+                downsample=downsample_spin.value(), extra_args=astap_args_edit.text().strip(),
             )
             save_solver_settings(self._current_pier, exe_edit.text().strip(), params)
             save_solver_backend(self._current_pier, backend_combo.currentData(),

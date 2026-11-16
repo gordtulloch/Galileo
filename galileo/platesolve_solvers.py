@@ -84,7 +84,11 @@ class SolverParams:
     """Configurable solver parameters (PLT-060)."""
     fov_hint_deg: float = 0.0
     search_radius_deg: float = 30.0
-    downsample: int = 2
+    # 0 leaves the choice to the solver (ASTAP picks automatically); ASTAP is only sent -z for 1 or more.
+    downsample: int = 0
+    # ASTAP only: extra command-line options (Options > Solve > ASTAP options). A flag given here
+    # replaces the same flag Galileo would have sent; see ``_merge_astap_args``.
+    extra_args: str = ""
 
 
 class PlateSolver:
@@ -254,45 +258,67 @@ class PlateSolver:
             return SolveResult(success=False, failure_reason="ASTAP executable not found")
 
         base = fits_path.with_suffix("")
-        # A previous solve of this same frame must not be mistaken for this one's answer.
-        def _clear_previous_solve() -> None:
-            for suffix in (".ini", ".wcs"):
-                base.with_suffix(suffix).unlink(missing_ok=True)
+        result, cmd = await self._astap_attempt(fits_path, base, hint)
+        if not result.success and hint is not None and result.failure_reason != "Cancelled" \
+                and not result.failure_reason.startswith(("Solver timed out", "ASTAP executable")):
+            # The position hint (usually where the mount thinks it points) may be wrong, and ASTAP
+            # then searches the wrong patch of sky. Standalone ASTAP reads the position from the
+            # image header and searches wider, so fall back to that before giving up.
+            logger.warning("ASTAP failed with a position hint (%s); retrying without it", result.failure_reason)
+            blind, cmd = await self._astap_attempt(fits_path, base, None)
+            if blind.success:
+                return blind
+            result = SolveResult(
+                success=False,
+                failure_reason=f"{blind.failure_reason} (also tried without the position hint)",
+            )
+        if not result.success:
+            logger.warning("ASTAP failed (%s): %s", result.failure_reason, " ".join(cmd))
+        return result
 
-        await asyncio.to_thread(_clear_previous_solve)
-
-        cmd = [self.executable, "-f", str(fits_path), "-update", "-o", str(base)]
+    def _astap_command(self, fits_path: Path, base: Path, hint: tuple[float, float] | None) -> list[str]:
+        """The ASTAP command line: Galileo's options from the settings, then the user's own
+        (Options > Solve > ASTAP options), which win over any option they repeat."""
+        args = ["-f", str(fits_path), "-update", "-o", str(base)]
         if self.params.fov_hint_deg > 0:
-            cmd += ["-fov", f"{self.params.fov_hint_deg:g}"]
-        if self.params.downsample > 1:
-            cmd += ["-z", str(self.params.downsample)]
+            args += ["-fov", f"{self.params.fov_hint_deg:g}"]
+        if self.params.downsample >= 1:
+            args += ["-z", str(self.params.downsample)]
         if hint is not None:
             ra_deg, dec_deg = hint
             # ASTAP takes RA in hours and Dec as the south-pole distance.
-            cmd += ["-ra", f"{ra_deg / 15.0:.6f}", "-spd", f"{dec_deg + 90.0:.6f}",
-                    "-r", f"{self.params.search_radius_deg:g}"]
+            args += ["-ra", f"{ra_deg / 15.0:.6f}", "-spd", f"{dec_deg + 90.0:.6f}",
+                     "-r", f"{self.params.search_radius_deg:g}"]
+        return [self.executable, *_merge_astap_args(args, self.params.extra_args)]
 
+    async def _astap_attempt(
+        self, fits_path: Path, base: Path, hint: tuple[float, float] | None,
+    ) -> tuple[SolveResult, list[str]]:
+        """Run ASTAP once and read its answer."""
+        cmd = self._astap_command(fits_path, base, hint)
+        for suffix in (".ini", ".wcs"):
+            await asyncio.to_thread(base.with_suffix(suffix).unlink, True)
         try:
             proc = await _start_process(cmd)
         except Exception as exc:
-            return SolveResult(success=False, failure_reason=str(exc))
+            return SolveResult(success=False, failure_reason=str(exc)), cmd
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            return SolveResult(success=False, failure_reason="Solver timed out")
+            return SolveResult(success=False, failure_reason="Solver timed out"), cmd
         except asyncio.CancelledError:
             proc.kill()      # a stopped solve must not leave ASTAP running in the background
             raise
         except Exception as exc:
-            return SolveResult(success=False, failure_reason=str(exc))
+            return SolveResult(success=False, failure_reason=str(exc)), cmd
 
         # ASTAP reports both outcomes in its .ini file. On failure it exits non-zero with
         # nothing on stderr, so the reason is only there (or in its exit code).
         ini = _read_astap_ini(base.with_suffix(".ini"))
         if ini.get("PLTSOLVD") == "T":
-            return _result_from_astap_ini(ini)
+            return _result_from_astap_ini(ini), cmd
         reason = (
             ini.get("ERROR")
             or _ASTAP_EXIT_REASONS.get(proc.returncode or 0)
@@ -303,8 +329,7 @@ class PlateSolver:
             # The solver never got as far as looking for stars, so what it was handed is the whole
             # story — without this the user has nothing to go on but "error reading the image file".
             reason = f"{reason} — it was given {_describe_fits(fits_path)}"
-        logger.info("ASTAP failed (%s): %s", reason, " ".join(cmd))
-        return SolveResult(success=False, failure_reason=reason)
+        return SolveResult(success=False, failure_reason=reason), cmd
 
     async def _run_astrometry(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:
         """Solve with a local astrometry.net ``solve-field``. It writes a WCS file on success; its
@@ -523,6 +548,48 @@ class _ThreadProcess:
 
     def kill(self) -> None:
         self._proc.kill()
+
+
+def _merge_astap_args(args: list[str], extra: str) -> list[str]:
+    """Combine Galileo's ASTAP options with the user's free-text *extra* options.
+
+    An option the user repeats replaces Galileo's own (with its value), so ``-z 4`` or ``-fov 1.2``
+    typed in Options > Solve beats the automatic one; any other option is appended. ``-f`` and
+    ``-o`` are Galileo's alone — it reads ASTAP's answer from the ``-o`` file — and are ignored."""
+    import shlex
+    import sys
+
+    if not extra.strip():
+        return args
+    try:
+        tokens = shlex.split(extra, posix=sys.platform != "win32")
+    except ValueError:
+        tokens = extra.split()
+    tokens = [t[1:-1] if len(t) > 1 and t[0] == t[-1] and t[0] in "\"'" else t for t in tokens]
+
+    def groups(items: list[str]) -> list[list[str]]:
+        out: list[list[str]] = []
+        for item in items:
+            if item.startswith("-") and not _is_number(item):
+                out.append([item])
+            elif out:
+                out[-1].append(item)
+            else:
+                out.append([item])
+        return out
+
+    mine = groups(args)
+    theirs = [g for g in groups(tokens) if g[0] not in ("-f", "-o")]
+    replaced = {g[0] for g in theirs}
+    return [t for g in mine if g[0] not in replaced for t in g] + [t for g in theirs for t in g]
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
 
 
 async def _start_process(cmd: list[str]):

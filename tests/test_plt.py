@@ -1789,3 +1789,59 @@ async def test_tc_plt_030_solver_process_falls_back_when_the_loop_cannot_spawn(m
     proc = await ps._start_process([sys.executable, "-c", "print('ok')"])
     out, _ = await asyncio.wait_for(proc.communicate(), 30)
     assert isinstance(proc, ps._ThreadProcess) and out.strip() == b"ok" and proc.returncode == 0
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+async def test_tc_plt_060_astap_options_override_and_default_to_auto(tmp_path, monkeypatch):
+    """PLT-060: ASTAP is sent no -z by default (auto, as standalone ASTAP); the user's ASTAP options
+    are appended, replace the same option Galileo would send, and cannot change -f or -o."""
+    import sys
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    commands = _fake_astap(monkeypatch, ini=_ASTAP_OK_INI)
+    frame = tmp_path / "frame.fits"
+
+    plain = plt_mod.PlateSolver(backend="astap", executable=sys.executable)
+    await plain.solve(frame)
+    assert "-z" not in commands[-1] and "-fov" not in commands[-1]
+
+    solver = plt_mod.PlateSolver(backend="astap", executable=sys.executable, params=plt_mod.SolverParams(
+        fov_hint_deg=1.2, downsample=2, extra_args='-z 4 -d "/my db" -s 500 -f other.fits'))
+    await solver.solve(frame, hint=(10.0, 20.0))
+    cmd = commands[-1]
+    assert cmd.count("-z") == 1 and cmd[cmd.index("-z") + 1] == "4"
+    assert cmd[cmd.index("-d") + 1] == "/my db" and cmd[cmd.index("-s") + 1] == "500"
+    assert cmd[cmd.index("-fov") + 1] == "1.2"
+    assert cmd.count("-f") == 1 and cmd[cmd.index("-f") + 1] == str(frame)
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+async def test_tc_plt_060_astap_retries_without_a_bad_position_hint(tmp_path, monkeypatch):
+    """PLT-060: a solve that fails with a position hint is retried once without it, so ASTAP reads
+    the position from the header as standalone ASTAP does."""
+    import sys
+    plt_mod = pytest.importorskip("galileo.platesolve")
+    solver = plt_mod.PlateSolver(backend="astap", executable=sys.executable)
+    commands = _fake_astap(monkeypatch, ini="PLTSOLVD=F\nERROR=No solution found\n")
+    result = await solver.solve(tmp_path / "frame.fits", hint=(10.0, 20.0))
+    assert result.success is False and len(commands) == 2
+    assert "-ra" in commands[0] and "-ra" not in commands[1]
+
+
+@pytest.mark.requirement("TC-PLT-060")
+@pytest.mark.priority("P2")
+def test_tc_plt_060_astap_options_persisted_per_pier(tmp_path):
+    """PLT-060: the ASTAP command-line options are saved per Pier (Options > Solve)."""
+    from galileo.library.database import db, init_db
+    from galileo.observatory import create_observatory, create_pier, get_solver_settings, save_solver_settings
+    from galileo.platesolve import SolverParams
+
+    init_db(tmp_path / "plt060a.db")
+    try:
+        pier = create_pier(create_observatory("Obs PLT-060a"), "Pier PLT-060a")
+        assert get_solver_settings(pier)[1].extra_args == ""
+        save_solver_settings(pier, "", SolverParams(extra_args="-s 500 "))
+        assert get_solver_settings(pier)[1].extra_args == "-s 500"
+    finally:
+        db.close()

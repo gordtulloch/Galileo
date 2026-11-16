@@ -21,7 +21,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from galileo.engine.devices import DeviceService
+from galileo.engine.devices import DeviceService, pier_id
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,44 @@ def forget(adapter: Any) -> None:
     """A screen disconnected *adapter*: the service stops holding it. Does nothing when no service exists."""
     if _service is not None:
         _service.release(adapter)
+
+
+_PAGE_CATEGORIES = {"mount": "mount", "filter_wheel": "filter_wheel", "rotator": "rotator", "dome": "dome",
+                    "flat_panel": "flat_panel", "focuser": "focuser"}
+
+
+def adopt_held(pier: Any, device_pages: dict[str, Any], camera_backends: dict[str, Any] | None = None) -> int:
+    """Hand the device service every live adapter the screens hold for *pier* that it does not hold yet.
+
+    A screen that connected before the service was on (or that kept a connection through a Pier switch) owns an
+    adapter the Control Surface cannot see, so a phone then reports the Pier as having no mount or camera although the
+    desktop shows them connected. Returns how many were adopted; does nothing with the setting off."""
+    if not enabled():
+        return 0
+    from galileo.current_object import pier_key
+    svc = service()
+    pid, key, adopted = pier_id(pier), pier_key(pier), 0
+
+    def offer(category: str, slot: str, adapter: Any) -> None:
+        nonlocal adopted
+        if adapter is None or not getattr(adapter, "is_connected", True):
+            return
+        if svc.controllers(pid, category).get(slot) is adapter:
+            return
+        svc.adopt(pid, category, slot, adapter)
+        adopted += 1
+
+    for page_id, category in _PAGE_CATEGORIES.items():
+        adapter_for = (device_pages.get(page_id) or {}).get("adapter_for")
+        if adapter_for is not None:
+            try:
+                offer(category, "primary", adapter_for(key))
+            except Exception:
+                logger.exception("Could not offer the %s to the device service", page_id)
+    for label, adapter in list((camera_backends or {}).items()):
+        slot = "primary" if str(label).lower().startswith("primary") else str(label).lower().replace(" ", "_")
+        offer("camera", slot, adapter)
+    return adopted
 
 
 def host_engine() -> Any | None:
@@ -163,4 +201,4 @@ class PierAdapters:
 _MISSING = object()
 
 
-__all__ = ["KEY", "NAMESPACE", "PierAdapters", "connect", "enabled", "forget", "host_engine", "reset", "service", "set_enabled"]
+__all__ = ["KEY", "NAMESPACE", "PierAdapters", "adopt_held", "connect", "enabled", "forget", "host_engine", "reset", "service", "set_enabled"]

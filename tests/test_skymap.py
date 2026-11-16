@@ -3,6 +3,7 @@
 
 """SKYMAP — Interactive Star Map / Planetarium (TC-SKYMAP-010 … TC-SKYMAP-060)."""
 
+import numpy as np
 import pytest
 from unittest.mock import MagicMock
 
@@ -372,3 +373,97 @@ def test_tc_skymap_110_the_landscape_recedes_and_follows_the_daylight():
     assert edge.std(axis=0).sum() < close.std(axis=0).sum(), "what's too fine to see is flat"
     assert sa.landscape_rgb(-30.0, 10.0, 1.0).sum() > 2 * sa.landscape_rgb(-30.0, 10.0, 0.0).sum()
     assert sa.landscape_rgb(-0.2, 10.0, 0.0).sum() > sa.landscape_rgb(-70.0, 10.0, 0.0).sum(), "haze at the horizon"
+
+
+def _mark_view():
+    from galileo.planning import star_atlas as sa
+    from galileo.planning.sky_atlas import DeepSkyObject, ObjectType
+    from galileo.ui.star_atlas import StarAtlasView
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])
+    view = StarAtlasView()
+    view.resize(400, 400)
+    view.set_location(40.0, 0.0)
+    view._stars = sa._fallback_catalog()
+    ra = view._lst            # on the meridian, so it is up whatever the time
+    dsos = [DeepSkyObject("M 99", ["NGC 4254"], ra, 40.0, ObjectType.GALAXY, 99.0, 5.0),   # far too faint to be drawn
+            DeepSkyObject("M 98", ["NGC 4192"], ra + 1, 40.0, ObjectType.GALAXY, 99.0, 5.0)]
+    view.set_catalogs(view._stars, dsos)
+    view.dso_catalogs = set()
+    view.show_dsos = False
+    return view, dsos
+
+
+@pytest.mark.requirement("TC-SKYMAP-120")
+@pytest.mark.priority("P2")
+def test_tc_skymap_120_a_saved_target_is_always_plotted_and_clickable():
+    """SKYMAP-120: a saved target is plotted with its name, and can be clicked, whatever catalog, magnitude and Show
+    settings would otherwise hide it; removing it from the list takes it off the map."""
+    view, dsos = _mark_view()
+    view.view.alt0, view.view.az0, view.view.fov_deg = 45.0, 180.0, 40.0
+    assert view.object_at(200, 200) is None
+    view.set_saved_targets([dsos[0]])
+    marked = view._marked_objects()
+    assert [(o["name"], why) for o, why in marked] == [("M 99", "saved")]
+    x, y, vis = view._viewport().project(np.array([marked[0][0]["alt"]]), np.array([marked[0][0]["az"]]))
+    assert vis[0]
+    assert view.object_at(float(x[0]), float(y[0]))["name"] == "M 99"
+    view.set_saved_targets([])
+    assert view._marked_objects() == []
+
+
+@pytest.mark.requirement("TC-SKYMAP-120")
+@pytest.mark.priority("P2")
+def test_tc_skymap_120_saving_and_removing_a_target_tells_the_atlas(monkeypatch):
+    """SKYMAP-120: saving or removing a target publishes on the bus, which is how every Star Atlas replots."""
+    from galileo.bus import SavedTargetsChangedEvent, get_bus
+    from galileo.planning import saved_targets
+    seen = []
+    bus = get_bus()
+    bus.subscribe(SavedTargetsChangedEvent, seen.append)
+    try:
+        class Record:
+            @staticmethod
+            def get_or_create(**kw):
+                return object(), True
+
+            class _Q:
+                def where(self, *_):
+                    return self
+
+                def execute(self):
+                    return 1
+            name = None
+
+            @classmethod
+            def delete(cls):
+                return cls._Q()
+        import types
+        monkeypatch.setitem(__import__("sys").modules, "galileo.library.models.saved_target",
+                            types.SimpleNamespace(SavedTargetRecord=Record))
+        _view, dsos = _mark_view()
+        assert saved_targets.save_target(dsos[0]) is True
+        saved_targets.remove_target("M 99")
+    finally:
+        bus.unsubscribe(SavedTargetsChangedEvent, seen.append)
+    assert [(e.name, e.added) for e in seen] == [("M 99", True), ("M 99", False)]
+
+
+@pytest.mark.requirement("TC-SKYMAP-120")
+@pytest.mark.priority("P2")
+def test_tc_skymap_120_find_plots_every_match_so_the_right_one_can_be_designated():
+    """SKYMAP-120: Find plots each object the text could mean (not only the best), each clickable, until the next Find."""
+    view, _dsos = _mark_view()
+    view.view.alt0, view.view.az0, view.view.fov_deg = 45.0, 180.0, 40.0
+    matches = view.find_matches("M 9")
+    assert [m["name"] for m in matches] == ["M 99", "M 98"]
+    view.set_found(matches)
+    assert {o["name"] for o, why in view._marked_objects() if why == "found"} == {"M 98", "M 99"}
+    for obj, _ in view._marked_objects():
+        x, y, vis = view._viewport().project(np.array([obj["alt"]]), np.array([obj["az"]]))
+        assert vis[0] and view.object_at(float(x[0]), float(y[0]))["name"] == obj["name"]
+    view.grab()                                    # and it paints
+    view.set_found([])
+    assert view._marked_objects() == []
+    assert view.find_matches("nothing like this") == []
+

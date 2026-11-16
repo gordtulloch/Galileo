@@ -77,6 +77,10 @@ class CurrentObjectChangedEvent(Event):
     ``galileo.current_object.pier_key``) and ``object`` (a ``CurrentObject``,
     or ``None`` when it was cleared)."""
 
+class SavedTargetsChangedEvent(Event):
+    """The saved target list (Planning > Targets) gained or lost an object. Payload: ``name`` of that object and
+    ``added`` (``True`` when it was added). The Star Atlas listens so a saved target is always plotted."""
+
 class FrameCapturedEvent(Event):
     """An imaging service finished a frame (and saved it). Payload: ``pier`` (the key from
     ``galileo.current_object.pier_key``) and ``service`` (the ``ImagingService`` holding it). Lets the

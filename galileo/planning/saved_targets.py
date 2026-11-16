@@ -24,12 +24,21 @@ def save_target(obj: DeepSkyObject) -> bool:
             "saved_at": time.time(),
         },
     )
+    if created:
+        _announce(obj.primary_name, added=True)
     return created
+
+
+def _announce(name: str, *, added: bool) -> None:
+    """Tell the rest of the application (the Star Atlas, chiefly) that the list changed."""
+    from galileo.bus import SavedTargetsChangedEvent, get_bus
+    get_bus().publish(SavedTargetsChangedEvent("saved_targets", name=name, added=added))
 
 
 def remove_target(name: str) -> None:
     from galileo.library.models.saved_target import SavedTargetRecord
     SavedTargetRecord.delete().where(SavedTargetRecord.name == name).execute()
+    _announce(name, added=False)
 
 
 def list_targets() -> list[DeepSkyObject]:

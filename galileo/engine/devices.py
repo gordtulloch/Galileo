@@ -261,7 +261,7 @@ class DeviceService:
 
     def adopt(self, pier: str, category: str, slot: str, adapter: Any) -> None:
         """Hold an adapter some other code connected, so everything that asks the service for it finds it."""
-        key = (pier, category.lower(), slot or PRIMARY)
+        key = (pier, self._canonical(category), slot or PRIMARY)
         with self._lock:
             previous = self._adapters.get(key)
             self._adapters[key] = adapter
@@ -280,6 +280,17 @@ class DeviceService:
         for key in keys:
             self._bus.publish(DeviceDisconnectedEvent(source=key[1], pier=key[0], slot=key[2]))
         return bool(keys)
+
+    @classmethod
+    def _canonical(cls, name: str) -> str:
+        """The Control Surface's name for a category (``filter_wheel``, not the device layer's ``filterwheel``), so
+        a device adopted under either spelling is found by the catalogue."""
+        cat = cls._category_of(name)
+        if cat is not None:
+            for key, value in CATEGORIES.items():
+                if value is cat:
+                    return key
+        return str(name).lower()
 
     @staticmethod
     def _category_of(name: str) -> DeviceCategory | None:

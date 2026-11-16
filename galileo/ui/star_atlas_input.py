@@ -61,6 +61,11 @@ class StarAtlasInputMixin(_MixinBase):
         """Nearest visible object within a few pixels of screen position (x, y)."""
         sets = self._sets(self._viewport())
         best, best_d = None, float(self.HIT_RADIUS_PX)
+        vp = self._viewport()
+        for obj, _why in self._marked_objects():       # saved targets and Find matches win: they were asked for
+            mx, my, vis = vp.project(np.array([obj["alt"]]), np.array([obj["az"]]))
+            if vis[0] and math.hypot(float(mx[0]) - x, float(my[0]) - y) < best_d:
+                best, best_d = obj, math.hypot(float(mx[0]) - x, float(my[0]) - y)
         makers = {"bodies": self._body_object, "minor": self._minor_object,
                   "stars": self._star_object, "dsos": self._dso_object}
         for key in ("bodies", "minor", "stars", "dsos"):      # bodies win ties, then comets etc., stars, DSOs

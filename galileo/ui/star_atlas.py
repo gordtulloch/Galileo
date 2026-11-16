@@ -12,6 +12,8 @@ maths lives in :mod:`galileo.planning.star_atlas`; this module only draws.
 
 from __future__ import annotations
 
+import contextlib
+
 import datetime as _dt
 import logging
 import threading
@@ -120,6 +122,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
     minorBodiesLoaded = Signal(str, int)
     _catalogsReady = Signal(object, object, object, object)
     _minorReady = Signal(str, object)
+    _savedTargetsChanged = Signal()
 
     LIVE_INTERVAL_MS = 10_000
     HIT_RADIUS_PX = 12
@@ -177,6 +180,10 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self._lines: sa.ConstellationLines = sa.ConstellationLines.empty()
         self._dso_ra = self._dso_dec = self._dso_mag = np.empty(0)
         self._dso_members: dict[str, np.ndarray] = {}
+        # Always plotted, whatever the catalog, magnitude and Show choices: every saved target, and what Find matched
+        # (so the user can click the right one and designate it).
+        self.saved_targets: list[Any] = []              # DeepSkyObjects from the Planning > Targets list
+        self.found_objects: list[dict[str, Any]] = []   # the object dicts a Find matched
         self._dso_user = np.zeros(0, dtype=bool)        # objects the user added by searching: always drawn
         self._bodies: list[dict[str, Any]] = []
         self._sun_alt = -30.0
@@ -191,6 +198,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self._live.timeout.connect(self._tick_live)
         self._catalogsReady.connect(self._on_catalogs)
         self._minorReady.connect(self._on_minor_loaded)
+        self._subscribe_saved_targets()
 
         self._recompute()
 
@@ -252,6 +260,58 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self._dso_user = np.array([self._dsos[j].user_added for j in range(len(self._dsos))], dtype=bool)
         self._recompute()
         self.update()
+
+    # -- objects that are always plotted ---------------------------------------
+
+    def _subscribe_saved_targets(self) -> None:
+        """Replot when a target is saved or removed, from whichever thread did it (the signal queues onto Qt's)."""
+        from galileo.bus import SavedTargetsChangedEvent, get_bus
+        self._savedTargetsChanged.connect(self.reload_saved_targets)
+        bus = get_bus()
+
+        def handler(_event) -> None:
+            with contextlib.suppress(RuntimeError):     # the widget is gone
+                self._savedTargetsChanged.emit()
+
+        bus.subscribe(SavedTargetsChangedEvent, handler)
+        self.destroyed.connect(lambda *_: bus.unsubscribe(SavedTargetsChangedEvent, handler))
+        self.reload_saved_targets()
+
+    def set_saved_targets(self, targets: list[Any]) -> None:
+        """The saved target list; each is plotted, labelled, whatever else is switched off."""
+        self.saved_targets = list(targets)
+        self.update()
+
+    def reload_saved_targets(self) -> None:
+        """Read the saved list again (it changed, or the page was shown)."""
+        try:
+            from galileo.planning.saved_targets import list_targets
+            self.set_saved_targets(list_targets())
+        except Exception:
+            logger.exception("Could not load the saved targets for the Star Atlas")
+
+    def set_found(self, objects: list[dict[str, Any]]) -> None:
+        """What Find matched: plotted as objects until the next Find (or an empty one) replaces them."""
+        self.found_objects = list(objects)
+        self.update()
+
+    def _marked_objects(self) -> list[tuple[dict[str, Any], str]]:
+        """Every object that is always plotted, as ``(object dict, "saved" | "found")``. A saved target that Find
+        also matched is drawn once, as found."""
+        found_names = {o["name"].lower() for o in self.found_objects}
+        out: list[tuple[dict[str, Any], str]] = []
+        for obj in self.found_objects:
+            alt, az = self._altaz_of(obj)
+            out.append(({**obj, "alt": alt, "az": az}, "found"))
+        for d in self.saved_targets:
+            if d.primary_name.lower() in found_names:
+                continue
+            alt, az = self._altaz_arrays(np.array([d.ra_deg]), np.array([d.dec_deg]))
+            out.append(({"kind": "dso", "name": d.primary_name, "designation": ", ".join(d.designations[:3]),
+                         "type": d.object_type.value, "ra_deg": d.ra_deg, "dec_deg": d.dec_deg,
+                         "mag": d.magnitude, "size_arcmin": d.size_arcmin, "alt": float(alt[0]), "az": float(az[0])},
+                        "saved"))
+        return out
 
     def dso_catalog_counts(self) -> dict[str, int]:
         """Number of loaded deep-sky objects in each catalog."""
@@ -382,6 +442,31 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
             if q in dso.primary_name.lower():
                 return self._dso_object(i)
         return None
+
+    def find_matches(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        """Every object a Find for *query* could mean, best match first: the one :meth:`find_object` picks, then
+        other deep-sky objects and named stars whose name or designation contains the text. The user plots them all
+        and designates the right one."""
+        q = query.strip().lower()
+        best = self.find_object(query)
+        if best is None:
+            return []
+        out = [best]
+        seen = {best["name"].lower()}
+
+        def add(obj: dict[str, Any]) -> None:
+            if obj["name"].lower() not in seen and len(out) < limit:
+                seen.add(obj["name"].lower())
+                out.append(obj)
+        for i, dso in enumerate(self._dsos):
+            if q in dso.primary_name.lower() or any(q in d.lower() for d in dso.designations):
+                add(self._dso_object(i))
+        for i in range(len(self._stars)):
+            if len(out) >= limit:
+                break
+            if self._stars.names[i] and q in self._stars.names[i].lower():
+                add(self._star_object(i))
+        return out
 
     # -- sky computation -----------------------------------------------------
 

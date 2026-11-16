@@ -422,8 +422,10 @@ class SolveWorkflow:
         params = self.solver.params
         scale_hint = settings.scale_hint_arcsec_px
         if scale_hint and params.fov_hint_deg <= 0:
-            height = await asyncio.to_thread(_image_height_px, frame)
-            fov = height * scale_hint / 3600.0 if height else 0.0
+            height, binning, self_scaled = await asyncio.to_thread(_image_scale_info, frame)
+            # With the focal length and pixel size in the header the solver works the scale out for
+            # itself, binning included; a hint computed here would only be a chance to get it wrong.
+            fov = 0.0 if self_scaled or not height else height * binning * scale_hint / 3600.0
         else:
             fov = 0.0
         started = time.monotonic()
@@ -582,6 +584,20 @@ def _image_height_px(path: Path) -> int:
             return int(hdul[0].shape[-2])
     except Exception:
         return 0
+
+
+def _image_scale_info(path: Path) -> tuple[int, int, bool]:
+    """``(height_px, binning, scale_in_header)`` of *path*: whether its header carries the focal
+    length and pixel size (``FOCALLEN`` and ``XPIXSZ``), which let a solver derive the scale."""
+    try:
+        from astropy.io import fits
+        with fits.open(path) as hdul:
+            header = hdul[0].header
+            height = int(hdul[0].shape[-2])
+            binning = max(int(header.get("YBINNING") or header.get("XBINNING") or 1), 1)
+            return height, binning, bool(header.get("FOCALLEN") and header.get("XPIXSZ"))
+    except Exception:
+        return 0, 1, False
 
 
 def _hms(ra_deg: float) -> str:

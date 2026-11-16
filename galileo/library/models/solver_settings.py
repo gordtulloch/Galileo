@@ -38,6 +38,7 @@ class SolverSettingsRecord(BaseModel):
     backend = pw.TextField(default="astap")
     astrometry_executable = pw.TextField(null=True)
     nova_api_key = pw.TextField(null=True)
+    astap_args = pw.TextField(null=True)         # extra ASTAP command-line options; blank = none
     tetra3_database = pw.TextField(null=True)   # blank = the database tetra3 ships with
 
     class Meta:

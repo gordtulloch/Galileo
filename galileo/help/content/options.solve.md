@@ -49,4 +49,8 @@ How far from the hinted position, in degrees, the solver searches. A small radiu
 
 ## Downsample
 
-Shrinks the image by this factor before solving. Faster, slightly less precise; **Off** solves at full resolution. Useful for large sensors, where a factor of 2 or 4 speeds the solve a great deal.
+Shrinks the image by this factor before solving. Faster, slightly less precise. **Auto** lets the solver choose (ASTAP picks a factor itself, which is what ASTAP does when you open an image in it); **1** solves at full resolution; 2 or more force that factor. A forced factor can lose too many stars on a small or already-binned image, so if ASTAP solves an image on its own but not from Galileo, set this back to Auto.
+
+## ASTAP options
+
+Extra command-line options passed to ASTAP, after the ones Galileo adds (`-f`, `-update`, `-o`, and `-fov`, `-z`, `-ra`/`-spd`/`-r` from the settings above). Separate them with spaces, for example `-d /path/to/star/database -s 500`. An option you repeat here replaces Galileo's own, so `-z 4` or `-r 90` wins; `-f` and `-o` cannot be changed, because Galileo reads ASTAP's answer from them. Use it for ASTAP's star database (`-d`), the maximum star count (`-s`) or the tolerance (`-t`); see ASTAP's command-line documentation. Used only when the solver is ASTAP. If a solve with a position hint fails, Galileo retries once without its position hint, so ASTAP reads the position from the image header instead.

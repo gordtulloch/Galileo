@@ -813,7 +813,7 @@ def get_solver_settings(pier: PierRecord | None) -> tuple[str, SolverParams]:
         return "", SolverParams(downsample=0)
     return record.executable or "", SolverParams(
         fov_hint_deg=record.fov_hint_deg, search_radius_deg=record.search_radius_deg,
-        downsample=record.downsample,
+        downsample=record.downsample, extra_args=record.astap_args or "",
     )
 
 
@@ -823,6 +823,7 @@ def save_solver_settings(pier: PierRecord, executable: str, params: SolverParams
     fields = {
         "executable": executable or None, "fov_hint_deg": params.fov_hint_deg,
         "search_radius_deg": params.search_radius_deg, "downsample": params.downsample,
+        "astap_args": params.extra_args.strip() or None,
     }
     record = SolverSettingsRecord.get_or_none(SolverSettingsRecord.pier == pier)
     if record is None:
