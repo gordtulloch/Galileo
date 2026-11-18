@@ -525,8 +525,48 @@ def _block_item_widget(label_text: str, kind_name: str, window: Any = None,
     return widget
 
 
+# --- Drag-session guard -----------------------------------------------------------------------------------
+# On macOS the drop is delivered *inside* the native drag session: dropEvent runs before QDrag.exec() has
+# returned, so even a zero-delay QTimer can fire while the drag is still live. Rebuilding the session cards
+# there destroys the drag's source widget mid-drag (a crash, or a window left unresponsive). Actions queued
+# during a drag therefore wait until exec() has returned; outside a drag they just run on the next tick.
+_drag_depth = 0
+_post_drag_actions: list = []
+
+
+def _run_after_drag(action) -> None:
+    from PySide6.QtCore import QTimer
+    if _drag_depth:
+        _post_drag_actions.append(action)
+    else:
+        QTimer.singleShot(0, action)
+
+
+def _drag_session_ended() -> None:
+    from PySide6.QtCore import QTimer
+    global _drag_depth
+    _drag_depth = max(0, _drag_depth - 1)
+    if _drag_depth == 0 and _post_drag_actions:
+        pending = _post_drag_actions[:]
+        _post_drag_actions.clear()
+        for action in pending:
+            QTimer.singleShot(0, action)
+
+
+class _PaletteListWidget(QListWidget):
+    """The block palette; marks its drags so drops they cause are applied only after the drag ends."""
+
+    def startDrag(self, supportedActions) -> None:
+        global _drag_depth
+        _drag_depth += 1
+        try:
+            super().startDrag(supportedActions)
+        finally:
+            _drag_session_ended()
+
+
 def _build_palette(window: Any = None, parent=None) -> QListWidget:
-    palette = QListWidget(parent)
+    palette = _PaletteListWidget(parent)
     palette.setObjectName("SessionPalette")
     palette.setDragEnabled(True)
     palette.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
@@ -684,10 +724,16 @@ class BlockListWidget(QListWidget):
         mime_data = self.model().mimeData(self.selectedIndexes()) or QMimeData()
         drag.setMimeData(mime_data)
         drag.setPixmap(self.viewport().grab(self.visualItemRect(item)))
-        result = drag.exec(supportedActions, Qt.DropAction.MoveAction)
+        global _drag_depth
+        _drag_depth += 1
+        try:
+            result = drag.exec(supportedActions, Qt.DropAction.MoveAction)
+            drop_pos = QCursor.pos()
+        finally:
+            _drag_session_ended()
         if result != Qt.DropAction.IgnoreAction:
             return
-        if not self._is_outside_every_session_panel(QCursor.pos()):
+        if not self._is_outside_every_session_panel(drop_pos):
             return
         block = item.data(_BLOCK_ROLE)
         if block not in self._region.blocks:
@@ -697,8 +743,7 @@ class BlockListWidget(QListWidget):
         except RegionLockedError as exc:
             QMessageBox.warning(self, "Can't remove block", str(exc))
             return
-        self.refresh()
-        self._on_changed(None)
+        _run_after_drag(lambda: (self.refresh(), self._on_changed(None)))
 
     def _accepts_drag(self, event) -> bool:
         return event.source() is self or event.source() is self._palette
@@ -776,8 +821,7 @@ class BlockListWidget(QListWidget):
         """Run *action* once the drag has finished. dropEvent runs inside the drag's nested event loop (and
         macOS holds the mouse for the drag): a modal warning there, or rebuilding the list (which deletes the
         very item being dragged), left the window unresponsive. The model is already updated by then."""
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, action)
+        _run_after_drag(action)
 
 
 class _RegionWidget(QFrame):
