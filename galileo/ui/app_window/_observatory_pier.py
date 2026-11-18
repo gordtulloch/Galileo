@@ -760,6 +760,28 @@ class AppWindowObservatoryPierMixin:
                 markers[-1]["fov"] = fov     # only the current Pier's train is known (SKYMAP-050)
         return markers
 
+    def atlas_current_objects(self: AppWindowState) -> list[dict]:
+        """The current object of each Pier in the current Observatory, as Star Atlas object dicts, so the Atlas plots
+        what was chosen with Select on Search or What's Up Tonight (or by a click) whatever its catalog (SKYMAP-130)."""
+        from galileo.current_object import get_current_objects
+        from galileo.observatory import list_piers
+
+        if self._current_observatory is None:
+            return []
+        try:
+            piers = list_piers(self._current_observatory)
+        except Exception:
+            logger.exception("Could not load the Piers for the Star Atlas current objects")
+            return []
+        objects = get_current_objects()
+        out = []
+        for pier in piers:
+            cur = objects.get(pier)
+            if cur is not None:
+                out.append({"name": cur.name, "designation": cur.designation, "type": cur.kind or "Other",
+                            "ra_deg": cur.ra_deg, "dec_deg": cur.dec_deg})
+        return out
+
     def _current_pier_fov(self: AppWindowState) -> dict | None:
         """The current Pier's field of view, from the Imaging tab's active optical tube and camera
         (the same ``FramingAssistant`` geometry the Framing dialog uses, FRAME-010), or ``None`` while

@@ -200,13 +200,17 @@ class Registry:
 
     async def run(self, prepared: Prepared, pier: str, principal: str) -> Outcome:
         spec, handler = prepared.spec, self._ops[prepared.spec.name][1]
-        level = logging.DEBUG if spec.permission_class == "read" else logging.INFO   # reads are polled; only actions are news
-        logger.log(level, "Control Surface: %s asked for %s on %s%s", principal or "unknown", spec.name, pier or "no Pier",
-                    _shown(prepared.args))
+        # Reads are polled every couple of seconds by every connected app; only actions are logged.
+        level = logging.NOTSET if spec.permission_class == "read" else logging.INFO
+        loud = level == logging.INFO
+        if loud:
+            logger.info("Control Surface: %s asked for %s on %s%s", principal or "unknown", spec.name, pier or "no Pier",
+                        _shown(prepared.args))
         if not spec.long_running:
             outcome = await self._call(handler, OperationContext(pier, principal), prepared.args)
-            logger.log(level, "Control Surface: %s on %s for %s: %s%s", spec.name, pier or "no Pier", principal or "unknown",
-                        outcome.status, f" ({outcome.reason})" if outcome.reason else "")
+            if loud:
+                logger.info("Control Surface: %s on %s for %s: %s%s", spec.name, pier or "no Pier", principal or "unknown",
+                            outcome.status, f" ({outcome.reason})" if outcome.reason else "")
             return outcome
         tracker = OperationTracker(spec.name, pier, principal, self._bus)
         tracker.start()

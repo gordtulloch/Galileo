@@ -124,6 +124,14 @@ def main() -> None:
         engine_attachment = desktop_devices.host_engine()
     except Exception:
         logger.exception("Could not start the hosted engine")
+    try:
+        # The desktop owns the live job queue, so a phone or browser changes it through this window (CSURF-205).
+        engine = getattr(engine_attachment, "engine", None)
+        if engine is not None and getattr(engine, "schedule", None) is not None:
+            from galileo.ui.remote_schedule import DesktopScheduleOwner
+            engine.schedule.set_owner(DesktopScheduleOwner(window, engine.devices))
+    except Exception:
+        logger.exception("Could not give the hosted engine the desktop's job queue")
 
     exit_code = app.exec()
     if engine_attachment is not None:

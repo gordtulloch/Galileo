@@ -130,6 +130,10 @@ class SessionTemplate:
 # Session region (SES-100 … SES-230)
 # ---------------------------------------------------------------------------
 
+class SavedNameTakenError(ValueError):
+    """Another saved session of the Pier already has the name being saved (SES-065)."""
+
+
 class SessionRegion:
     """One session: an ordered, per-Pier list of action blocks, with its own
     Save/Save as Template/Load from Template/Schedule/Delete controls (SES-110)."""
@@ -239,10 +243,37 @@ class SessionRegion:
 
     # --- Persistence (SES-060, SES-180, SES-190) ---------------------------
 
-    def save(self) -> None:
-        """Keep this session (SES-060): it stays on the Sessions screen, across restarts, until it completes or is
-        deleted. Stored as a ``saved_sessions`` row in the shared database; not run until Schedule is used."""
+    @property
+    def is_saved(self) -> bool:
+        return self._record_id is not None
+
+    def saved_name_taken(self, name: str) -> bool:
+        """Whether a *different* saved session of this Pier already has *name* (SES-065)."""
         from galileo.library.models.saved_session import SavedSessionRecord
+        query = SavedSessionRecord.select().where(
+            (SavedSessionRecord.pier_name == (self._pier_name or "")) & (SavedSessionRecord.name == name))
+        if self._record_id is not None:
+            query = query.where(SavedSessionRecord.id != self._record_id)
+        return query.exists()
+
+    def save(self, name: str | None = None, replace: bool = False) -> None:
+        """Keep this session (SES-060): it stays on the Sessions screen, across restarts, until it completes or is
+        deleted. Stored as a ``saved_sessions`` row in the shared database; not run until Schedule is used.
+
+        *name* renames the session as it is kept (SES-065: the Save control asks for one the first time). Another
+        saved session of this Pier with that name is an error unless *replace* is given, which discards it."""
+        from galileo.library.models.saved_session import SavedSessionRecord
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("A saved session needs a name.")
+            if self.saved_name_taken(name):
+                if not replace:
+                    raise SavedNameTakenError(f"A saved session called {name!r} already exists on this Pier.")
+                SavedSessionRecord.delete().where(
+                    (SavedSessionRecord.pier_name == (self._pier_name or "")) & (SavedSessionRecord.name == name)
+                    & (SavedSessionRecord.id != (self._record_id or 0))).execute()
+            self.name = name
         fields = {"pier_name": self._pier_name or "", "name": self.name, "camera_slot": self.camera_slot,
                   "blocks_json": json.dumps([_block_to_dict(b) for b in self.blocks])}
         record = SavedSessionRecord.get_or_none(SavedSessionRecord.id == self._record_id) if self._record_id else None
@@ -795,6 +826,7 @@ class _RegionWidget(QFrame):
 
         header = QHBoxLayout()
         name_label = QLabel(region.name)
+        self._name_label = name_label
         name_label.setObjectName("PageSubtitle")
         header.addWidget(name_label, 1)
 
@@ -926,7 +958,26 @@ class _RegionWidget(QFrame):
         self._progress_label.setText(text)
 
     def _save(self) -> None:
-        self._region.save()
+        region = self._region
+        if region.is_saved:                       # already kept: Save updates it under its own name
+            region.save()
+            return
+        # SES-065: the first Save asks for the name the session will be kept (and shown on a phone) under.
+        name, ok = QInputDialog.getText(
+            self, "Save session", "Name for this saved session:", QLineEdit.EchoMode.Normal, region.name)
+        name = name.strip()
+        if not ok or not name:
+            return
+        try:
+            region.save(name)
+        except SavedNameTakenError:
+            answer = QMessageBox.question(
+                self, "Save session", f"A saved session called {name!r} already exists. Replace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            region.save(name, replace=True)
+        self._name_label.setText(region.name)
 
     def _save_as_template(self) -> None:
         name, ok = QInputDialog.getText(

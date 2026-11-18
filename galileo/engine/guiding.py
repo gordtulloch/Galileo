@@ -27,6 +27,7 @@ from galileo.guiding import GuidingService
 
 logger = logging.getLogger(__name__)
 
+EQUIPMENT_TIMEOUT_S = 90.0                   # PHD2 answers set_connected once its camera and mount are up
 DRIVER_NAME = "PHD2"                         # what the Guider screen saves as the guider's driver
 DEFAULT_HOST, DEFAULT_PORT = "localhost", 4400
 COMMAND_TIMEOUT_S = 15.0                     # PHD2 accepting a command, not guiding settling
@@ -74,8 +75,9 @@ class EngineGuiding:
             return "there is no such Pier"
         if self._saved(pier) is None:
             return "this Pier has no PHD2 guider saved (Equipment > Guider)"
-        if self.service(pier) is not None:
-            return "already connected to PHD2"
+        service = self.service(pier)
+        if service is not None and service.model.snapshot().equipment_connected:
+            return "already connected to PHD2 and its equipment"
         if pier in self._connecting:
             return "already connecting to PHD2"
         return None
@@ -94,16 +96,32 @@ class EngineGuiding:
             service = self._services[pier] = self._factory(host, port)
         self._connecting.add(pier)
         try:
-            await service.connect()
-            await asyncio.to_thread(service.sync_state)
+            if not service.is_connected:
+                await service.connect()
+                await asyncio.to_thread(service.sync_state)
+            self._publish(pier)
+            self._ensure_poller()
+            # PHD2's own equipment (its camera and mount) is what guiding needs, so connect it too, as the Guider
+            # screen's "Connect equipment" does. PHD2 answers once the devices are up, which can take a while.
+            if not service.model.snapshot().equipment_connected:
+                try:
+                    await asyncio.wait_for(asyncio.wrap_future(service.set_equipment_connected(True)),
+                                           EQUIPMENT_TIMEOUT_S)
+                except Exception as exc:
+                    logger.warning("Pier %s: PHD2 at %s:%s is connected but its equipment is not: %s", pier, host, port,
+                                   exc or type(exc).__name__)
+                    self._publish(pier)
+                    raise Refused(f"connected to PHD2 at {host}:{port}, but its equipment did not connect "
+                                  f"({exc or type(exc).__name__}): check PHD2's camera and mount profile") from exc
+        except Refused:
+            raise
         except Exception as exc:
             logger.warning("Pier %s: could not connect to PHD2 at %s:%s: %s", pier, host, port, exc)
             raise Refused(f"could not connect to PHD2 at {host}:{port}: {exc}") from exc
         finally:
             self._connecting.discard(pier)
         self._publish(pier)
-        self._ensure_poller()
-        return {"connected": True, "host": host, "port": port}
+        return {"connected": True, "equipment_connected": True, "host": host, "port": port}
 
     async def disconnect(self, pier: str) -> None:
         service = self._services.get(pier)
@@ -119,6 +137,8 @@ class EngineGuiding:
         try:
             if name == "guide":
                 future = service.guide(recalibrate=bool(kwargs.get("recalibrate")))
+            elif name == "loop":
+                future = service.loop()
             elif name == "stop":
                 future = service.stop()
             elif name == "dither":
@@ -131,6 +151,12 @@ class EngineGuiding:
                     mapped = service.cutout_to_frame(x, y)
                     if mapped is None:
                         raise Refused("there is no guide-star cut-out to tap yet")
+                    x, y = mapped
+                elif service.frame_is_wide_view:
+                    # The frame the client tapped is the large guide-star image standing in for PHD2's whole frame.
+                    mapped = service.wide_view_to_frame(x, y)
+                    if mapped is None:
+                        raise Refused("the guide star's position is not known yet")
                     x, y = mapped
                 future = service.select_star(x, y)
             else:

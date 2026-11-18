@@ -71,7 +71,7 @@ def register_guiding_operations(registry: Registry, access: GuidingAccess) -> No
                                     description="The guide star's cut-out image and position"), star)
     registry.register(OperationSpec("guiding.connect", "operate", (), needs_lease=True,
                                     available=access.why_not_connect,
-                                    description="Connect to the Pier's saved PHD2"), connect)
+                                    description="Connect to the Pier's saved PHD2 and connect its equipment (camera and mount)"), connect)
     registry.register(OperationSpec("guiding.disconnect", "operate", (), needs_lease=True,
                                     description="Disconnect from PHD2"), disconnect)
     registry.register(OperationSpec("guiding.start", "operate", (Arg("recalibrate", "bool", required=False, default=False),),
@@ -86,6 +86,9 @@ def register_guiding_operations(registry: Registry, access: GuidingAccess) -> No
     registry.register(OperationSpec("guiding.dither", "operate", (), needs_lease=True, available=commands_available,
                                     description="Dither by the Options > Guiding amount and settle"),
                       sender("dither", "requested"))
+    registry.register(OperationSpec("guiding.loop", "operate", (), needs_lease=True, available=commands_available,
+                                    description="Start PHD2 looping exposures (shows the guide star and frame; no guiding)"),
+                      sender("loop", "requested"))
     registry.register(OperationSpec("guiding.find_star", "operate", (), needs_lease=True,
                                     available=commands_available,
                                     description="Ask PHD2 to choose a guide star"), sender("find_star", "requested"))

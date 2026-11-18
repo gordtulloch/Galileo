@@ -200,7 +200,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SES-040` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-040` |
 | `SES-050` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-050` |
 | `SES-060` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-060` |
-| `SES-070` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-070` |
+| `SES-065` | MVP | SDD 4.6 `galileo.session_exec`; SDD 4.9 `galileo.ui.sessions` | Test | `TC-SES-065` || `SES-070` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-070` |
 | `SES-080` | MVP | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-080` |
 | `SES-090` | P3 | SDD 4.6 `galileo.session_exec` | Test | `TC-SES-090` |
 | `SES-100` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-100` |
@@ -292,6 +292,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SKYMAP-100` | P2 | SDD 4.9a `galileo.planning.sky_survey`, `galileo.ui.star_atlas` | Test | `TC-SKYMAP-100` |
 | `SKYMAP-110` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-110` |
 | `SKYMAP-120` | P2 | SDD 4.9a `galileo.ui.star_atlas`, `galileo.planning.saved_targets` | Test | `TC-SKYMAP-120` |
+| `SKYMAP-130` | P2 | SDD 4.9a `galileo.ui.star_atlas` | Test | `TC-SKYMAP-130` |
 
 ### `SCHED` — Observatory Scheduler (KStars/EKOS-informed)
 
@@ -386,6 +387,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `GUIDE-080` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-080` |
 | `GUIDE-090` | MVP | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-090` |
 | `GUIDE-100` | MVP | SDD 4.14 `galileo.guiding`; SDD 4.32 `replication.LoopbackGuard` | Test | `TC-GUIDE-100` |
+| `GUIDE-110` | P2 | SDD 4.14 `galileo.guiding` | Test | `TC-GUIDE-110` |
 
 ### `DOME` — Dome Control
 
@@ -523,9 +525,9 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CSURF-170` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-170` |
 | `CSURF-180` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-180` |
 | `CSURF-185` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-185` |
-| `CSURF-190` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-190` |
+| `CSURF-186` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-186` || `CSURF-190` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-190` |
 | `CSURF-200` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-200` |
-| `CSURF-210` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-210` |
+| `CSURF-205` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-205` || `CSURF-210` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-210` |
 | `CSURF-220` | MVP | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-220` |
 | `CSURF-230` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-230` |
 | `CSURF-240` | P2 | SDD 4.29 `galileo.control_surface` | Test | `TC-CSURF-240` |

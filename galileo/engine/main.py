@@ -49,6 +49,7 @@ class Engine:
         self.frame_sources: Any = None
         self.previews: Any = None
         self.guiding: Any = None
+        self.schedule: Any = None          # the ScheduleControl: the desktop registers the owner of the live queue on it
         self._channel_loop: asyncio.AbstractEventLoop | None = None
         self._channel_thread: threading.Thread | None = None
         self.registry: Any = None
@@ -148,8 +149,15 @@ class Engine:
         register_sky_operations(self.registry, EngineSky(self.devices))                           # CSURF-130
         from galileo.control_surface.history import StoreHistory, register_history_operations
         register_history_operations(self.registry, StoreHistory())                                # CSURF-230
-        from galileo.control_surface.schedule import StoredSchedule, register_schedule_operations
-        register_schedule_operations(self.registry, StoredSchedule(self.devices.pier_name))      # CSURF-200
+        from galileo.control_surface.schedule import (
+            ScheduleControl,
+            StoredSchedule,
+            register_schedule_control_operations,
+            register_schedule_operations,
+        )
+        self.schedule = ScheduleControl(StoredSchedule(self.devices.pier_name))                   # CSURF-200, CSURF-205
+        register_schedule_operations(self.registry, self.schedule)
+        register_schedule_control_operations(self.registry, self.schedule)
         if not self.embedded:                                # the desktop has its own pointing helpers and watchdog
             self.helpers = Helpers(self.devices, self.state)    # HEAD-060
             self.helpers.start()

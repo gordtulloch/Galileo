@@ -183,6 +183,7 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         # Always plotted, whatever the catalog, magnitude and Show choices: every saved target, and what Find matched
         # (so the user can click the right one and designate it).
         self.saved_targets: list[Any] = []              # DeepSkyObjects from the Planning > Targets list
+        self.current_objects: list[dict[str, Any]] = []  # each Pier's current object (Select, a click): always plotted
         self.found_objects: list[dict[str, Any]] = []   # the object dicts a Find matched
         self._dso_user = np.zeros(0, dtype=bool)        # objects the user added by searching: always drawn
         self._bodies: list[dict[str, Any]] = []
@@ -295,9 +296,16 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
         self.found_objects = list(objects)
         self.update()
 
+    def set_current_objects(self, objects: list[dict[str, Any]]) -> None:
+        """The Piers' current objects (what Select on Search or What's Up Tonight, or a click here, chose): each is
+        plotted whatever the catalog choice, so a chosen IC object is not an empty patch of sky (SKYMAP-130)."""
+        self.current_objects = list(objects)
+        self.update()
+
     def _marked_objects(self) -> list[tuple[dict[str, Any], str]]:
-        """Every object that is always plotted, as ``(object dict, "saved" | "found")``. A saved target that Find
-        also matched is drawn once, as found."""
+        """Every object that is always plotted, as ``(object dict, "saved" | "found" | "current")``. A saved target
+        that Find also matched is drawn once, as found; a current object is drawn once, as found or saved if it is
+        one of those too."""
         found_names = {o["name"].lower() for o in self.found_objects}
         out: list[tuple[dict[str, Any], str]] = []
         for obj in self.found_objects:
@@ -311,6 +319,14 @@ class StarAtlasView(StarAtlasInputMixin, StarAtlasPaintMixin, QWidget):
                          "type": d.object_type.value, "ra_deg": d.ra_deg, "dec_deg": d.dec_deg,
                          "mag": d.magnitude, "size_arcmin": d.size_arcmin, "alt": float(alt[0]), "az": float(az[0])},
                         "saved"))
+        drawn = found_names | {d.primary_name.lower() for d in self.saved_targets}
+        for obj in self.current_objects:
+            if obj["name"].lower() in drawn:
+                continue
+            drawn.add(obj["name"].lower())
+            alt, az = self._altaz_arrays(np.array([obj["ra_deg"]]), np.array([obj["dec_deg"]]))
+            out.append(({"kind": "dso", "mag": 99.0, "size_arcmin": 0.0, **obj, "alt": float(alt[0]), "az": float(az[0])},
+                        "current"))
         return out
 
     def dso_catalog_counts(self) -> dict[str, int]:

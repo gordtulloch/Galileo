@@ -337,3 +337,56 @@ async def test_tc_guide_090_commands_reach_phd2_and_rejections_are_logged(phd2):
         assert _wait_until(lambda: any("PHD2 rejected loop" in line for line in service.model.snapshot().log))
     finally:
         await service.disconnect()
+
+
+@pytest.mark.requirement("TC-GUIDE-110")
+@pytest.mark.priority("P2")
+def test_tc_guide_110_remote_phd2_frame_falls_back_to_a_large_star_image():
+    """GUIDE-110: when PHD2's saved frame is on another computer, the guide frame is a large guide-star image fetched over
+    the network, the size halves while PHD2 refuses it, and a tap on it maps back to the camera frame by the star."""
+    import base64
+    import time
+    from concurrent.futures import Future
+
+    import numpy as np
+
+    class Remote:
+        is_connected = True
+        on_event = on_disconnect = None
+
+        def __init__(self):
+            self.sizes: list[int] = []
+
+        def request(self, method, params=None):
+            f: Future = Future()
+            if method == "save_image":
+                f.set_result({"filename": "/home/pi/.phd2/save_image_x"})       # a file only the Pi has
+            elif method == "get_star_image":
+                self.sizes.append(params[0])
+                if params[0] > 200:
+                    f.set_exception(RuntimeError("size too large"))
+                else:
+                    n = params[0]
+                    f.set_result({"frame": 1, "width": n, "height": n, "star_pos": [n / 2, n / 2],
+                                  "pixels": base64.b64encode(np.zeros(n * n, "<u2").tobytes()).decode()})
+            else:
+                f.set_result(0)
+            return f
+
+        def call(self, method, params=None, timeout=0):
+            return {"get_app_state": "Looping"}.get(method)
+
+    client = Remote()
+    service = GuidingService("pi", 4400, client=client)
+    service.model.update(app_state="Looping", frame_size=(640, 480), star_pos=(300.0, 200.0))
+    for _ in range(12):
+        service.request_frame()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and service._frame_busy:
+            time.sleep(0.01)
+        if service.model.snapshot().frame is not None:
+            break
+    snap = service.model.snapshot()
+    assert snap.frame is not None and snap.frame.shape == (120, 120)
+    assert client.sizes[0] == 480 and client.sizes[-1] == 120 and 240 in client.sizes and service.frame_is_wide_view
+    assert service.wide_view_to_frame(60.0, 60.0) == (300.0, 200.0)            # the star is the common point

@@ -111,9 +111,15 @@ class EngineAutofocus:
             if event.payload.get("confirm"):
                 picture.update(phase="confirming", message="Confirming at the best position…")
             else:
-                picture["points"].append([event.payload.get("position"), round(float(event.payload.get("hfr", 0.0)), 3)])
-                picture.update(step=len(picture["points"]),
-                               message=f"Point {len(picture['points'])} of {picture['steps']}")
+                hfr = float(event.payload.get("hfr", 0.0) or 0.0)
+                position = event.payload.get("position")
+                picture["done"] = picture.get("done", 0) + 1
+                if hfr == hfr and abs(hfr) != float("inf"):      # a frame with no stars measures NaN, which isn't JSON
+                    picture["points"].append([position, round(hfr, 3)])
+                    note = f"Point {picture['done']} of {picture['steps']}: HFR {hfr:.2f} at {position}"
+                else:
+                    note = f"Point {picture['done']} of {picture['steps']}: no stars found at {position}"
+                picture.update(step=picture["done"], message=note)
             self._publish(pier)
             progress(picture["message"], (picture["step"] / picture["steps"]) if picture["steps"] else None)
 

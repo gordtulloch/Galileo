@@ -394,6 +394,27 @@ def _mark_view():
     return view, dsos
 
 
+@pytest.mark.requirement("TC-SKYMAP-130")
+@pytest.mark.priority("P2")
+def test_tc_skymap_130_a_pier_s_current_object_is_plotted_without_being_saved():
+    """SKYMAP-130: an object chosen with Select (the Pier's current object) is plotted and clickable whatever catalog
+    would hide it (an IC object with IC switched off), drawn once if it is also found or saved, and cleared with it."""
+    view, dsos = _mark_view()
+    view.view.alt0, view.view.az0, view.view.fov_deg = 45.0, 180.0, 40.0
+    chosen = {"name": "IC 434", "designation": "", "type": "Nebula", "ra_deg": dsos[0].ra_deg, "dec_deg": 40.0}
+    assert view._marked_objects() == []
+    view.set_current_objects([chosen])
+    marked = view._marked_objects()
+    assert [(o["name"], why) for o, why in marked] == [("IC 434", "current")]
+    x, y, vis = view._viewport().project(np.array([marked[0][0]["alt"]]), np.array([marked[0][0]["az"]]))
+    assert vis[0] and view.object_at(float(x[0]), float(y[0]))["name"] == "IC 434"
+    view.set_found([{**chosen, "alt": 45.0, "az": 180.0}])                     # found too: drawn once, as found
+    assert [why for _o, why in view._marked_objects()] == ["found"]
+    view.set_found([])
+    view.set_current_objects([])
+    assert view._marked_objects() == []
+
+
 @pytest.mark.requirement("TC-SKYMAP-120")
 @pytest.mark.priority("P2")
 def test_tc_skymap_120_a_saved_target_is_always_plotted_and_clickable():

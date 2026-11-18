@@ -107,6 +107,41 @@ def test_tc_ses_060_saved_and_scheduled_sessions_survive_a_restart(tmp_path):
         db.close()
 
 
+@pytest.mark.requirement("TC-SES-065")
+@pytest.mark.priority("MVP")
+def test_tc_ses_065_save_keeps_the_session_under_the_name_given(tmp_path):
+    """SES-065: Save keeps a not-yet-saved session under the name asked for, refuses a name another saved session of
+    the Pier already has unless told to replace it, and a name is required."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    from galileo.library.database import db, init_db
+    from galileo.library.models.saved_session import SavedSessionRecord
+    init_db(tmp_path / "ses065.db")
+    try:
+        first = ui_mod.SessionRegion(name="Session 1")
+        first._pier_name = "P"
+        assert not first.is_saved
+        first.save("  Orion core  ")
+        assert first.is_saved and first.name == "Orion core"
+        assert [r.name for r in SavedSessionRecord.select()] == ["Orion core"]
+
+        second = ui_mod.SessionRegion(name="Session 2")
+        second._pier_name = "P"
+        with pytest.raises(ui_mod.SavedNameTakenError):
+            second.save("Orion core")
+        assert not second.is_saved and second.name == "Session 2"            # nothing kept, nothing renamed
+        with pytest.raises(ValueError):
+            second.save("   ")
+        other_pier = ui_mod.SessionRegion(name="x")
+        other_pier._pier_name = "Q"
+        other_pier.save("Orion core")                                        # names are per Pier
+        second.save("Orion core", replace=True)                              # replace discards the old one
+        assert [r.pier_name for r in SavedSessionRecord.select().where(SavedSessionRecord.name == "Orion core")
+                .order_by(SavedSessionRecord.pier_name)] == ["P", "Q"]
+        first.save()                                                         # a plain re-save keeps its name
+    finally:
+        db.close()
+
+
 @pytest.mark.requirement("TC-SES-070")
 @pytest.mark.priority("MVP")
 def test_tc_ses_070_per_frame_session_metadata():

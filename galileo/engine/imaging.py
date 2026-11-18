@@ -71,8 +71,8 @@ class EngineImaging:
         finally:
             self._busy.discard(pier)
 
-    _PROGRESS_KEYS = ("imaging.exposure_progress", "imaging.exposure_s", "imaging.progress", "imaging.frame",
-                      "imaging.count")
+    _PROGRESS_KEYS = ("imaging.exposure_progress", "imaging.exposure_s", "imaging.phase", "imaging.progress",
+                      "imaging.frame", "imaging.count")
 
     async def _publish_progress(self, pier: str, service: Any, count: int) -> None:
         """While a capture runs, publish how far the exposure and the series have got (twice a second), so a client can
@@ -83,10 +83,14 @@ class EngineImaging:
             started = service.exposure_started_at
             seconds = float(service.exposure_seconds or 0.0)
             if started is not None and seconds > 0:
-                self._state.publish(pier, "imaging.exposure_progress", min(1.0, max(0.0, (time.time() - started) / seconds)))
+                elapsed = time.time() - started
+                self._state.publish(pier, "imaging.exposure_progress", min(1.0, max(0.0, elapsed / seconds)))
                 self._state.publish(pier, "imaging.exposure_s", seconds)
+                # Once the exposure time has passed the frame is being read out of the camera.
+                self._state.publish(pier, "imaging.phase", "integrating" if elapsed < seconds else "downloading")
             else:
                 self._state.publish(pier, "imaging.exposure_progress", None)
+                self._state.publish(pier, "imaging.phase", "processing")      # between frames: saving, stacking
             done = int(service.series_done)
             self._state.publish(pier, "imaging.progress", done / count if count else None)
             self._state.publish(pier, "imaging.frame", min(done + 1, count))

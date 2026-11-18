@@ -15,7 +15,7 @@ The controls on the left that change what the map shows and when.
 
 ## Sky map
 
-The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session / Save to Targets / Park-Unpark menu. Every object on your Targets list is always plotted, in orange with its name, whatever catalogs, magnitude limit and Show choices are set; saving or removing a target updates the map at once.
+The sky as seen from the site at the chosen time. Click to select, double-click to centre and track, drag to pan, scroll to zoom. Right-click for the Goto / Sync / Add to Session / Save to Targets / Park-Unpark menu. Every object on your Targets list is always plotted, in orange with its name, whatever catalogs, magnitude limit and Show choices are set; saving or removing a target updates the map at once. The current object of each Pier (what you chose with **Select** on Search or What's Up Tonight, or by clicking an object here) is plotted the same way, in yellow, so an object from a catalog that is switched off, such as an IC object, is not an empty patch of sky; it does not have to be saved as a target first.
 
 ## Find
 

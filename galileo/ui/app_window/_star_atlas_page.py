@@ -482,6 +482,7 @@ class AppWindowStarAtlasPageMixin:
         # screen, and more often while a slew is running so the reticle keeps up with it.
         def refresh_markers() -> None:
             view.set_pier_markers(self.pier_markers())
+            view.set_current_objects(self.atlas_current_objects())      # SKYMAP-130
 
         def poll_markers() -> None:
             view.reload_saved_targets()       # a target saved on another node arrives by replication, not the bus

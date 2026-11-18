@@ -863,12 +863,11 @@ def test_tc_plt_070_capture_options_reach_the_camera_and_filter_wheel(window, pa
     page.bin_combo.setCurrentIndex(1)
     page.gain_spin.setValue(120)
     page.filter_combo.setCurrentText("Ha")
-    page.dark_check.setChecked(True)
     page.capture_btn.click()
     assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
     wheel.move_to_filter.assert_awaited_once_with("Ha")
     exposures = devices.camera.start_exposure.await_args_list
-    assert [c.kwargs["frame_type"] for c in exposures] == ["Light", "Dark"]
+    assert [c.kwargs["frame_type"] for c in exposures] == ["Light"]   # darks are subtracted from the Library's master, not taken
     assert all(c.kwargs["binning"] == 2 and c.kwargs["gain"] == 120 for c in exposures)
 
 
