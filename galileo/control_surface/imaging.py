@@ -27,7 +27,7 @@ class ImagingAccess(Protocol):
 
     async def capture(self, pier: str, count: int, seconds: float, filter_name: str, frame_type: str,
                       gain: int, offset: int, camera_slot: str, progress: Any,
-                      live_stack: bool = False) -> dict[str, Any]:
+                      live_stack: bool = False, binning: int = 1) -> dict[str, Any]:
         """Take the series; calls ``progress(done, total)`` after each frame; returns a summary."""
 
     async def stop(self, pier: str) -> bool:
@@ -49,7 +49,7 @@ def register_imaging_operations(registry: Registry, access: ImagingAccess) -> No
         return await access.capture(
             ctx.pier, total, float(args["seconds"]), args.get("filter") or "", args["frame_type"],
             int(args["gain"]), int(args["offset"]), args.get("camera_slot") or "primary", progress,
-            bool(args.get("live_stack", False)))
+            bool(args.get("live_stack", False)), int(args.get("binning", 1)))
 
     async def stop(ctx: OperationContext, args: dict[str, Any]) -> Any:
         if not await access.stop(ctx.pier):
@@ -68,7 +68,8 @@ def register_imaging_operations(registry: Registry, access: ImagingAccess) -> No
          Arg("gain", "int", required=False, default=0, minimum=0, maximum=10000),
          Arg("offset", "int", required=False, default=0, minimum=0, maximum=10000),
          Arg("camera_slot", "str", required=False),
-         Arg("live_stack", "bool", required=False, default=False)),
+         Arg("live_stack", "bool", required=False, default=False),
+         Arg("binning", "int", required=False, default=1, minimum=1, maximum=4)),
         needs_lease=True, long_running=True, available=capture_available,
         description="Take one frame or a series; each frame is saved to the Library. With live_stack, a series of "
                     "three or more frames is also registered and averaged into a stack, shown as it builds"), capture)

@@ -11,7 +11,10 @@ own log lines become the operation's progress, and the last run's solutions and 
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -51,6 +54,7 @@ class EngineSolve:
         self._busy = busy or (lambda pier: False)          # whether polar alignment holds the camera and mount
         self._factory: Factory = factory or (lambda pier, log, camera_slot="primary": build_workflow(devices, pier, log, camera_slot))
         self._workflows: dict[str, Any] = {}
+        self._exposing: dict[str, tuple[float, float] | None] = {}   # Pier -> (started, seconds) of the frame being taken
         self._last: dict[str, dict[str, Any]] = {}
 
     def why_not(self, pier: str, mount: bool = False, camera: bool = True, camera_slot: str = "primary") -> str | None:
@@ -92,6 +96,7 @@ class EngineSolve:
 
         def configure(workflow: Any) -> None:
             workflow.on_frame = on_frame
+            workflow.on_exposure = self._on_exposure(pier)
             if target is not None:
                 workflow.set_target(target[0], target[1], target[2])
 
@@ -100,8 +105,10 @@ class EngineSolve:
             binning=binning, gain=gain, filter_name=filter_name,
             action={"nothing": SolveAction.NOTHING, "sync": SolveAction.SYNC,
                     "slew": SolveAction.SLEW_TO_TARGET}[action])
-        return await self._execute(pier, progress, configure, lambda workflow: workflow.capture_and_solve(settings),
-                                   size, accuracy_arcsec, camera_slot)
+        summary = await self._execute(pier, progress, configure,
+                                      lambda workflow: workflow.capture_and_solve(settings),
+                                      size, accuracy_arcsec, camera_slot)
+        return self._unless_failed(summary)
 
     async def load(self, pier: str, *, frame_id: str, progress: Callable[[str], None]) -> dict[str, Any]:
         """Load & Slew: solve a Library frame and slew the mount to where it points."""
@@ -115,9 +122,36 @@ class EngineSolve:
             path = await asyncio.to_thread(ensure_local_sync, frame_id)
         except (LocationError, KeyError, ValueError, OSError) as exc:
             raise Refused(f"that frame is not available: {exc}") from exc
-        return await self._execute(pier, progress, lambda workflow: None,
-                                   lambda workflow: workflow.solve_file(str(path), slew=True), {"width": 0, "height": 0},
-                                   None)
+        summary = await self._execute(pier, progress, lambda workflow: None,
+                                      lambda workflow: workflow.solve_file(str(path), slew=True),
+                                      {"width": 0, "height": 0}, None)
+        return self._unless_failed(summary)
+
+    @staticmethod
+    def _unless_failed(summary: dict[str, Any]) -> dict[str, Any]:
+        """A run that ended without a solution is a failure the client is told about, with the workflow's own reason
+        (the summary, with its log, is already published as ``solve.last``). A run the user stopped is not."""
+        if summary["solved"] or summary["stopped"]:
+            return summary
+        solutions = summary["solutions"]
+        reason = (solutions[-1].get("failure_reason") if solutions else "") or ""
+        if not reason:                                    # it never got as far as a solver: the log says why
+            reason = next((line for line in reversed(summary["log"])
+                           if line.startswith(("Failed", "Capture failed", "No camera", "Could not"))), "")
+        raise Refused(f"the plate solve did not succeed: {reason or 'no solution was found'}")
+
+    def _on_exposure(self, pier: str) -> Callable[[float | None, str], None]:
+        def notify(seconds: float | None, label: str) -> None:
+            self._exposing[pier] = (time.time(), float(seconds)) if seconds else None
+        return notify
+
+    async def _publish_progress(self, pier: str) -> None:
+        """While a solve runs, publish how far the exposure being taken has got (0 to 1, twice a second)."""
+        while True:
+            taken = self._exposing.get(pier)
+            fraction = None if taken is None else min(1.0, max(0.0, (time.time() - taken[0]) / taken[1]))
+            self._publish(pier, "solve.exposure_progress", fraction)
+            await asyncio.sleep(0.5)
 
     def cameras(self, pier: str) -> list[dict[str, Any]]:
         """The Pier's cameras by slot, for the apps' camera choice."""
@@ -143,6 +177,7 @@ class EngineSolve:
 
         self._workflows[pier] = None                       # claimed, so a second request is refused at once
         self._publish(pier, "solve.running", True)
+        ticker = asyncio.create_task(self._publish_progress(pier))
         if accuracy_arcsec is not None:
             self._publish(pier, "solve.accuracy_arcsec", accuracy_arcsec)
         try:
@@ -164,6 +199,11 @@ class EngineSolve:
             self._publish(pier, "solve.last", summary)
             return summary
         finally:
+            ticker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ticker
+            self._exposing.pop(pier, None)
+            self._publish(pier, "solve.exposure_progress", None)
             self._workflows.pop(pier, None)
             self._publish(pier, "solve.running", False)
 

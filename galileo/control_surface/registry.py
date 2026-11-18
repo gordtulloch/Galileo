@@ -200,8 +200,14 @@ class Registry:
 
     async def run(self, prepared: Prepared, pier: str, principal: str) -> Outcome:
         spec, handler = prepared.spec, self._ops[prepared.spec.name][1]
+        level = logging.DEBUG if spec.permission_class == "read" else logging.INFO   # reads are polled; only actions are news
+        logger.log(level, "Control Surface: %s asked for %s on %s%s", principal or "unknown", spec.name, pier or "no Pier",
+                    _shown(prepared.args))
         if not spec.long_running:
-            return await self._call(handler, OperationContext(pier, principal), prepared.args)
+            outcome = await self._call(handler, OperationContext(pier, principal), prepared.args)
+            logger.log(level, "Control Surface: %s on %s for %s: %s%s", spec.name, pier or "no Pier", principal or "unknown",
+                        outcome.status, f" ({outcome.reason})" if outcome.reason else "")
+            return outcome
         tracker = OperationTracker(spec.name, pier, principal, self._bus)
         tracker.start()
         task = asyncio.create_task(self._background(handler, OperationContext(pier, principal, tracker),
@@ -217,6 +223,8 @@ class Registry:
         except BaseException:                            # cancelled or died: still exactly one finished
             tracker.finish("unavailable", "the operation was interrupted")
             raise
+        logger.info("Control Surface: %s on %s for %s finished: %s%s", tracker.operation, tracker.pier,
+                    tracker.principal or "unknown", outcome.status, f" ({outcome.reason})" if outcome.reason else "")
         tracker.finish(outcome.status, outcome.reason)
 
     @staticmethod
@@ -233,9 +241,10 @@ class Registry:
             return Outcome("unreachable", str(exc) or "unreachable")
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("Control Surface operation failed")
-            return Outcome("unavailable", "the operation failed")
+            # CSURF-040: internals never reach a client, but the kind of failure and where to look do.
+            return Outcome("unavailable", f"the operation failed ({type(exc).__name__}); the Galileo log has the details")
         return Outcome("ok", value=result)
 
     async def wait_idle(self) -> None:
@@ -246,6 +255,14 @@ class Registry:
     def cancel_background(self) -> None:
         for task in list(self._tasks):
             task.cancel()
+
+
+def _shown(args: dict[str, Any] | None) -> str:
+    """The arguments of a request, short enough for a log line."""
+    if not args:
+        return ""
+    text = ", ".join(f"{k}={v!r}" for k, v in args.items())
+    return f" ({text[:197]}...)" if len(text) > 200 else f" ({text})"
 
 
 __all__ = [

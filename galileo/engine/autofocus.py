@@ -82,7 +82,7 @@ class EngineAutofocus:
     def _publish(self, pier: str) -> None:
         self._state.publish(pier, STATE_KEY, {**self._picture[pier], "points": list(self._picture[pier]["points"])})
 
-    async def run(self, pier: str, *, progress: Callable[[str], None]) -> dict[str, Any]:
+    async def run(self, pier: str, *, progress: Callable[..., None]) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             raise Refused(reason)
@@ -103,7 +103,7 @@ class EngineAutofocus:
             picture.update(steps=int(event.payload.get("num_points", 0)), step=0, points=[], phase="sweeping",
                            message=f"Sweeping {event.payload.get('num_points', 0)} points…")
             self._publish(pier)
-            progress(picture["message"])
+            progress(picture["message"], (picture["step"] / picture["steps"]) if picture["steps"] else None)
 
         def on_frame(event: Any) -> None:
             if not mine(event):
@@ -115,7 +115,7 @@ class EngineAutofocus:
                 picture.update(step=len(picture["points"]),
                                message=f"Point {len(picture['points'])} of {picture['steps']}")
             self._publish(pier)
-            progress(picture["message"])
+            progress(picture["message"], (picture["step"] / picture["steps"]) if picture["steps"] else None)
 
         def on_complete(event: Any) -> None:
             if not mine(event):

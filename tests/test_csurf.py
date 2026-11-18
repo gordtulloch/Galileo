@@ -940,7 +940,9 @@ async def test_tc_csurf_140_solve_refusals_failure_and_stop(registry, bus):
 
     r4 = Registry(bus)
     solve4, _ = _solve_world(r4, succeed=False)
-    await _finish(r4, bus, "solve.capture", {})
+    _, done4 = await _finish(r4, bus, "solve.capture", {})
+    # No solution is a failure the client is told about, in the solver's words (it used to finish "ok" and say nothing).
+    assert done4["outcome"] == "refused" and "no stars" in done4["reason"]
     last = solve4.status("p1")["last"]
     assert last["solved"] is False and last["solutions"][0]["failure_reason"] == "no stars"
     assert "Failed: no stars" in last["log"]
@@ -1315,3 +1317,83 @@ async def test_tc_csurf_140_solve_action_state_and_solution_coordinates(registry
     assert listed.value == {"frames": [{"id": 7, "name": "a.fits"}]}
     parts["camera"] = None                                                            # loading needs no camera
     assert solve.why_not("p1", mount=True, camera=False) is None and "no camera" in solve.why_not("p1")
+
+
+@pytest.mark.requirement("TC-CSURF-145")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_145_polar_workflow_is_built_with_the_fits_header_context(monkeypatch):
+    """CSURF-145: polar.start builds its workflow with the rig's FITS-header context. It once read
+    ``context.frame_context``, which a SessionContext does not have, so every start failed with "the operation
+    failed"."""
+    from types import SimpleNamespace
+
+    from galileo.engine import polar as engine_polar
+
+    async def fake_context(devices, pier):
+        return SimpleNamespace(camera="cam", mount="mnt", filter_wheel="wheel")        # as a SessionContext: no frame_context
+
+    async def fake_frame_context(devices, pier, record, slot):
+        return {"telescope": "Newt 200"}
+
+    monkeypatch.setattr(engine_polar, "build_context", fake_context)
+    monkeypatch.setattr(engine_polar, "site_of", lambda devices, pier: (51.0, -1.0))
+    monkeypatch.setattr("galileo.engine.sessions.frame_context", fake_frame_context)
+    monkeypatch.setattr("galileo.current_object.pier_key", lambda record: "k")
+    monkeypatch.setattr("galileo.observatory.make_pier_solver",
+                        lambda record, pier_key=None: SimpleNamespace(is_available=lambda: True))
+    devices = SimpleNamespace(pier_record=lambda pier: object())
+    workflow = await engine_polar.build_workflow(devices, "p1", lambda message: None, lambda update: None)
+    assert workflow.frame_metadata == {"telescope": "Newt 200"} and workflow.filter_wheel == "wheel"
+
+
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_capture_publishes_the_progress_a_client_draws():
+    """CSURF-120: while a capture runs the engine publishes how far the exposure and the series have got
+    (imaging.exposure_progress, imaging.progress, imaging.frame, imaging.count), and clears them afterwards."""
+    import time
+    from types import SimpleNamespace
+
+    from galileo.control_surface import ObservableState
+    from galileo.engine.imaging import EngineImaging
+
+    state = ObservableState()
+    imaging = EngineImaging(SimpleNamespace(), SimpleNamespace(), state)
+    service = SimpleNamespace(exposure_started_at=time.time() - 5.0, exposure_seconds=10.0, series_done=1)
+    ticker = asyncio.create_task(imaging._publish_progress("p1", service, 4))
+    await asyncio.sleep(0.05)
+    ticker.cancel()
+    assert 0.4 < state.read("p1", "imaging.exposure_progress") < 0.7 and state.read("p1", "imaging.exposure_s") == 10.0
+    assert state.read("p1", "imaging.progress") == 0.25 and state.read("p1", "imaging.frame") == 2
+    assert state.read("p1", "imaging.count") == 4
+    imaging._clear_progress("p1")
+    assert all(state.read("p1", key) is None for key in imaging._PROGRESS_KEYS)
+
+
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_capture_takes_binning(registry, bus):
+    """CSURF-120: imaging.capture accepts binning (1 to 4), for the apps' capture line, and passes it on."""
+    from galileo.control_surface.imaging import register_imaging_operations
+
+    seen = {}
+
+    class Access:
+        def why_not(self, pier):
+            return None
+
+        async def capture(self, pier, count, seconds, filter_name, frame_type, gain, offset, camera_slot, progress,
+                          live_stack=False, binning=1):
+            seen["binning"] = binning
+            return {}
+
+        async def stop(self, pier):
+            return False
+
+        def status(self, pier):
+            return {}
+
+    register_imaging_operations(registry, Access())
+    _, done = await _finish(registry, bus, "imaging.capture", {"seconds": 1, "binning": 2})
+    assert done["outcome"] == "ok" and seen["binning"] == 2
+    assert (await registry.invoke("imaging.capture", {"seconds": 1, "binning": 9}, "p1", "web")).status == "invalid"

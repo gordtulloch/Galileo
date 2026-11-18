@@ -11,6 +11,8 @@ none while a session is running, since both would drive the one camera.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from typing import Any
@@ -24,8 +26,9 @@ logger = logging.getLogger(__name__)
 class EngineImaging:
     """``ImagingAccess`` (``galileo.control_surface.imaging``) over the device service and session runner."""
 
-    def __init__(self, devices: Any, runner: Any) -> None:
+    def __init__(self, devices: Any, runner: Any, state: Any = None) -> None:
         self._devices, self._runner = devices, runner
+        self._state = state                              # where the progress a client draws is published, if anywhere
         self._services: dict[str, Any] = {}              # Pier -> the ImagingService holding its current frame
         self._busy: set[str] = set()
 
@@ -43,7 +46,7 @@ class EngineImaging:
 
     async def capture(self, pier: str, count: int, seconds: float, filter_name: str, frame_type: str,
                       gain: int, offset: int, camera_slot: str, progress: Any,
-                      live_stack: bool = False) -> dict[str, Any]:
+                      live_stack: bool = False, binning: int = 1) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             from galileo.control_surface import Refused
@@ -51,15 +54,49 @@ class EngineImaging:
         self._busy.add(pier)
         try:
             service = (await build_context(self._devices, pier, camera_slot)).make_imaging()
-            service.gain, service.offset = gain, offset
+            service.gain, service.offset, service.binning = gain, offset, binning
             service.live_stack_enabled = live_stack
             self._services[pier] = service
-            ids = await service.capture_series(count, seconds, filter_name, frame_type,
-                                               on_frame_done=progress)
+            ticker = asyncio.create_task(self._publish_progress(pier, service, count))
+            try:
+                ids = await service.capture_series(count, seconds, filter_name, frame_type,
+                                                   on_frame_done=progress)
+            finally:
+                ticker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await ticker
+                self._clear_progress(pier)
             return {"frames": service.series_done, "requested": count, "library_ids": list(ids),
                     "note": service.library_note, "stopped": service.stop_requested}
         finally:
             self._busy.discard(pier)
+
+    _PROGRESS_KEYS = ("imaging.exposure_progress", "imaging.exposure_s", "imaging.progress", "imaging.frame",
+                      "imaging.count")
+
+    async def _publish_progress(self, pier: str, service: Any, count: int) -> None:
+        """While a capture runs, publish how far the exposure and the series have got (twice a second), so a client can
+        draw the bars. ``imaging.exposure_progress`` and ``imaging.progress`` are 0 to 1."""
+        if self._state is None:
+            return
+        while True:
+            started = service.exposure_started_at
+            seconds = float(service.exposure_seconds or 0.0)
+            if started is not None and seconds > 0:
+                self._state.publish(pier, "imaging.exposure_progress", min(1.0, max(0.0, (time.time() - started) / seconds)))
+                self._state.publish(pier, "imaging.exposure_s", seconds)
+            else:
+                self._state.publish(pier, "imaging.exposure_progress", None)
+            done = int(service.series_done)
+            self._state.publish(pier, "imaging.progress", done / count if count else None)
+            self._state.publish(pier, "imaging.frame", min(done + 1, count))
+            self._state.publish(pier, "imaging.count", count)
+            await asyncio.sleep(0.5)
+
+    def _clear_progress(self, pier: str) -> None:
+        if self._state is not None:
+            for key in self._PROGRESS_KEYS:
+                self._state.publish(pier, key, None)
 
     async def stop(self, pier: str) -> bool:
         service = self._services.get(pier)

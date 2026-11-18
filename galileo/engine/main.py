@@ -121,7 +121,7 @@ class Engine:
         register_pier_operations(self.registry, EnginePiers(self.devices, sessions))             # CSURF-100
         from galileo.control_surface.imaging import register_imaging_operations
         from galileo.engine.imaging import EngineImaging
-        register_imaging_operations(self.registry, EngineImaging(self.devices, self.runner))      # CSURF-120
+        register_imaging_operations(self.registry, EngineImaging(self.devices, self.runner, self.state))      # CSURF-120
         from galileo.control_surface.flips import register_flip_operations
         from galileo.engine.flips import EngineFlips
         register_flip_operations(self.registry, EngineFlips(self.devices, self.runner))           # CSURF-170

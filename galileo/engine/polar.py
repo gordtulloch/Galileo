@@ -49,6 +49,7 @@ async def build_workflow(devices: Any, pier: str, log: Callable[[str], None],
     if site is None:
         raise Refused("this Pier's Observatory has no latitude and longitude set")
     from galileo.current_object import pier_key
+    from galileo.engine.sessions import frame_context
     context = await build_context(devices, pier)
     record = devices.pier_record(pier)
     solver = make_pier_solver(record, pier_key=pier_key(record))
@@ -56,7 +57,7 @@ async def build_workflow(devices: Any, pier: str, log: Callable[[str], None],
         raise Refused(f"the plate solver is not set up — {solver.missing_message()}")
     workflow = PolarAlignWorkflow(solver, camera=context.camera, mount=context.mount, latitude=site[0],
                                   longitude=site[1], on_progress=on_progress, log=log,
-                                  frame_metadata=dict(context.frame_context))
+                                  frame_metadata=await frame_context(devices, pier, record, "primary"))
     workflow.filter_wheel = context.filter_wheel
     return workflow
 
@@ -106,7 +107,7 @@ class EnginePolar:
         self._state.publish(pier, STATE_KEY, dict(self._picture[pier]))
 
     async def run(self, pier: str, *, exposure_s: float, settle_s: float, step_deg: float, direction: str,
-                  refraction: bool, slew_from_zenith: bool, progress: Callable[[str], None]) -> dict[str, Any]:
+                  refraction: bool, slew_from_zenith: bool, progress: Callable[..., None]) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             raise Refused(reason)
@@ -141,7 +142,8 @@ class EnginePolar:
                     "arcmin_per_px": geometry.arcmin_per_px}
             picture["log"] = list(log)
             self._publish(pier)
-            progress(update.message)
+            # A fraction while measuring; adjusting has no end, so its bar keeps moving instead.
+            progress(update.message, (update.step / update.steps) if update.steps and update.phase == "measuring" else None)
 
         latest: dict[str, Any] = {"version": 0, "width": 0, "height": 0}
 
