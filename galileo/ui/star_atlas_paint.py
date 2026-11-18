@@ -400,7 +400,7 @@ class StarAtlasPaintMixin(_MixinBase):
                 p.drawText(QPointF(x[i] - metrics.horizontalAdvance(text) / 2.0, y[i]), text)
 
     def _draw_marked(self, p: QPainter, vp) -> None:
-        """Saved targets and Find matches, plotted as objects with the icon of their type and their name whatever
+        """Saved targets, Find matches and the Piers' current objects, plotted as objects with the icon of their type and their name whatever
         the catalog, magnitude and Show settings (and above the ground), so each can be seen and clicked."""
         marked = self._marked_objects()
         if not marked:
@@ -414,7 +414,7 @@ class StarAtlasPaintMixin(_MixinBase):
             x, y, vis = vp.project(np.array([obj["alt"]]), np.array([obj["az"]]))
             if not vis[0] or not (-20 < x[0] < vp.width + 20 and -20 < y[0] < vp.height + 20):
                 continue
-            color = _FOUND_COLOR if why == "found" else _SAVED_COLOR
+            color = _FOUND_COLOR if why in ("found", "current") else _SAVED_COLOR
             r = float(min(40.0, max(6.0, float(obj.get("size_arcmin") or 0.0) * px_per_arcmin / 2.0)))
             self._draw_dso_icon(p, float(x[0]), float(y[0]), str(obj.get("type", "")), r, color)
             p.setPen(color)

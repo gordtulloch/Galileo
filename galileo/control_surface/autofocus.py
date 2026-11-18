@@ -52,7 +52,7 @@ class AutofocusAccess(Protocol):
 def register_autofocus_operations(registry: Registry, access: AutofocusAccess) -> None:
     async def start(ctx: OperationContext, args: dict[str, Any]) -> Any:
         try:
-            return await access.run(ctx.pier, progress=lambda message: ctx.progress(None, message))
+            return await access.run(ctx.pier, progress=lambda message, fraction=None: ctx.progress(fraction, message))
         except (DeviceConnectionError, DeviceTimeoutError) as exc:
             raise Unreachable(str(exc) or "the device did not answer") from exc
         except (DeviceError, SafetyError) as exc:

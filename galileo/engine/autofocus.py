@@ -82,7 +82,7 @@ class EngineAutofocus:
     def _publish(self, pier: str) -> None:
         self._state.publish(pier, STATE_KEY, {**self._picture[pier], "points": list(self._picture[pier]["points"])})
 
-    async def run(self, pier: str, *, progress: Callable[[str], None]) -> dict[str, Any]:
+    async def run(self, pier: str, *, progress: Callable[..., None]) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             raise Refused(reason)
@@ -103,7 +103,7 @@ class EngineAutofocus:
             picture.update(steps=int(event.payload.get("num_points", 0)), step=0, points=[], phase="sweeping",
                            message=f"Sweeping {event.payload.get('num_points', 0)} points…")
             self._publish(pier)
-            progress(picture["message"])
+            progress(picture["message"], (picture["step"] / picture["steps"]) if picture["steps"] else None)
 
         def on_frame(event: Any) -> None:
             if not mine(event):
@@ -111,11 +111,17 @@ class EngineAutofocus:
             if event.payload.get("confirm"):
                 picture.update(phase="confirming", message="Confirming at the best position…")
             else:
-                picture["points"].append([event.payload.get("position"), round(float(event.payload.get("hfr", 0.0)), 3)])
-                picture.update(step=len(picture["points"]),
-                               message=f"Point {len(picture['points'])} of {picture['steps']}")
+                hfr = float(event.payload.get("hfr", 0.0) or 0.0)
+                position = event.payload.get("position")
+                picture["done"] = picture.get("done", 0) + 1
+                if hfr == hfr and abs(hfr) != float("inf"):      # a frame with no stars measures NaN, which isn't JSON
+                    picture["points"].append([position, round(hfr, 3)])
+                    note = f"Point {picture['done']} of {picture['steps']}: HFR {hfr:.2f} at {position}"
+                else:
+                    note = f"Point {picture['done']} of {picture['steps']}: no stars found at {position}"
+                picture.update(step=picture["done"], message=note)
             self._publish(pier)
-            progress(picture["message"])
+            progress(picture["message"], (picture["step"] / picture["steps"]) if picture["steps"] else None)
 
         def on_complete(event: Any) -> None:
             if not mine(event):

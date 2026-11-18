@@ -49,6 +49,7 @@ async def build_workflow(devices: Any, pier: str, log: Callable[[str], None],
     if site is None:
         raise Refused("this Pier's Observatory has no latitude and longitude set")
     from galileo.current_object import pier_key
+    from galileo.engine.sessions import frame_context
     context = await build_context(devices, pier)
     record = devices.pier_record(pier)
     solver = make_pier_solver(record, pier_key=pier_key(record))
@@ -56,7 +57,7 @@ async def build_workflow(devices: Any, pier: str, log: Callable[[str], None],
         raise Refused(f"the plate solver is not set up — {solver.missing_message()}")
     workflow = PolarAlignWorkflow(solver, camera=context.camera, mount=context.mount, latitude=site[0],
                                   longitude=site[1], on_progress=on_progress, log=log,
-                                  frame_metadata=dict(context.frame_context))
+                                  frame_metadata=await frame_context(devices, pier, record, "primary"))
     workflow.filter_wheel = context.filter_wheel
     return workflow
 
@@ -106,7 +107,7 @@ class EnginePolar:
         self._state.publish(pier, STATE_KEY, dict(self._picture[pier]))
 
     async def run(self, pier: str, *, exposure_s: float, settle_s: float, step_deg: float, direction: str,
-                  refraction: bool, slew_from_zenith: bool, progress: Callable[[str], None]) -> dict[str, Any]:
+                  refraction: bool, slew_from_zenith: bool, progress: Callable[..., None]) -> dict[str, Any]:
         reason = self.why_not(pier)
         if reason:
             raise Refused(reason)
@@ -121,6 +122,10 @@ class EnginePolar:
         def note(message: str) -> None:
             log.append(message)
             del log[:-LOG_KEPT]
+            # Whatever the workflow says it is doing (slewing, capturing, solving...) is what the client shows, so a
+            # long step never leaves the last "report" on screen as if nothing were happening.
+            picture.update(message=message, log=list(log))
+            self._publish(pier)
 
         def on_progress(update: Any) -> None:
             picture.update(phase=update.phase, message=update.message, step=update.step, steps=update.steps)
@@ -141,7 +146,8 @@ class EnginePolar:
                     "arcmin_per_px": geometry.arcmin_per_px}
             picture["log"] = list(log)
             self._publish(pier)
-            progress(update.message)
+            # A fraction while measuring; adjusting has no end, so its bar keeps moving instead.
+            progress(update.message, (update.step / update.steps) if update.steps and update.phase == "measuring" else None)
 
         latest: dict[str, Any] = {"version": 0, "width": 0, "height": 0}
 
@@ -161,12 +167,20 @@ class EnginePolar:
             await workflow.align(PolarAlignSettings(
                 exposure_s=exposure_s, settle_s=settle_s, step_deg=step_deg, direction=direction,
                 refraction=refraction, slew_from_zenith=slew_from_zenith))
-            return {"error": picture["error"], "stopped": bool(getattr(workflow, "stopped", False)),
-                    "log": list(log)}
+            stopped = bool(getattr(workflow, "stopped", False))
+            if picture["error"] is None and not stopped:
+                # It ended without measuring anything (a slew refused as obstructed, a frame that would not solve):
+                # that is a failure the client is told about, in the workflow's own words, not a quiet success.
+                raise Refused(f"polar alignment did not complete: {picture['message']}")
+            return {"error": picture["error"], "stopped": stopped, "log": list(log)}
         finally:
             self._workflows.pop(pier, None)
-            picture.update(running=False, phase="finished", log=list(log),
-                           stopped=bool(getattr(workflow, "stopped", False)))
+            stopped = bool(getattr(workflow, "stopped", False))
+            # Once it has ended, the message says so, rather than keeping the last step as if it were still going.
+            ended = ("Polar alignment stopped." if stopped else
+                     "Polar alignment finished." if picture["error"] is not None else
+                     f"Polar alignment ended without a result. Last step: {picture['message']}")
+            picture.update(running=False, phase="finished", log=list(log), stopped=stopped, message=ended)
             self._publish(pier)
 
     async def stop(self, pier: str) -> bool:

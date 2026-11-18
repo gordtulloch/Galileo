@@ -22,13 +22,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_HIPS2FITS_URL = "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
-
-# The CDS HiPS survey queried for cutouts — DSS2's color composite (its red
-# and blue plates combined), preferred over a single-band plate wherever it's
-# available.
-_DSS_HIPS_SURVEY = "CDS/P/DSS2/color"
-
 # Unlike STScI's old dss_search CGI (which returned a FITS cutout at a fixed
 # pixel scale, so a large arcmin request meant a large file that eventually
 # failed to parse), hips2fits takes the OUTPUT pixel size and the sky field of
@@ -52,44 +45,16 @@ def _fetch_hips_cutout_sync(
     generalized to a non-square, larger preview size. Returns ``b""`` on any
     failure (no internet, an unreadable response, …) rather than raising — a
     missing survey image is never fatal to the Framing Assistant."""
-    import io
-
     try:
-        import requests
-        from PIL import Image
+        from galileo.planning.hips_cutout import fetch_cutout
 
-        width_deg = width_arcmin / 60.0
-        height_deg = height_arcmin / 60.0
         if width_arcmin >= height_arcmin:
             width_px = size_px
             height_px = max(1, round(size_px * height_arcmin / width_arcmin)) if width_arcmin else size_px
         else:
             height_px = size_px
             width_px = max(1, round(size_px * width_arcmin / height_arcmin))
-        fov_deg = max(width_deg, height_deg)
-
-        resp = requests.get(
-            _HIPS2FITS_URL,
-            params={
-                "hips": _DSS_HIPS_SURVEY,
-                "width": width_px,
-                "height": height_px,
-                "fov": fov_deg,
-                "projection": "TAN",
-                "coordsys": "icrs",
-                "ra": ra_deg,
-                "dec": dec_deg,
-                "format": "jpg",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        # Round-trip through PIL to confirm the response is actually a decodable
-        # image (a service error can still come back with a 200 status).
-        image = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG")
-        return buf.getvalue()
+        return fetch_cutout(ra_deg, dec_deg, max(width_arcmin, height_arcmin) / 60.0, width_px, height_px)
     except Exception:
         logger.debug(
             "Could not fetch HiPS cutout for RA=%s Dec=%s", ra_deg, dec_deg, exc_info=True

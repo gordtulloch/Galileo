@@ -1162,7 +1162,7 @@ async def test_tc_plt_080_workflow_rotates_measures_then_follows_the_adjustment(
     assert len(measured) >= 2 and workflow.stopped
     assert measured[0].altitude_arcsec == pytest.approx(0.2 * 3600, abs=60)
     assert measured[1].total_arcsec == pytest.approx(measured[0].total_arcsec, abs=15)
-    assert [p.step for p in seen if p.phase == "measuring" and p.message.startswith("Solving")] == [1, 2, 3]
+    assert [p.step for p in seen if p.phase == "measuring" and "taking a frame and solving it" in p.message] == [1, 2, 3]
 
 
 @pytest.mark.requirement("TC-PLT-080")

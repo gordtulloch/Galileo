@@ -60,7 +60,7 @@ def register_polar_operations(registry: Registry, access: PolarAccess) -> None:
         return await access.run(
             ctx.pier, exposure_s=float(args["exposure_s"]), settle_s=float(args["settle_s"]),
             step_deg=float(args["step_deg"]), direction=str(args["direction"]), refraction=bool(args["refraction"]),
-            slew_from_zenith=bool(args["slew_from_zenith"]), progress=lambda message: ctx.progress(None, message))
+            slew_from_zenith=bool(args["slew_from_zenith"]), progress=lambda message, fraction=None: ctx.progress(fraction, message))
 
     async def stop(ctx: OperationContext, args: dict[str, Any]) -> Any:
         if not await access.stop(ctx.pier):

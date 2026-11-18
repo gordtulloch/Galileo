@@ -584,6 +584,220 @@ async def test_tc_csurf_200_scheduler_queue_is_readable_per_pier(registry, setti
     assert names == ["scheduler.jobs"]
 
 
+class _FakeOwner:
+    """Stands in for the desktop that owns the live queue (``galileo.ui.remote_schedule``)."""
+
+    def __init__(self):
+        from galileo.control_surface import Refused
+        self._refused = Refused
+        self.calls: list = []
+        self.running = ""
+        self.upcoming = ["M51"]
+
+    def jobs(self, pier):
+        return [{"name": "M31", "running": bool(self.running), "paused": False, "run_state": "running"},
+                {"name": "M51", "running": False, "paused": False, "run_state": "pending"}]
+
+    def saved(self, pier):
+        return [{"name": "Orion core", "blocks": 5, "target": "M42"}]
+
+    def check(self, pier, name):
+        return {"running": self.running, "upcoming": list(self.upcoming), "reason": ""}
+
+    def run_saved(self, pier, name, preempt):
+        if self.running:
+            raise self._refused("Jobs already running")
+        if self.upcoming and not preempt:
+            raise self._refused("Upcoming jobs are scheduled: repeat with preempt to run now")
+        self.calls.append(("run_saved", name, preempt))
+        return {"started": name}
+
+    def remove(self, pier, name):
+        if name == self.running:
+            raise self._refused("a running job cannot be removed")
+        self.calls.append(("remove", name))
+
+    def reorder(self, pier, name, position):
+        self.calls.append(("reorder", name, position))
+
+    def pause(self, pier):
+        self.calls.append(("pause",))
+
+    def resume(self, pier):
+        self.calls.append(("resume",))
+
+    def stop(self, pier):
+        self.calls.append(("stop",))
+
+
+@pytest.mark.requirement("TC-CSURF-205")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_205_queue_control_goes_through_the_desktop_that_owns_it(registry, settings_db):
+    """CSURF-205/CSURF-186: pause, resume, stop, remove and reorder, and the saved-session operations, are offered
+    only while a desktop owns the queue (otherwise unavailable with the reason); the listed queue is the owner's,
+    with the running job; the owner's rules (a running job is not removed) reach the client as a refusal."""
+    from galileo.control_surface.schedule import (
+        NO_OWNER,
+        ScheduleControl,
+        StoredSchedule,
+        register_schedule_control_operations,
+        register_schedule_operations,
+    )
+
+    control = ScheduleControl(StoredSchedule({"p": "North pier"}.get))
+    register_schedule_operations(registry, control)
+    register_schedule_control_operations(registry, control)
+    owned = {"session.saved", "session.start_check", "session.run_saved", "scheduler.remove", "scheduler.reorder",
+             "scheduler.pause", "scheduler.resume", "scheduler.stop"}
+    cat = {o["name"]: o for o in registry.catalogue("p")["operations"]}
+    assert owned <= set(cat) and all(not cat[n]["available"] and cat[n]["reason"] == NO_OWNER for n in owned)
+    stored = await registry.invoke("scheduler.jobs", {}, "p", "web")
+    assert stored.ok and stored.value["jobs"] == []                       # nothing stored, nothing running
+    assert (await registry.invoke("scheduler.pause", {}, "p", "web")).status == "unavailable"
+
+    owner = _FakeOwner()
+    control.set_owner(owner)
+    cat = {o["name"]: o for o in registry.catalogue("p")["operations"]}
+    assert all(cat[n]["available"] for n in owned)
+    assert cat["session.saved"]["class"] == "read" and cat["scheduler.remove"]["needs_lease"] is True
+    live = await registry.invoke("scheduler.jobs", {}, "p", "web")
+    assert [j["name"] for j in live.value["jobs"]] == ["M31", "M51"] and live.value["jobs"][0]["running"] is False
+    saved = await registry.invoke("session.saved", {}, "p", "web")
+    assert saved.value == {"sessions": [{"name": "Orion core", "blocks": 5, "target": "M42"}]}
+    check = await registry.invoke("session.start_check", {"name": "Orion core"}, "p", "web")
+    assert check.value == {"running": "", "upcoming": ["M51"], "reason": ""}
+
+    # Jobs still to come: refused until the client says to pre-empt them.
+    first = await registry.invoke("session.run_saved", {"name": "Orion core"}, "p", "web")
+    assert first.status == "refused" and "preempt" in first.reason and owner.calls == []
+    second = await registry.invoke("session.run_saved", {"name": "Orion core", "preempt": True}, "p", "web")
+    assert second.ok and owner.calls == [("run_saved", "Orion core", True)]
+    # A job running: refused, whatever else is said.
+    owner.running = "M31"
+    busy = await registry.invoke("session.run_saved", {"name": "Orion core", "preempt": True}, "p", "web")
+    assert busy.status == "refused" and busy.reason == "Jobs already running"
+    assert (await registry.invoke("scheduler.remove", {"name": "M31"}, "p", "web")).status == "refused"
+
+    owner.calls.clear()
+    assert (await registry.invoke("scheduler.remove", {"name": "M51"}, "p", "web")).ok
+    assert (await registry.invoke("scheduler.reorder", {"name": "M51", "position": 0}, "p", "web")).ok
+    for op in ("scheduler.pause", "scheduler.resume", "scheduler.stop"):
+        assert (await registry.invoke(op, {}, "p", "web")).ok
+    assert owner.calls == [("remove", "M51"), ("reorder", "M51", 0), ("pause",), ("resume",), ("stop",)]
+    assert (await registry.invoke("scheduler.reorder", {"name": "M51", "position": -1}, "p", "web")).status == "invalid"
+
+
+@pytest.mark.requirement("TC-CSURF-205")
+@pytest.mark.priority("MVP")
+def test_tc_csurf_205_desktop_owner_applies_the_queue_rules(tmp_path):
+    """CSURF-205/CSURF-186: the desktop's owner lists saved sessions (not templates), refuses to start while a job
+    runs ("Jobs already running") or, with jobs to come, without pre-empt; removes and reorders only jobs that are
+    not running; renumbers the queue to the new order; pauses, resumes and stops the running session."""
+    import datetime
+    import json
+    from types import SimpleNamespace
+
+    pytest.importorskip("PySide6")
+    from galileo.control_surface import Refused
+    from galileo.library.database import db, init_db
+    from galileo.library.models.saved_session import SavedSessionRecord
+    from galileo.library.models.session_template import SessionTemplateRecord
+    from galileo.scheduler import ObservatoryScheduler, SchedulerJob
+    from galileo.session_exec import RunState, SessionProgress
+    from galileo.ui.remote_schedule import DesktopScheduleOwner
+
+    init_db(tmp_path / "owner.db")
+    try:
+        target = {"_type": "TargetBlock", "name": "M42", "ra_deg": 83.8, "dec_deg": -5.4}
+        SavedSessionRecord.create(pier_name="North", name="Orion core", blocks_json=json.dumps([target]))
+        SessionTemplateRecord.create(name="Typical Session", blocks_json="[]")          # a template: never offered
+        scheduler = ObservatoryScheduler()
+        soon = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)).isoformat()
+        jobs = {n: SchedulerJob(n, pier_name="North", priority=i + 1) for i, n in enumerate(("A", "B", "C"))}
+        jobs["B"].scheduled_start_utc = soon
+        for job in jobs.values():
+            scheduler.add_job(job)
+
+        class Controller:
+            def __init__(self):
+                self._runs = {}
+                self.started, self.actions = [], []
+
+            def start_region(self, region):
+                self.started.append(region.name)
+                return [], []
+
+            def pause(self, region):
+                self.actions.append(("pause", region.name))
+
+            def resume(self, region):
+                self.actions.append(("resume", region.name))
+
+            def stop(self, region):
+                self.actions.append(("stop", region.name))
+
+        controller = Controller()
+        pier = SimpleNamespace(id=7, name="North")
+        window = SimpleNamespace(_scheduler_for_pier=lambda name: scheduler, _current_pier=pier, _device_pages={},
+                                 _session_controller=controller)
+        devices = SimpleNamespace(pier_name=lambda p: "North", pier_record=lambda p: pier)
+        owner = DesktopScheduleOwner(window, devices)
+
+        assert owner.saved("p") == [{"name": "Orion core", "blocks": 1, "target": "M42"}]
+        assert owner.check("p", "Orion core") == {"running": "", "upcoming": ["B"], "reason": ""}
+        assert owner.check("p", "Nope")["reason"].startswith("There is no saved session")
+        with pytest.raises(Refused, match="Upcoming jobs"):
+            owner.run_saved("p", "Orion core", False)
+        assert controller.started == []
+        assert owner.run_saved("p", "Orion core", True) == {"started": "Orion core"}
+        assert controller.started == ["Orion core"]
+
+        # Something running: the queue shows it first, it is not movable or removable, and nothing else starts.
+        running = SimpleNamespace(region=SimpleNamespace(name="Orion core"), job=None,
+                                  progress=SessionProgress(state=RunState.RUNNING, frames_done=3, frames_total=10))
+        controller._runs[7] = running
+        listed = owner.jobs("p")
+        assert [j["name"] for j in listed] == ["Orion core", "A", "B", "C"]
+        assert listed[0]["running"] and not listed[0]["queued"] and not listed[0]["paused"]
+        assert listed[0]["frames_captured"] == 3 and not any(j["running"] for j in listed[1:])
+        with pytest.raises(Refused, match="Jobs already running"):
+            owner.run_saved("p", "Orion core", True)
+        assert owner.check("p", "Orion core")["running"] == "Orion core"
+        running.progress = SessionProgress(state=RunState.PAUSED)
+        assert owner.jobs("p")[0]["paused"] is True
+        owner.pause("p")
+        owner.resume("p")
+        owner.stop("p")
+        assert controller.actions == [("pause", "Orion core"), ("resume", "Orion core"), ("stop", "Orion core")]
+        del controller._runs[7]
+        with pytest.raises(Refused, match="No job is running"):
+            owner.stop("p")
+
+        # A queued job that is running is neither removed nor moved.
+        scheduler.active_job = jobs["A"]
+        with pytest.raises(Refused, match="cannot be removed"):
+            owner.remove("p", "A")
+        with pytest.raises(Refused, match="cannot be moved"):
+            owner.reorder("p", "A", 2)
+        owner.reorder("p", "C", 0)                                           # the running job stays first
+        assert [j.name for j in scheduler.get_ordered_jobs()] == ["A", "C", "B"]
+        assert [j.priority for j in scheduler.get_ordered_jobs()] == [1, 2, 3]
+        scheduler.active_job = None
+        owner.reorder("p", "C", 0)
+        assert [j.name for j in scheduler.get_ordered_jobs()] == ["C", "A", "B"]
+        owner.remove("p", "B")
+        assert [j.name for j in scheduler.get_ordered_jobs()] == ["C", "A"]
+        with pytest.raises(Refused, match="no queued job"):
+            owner.remove("p", "B")
+
+        window._current_pier = SimpleNamespace(id=8, name="South")           # another Pier is on the desktop's screen
+        assert "Select this Pier" in owner.check("p", "Orion core")["reason"]
+        with pytest.raises(Refused, match="Select this Pier"):
+            owner.run_saved("p", "Orion core", True)
+    finally:
+        db.close()
+
+
 class _FakePhd2:
     """Stands in for ``Phd2Adapter``: records what the service asks of PHD2, answers like PHD2 would."""
 
@@ -592,6 +806,7 @@ class _FakePhd2:
         self.on_event = self.on_disconnect = None
         self.requests: list = []
         self.reject = set(reject)
+        self.equipment = True               # whether PHD2's own camera and mount are connected
 
     async def connect(self):
         self.is_connected = True
@@ -600,12 +815,14 @@ class _FakePhd2:
         self.is_connected = False
 
     def call(self, method, params=None, timeout=0):
-        return {"get_app_state": "Stopped", "get_exposure": 2000, "get_pixel_scale": 1.5, "get_connected": True,
+        return {"get_app_state": "Stopped", "get_exposure": 2000, "get_pixel_scale": 1.5, "get_connected": self.equipment,
                 "get_calibrated": False}.get(method)
 
     def request(self, method, params=None):
         from concurrent.futures import Future
         self.requests.append((method, params))
+        if method == "set_connected":
+            self.equipment = bool(params[0])
         f: Future = Future()
         if method in self.reject:
             f.set_exception(RuntimeError("no star selected"))
@@ -643,10 +860,11 @@ async def test_tc_csurf_160_guiding_connects_commands_and_reports(registry, monk
     import base64
 
     guiding, fake, state = _guiding_world(registry, monkeypatch)
+    fake.equipment = False
     try:
         cat = {o["name"]: o for o in registry.catalogue("p1")["operations"] if o["name"].startswith("guiding.")}
         assert set(cat) == {"guiding.status", "guiding.star", "guiding.connect", "guiding.disconnect", "guiding.start",
-                            "guiding.recalibrate", "guiding.stop", "guiding.dither", "guiding.find_star",
+                            "guiding.recalibrate", "guiding.stop", "guiding.dither", "guiding.find_star", "guiding.loop",
                             "guiding.select_star"}
         assert cat["guiding.connect"]["available"] is True
         assert cat["guiding.start"]["available"] is False and "not connected" in cat["guiding.start"]["reason"]
@@ -655,13 +873,15 @@ async def test_tc_csurf_160_guiding_connects_commands_and_reports(registry, monk
         assert before.status == "unavailable" and fake.requests == []
 
         out = await registry.invoke("guiding.connect", {}, "p1", "web")
-        assert out.ok and out.value == {"connected": True, "host": "phd2.local", "port": 4401}
+        assert out.ok and out.value == {"connected": True, "equipment_connected": True, "host": "phd2.local",
+                                        "port": 4401}
         assert (await registry.invoke("guiding.connect", {}, "p1", "web")).status == "unavailable"   # already
+        assert "set_connected" in [r[0] if isinstance(r, tuple) else r for r in fake.requests]   # PHD2's equipment too
         assert guiding.service("p1") is not None                                                    # sessions use it
         assert state.read("p1", "guiding.state") == {"connected": True, "app_state": "Stopped", "guiding": False,
                                                      "settling": False}
 
-        for op, method in (("guiding.start", "guide"), ("guiding.dither", "dither"),
+        for op, method in (("guiding.start", "guide"), ("guiding.dither", "dither"), ("guiding.loop", "loop"),
                            ("guiding.find_star", "find_star"), ("guiding.stop", "stop_capture")):
             fake.requests.clear()
             out = await registry.invoke(op, {}, "p1", "web")
@@ -940,7 +1160,9 @@ async def test_tc_csurf_140_solve_refusals_failure_and_stop(registry, bus):
 
     r4 = Registry(bus)
     solve4, _ = _solve_world(r4, succeed=False)
-    await _finish(r4, bus, "solve.capture", {})
+    _, done4 = await _finish(r4, bus, "solve.capture", {})
+    # No solution is a failure the client is told about, in the solver's words (it used to finish "ok" and say nothing).
+    assert done4["outcome"] == "refused" and "no stars" in done4["reason"]
     last = solve4.status("p1")["last"]
     assert last["solved"] is False and last["solutions"][0]["failure_reason"] == "no stars"
     assert "Failed: no stars" in last["log"]
@@ -1315,3 +1537,89 @@ async def test_tc_csurf_140_solve_action_state_and_solution_coordinates(registry
     assert listed.value == {"frames": [{"id": 7, "name": "a.fits"}]}
     parts["camera"] = None                                                            # loading needs no camera
     assert solve.why_not("p1", mount=True, camera=False) is None and "no camera" in solve.why_not("p1")
+
+
+@pytest.mark.requirement("TC-CSURF-145")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_145_polar_workflow_is_built_with_the_fits_header_context(monkeypatch):
+    """CSURF-145: polar.start builds its workflow with the rig's FITS-header context. It once read
+    ``context.frame_context``, which a SessionContext does not have, so every start failed with "the operation
+    failed"."""
+    from types import SimpleNamespace
+
+    from galileo.engine import polar as engine_polar
+
+    async def fake_context(devices, pier):
+        return SimpleNamespace(camera="cam", mount="mnt", filter_wheel="wheel")        # as a SessionContext: no frame_context
+
+    async def fake_frame_context(devices, pier, record, slot):
+        return {"telescope": "Newt 200"}
+
+    monkeypatch.setattr(engine_polar, "build_context", fake_context)
+    monkeypatch.setattr(engine_polar, "site_of", lambda devices, pier: (51.0, -1.0))
+    monkeypatch.setattr("galileo.engine.sessions.frame_context", fake_frame_context)
+    monkeypatch.setattr("galileo.current_object.pier_key", lambda record: "k")
+    monkeypatch.setattr("galileo.observatory.make_pier_solver",
+                        lambda record, pier_key=None: SimpleNamespace(is_available=lambda: True))
+    devices = SimpleNamespace(pier_record=lambda pier: object())
+    workflow = await engine_polar.build_workflow(devices, "p1", lambda message: None, lambda update: None)
+    assert workflow.frame_metadata == {"telescope": "Newt 200"} and workflow.filter_wheel == "wheel"
+
+
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_capture_publishes_the_progress_a_client_draws():
+    """CSURF-120: while a capture runs the engine publishes how far the exposure and the series have got
+    (imaging.exposure_progress, imaging.progress, imaging.frame, imaging.count), and clears them afterwards."""
+    import time
+    from types import SimpleNamespace
+
+    from galileo.control_surface import ObservableState
+    from galileo.engine.imaging import EngineImaging
+
+    state = ObservableState()
+    imaging = EngineImaging(SimpleNamespace(), SimpleNamespace(), state)
+    service = SimpleNamespace(exposure_started_at=time.time() - 5.0, exposure_seconds=10.0, series_done=1)
+    ticker = asyncio.create_task(imaging._publish_progress("p1", service, 4))
+    await asyncio.sleep(0.05)
+    ticker.cancel()
+    assert 0.4 < state.read("p1", "imaging.exposure_progress") < 0.7 and state.read("p1", "imaging.exposure_s") == 10.0
+    assert state.read("p1", "imaging.progress") == 0.25 and state.read("p1", "imaging.frame") == 2
+    assert state.read("p1", "imaging.count") == 4
+    assert state.read("p1", "imaging.phase") == "integrating"
+    service.exposure_started_at = time.time() - 11.0                                  # past its 10 s: being read out
+    ticker = asyncio.create_task(imaging._publish_progress("p1", service, 4))
+    await asyncio.sleep(0.05)
+    ticker.cancel()
+    assert state.read("p1", "imaging.phase") == "downloading" and state.read("p1", "imaging.exposure_progress") == 1.0
+    imaging._clear_progress("p1")
+    assert all(state.read("p1", key) is None for key in imaging._PROGRESS_KEYS)
+
+
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_capture_takes_binning(registry, bus):
+    """CSURF-120: imaging.capture accepts binning (1 to 4), for the apps' capture line, and passes it on."""
+    from galileo.control_surface.imaging import register_imaging_operations
+
+    seen = {}
+
+    class Access:
+        def why_not(self, pier):
+            return None
+
+        async def capture(self, pier, count, seconds, filter_name, frame_type, gain, offset, camera_slot, progress,
+                          live_stack=False, binning=1):
+            seen["binning"] = binning
+            return {}
+
+        async def stop(self, pier):
+            return False
+
+        def status(self, pier):
+            return {}
+
+    register_imaging_operations(registry, Access())
+    _, done = await _finish(registry, bus, "imaging.capture", {"seconds": 1, "binning": 2})
+    assert done["outcome"] == "ok" and seen["binning"] == 2
+    assert (await registry.invoke("imaging.capture", {"seconds": 1, "binning": 9}, "p1", "web")).status == "invalid"

@@ -29,7 +29,7 @@ The blocks you can add. Drag one into a session. A block that needs a Target bef
 
 ## Save
 
-Keeps this session. A saved (or scheduled) session stays on this screen, with any later edits, even after you close Galileo, until it has completed or you delete it. A session you never saved or scheduled is not kept.
+Keeps this session. The first time, it asks for a **name** (it starts with the session's current one); if a saved session of that name already exists on this Pier it asks before replacing it. That name is what the saved session is called on a phone or tablet running MobileConnect, which lists the saved sessions of the Pier it is working on and can run one. A saved (or scheduled) session stays on this screen, with any later edits, even after you close Galileo, until it has completed or you delete it. A session you never saved or scheduled is not kept.
 
 ## Save as Template
 

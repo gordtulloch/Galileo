@@ -164,7 +164,13 @@ def register_device_operations(registry: Registry, access: DeviceAccess, holds: 
         (Arg("celsius", "float", minimum=-60, maximum=40, unit="°C"),))
 
     # -- the rest of the train ------------------------------------------------------------------------------
-    add("filter.names", "filter_wheel", "filter wheel", lambda c, a: ctrl(c, "filter_wheel").get_filter_names(), cls="read")
+    def _filter_names(c: OperationContext, a: dict[str, Any]) -> list[str]:
+        # The pool holds the raw adapter, which has ``filter_names`` rather than the controller's ``get_filter_names``.
+        wheel = ctrl(c, "filter_wheel")
+        getter = getattr(wheel, "get_filter_names", None)
+        return list(getter() if callable(getter) else getattr(wheel, "filter_names", None) or [])
+
+    add("filter.names", "filter_wheel", "filter wheel", _filter_names, cls="read")
     add("filter.select", "filter_wheel", "filter wheel", lambda c, a: ctrl(c, "filter_wheel").move_to_filter(a["name"]),
         (Arg("name", "str"),))
     add("rotator.status", "rotator", "rotator", lambda c, a: ctrl(c, "rotator").get_status(), cls="read")
@@ -181,7 +187,14 @@ def register_device_operations(registry: Registry, access: DeviceAccess, holds: 
         lambda c, a: ctrl(c, "flat_panel").light_on() if a["on"] else ctrl(c, "flat_panel").light_off(), (Arg("on", "bool"),))
     add("flatpanel.brightness", "flat_panel", "flat panel", lambda c, a: ctrl(c, "flat_panel").set_brightness(a["level"]),
         (Arg("level", "int", minimum=0, maximum=65535),))
-    add("weather.readings", "weather", "weather station", lambda c, a: ctrl(c, "weather").get_readings(), cls="read")
+    async def _weather_readings(c: OperationContext, a: dict[str, Any]) -> dict:
+        # The pool holds the raw adapter (it has the values, not ``get_readings``); poll it for a fresh set.
+        from galileo.core.devices import WeatherController
+        controller = WeatherController(ctrl(c, "weather"))
+        await controller.poll()
+        return controller.get_readings()
+
+    add("weather.readings", "weather", "weather station", _weather_readings, cls="read")
 
     # -- switches and the Imaging screen's own controls (EQP-SW-150) -----------------------------------------
     def switches(ctx: OperationContext) -> Any:

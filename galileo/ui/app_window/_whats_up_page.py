@@ -496,9 +496,15 @@ class AppWindowWhatsUpPageMixin:
                         data, error = astrospheric.fetch_forecast(key, location.latitude, location.longitude)
                         hours = astrospheric.hourly(data) if data else {}
                     hours["Aurora"] = sky_conditions.fetch_kp_cells()
+                    smoke: list = []
                     if window_start.astimezone().date() == _dt.datetime.now().astimezone().date():
-                        hours["Smoke"] = sky_conditions.fetch_smoke_cell(
+                        smoke = sky_conditions.fetch_smoke_cell(
                             location.latitude, location.longitude, window_start, window_end)
+                    if not smoke:
+                        # Always show the row: one grey "no data" cell across the night (value None).
+                        smoke = [(window_start.astimezone(_dt.UTC), None, "#666666",
+                                  (window_end - window_start).total_seconds() / 3600.0)]
+                    hours["Smoke"] = smoke
                     self.done.emit(hours, error)
 
             def on_done(hours, error) -> None:

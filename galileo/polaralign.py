@@ -527,7 +527,8 @@ class PolarAlignWorkflow(SolveWorkflow):
 
         for i in range(MEASURE_POINTS):
             if i:
-                self._report("measuring", f"Rotating the mount {settings.step_deg:g}° {settings.direction}…", i)
+                self._report("measuring", f"Rotating the mount {settings.step_deg:g}° {settings.direction} to position {i + 1} of "
+                                          f"{MEASURE_POINTS}…", i)
                 moved = await self._slew_and_arrive((start_ra + offsets[i]) % 360.0, dec, system, settings)
                 if moved is None:
                     return
@@ -535,7 +536,7 @@ class PolarAlignWorkflow(SolveWorkflow):
                 turned = _wrap180(moved[0] - start_ra)
                 if abs(turned) < _TRAVEL_WARN_FRACTION * abs(offsets[i]):
                     self._log(f"The mount turned {turned:+.1f}° of the {offsets[i]:+.1f}° asked for; carrying on.")
-            self._report("measuring", f"Solving position {i + 1} of {MEASURE_POINTS}…", i + 1)
+            self._report("measuring", f"Position {i + 1} of {MEASURE_POINTS}: taking a frame and solving it…", i + 1)
             solved = await self._capture_solve(settings, hint, attempt)
             attempt += 1
             if solved is None:

@@ -129,6 +129,7 @@ class ImagingService:
         # as configured".
         self.gain: int = 0
         self.offset: int = 0
+        self.binning: int = 1                  # only passed to the camera when above 1, as the Solve screen does
         self.frame_context: dict = {}          # what the page knows about the rig: telescope, site, ...
         self.last_shot: dict = {}              # when and how the frame in ``current_frame`` was taken
         # Series capture and Library auto-save (IMG-150).
@@ -734,6 +735,8 @@ class ImagingService:
             options["gain"] = int(gain)
         if offset:
             options["offset"] = int(offset)
+        if self.binning > 1:
+            options["binning"] = int(self.binning)
         self.exposure_started_at, self.exposure_seconds = time.time(), float(duration)
         try:
             await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)

@@ -547,7 +547,7 @@ def test_star_atlas_deep_sky_catalog_parses_openngc_with_messier_and_caldwell():
     assert sky.catalogs_of(m31) == {"Messier", "NGC"}
     assert sky.catalogs_of(objs["NGC 7000"]) == {"Caldwell", "NGC"}
     assert sky.catalogs_of(objs["C 99"]) == {"Caldwell"} and sky.catalogs_of(objs["M40"]) == {"Messier"}
-    assert sky.catalogs_of(objs["IC 1"]) == set()
+    assert sky.catalogs_of(objs["IC 1"]) == {"IC"}
     assert objs["M40"].designations.count("M40") == 1
 
 
@@ -564,7 +564,7 @@ def test_star_atlas_view_draws_only_the_selected_deep_sky_catalogs(view):
             dso("NGC 500", ["NGC 500"], 10.0), dso("NGC 501", ["NGC 501"], 99.0)]
     view.set_catalogs(sa._fallback_catalog(), dsos)
     assert view.dso_catalogs == {"Messier"}                  # Messier is on by default
-    assert view.dso_catalog_counts() == {"Messier": 1, "Caldwell": 1, "NGC": 2}
+    assert view.dso_catalog_counts() == {"Messier": 1, "Caldwell": 1, "NGC": 2, "IC": 0}
     assert len(view._dsos) == 3                               # NGC 501 has no magnitude and is in no curated list
     view.dso_mag_limit = 16.0
     view.center_on_altaz(85.0, 0.0)

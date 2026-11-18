@@ -387,6 +387,9 @@ class GuidingService:
         self._is_guiding = False
         self._frame_lock = threading.Lock()
         self._frame_busy = False
+        self._frame_remote = False      # PHD2's saved frame is not readable here (PHD2 is on another computer)
+        self._wide_star: tuple[float, float] | None = None   # where the star is within that stand-in image
+        self._wide_size = 0             # the cut-out size last asked for as a stand-in for the frame; 0 = not yet chosen
 
     @property
     def is_connected(self) -> bool:
@@ -477,6 +480,9 @@ class GuidingService:
         removed. PHD2 does not stream frames to network clients, so this only works when that file is readable from
         this machine (PHD2 on the same computer, or a shared folder); otherwise the frame stays unavailable and the
         guide-star cut-out is all there is. At most one fetch is in flight."""
+        if self._frame_remote:
+            self._request_wide_view()
+            return
         with self._frame_lock:
             if self._frame_busy or self._client is None:
                 return
@@ -493,6 +499,11 @@ class GuidingService:
                 if data is not None:
                     self.model.set_frame(np.asarray(data))
                 Path(path).unlink(missing_ok=True)
+            except FileNotFoundError as exc:
+                # PHD2 saved it on its own computer. Use a large guide-star cut-out as the wide view from now on.
+                self._frame_remote = True
+                logger.info("PHD2's saved frame %s is not on this computer (%s); using a large guide-star image instead.",
+                            path, exc)
             except Exception as exc:
                 logger.debug("Could not read PHD2's saved frame %s: %s", path, exc)
             finally:
@@ -512,6 +523,60 @@ class GuidingService:
             threading.Thread(target=read, args=(name,), name="guide-frame", daemon=True).start()
 
         self._client.request("save_image", None).add_done_callback(done)
+
+    def _request_wide_view(self) -> None:
+        """Stand in for the whole guide frame with the biggest ``get_star_image`` PHD2 will give: the cut-out is centred on
+        the guide star and is sent over the network, unlike ``save_image``. Starts at the frame's smaller side (at most
+        640 pixels) and halves the size each time PHD2 refuses it, down to the small cut-out; what PHD2 returns is logged
+        once so the real limit is known."""
+        with self._frame_lock:
+            if self._frame_busy or self._client is None:
+                return
+            self._frame_busy = True
+        if not self._wide_size:
+            side = min(self.model.frame_size) if self.model.frame_size else 640
+            self._wide_size = max(100, min(640, int(side)))
+        size = self._wide_size
+
+        def done(future: Future) -> None:
+            try:
+                exc = future.exception()
+                result = None if exc is not None else future.result()
+                if exc is not None or not isinstance(result, dict):
+                    if size > 100:
+                        self._wide_size = max(100, size // 2)
+                        logger.info("PHD2 refused a %d-pixel guide-star image (%s); trying %d.", size, exc or result,
+                                    self._wide_size)
+                    return
+                width, height = int(result["width"]), int(result["height"])
+                pixels = base64.b64decode(result["pixels"])
+                if len(pixels) != width * height * 2:
+                    return
+                if not getattr(self, "_wide_logged", False):
+                    self._wide_logged = True
+                    logger.info("Asked PHD2 for a %d-pixel guide-star image; it gave %dx%d.", size, width, height)
+                pos = result.get("star_pos") or [width / 2, height / 2]
+                self._wide_star = (float(pos[0]), float(pos[1]))
+                self.model.set_frame(np.frombuffer(pixels, dtype="<u2").reshape(height, width))
+            except Exception as err:
+                logger.debug("Could not use PHD2's guide-star image as the frame: %s", err)
+            finally:
+                with self._frame_lock:
+                    self._frame_busy = False
+
+        self._client.request("get_star_image", [size]).add_done_callback(done)
+
+    @property
+    def frame_is_wide_view(self) -> bool:
+        """The ``frame`` is a large guide-star image, not PHD2's whole frame, so taps on it are in its own pixels."""
+        return self._frame_remote and self._wide_star is not None
+
+    def wide_view_to_frame(self, x: float, y: float) -> tuple[float, float] | None:
+        """A point on the wide view, as a point on the camera's frame (the star is the common point)."""
+        star = self.model.snapshot().star_pos
+        if self._wide_star is None or star is None:
+            return None
+        return x - self._wide_star[0] + star[0], y - self._wide_star[1] + star[1]
 
     def cutout_to_frame(self, x: float, y: float) -> tuple[float, float] | None:
         """A point on the guide-star cut-out, as a point on the whole guide frame. ``None`` until both the cut-out and

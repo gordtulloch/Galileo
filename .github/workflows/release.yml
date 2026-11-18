@@ -124,6 +124,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          body_path: docs/release-notes/${{ github.ref_name }}.md
 
   # Rebuilds every plugin ZIP and its release in gordtulloch/Galileo-Plugins by dispatching that repo's workflow.
   # Needs a repo secret PLUGINS_REPO_TOKEN: a fine-grained PAT on Galileo-Plugins with Actions read/write.
