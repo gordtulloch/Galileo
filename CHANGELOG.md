@@ -10,8 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Survey thumbnails and Framing cutouts now come from IRSA's HiPS mirror, not CDS hips2fits.** The CDS services (`alasky.cds.unistra.fr`) are down, so target thumbnails (Targets, What's Up Tonight) and the Framing Assistant's survey image failed. New `galileo.planning.hips_cutout` builds the same north-up DSS2 colour cutout locally from the static tiles at `https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color/` (tiles are disk-cached under the cache dir's `hips/`). Both `_fetch_hips_thumbnail_sync` and `_fetch_hips_cutout_sync` use it; their signatures and the thumbnail cache are unchanged. The Mellinger sky-map background is unaffected (IRSA doesn't mirror it). **Checked:** M81 and M42 cutouts render correctly oriented against the live mirror; no visible controls changed, so no help or wiki change.
+
 ### Fixed
 
+- **What's Up Tonight: the Smoke row is always shown.** When NOAA smoke data is unavailable (not today's date, outside North America, or a failed fetch) the row now shows one grey "no data" cell across the night instead of vanishing. No new controls, so no help or wiki change. **Not run:** visually in the app.
+- **What's Up Tonight: forecast row labels (Cloud, Seeing, Smoke, Aurora, …) were drawn over the data cells.** The labels now sit in their own column to the left, and the day/night band uses the same left gutter so hours still line up with the cells beneath. Visual layout only; no controls changed, so no help or wiki change. **Not run:** visually in the app.
 - **A device the desktop connected was held under a second category spelling (`HEAD-090`).** The device service stored desktop-connected filter wheels, flat panels and weather stations as `filterwheel`/`flatpanel`/`weatherstation`, while the Control Surface looks for `filter_wheel`/`flat_panel`/`weather`, so the phone could see them listed as connected yet get "no filter wheel". `DeviceService.adopt` now files every device under the Control Surface name. **Checked:** the name mapping; **not run:** against the phone.
 
 - **The phone no longer reports "Pier has no mount/camera" for devices the desktop shows connected (`HEAD-090`).** With *Hold devices in the device service* on, a mount or camera connected before that (or kept by a screen across a Pier switch) was owned by its screen only, so the Control Surface could not see it and the phone refused with "this Pier has no mount/camera" even after Connect All. The top bar's Connect, and the periodic connect-state refresh, now hand every live adapter the screens hold for the current Pier to the device service (`desktop_devices.adopt_held`), so no separate connect from the phone is needed. **Checked:** imports and existing tests; **not run:** against a real phone and hardware. No visible controls changed, so no help or wiki change.

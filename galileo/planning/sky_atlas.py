@@ -421,12 +421,6 @@ def constellation_for(ra_deg: float, dec_deg: float) -> str:
     return get_constellation(coord)
 
 
-_HIPS2FITS_URL = "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
-
-# DSS2's color composite (its red and blue plates combined), preferred over a
-# single-band plate wherever it's available.
-_DSS_HIPS_SURVEY = "CDS/P/DSS2/color"
-
 # Size-aware thumbnail field of view (SKY-080): padded around the object's own
 # angular size rather than a fixed window, so a point-source star and a
 # multi-degree nebula both crop sensibly — clamped so a tiny/unknown size
@@ -508,7 +502,7 @@ def _fetch_hips_thumbnail_sync(
 ) -> bytes:
     """Blocking HiPS cutout fetch (ported from Obsy's ``Target.save()``,
     ``targets/models.py``, ADR-005; migrated from STScI's dss_search CGI,
-    which caps cutout size, to the CDS hips2fits service, which doesn't):
+    which caps cutout size, to the static DSS2 colour HiPS tiles mirrored by IRSA, since the CDS hips2fits service is down):
     request a pre-rendered JPEG cutout centered on (*ra_deg*, *dec_deg*) from
     the ``CDS/P/DSS2/color`` HiPS survey (no local FITS decoding/normalization
     needed, since the color survey is already an 8-bit-per-channel rendering),
@@ -516,35 +510,10 @@ def _fetch_hips_thumbnail_sync(
     ``asyncio.to_thread`` by :meth:`SkyAtlas._fetch_thumbnail`. Returns ``b""``
     on any failure rather than raising, since a missing thumbnail is never
     fatal to the caller."""
-    import io
-
     try:
-        import requests
-        from PIL import Image
+        from galileo.planning.hips_cutout import fetch_cutout
 
-        fov_deg = max(width_arcmin, height_arcmin) / 60.0
-        resp = requests.get(
-            _HIPS2FITS_URL,
-            params={
-                "hips": _DSS_HIPS_SURVEY,
-                "width": size_px,
-                "height": size_px,
-                "fov": fov_deg,
-                "projection": "TAN",
-                "coordsys": "icrs",
-                "ra": ra_deg,
-                "dec": dec_deg,
-                "format": "jpg",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        # Round-trip through PIL to confirm the response is actually a decodable
-        # image (a service error can still come back with a 200 status).
-        image = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG")
-        return buf.getvalue()
+        return fetch_cutout(ra_deg, dec_deg, max(width_arcmin, height_arcmin) / 60.0, size_px, size_px)
     except Exception:
         logger.debug(
             "Could not fetch HiPS thumbnail for RA=%s Dec=%s", ra_deg, dec_deg, exc_info=True

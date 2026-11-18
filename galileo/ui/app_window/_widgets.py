@@ -318,6 +318,11 @@ class _AltitudeChart(_QWidgetBase):
         painter.end()
 
 
+# Width of the label column left of the day/night band and the forecast rows beneath it. Both widgets
+# use it so their time scales stay aligned and row labels never overlap the data cells.
+_FORECAST_LABEL_GUTTER = 92.0
+
+
 class _DayNightBandChart(_QWidgetBase):
     """A day/night graphic across one local calendar day (WUT-110): a colored
     band from local midnight to local midnight, split into Night /
@@ -381,7 +386,7 @@ class _DayNightBandChart(_QWidgetBase):
         font.setPointSizeF(7.5)
         painter.setFont(font)
 
-        band = QRectF(4, 13, self.width() - 8, 18)
+        band = QRectF(_FORECAST_LABEL_GUTTER, 13, self.width() - _FORECAST_LABEL_GUTTER - 4, 18)
         if not self._segments or self._window_start is None or self._window_end is None:
             painter.setPen(fg)
             painter.drawText(self.rect(), _Qt.AlignmentFlag.AlignCenter, "No day/night data for this date/location.")
@@ -465,7 +470,7 @@ class _AstrosphericStrip(_QWidgetBase):
         font = QFont(painter.font())
         font.setPointSizeF(7.0)
         painter.setFont(font)
-        left, width = 4.0, self.width() - 8.0
+        left, width = _FORECAST_LABEL_GUTTER, self.width() - _FORECAST_LABEL_GUTTER - 4.0
         total = (self._end - self._start).total_seconds() or 1.0
         for row, var in enumerate(self._data):
             top = 1.0 + row * self._ROW_H
@@ -484,9 +489,10 @@ class _AstrosphericStrip(_QWidgetBase):
                 painter.drawRect(cell)
                 if cell.width() >= 18:
                     painter.setPen(QColor("#000000") if fill.lightness() > 128 else QColor("#ffffff"))
-                    painter.drawText(cell, _Qt.AlignmentFlag.AlignCenter, f"{display_value(var, value):.0f}")
+                    text = "no data" if value is None else f"{display_value(var, value):.0f}"
+                    painter.drawText(cell, _Qt.AlignmentFlag.AlignCenter, text)
             painter.setPen(QColor("#ffffff"))
-            painter.drawText(QRectF(left + 3, top, 90, self._ROW_H - 2),
+            painter.drawText(QRectF(4.0, top, _FORECAST_LABEL_GUTTER - 8.0, self._ROW_H - 2),
                              _Qt.AlignmentFlag.AlignVCenter | _Qt.AlignmentFlag.AlignLeft, ROW_LABELS[var])
         painter.end()
 

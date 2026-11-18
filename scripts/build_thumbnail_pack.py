@@ -3,7 +3,7 @@
 
 Usage: python scripts/build_thumbnail_pack.py [--out galileo-thumbnails.zip] [--workers 4] [--limit N] [--no-large]
 
-Downloads sky-survey images (CDS hips2fits, DSS2 colour) for every object in the bundled catalog - the small
+Downloads sky-survey images (DSS2 colour HiPS tiles via IRSA) for every object in the bundled catalog - the small
 150 px result-tile thumbnail and the 640 px click-to-enlarge image (Targets / What's Up Tonight), so the
 enlarged view works offline - and packs them into one ZIP (use --no-large for the tiles only; the large
 images make the pack several times bigger). Galileo's Options > Planning > "Download Catalog Images" fetches that ZIP from
@@ -27,7 +27,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, default=Path("galileo-thumbnails.zip"), help="ZIP file to write")
     parser.add_argument("--workers", type=int, default=4,
-                        help="parallel requests (default 4 — be kind to the free hips2fits service)")
+                        help="parallel requests (default 4 — be kind to the free IRSA tile service)")
     parser.add_argument("--limit", type=int, default=0, help="only the first N catalog objects (for a trial run)")
     parser.add_argument("--no-large", action="store_true", help="skip the 640 px click-to-enlarge images (tiles only)")
     args = parser.parse_args()
