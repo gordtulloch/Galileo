@@ -1276,6 +1276,122 @@ def test_tc_plug_210_registering_again_replaces_rather_than_duplicates(plugin_ma
 
 
 # ---------------------------------------------------------------------------
+# TC-PLUG-220 — solver backend registration
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def solver_registry():
+    from galileo.platesolve import SolverBackendRegistry
+    SolverBackendRegistry.clear()
+    yield SolverBackendRegistry
+    SolverBackendRegistry.clear()
+
+
+def _solver_plugin(plugins, plugin_name, key="fake", ready=True):
+    from galileo.platesolve import SolveResult, SolverBackend
+
+    class Fake(SolverBackend):
+        label = "Fake solver"
+        calls: list = []
+
+        def is_available(self):
+            return ready
+
+        async def solve(self, fits_path, hint, params):
+            type(self).calls.append((fits_path, hint))
+            return SolveResult(success=True, ra_deg=10.0, dec_deg=20.0)
+
+    Fake.key = key
+
+    class SolverPlugin(plugins.PluginBase):
+        name = plugin_name
+        version = "1.0.0"
+        api_version = "1"
+        accepted: bool | None = None
+
+        def activate(self, ctx):
+            type(self).accepted = ctx.register_solver_backend(Fake())
+
+        def deactivate(self): pass
+
+    return SolverPlugin, Fake
+
+
+@pytest.mark.requirement("TC-PLUG-220")
+@pytest.mark.priority("P2")
+async def test_tc_plug_220_plugin_solver_is_offered_and_used_by_the_plate_solver(plugin_manager, solver_registry):
+    """PLUG-220: a plugin registers a solver through PluginContext; it is listed beside the built-in ones and
+    PlateSolver runs it, passing the hint and parameters."""
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.platesolve import PlateSolver, all_backends
+    cls, fake = _solver_plugin(plugins, "SolverPlugin")
+    plugin_manager.load(cls)
+    assert cls.accepted is True
+    assert all_backends()["fake"] == "Fake solver" and "astap" in all_backends()
+    solver = PlateSolver(backend="fake", event_bus=MagicMock())
+    assert solver.is_available() and PlateSolver.is_offline_capable("fake")
+    result = await solver.solve("frame.fits", hint=(1.0, 2.0))
+    assert result.success and result.ra_deg == 10.0
+    assert fake.calls[0][1] == (1.0, 2.0)
+
+
+@pytest.mark.requirement("TC-PLUG-220")
+@pytest.mark.priority("P2")
+def test_tc_plug_220_a_plugin_cannot_replace_a_builtin_or_another_plugins_solver(plugin_manager, solver_registry, caplog):
+    """PLUG-220: a key already taken (ASTAP, or another plugin's solver) is refused with a logged reason."""
+    import logging
+    plugins = pytest.importorskip("galileo.plugins")
+    clash, _ = _solver_plugin(plugins, "Clash", key="astap")
+    first, _ = _solver_plugin(plugins, "First", key="shared")
+    second, _ = _solver_plugin(plugins, "Second", key="shared")
+    with caplog.at_level(logging.ERROR):
+        plugin_manager.load(clash)
+        plugin_manager.load(first)
+        plugin_manager.load(second)
+    assert (clash.accepted, first.accepted, second.accepted) == (False, True, False)
+    assert "already taken" in caplog.text
+    from galileo.platesolve import all_backends
+    assert all_backends()["astap"] == "ASTAP"
+
+
+@pytest.mark.requirement("TC-PLUG-220")
+@pytest.mark.priority("P2")
+async def test_tc_plug_220_disabled_or_unloaded_plugin_solver_is_not_offered(plugin_manager, solver_registry):
+    """PLUG-220 / PLUG-060 / PLUG-120: a disabled plugin's solver is not offered (and says why when selected);
+    unloading drops it."""
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.platesolve import PlateSolver, all_backends
+    cls, _ = _solver_plugin(plugins, "TogglePlugin")
+    plugin_manager.load(cls)
+    plugin_manager.disable("TogglePlugin")
+    assert "fake" not in all_backends()
+    solver = PlateSolver(backend="fake", event_bus=MagicMock())
+    assert not solver.is_available() and "plugin" in solver.missing_message()
+    assert not (await solver.solve("frame.fits")).success
+    plugin_manager.enable("TogglePlugin")
+    assert "fake" in all_backends()
+    plugin_manager.unload("TogglePlugin")
+    assert "fake" not in all_backends()
+
+
+@pytest.mark.requirement("TC-PLUG-220")
+@pytest.mark.priority("P2")
+async def test_tc_plug_220_a_failing_plugin_solver_is_reported_not_raised(plugin_manager, solver_registry):
+    """PLUG-220: an exception in a plugin's solver becomes a failed SolveResult, never an error in the caller."""
+    plugins = pytest.importorskip("galileo.plugins")
+    from galileo.platesolve import PlateSolver
+    cls, fake = _solver_plugin(plugins, "Boom")
+
+    async def boom(self, fits_path, hint, params):
+        raise RuntimeError("index corrupt")
+
+    fake.solve = boom
+    plugin_manager.load(cls)
+    result = await PlateSolver(backend="fake", event_bus=MagicMock()).solve("frame.fits")
+    assert not result.success and "index corrupt" in result.failure_reason
+
+
+# ---------------------------------------------------------------------------
 # TC-PLUG-200
 # ---------------------------------------------------------------------------
 

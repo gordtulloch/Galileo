@@ -305,6 +305,13 @@ class SolveBuildMixin(_MixinBase):
         mode_row.addWidget(self.tetra3_radio)
         self._mode_backends = {self.astap_radio: "astap", self.astrometry_radio: "astrometry_local",
                                self.nova_radio: "astrometry_web", self.tetra3_radio: "tetra3"}
+        # Solvers added by plugins (PLUG-220), e.g. Skyshot, get a button of their own.
+        from galileo.platesolve import SolverBackendRegistry
+        for key, label in SolverBackendRegistry.offered().items():
+            radio = QRadioButton(label)
+            radio.setToolTip(f"{label}, added by a plugin. Set it up under its own page in Options.")
+            mode_row.addWidget(radio)
+            self._mode_backends[radio] = key
         layout.addLayout(mode_row)
         box.addWidget(mode)
 

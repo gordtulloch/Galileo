@@ -339,6 +339,17 @@ class PluginContext:
         SwitchProfileRegistry.register(profile, owner=owner, is_active=probe)
         return True
 
+    def register_solver_backend(self, backend) -> bool:
+        """Register a plate-solver (PLUG-220): a ``galileo.platesolve.SolverBackend`` subclass instance.
+        It then appears in Options > Solve and on the Solve screen beside ASTAP and the others. A key
+        that is already taken (by a built-in solver or another plugin) is refused with ``False`` and a
+        logged reason. While the registering plugin is disabled the solver is not offered (PLUG-060);
+        unloading it drops it (PLUG-120)."""
+        from galileo.platesolve import SolverBackendRegistry
+        owner, host = self._plugin_name, self._host
+        probe = (lambda: host.is_active(owner)) if host is not None and owner else None
+        return SolverBackendRegistry.register(backend, owner=owner, is_active=probe)
+
     def register_instruction_type(self, instruction_cls) -> None:
         """Register a new session block type (PLUG-020, SES-340)."""
         from galileo.session_exec import BlockRegistry
@@ -662,6 +673,8 @@ class PluginManager:
         self._active.pop(name, None)
         from galileo.core.switches import SwitchProfileRegistry
         SwitchProfileRegistry.unregister_owner(name)
+        from galileo.platesolve import SolverBackendRegistry
+        SolverBackendRegistry.unregister_owner(name)
         self._ui_registry._panels = [p for p in self._ui_registry._panels if p.plugin is not plugin]
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
         self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]

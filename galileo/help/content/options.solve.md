@@ -5,7 +5,7 @@ How Galileo runs the plate solver on the current Pier. Plate solving works out e
 
 ## Solver
 
-Which solver Galileo uses by default: **ASTAP** (local, fast, needs its star database), **astrometry.net (local solve-field)** (local, needs the program and its index files; mainly Linux and macOS) or **nova.astrometry.net (web)** (needs internet and an API key; the frame is uploaded, and it is slower). **tetra3 (ESA, local)** (fast and offline, run inside Galileo; needs a star-pattern database matching your field of view (the bundled one is for 10–30° fields); it ignores the position hint and the search radius and relies on the field-of-view hint instead). The Solve screen's *Solver Mode* can override it for a single run.
+Which solver Galileo uses by default: **ASTAP** (local, fast, needs its star database), **astrometry.net (local solve-field)** (local, needs the program and its index files; mainly Linux and macOS) or **nova.astrometry.net (web)** (needs internet and an API key; the frame is uploaded, and it is slower). **tetra3 (ESA, local)** (fast and offline, run inside Galileo; needs a star-pattern database matching your field of view (the bundled one is for 10–30° fields); it ignores the position hint and the search radius and relies on the field-of-view hint instead). The Solve screen's *Solver Mode* can override it for a single run. A plugin can add more solvers to this list, such as **Skyshot (blind, local)** from the Skyshot Solver plugin, which is set up under its own page in Options.
 
 ## ASTAP executable
 

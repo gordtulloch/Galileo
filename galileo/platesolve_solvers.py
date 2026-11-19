@@ -12,8 +12,10 @@ import math
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 from galileo.net import http_request, urlopen_http
 from galileo.bus import Event, SolveCompleteEvent, SolveStartedEvent, get_bus
 
@@ -21,6 +23,85 @@ logger = logging.getLogger(__name__)
 
 
 _OFFLINE_BACKENDS = {"astap", "astrometry_local", "tetra3"}
+
+
+class SolverBackend:
+    """A plate-solver a plugin adds beside the built-in ones (PLUG-220).
+
+    A subclass sets :attr:`key` (the name saved in Options > Solve, so it must stay stable) and
+    :attr:`label`, then implements :meth:`solve`. It reads whatever it needs (an executable, a
+    database folder) from its own plugin settings, so core stores nothing on its behalf. It is
+    given the search hint and parameters; one that cannot use a hint (a blind solver) ignores it.
+    """
+
+    key: str = ""
+    label: str = ""
+    #: True when it works with no internet connection (PLT-020).
+    offline: bool = True
+
+    def is_available(self) -> bool:
+        """True when everything it needs is installed and configured."""
+        return True
+
+    def missing_message(self) -> str:
+        """What to tell the user when :meth:`is_available` is False."""
+        return f"{self.label or self.key} is not set up (see its page under Options)."
+
+    async def solve(self, fits_path: Path, hint: tuple[float, float] | None, params: SolverParams) -> SolveResult:
+        raise NotImplementedError
+
+
+class SolverBackendRegistry:
+    """The solver backends plugins have registered (PLUG-220). Each entry remembers its owning
+    plugin and a liveness probe, so a disabled plugin's backend is not offered (PLUG-060) and a
+    removed plugin's is dropped (PLUG-120)."""
+
+    _entries: ClassVar[dict[str, tuple[SolverBackend, str, Callable[[], bool] | None]]] = {}
+
+    @classmethod
+    def register(cls, backend: SolverBackend, owner: str = "", is_active: Callable[[], bool] | None = None) -> bool:
+        """Add *backend*. A key that clashes with a built-in backend, or with another plugin's, is
+        refused (``False``) so a plugin can never replace ASTAP; the same owner may re-register."""
+        key = backend.key
+        if not key or not backend.label:
+            logger.error("Solver backend %r rejected: it needs a key and a label", type(backend).__name__)
+            return False
+        if key in _BUILTIN_BACKENDS or (key in cls._entries and cls._entries[key][1] != owner):
+            logger.error("Solver backend %r rejected: that key is already taken", key)
+            return False
+        cls._entries[key] = (backend, owner, is_active)
+        return True
+
+    @classmethod
+    def unregister_owner(cls, owner: str) -> None:
+        for key in [k for k, e in cls._entries.items() if e[1] == owner]:
+            del cls._entries[key]
+
+    @classmethod
+    def clear(cls) -> None:
+        cls._entries.clear()
+
+    @classmethod
+    def get(cls, key: str) -> SolverBackend | None:
+        """The backend registered under *key*, or ``None`` when absent or its plugin is disabled."""
+        entry = cls._entries.get(key)
+        if entry is None:
+            return None
+        backend, owner, probe = entry
+        try:
+            if probe is None or probe():
+                return backend
+        except Exception:
+            logger.exception("Liveness probe for solver backend %r (plugin %r) failed", key, owner)
+        return None
+
+    @classmethod
+    def offered(cls) -> dict[str, str]:
+        """``{key: label}`` of every backend whose plugin is enabled."""
+        return {key: b.label for key in list(cls._entries) if (b := cls.get(key)) is not None}
+
+
+_BUILTIN_BACKENDS = frozenset({"astap", "astrometry_local", "astrometry_web", "tetra3"})
 
 
 _NOVA_URL = "https://nova.astrometry.net"
@@ -132,6 +213,9 @@ class PlateSolver:
             return bool(self.api_key)
         if self.backend == "tetra3":
             return tetra3_installed()
+        if self.backend not in _BUILTIN_BACKENDS:
+            plugin_backend = SolverBackendRegistry.get(self.backend)
+            return plugin_backend is not None and plugin_backend.is_available()
         return bool(self.executable)
 
     def missing_message(self) -> str:
@@ -144,13 +228,22 @@ class PlateSolver:
         if self.backend == "astrometry_local":
             return ("Solving needs astrometry.net's solve-field and its index files. Install them, "
                     "or set the path in Options > Solve.")
+        if self.backend not in _BUILTIN_BACKENDS:
+            plugin_backend = SolverBackendRegistry.get(self.backend)
+            if plugin_backend is None:
+                return (f"The solver {self.backend!r} comes from a plugin that is not installed or is "
+                        "disabled. Pick another solver in Options > Solve.")
+            return plugin_backend.missing_message()
         return ("Solving needs the ASTAP solver and a star database (both free from hnsky.org/astap.htm). "
                 "Install them, then try again.")
 
     @staticmethod
     def is_offline_capable(backend: str) -> bool:
         """Return True when *backend* does not require internet access (PLT-020)."""
-        return backend in _OFFLINE_BACKENDS
+        if backend in _OFFLINE_BACKENDS:
+            return True
+        plugin_backend = SolverBackendRegistry.get(backend)
+        return plugin_backend is not None and plugin_backend.offline
 
     @staticmethod
     def _find_executable(backend: str) -> str:
@@ -251,6 +344,15 @@ class PlateSolver:
             return await self._run_nova(fits_path, hint)
         if self.backend == "tetra3":
             return await self._run_tetra3(fits_path)
+        plugin_backend = SolverBackendRegistry.get(self.backend)
+        if plugin_backend is not None:
+            try:
+                return await plugin_backend.solve(fits_path, hint, self.params)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("Solver backend %r failed", self.backend)
+                return SolveResult(success=False, failure_reason=f"{plugin_backend.label}: {exc}")
         return SolveResult(success=False, failure_reason=f"Unknown backend: {self.backend}")
 
     async def _run_astap(self, fits_path: Path, hint: tuple[float, float] | None = None) -> SolveResult:

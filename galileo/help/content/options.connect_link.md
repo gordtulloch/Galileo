@@ -19,6 +19,10 @@ How long a pairing request waits for you, and then how long the device has to co
 
 How many days Connect Link keeps its record of what each device did (requests, refusals, who opened an outreach event). Older entries are deleted each day. The log never holds a password, token or secret.
 
+## Listen on
+
+The network address the link listens on and advertises. **Automatic** lets Windows, macOS or Linux pick, which can choose the wrong adapter when the computer has a VPN or virtual adapters (symptom: a phone cannot connect, and the status line above shows an address that is not your Wi-Fi or LAN address). Pick your real LAN address from the list, or type one. Listening on every interface (0.0.0.0) is not allowed. Changing it restarts the listener when you press **Apply**.
+
 ## Advertise on the network
 
 Lets other computers on your network find this one by name instead of by typing its address. Only the computer's name, port and role are announced, never a secret, and finding it does not let anyone pair with it. Changing this restarts the listener when you press **Apply**.

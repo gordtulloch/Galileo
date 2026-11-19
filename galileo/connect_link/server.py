@@ -49,6 +49,24 @@ def default_bind_host() -> str:
         s.close()
 
 
+def lan_addresses() -> list[tuple[str, str]]:
+    """``(address, adapter name)`` for each usable IPv4 address on this computer (up, not loopback,
+    not link-local), for the Options > Connect Link "Listen on" list."""
+    found: list[tuple[str, str]] = []
+    try:
+        import psutil
+        up = {name for name, st in psutil.net_if_stats().items() if st.isup}
+        for name, addrs in psutil.net_if_addrs().items():
+            if name not in up:
+                continue
+            for a in addrs:
+                if a.family == socket.AF_INET and not a.address.startswith(("127.", "169.254.", "0.")):
+                    found.append((a.address, name))
+    except Exception:
+        logger.exception("Could not list the network addresses")
+    return found
+
+
 def default_versions() -> Versions:
     """This node's versions for the handshake (LINK-080), read from the running application."""
     from galileo import __version__
@@ -338,4 +356,4 @@ class LinkServer:
         return web.json_response(result)
 
 
-__all__ = ["API", "DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host", "default_versions"]
+__all__ = ["API", "DEFAULT_PORT", "PROTOCOL_VERSION", "LinkServer", "default_bind_host", "default_versions", "lan_addresses"]

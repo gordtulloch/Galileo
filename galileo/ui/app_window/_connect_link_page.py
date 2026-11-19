@@ -38,10 +38,11 @@ class AppWindowConnectLinkPageMixin:
         (each shown with its confirmation code) and revoke or delete paired devices."""
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import (
-            QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
+            QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
             QMessageBox, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
         )
         from galileo.connect_link.host import get_host
+        from galileo.connect_link.server import lan_addresses
         from galileo.connect_link.service import LinkSettings, SettingsError
 
         inner = QWidget()
@@ -77,6 +78,9 @@ class AppWindowConnectLinkPageMixin:
         retention.setRange(1, 3650)
         retention.setSuffix(" days")
         form.addRow("Keep the audit log for", retention)
+        bind = QComboBox()
+        bind.setEditable(True)
+        form.addRow("Listen on", bind)
         advertise = QCheckBox("Advertise on the network")
         form.addRow(advertise)
         apply_btn = QPushButton("Apply")
@@ -136,6 +140,17 @@ class AppWindowConnectLinkPageMixin:
                 widget.blockSignals(True)
                 widget.setValue(value)
                 widget.blockSignals(False)
+            bind.blockSignals(True)
+            bind.clear()
+            bind.addItem("Automatic", "")
+            for address, adapter in lan_addresses():
+                bind.addItem(f"{address}  ({adapter})", address)
+            index = bind.findData(s.bind_host)
+            if index >= 0:
+                bind.setCurrentIndex(index)
+            else:
+                bind.setEditText(s.bind_host)
+            bind.blockSignals(False)
             for check, value in ((enable, s.enabled), (advertise, s.advertise)):
                 check.blockSignals(True)
                 check.setChecked(value)
@@ -193,9 +208,11 @@ class AppWindowConnectLinkPageMixin:
             refresh()
 
         def on_apply() -> None:
-            current = host().settings()
+            i = bind.currentIndex()
+            picked = i >= 0 and bind.itemText(i) == bind.currentText()   # a list entry, not typed text
+            chosen = str(bind.itemData(i) or "") if picked else bind.currentText().strip()
             new = LinkSettings(enable.isChecked(), port.value(), expiry.value(), retention.value(),
-                               advertise.isChecked(), current.bind_host)
+                               advertise.isChecked(), chosen)
             try:
                 host().apply_settings(new)
             except SettingsError as exc:
@@ -272,7 +289,7 @@ class AppWindowConnectLinkPageMixin:
         timer.timeout.connect(tick)
         timer.start()
         inner._connect_link = {  # type: ignore[attr-defined]
-            "refresh": refresh, "load": load_settings, "enable": enable, "port": port, "expiry": expiry,
+            "refresh": refresh, "load": load_settings, "enable": enable, "port": port, "bind": bind, "expiry": expiry,
             "retention": retention, "advertise": advertise, "apply": apply_btn, "approve": approve_btn,
             "reject": reject_btn, "revoke": revoke_btn, "delete": delete_btn, "pending": pending,
             "peers": peers, "status": status_label, "fingerprint": fingerprint, "host": host,

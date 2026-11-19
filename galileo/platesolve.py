@@ -20,6 +20,8 @@ from typing import Any
 from galileo.platesolve_solvers import (  # noqa: F401  (re-exported: these used to live in this module)
     PlateSolver,
     SolveResult,
+    SolverBackend,
+    SolverBackendRegistry,
     SolverParams,
     _ASTAP_EXIT_REASONS,
     _ASTAP_UNREADABLE,
@@ -47,6 +49,11 @@ BACKENDS = {
     "astrometry_web": "nova.astrometry.net (web)",
     "tetra3": "tetra3 (ESA, local)",
 }
+
+
+def all_backends() -> dict[str, str]:
+    """``{key: label}`` of the built-in solvers plus those enabled plugins have added (PLUG-220)."""
+    return {**BACKENDS, **SolverBackendRegistry.offered()}
 
 
 # ---------------------------------------------------------------------------

@@ -542,7 +542,7 @@ class AppWindowSettingsPagesMixin:
             save_solver_settings,
             save_tetra3_database,
         )
-        from galileo.platesolve import BACKENDS, SolverParams
+        from galileo.platesolve import SolverParams, all_backends
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -562,10 +562,11 @@ class AppWindowSettingsPagesMixin:
         layout.addLayout(form)
 
         backend_combo = QComboBox()
-        for key, label in BACKENDS.items():
+        for key, label in all_backends().items():
             backend_combo.addItem(label, key)
         backend_combo.setToolTip("Which solver the application uses by default: ASTAP, a local astrometry.net "
-                                 "installation, the nova.astrometry.net web service, or ESA's tetra3.")
+                                 "installation, the nova.astrometry.net web service, ESA's tetra3, or one "
+                                 "added by a plugin (such as Skyshot).")
         form.addRow("Solver", backend_combo)
 
         exe_row = QHBoxLayout()

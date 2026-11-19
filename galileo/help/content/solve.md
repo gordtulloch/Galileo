@@ -145,7 +145,7 @@ Shows the frame on this screen with the Library's dark master subtracted, when o
 
 ## Solver Mode
 
-Which solver to use for this run. It starts as the one chosen for the Pier in Options › Solve.
+Which solver to use for this run. It starts as the one chosen for the Pier in Options › Solve. A solver added by a plugin, such as Skyshot, gets a button of its own here once the plugin is installed and enabled.
 
 ## ASTAP
 
