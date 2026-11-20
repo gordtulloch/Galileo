@@ -80,6 +80,7 @@ class AppWindowConnectLinkPageMixin:
         form.addRow("Keep the audit log for", retention)
         bind = QComboBox()
         bind.setEditable(True)
+        bind.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)       # typed text is used, not added to the list
         form.addRow("Listen on", bind)
         advertise = QCheckBox("Advertise on the network")
         form.addRow(advertise)
@@ -199,20 +200,44 @@ class AppWindowConnectLinkPageMixin:
         def warn(text: str) -> None:
             QMessageBox.warning(inner, "Connect Link", text)
 
+        def form_settings() -> LinkSettings | None:
+            """The settings as the form shows them now; None (after a warning) if the address is not valid."""
+            text = bind.currentText().strip()
+            i = bind.findText(text)
+            chosen = str(bind.itemData(i) or "") if i >= 0 else text     # a list entry, or typed text
+            if chosen:
+                import ipaddress
+                try:
+                    ipaddress.IPv4Address(chosen)
+                except ValueError:
+                    warn(f"“{chosen}” is not an IPv4 address such as 192.168.1.20.")
+                    return None
+            return LinkSettings(enable.isChecked(), port.value(), expiry.value(), retention.value(),
+                                advertise.isChecked(), chosen)
+
         def on_enable(checked: bool) -> None:
+            # Save what the form shows first, so turning the link on listens where the page says,
+            # not where the last Apply left it.
+            new = form_settings()
+            if new is None:
+                enable.blockSignals(True)
+                enable.setChecked(not checked)
+                enable.blockSignals(False)
+                return
             try:
+                host().apply_settings(new)
                 host().set_enabled(checked)
+            except SettingsError as exc:
+                warn(str(exc))
             except Exception as exc:
                 logger.exception("Could not change Connect Link")
                 warn(f"Connect Link could not be {'started' if checked else 'stopped'}: {exc}")
             refresh()
 
         def on_apply() -> None:
-            i = bind.currentIndex()
-            picked = i >= 0 and bind.itemText(i) == bind.currentText()   # a list entry, not typed text
-            chosen = str(bind.itemData(i) or "") if picked else bind.currentText().strip()
-            new = LinkSettings(enable.isChecked(), port.value(), expiry.value(), retention.value(),
-                               advertise.isChecked(), chosen)
+            new = form_settings()
+            if new is None:
+                return
             try:
                 host().apply_settings(new)
             except SettingsError as exc:

@@ -52,18 +52,24 @@ def default_bind_host() -> str:
 def lan_addresses() -> list[tuple[str, str]]:
     """``(address, adapter name)`` for each usable IPv4 address on this computer (up, not loopback,
     not link-local), for the Options > Connect Link "Listen on" list."""
+    skip = ("127.", "169.254.", "0.")
     found: list[tuple[str, str]] = []
     try:
         import psutil
         up = {name for name, st in psutil.net_if_stats().items() if st.isup}
         for name, addrs in psutil.net_if_addrs().items():
-            if name not in up:
-                continue
-            for a in addrs:
-                if a.family == socket.AF_INET and not a.address.startswith(("127.", "169.254.", "0.")):
-                    found.append((a.address, name))
-    except Exception:
-        logger.exception("Could not list the network addresses")
+            if name in up:
+                found += [(a.address, name) for a in addrs
+                          if a.family == socket.AF_INET and not a.address.startswith(skip)]
+    except Exception:                       # psutil missing or failing: fall back to the host name's addresses
+        logger.warning("Listing adapters with psutil failed; using the host name's addresses", exc_info=True)
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                address = str(info[4][0])
+                if not address.startswith(skip) and all(address != f[0] for f in found):
+                    found.append((address, "this computer"))
+        except OSError:
+            logger.exception("Could not list the network addresses")
     return found
 
 
