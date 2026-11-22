@@ -145,27 +145,6 @@ def test_tc_log_050_log_file_resets_each_run_rather_than_appending(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TC-LOG-060
-# ---------------------------------------------------------------------------
-
-@pytest.mark.requirement("TC-LOG-060")
-@pytest.mark.priority("P2")
-def test_tc_log_060_recent_log_pane_on_equipment_screens(diag_service):
-    """LOG-060: Display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer."""
-    diag_mod = pytest.importorskip("galileo.diagnostics")
-
-    for i in range(15):
-        diag_service.log_info(f"Camera event {i}")
-
-    pane = diag_mod.RecentLogPane(service=diag_service, min_visible_lines=10)
-
-    assert pane.min_visible_lines >= 10
-    visible = pane.get_visible_entries()
-    assert len(visible) >= 10
-    assert visible[-1].message == "Camera event 14", "most recent entries are shown"
-
-
-# ---------------------------------------------------------------------------
 # TC-LOG-070
 # ---------------------------------------------------------------------------
 

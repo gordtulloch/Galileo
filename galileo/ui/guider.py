@@ -144,11 +144,6 @@ class GuiderPage(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
 
-        # PHD2's own event log (newest first), not the application log the other pages tail.
-        self.event_log = self._window._build_log_pane()
-        self.event_log.setFixedHeight(self.event_log.fontMetrics().lineSpacing() * 7 + 12)
-        layout.addWidget(self.event_log)
-
     def _build_left_column(self) -> QWidget:
         column = QWidget()
         column.setFixedWidth(340)
@@ -546,10 +541,6 @@ class GuiderPage(QWidget):
         self._render_scope(tube, snap)
         self._render_info(snap)
         self._render_plots(snap)
-
-        text = "\n".join(reversed(snap.log)) if snap else ""  # newest first, like the reference screen
-        if self.event_log.toPlainText() != text:
-            self.event_log.setPlainText(text)
 
     def _apply_connection_controls(self, snap: GuideSnapshot | None, connected: bool, equipment: bool) -> None:
         """The PHD2 host/port/Connect/Disconnect controls and the one-line connection status."""

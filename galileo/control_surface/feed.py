@@ -23,12 +23,14 @@ from galileo.bus import DeviceConnectedEvent, DeviceDisconnectedEvent, DeviceErr
 from galileo.control_surface.events import OperationFinished, OperationProgress, OperationStarted
 from galileo.control_surface.lease import LeaseBroker
 from galileo.control_surface.state import ObservableState
+from galileo.notices import NoticeEvent
 
 logger = logging.getLogger(__name__)
 
 FEED_EVENTS: tuple[type[Event], ...] = (
     DeviceConnectedEvent, DeviceDisconnectedEvent, DeviceErrorEvent,
     OperationStarted, OperationProgress, OperationFinished,
+    NoticeEvent,                       # NOTE-040: what the apps show as a brief on-screen notice
 )
 DEFAULT_CAPACITY = 2000
 

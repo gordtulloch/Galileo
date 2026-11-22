@@ -651,8 +651,19 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LOG-030` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-030` |
 | `LOG-040` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-040` |
 | `LOG-050` | MVP | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-050` |
-| `LOG-060` | P2 | SDD 4.22 `galileo.diagnostics` | Test | `TC-LOG-060` |
+| `LOG-060` | — | Retired; superseded by `NOTE-010` | — | — |
 | `LOG-070` | MVP | SDD 4.22 `galileo.diagnostics` / `galileo.crashreport` | Test | `TC-LOG-070` |
+
+### `NOTE` — Event Notices
+
+| SRS ID | Priority | SDD Component | Verification | Test Case |
+|---|---|---|---|---|
+| `NOTE-010` | MVP | SDD 4.22a `galileo.ui.notice_toast` | Test | `TC-NOTE-010` |
+| `NOTE-020` | MVP | SDD 4.22a `galileo.notices` / `galileo.adapters` | Test | `TC-NOTE-020` |
+| `NOTE-030` | MVP | SDD 4.22a `galileo.notices` | Test | `TC-NOTE-030` |
+| `NOTE-040` | MVP | SDD 4.22a `galileo.control_surface.feed` | Test | `TC-NOTE-040` |
+| `NOTE-050` | P2 | SDD 4.22a `galileo.notices` | Test | `TC-NOTE-050` |
+| `NOTE-060` | MVP | SDD 4.22a `galileo.notices` / `galileo.app` | Test | `TC-NOTE-060` |
 
 ### `LIB` — Image Library & Repository Management (merged from AstroFiler)
 
@@ -791,7 +802,8 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `REPL` | 8 | 8 | 0 | 0 |
 | `HEAD` | 18 | 15 | 3 | 0 |
 | `UI` | 3 | 0 | 2 | 1 |
-| `LOG` | 6 | 4 | 2 | 0 |
+| `LOG` | 5 | 4 | 1 | 0 |
+| `NOTE` | 6 | 5 | 1 | 0 |
 | `LIB` | 21 | 14 | 5 | 2 |
 | `NFR-PERF` | 3 | 3 | 0 | 0 |
 | `NFR-REL` | 4 | 3 | 1 | 0 |
@@ -802,4 +814,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **428** | **285** | **125** | **18** |
+| **Total** | **433** | **290** | **125** | **18** |

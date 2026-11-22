@@ -289,5 +289,7 @@ class IndiMountAdapter(IndiAdapter):
         if status["tracking"] is not None:
             self.is_tracking = status["tracking"]
         if status["slewing"] is not None:
+            from galileo.notices import note_slew_state
+            note_slew_state(self.device_name, bool(self.is_slewing), bool(status["slewing"]))
             self.is_slewing = status["slewing"]
         return status

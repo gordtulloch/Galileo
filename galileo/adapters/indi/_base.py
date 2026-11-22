@@ -160,6 +160,8 @@ class IndiAdapter(DeviceBackend):
             "INDI %s %s (%s:%d device=%r):%s",
             self.device_type, action, self.host, self.port, self.device_name, detail,
         )
+        from galileo.notices import notice_for_command
+        notice_for_command(str(self.device_type), action, self.device_name, **params)
 
     async def push_context(
         self,

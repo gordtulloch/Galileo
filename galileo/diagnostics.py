@@ -86,8 +86,8 @@ def _ensure_tail_handler() -> None:
         return
     handler = _TailBufferHandler()
     handler.setFormatter(_ConciseFormatter(_LOG_FORMAT))
-    # The on-screen log panes (fed by get_recent_log_lines) are meant for a
-    # user glancing at what the app is doing, not for debugging internals —
+    # The tail buffer (get_recent_log_lines, used by crash reports) is meant for a
+    # glance at what the app was doing, not for debugging internals —
     # DEBUG-level records still reach the on-disk file via the root logger's
     # own DEBUG level and the separate FileHandler, just not this buffer.
     handler.setLevel(logging.INFO)
@@ -238,30 +238,6 @@ class DiagnosticsService:
         logger.log(py_level, message)
         if stack_trace:
             logger.log(py_level, "Stack trace:\n%s", stack_trace)
-
-
-class RecentLogPane:
-    """Non-UI view onto a :class:`DiagnosticsService`'s recent entries,
-    backing the scrollable "last N lines" pane every Equipment
-    device-category screen shows (LOG-060) — the same relationship
-    :class:`LogViewer` (LOG-020) has to a full log-viewer dialog. The actual
-    on-screen widget (``galileo.ui.app_window``'s ``_build_log_pane``) polls
-    the separate process-wide :func:`get_recent_log_lines` tail buffer
-    instead, since it renders formatted lines from *every* logger, not just
-    one service's own ``log_*()`` calls; this class is the equivalent
-    logic-level view for callers (and tests) that hold a specific
-    ``DiagnosticsService`` instance."""
-
-    def __init__(self, service: DiagnosticsService, min_visible_lines: int = 10) -> None:
-        self._service = service
-        self.min_visible_lines = min_visible_lines
-
-    def get_visible_entries(self) -> list[LogEntry]:
-        """The most recent entries, at least ``min_visible_lines`` of them
-        (fewer only if the service hasn't logged that many yet), oldest
-        first — so the last element is always the most recent."""
-        entries = self._service.get_entries()
-        return entries[-self.min_visible_lines:]
 
 
 class LogViewer:

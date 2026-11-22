@@ -229,6 +229,8 @@ class Engine:
         self.lock.update(channel=info)
         from galileo.control_surface.feed import EventFeed
         from galileo.control_surface.service import ControlSurfaceService, publish_control_surface
+        from galileo.notices import install_bridge
+        install_bridge(bus)                                             # NOTE-030: events other modules publish become notices
         self.feed = EventFeed(state=self.state, leases=self.leases, bus=bus, pier_ids=self.devices.pier_ids)
         from galileo.control_surface.frames import FramePreviews, FrameSources
         self.frame_sources = FrameSources(bus, guide=self.guiding.frame)                          # PREV-070: the current exposure of each Pier

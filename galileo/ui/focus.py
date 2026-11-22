@@ -317,11 +317,6 @@ class FocusPage(QWidget):
         self.layout_choice = FrameLayoutChoice(self, self._image_box, self._apply_orientation)
         self._left_layout.insertWidget(self._left_layout.count() - 1, self.layout_choice.group)
 
-        layout.addWidget(_heading("Log"))
-        log_pane = self._window._build_log_pane()
-        self._window._log_panes.append(log_pane)
-        layout.addWidget(log_pane)
-
     def _build_left_column(self) -> QWidget:
         column = QWidget()
         column.setFixedWidth(380)

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ._common import QPlainTextEdit, QWidget
+from ._common import QWidget
 
 if TYPE_CHECKING:
     # Only to resolve 3 pre-existing bare-name annotations carried over from
@@ -69,7 +69,6 @@ class AppWindowState(Protocol):
     _imaging_services: Any
     _imaging_ui: Any
     _library_screens: Any
-    _log_panes: Any
     _nav_columns: Any
     _observatories: Any
     _observatory_combo: Any
@@ -222,12 +221,8 @@ class AppWindowState(Protocol):
     def _build_library_settings_page(self) -> QWidget: ...
     def _open_library_settings(self) -> None: ...
     def _build_equipment_page(self) -> QWidget: ...
-    def _build_log_pane(self) -> QPlainTextEdit: ...
     @staticmethod
     def _make_aux_server_panel(server: str, port: int) -> Any: ...
-    def _refresh_log_panes(self) -> None: ...
-    @staticmethod
-    def set_log_pane_text(pane: QPlainTextEdit, text: str) -> None: ...
 
     # _misc_device_pages.py
     def _build_guider_page(self) -> QWidget: ...

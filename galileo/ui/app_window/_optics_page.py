@@ -241,13 +241,6 @@ class AppWindowOpticsPageMixin:
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
 
-        log_heading = QLabel("Log")
-        log_heading.setObjectName("CriteriaHeading")
-        layout.addWidget(log_heading)
-        log_pane = self._build_log_pane()
-        self._log_panes.append(log_pane)
-        layout.addWidget(log_pane)
-
         def save_optics() -> None:
             if self._current_pier is None:
                 QMessageBox.warning(

@@ -442,28 +442,23 @@ def test_tc_img_120_service_follows_the_frame_unless_the_user_chooses(imaging_se
 @pytest.mark.requirement("TC-IMG-120")
 @pytest.mark.priority("P2")
 def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_the_rest_left(window):
-    """IMG-120: for a portrait frame the preview becomes a full-height column one third of the page wide, the nudge pad/stretch slider/histogram/progress sit to its left, and the log drops to a full-width bar under the settings and dock columns."""
+    """IMG-120: for a portrait frame the preview becomes a full-height column one third of the page wide, the nudge pad/stretch slider/histogram/progress sit to its left; the log pane no longer exists (NOTE-010)."""
     import numpy as np
     ui, service = window._imaging_ui, window._imaging_service
-    dock, content, log_bar = ui["dock_panel"], ui["content"], ui["log_bar"]
-    left_column = ui["left_column"]
+    dock, content = ui["dock_panel"], ui["content"]
     nudge, settings = ui["nudge_group"], ui["settings_panel"]
     secondary = (ui["histogram"], ui["progress"])
 
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary), "landscape keeps them under the preview"
-    assert ui["log"].parentWidget() is content, "and the log beneath them"
     assert nudge.parentWidget() is settings, "and the nudge pad in the settings panel"
-    assert log_bar.isHidden()
-    landscape_log_height = ui["log"].height()
+    assert "log" not in ui and "log_bar" not in ui, "the imaging page has no log pane"
 
     service.current_frame = np.zeros((300, 200), dtype=np.uint16)
     ui["apply_orientation"]()
     assert all(w.parentWidget() is dock for w in (nudge, *secondary))
     assert ui["preview"].parentWidget() is content
     assert content.layout().count() == 2, "only the preview and its Fit/1:1/+/- toolbar are left on the right"
-    assert ui["log"].parentWidget() is log_bar, "the log moves to the full-width bar, not the narrow dock column"
-    assert not log_bar.isHidden()
 
     page = ui["page"]
     window._window.show()   # a hidden page gets its resize events only once it is shown
@@ -480,7 +475,6 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     window.app.processEvents()
     assert content.minimumWidth() == content.maximumWidth() == page.width() // 3, "the preview column is a third of the page"
     assert content.height() == page.height(), "the preview keeps the full height of the page"
-    assert log_bar.width() == left_column.width() > dock.width(), "the log bar spans the settings and dock columns"
     before = content.maximumWidth()
     window._window.resize(2400, 900)
     window.app.processEvents()
@@ -489,10 +483,7 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     service.current_frame = np.zeros((200, 300), dtype=np.uint16)
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary)
-    assert ui["log"].parentWidget() is content, "the log goes back under the preview"
     assert nudge.parentWidget() is settings, "the nudge pad goes back to the settings panel"
-    assert not log_bar.isVisible()
-    assert ui["log"].height() == landscape_log_height
     assert content.maximumWidth() > 10000, "landscape lets the preview take the whole right side again"
 
 
@@ -2624,7 +2615,7 @@ def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_pa
 
     saved = ImagingLayout()
     saved.set_visible("histogram", False)
-    saved.move("log", -5)
+    saved.move("progress", -5)
     ImagingLayoutStore().save(saved)
 
     page = window._build_imaging_page()
@@ -2632,9 +2623,9 @@ def test_tc_ui_020_imaging_page_applies_and_persists_panel_layout(window, tmp_pa
     assert hist.isHidden()
     lay = hist.parentWidget().layout()
     names = [lay.itemAt(i).widget() for i in range(lay.count())]
-    log_idx = next(i for i, w in enumerate(names) if w is not None and w.__class__.__name__ == "QLabel" and w.text() == "Log")
     stretch_idx = next(i for i, w in enumerate(names) if w is not None and w.findChildren(window.QtWidgets.QSlider))
-    assert log_idx < stretch_idx
+    assert not any(w.__class__.__name__ == "QLabel" and w.text() == "Log" for w in names if w is not None)
+    assert stretch_idx >= 0
     assert not any(b.text() == "Panels…" for b in page.findChildren(QPushButton))
 
 

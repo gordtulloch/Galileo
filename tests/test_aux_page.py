@@ -136,17 +136,17 @@ def _device_tabs(page):
 
 @pytest.mark.requirement("TC-EQP-AUX-010")
 @pytest.mark.priority("P2")
-def test_tc_eqp_aux_010_page_is_one_connection_line_with_a_log_tail(window):
-    """EQP-AUX-010: the page has a single Server/Port/Connect line at the top, Save, a log tail, and no tabs until connected."""
+def test_tc_eqp_aux_010_page_is_one_connection_line(window):
+    """EQP-AUX-010: the page has a single Server/Port/Connect line at the top, Save, and no tabs until connected."""
     page = window._build_aux_page()
     labels = {w.text() for w in page.findChildren(QtWidgets.QLabel)}
-    assert {"Server", "Port", "Log"} <= labels
+    assert {"Server", "Port"} <= labels and "Log" not in labels
     assert not (labels & {"Driver", "Device"})  # INDI only: no driver choice, no single-device picker
     assert not page.findChildren(QtWidgets.QComboBox)
     for text in ("Connect", "Save"):
         _button(page, text)
     assert not [b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "Scan"]
-    assert page.findChildren(QtWidgets.QPlainTextEdit)  # the shared log pane
+    assert not page.findChildren(QtWidgets.QPlainTextEdit)  # no log pane: events are notices (NOTE-010)
     assert not page.findChildren(QtWidgets.QTabWidget)  # nothing connected yet: just the placeholder
 
 

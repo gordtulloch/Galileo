@@ -102,7 +102,7 @@ def test_tc_foc_090_focus_is_a_primary_section_with_the_reference_controls(windo
     assert page.loop_btn.text() == "Loop" and page.manual_stop_btn.text() == "Stop"
     assert page.stats_label.text() == NO_STATS
     assert not _drawn(page) and page.plot.points == []
-    assert len(page.findChildren(QtWidgets.QPlainTextEdit)) == 1        # the log
+    assert not page.findChildren(QtWidgets.QPlainTextEdit)              # no log pane: events are notices (NOTE-010)
 
 
 @pytest.mark.requirement("TC-FOC-090")

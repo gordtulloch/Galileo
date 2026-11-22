@@ -323,26 +323,9 @@ def test_tc_plt_070_does_not_change_while_not_in_view(window, page, tmp_path):
     assert not page._mount_timer.isActive()
 
 
-def test_tc_plt_070_log_is_the_live_application_log_tail_and_only_runs_in_view(window, page):
-    """PLT-070: The bottom pane is the application's live log tail, the full width of the page (as on the Equipment screens),
-    and is refreshed only while the screen is in view."""
-    import logging
-    _open(window, "equipment")
-    assert not page._log_timer.isActive()
-    logging.getLogger("galileo.test").info("written while the Solve screen was hidden")
-    window.app.processEvents()
-    assert "written while the Solve screen was hidden" not in page.log_pane.toPlainText()   # the pane wasn't touched
-    _open(window)                                                            # showing it catches up at once
-    assert page._log_timer.isActive()
-    assert "written while the Solve screen was hidden" in page.log_pane.toPlainText()
-
-    logging.getLogger("galileo.test").info("written while the Solve screen was showing")
-    page._log_timer.timeout.emit()
-    assert "written while the Solve screen was showing" in page.log_pane.toPlainText()
-
-    assert page.log_pane.width() == page.image_view.width()                  # no side buttons; full width
-    _open(window, "equipment")
-    assert not page._log_timer.isActive()
+def test_tc_plt_070_has_no_log_pane_events_are_notices(window, page):
+    """PLT-070: The Solve screen has no log pane of its own; what it does is announced as event notices (NOTE-010)."""
+    assert not hasattr(page, "log_pane") and not hasattr(page, "_log_timer")
 
 
 def test_tc_plt_070_screen_updates_through_a_solve_in_progress(window, page, tmp_path):
@@ -387,10 +370,6 @@ def test_tc_plt_070_capture_and_solve_fills_the_screen(window, page):
     assert _pump(window, lambda: page.image_view.has_image)
     assert page.capture_btn.isEnabled() and not page.stop_btn.isEnabled() and not page.busy.isVisible()
 
-    page._refresh_log()                                                      # (the screen does this on a timer)
-    lines = [line for line in page.log_pane.toPlainText().splitlines() if "galileo.ui.solve" in line]
-    joined = "\n".join(lines)                                                # the application log, oldest first
-    assert joined.index("Setting target") < joined.index("Capturing image") < joined.index("Solver completed")
 
 
 def test_tc_plt_070_two_piers_solve_concurrently(window, page):
@@ -564,8 +543,6 @@ def test_tc_plt_070_stop_ends_a_run_in_progress(window, page):
     page.stop_btn.click()
     assert _pump(window, lambda: not page._running.get(page._pier_key()))
     devices.camera.abort_exposure.assert_awaited()
-    page._refresh_log()
-    assert "Stopped." in page.log_pane.toPlainText()
     assert page.capture_btn.isEnabled() and not page.stop_btn.isEnabled()
     assert page.table.rowCount() == 0                          # nothing was solved
 

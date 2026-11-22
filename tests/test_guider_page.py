@@ -32,6 +32,19 @@ from tests.phd2_fake_server import FakePhd2Server
 
 
 @pytest.fixture
+def notices():
+    """Every notice posted during the test, as ``"title: message"`` text (the guider page has no log pane)."""
+    from galileo.bus import get_bus
+    from galileo.notices import NoticeEvent
+
+    seen: list[str] = []
+    handler = lambda e: seen.append(f"{e.payload['title']}: {e.payload['message']}")   # noqa: E731
+    get_bus().subscribe(NoticeEvent, handler)
+    yield seen
+    get_bus().unsubscribe(NoticeEvent, handler)
+
+
+@pytest.fixture
 def phd2():
     server = FakePhd2Server()
     yield server
@@ -140,15 +153,15 @@ def test_tc_guide_070_connect_shows_phd2_state_and_choices(window, phd2):
 
 @pytest.mark.requirement("TC-GUIDE-070")
 @pytest.mark.priority("MVP")
-def test_tc_guide_070_unreachable_phd2_is_reported_in_the_log_pane(window):
-    """GUIDE-070: a failed connect re-enables Connect and says why in the page's log."""
+def test_tc_guide_070_unreachable_phd2_is_reported_in_a_notice(window, notices):
+    """GUIDE-070: a failed connect re-enables Connect and says why in a notice."""
     page = window._build_guider_page()
     page.host_edit.setText("127.0.0.1")
     page.port_spin.setValue(1)
     page.connect_btn.click()
     assert _pump(window, lambda: page._pier_key() not in page._connecting)
     page._tick()
-    assert page.connect_btn.isEnabled() and "Could not connect to PHD2 at 127.0.0.1:1" in page.event_log.toPlainText()
+    assert page.connect_btn.isEnabled() and any("Could not connect to PHD2 at 127.0.0.1:1" in n for n in notices)
 
 
 @pytest.mark.requirement("TC-GUIDE-070")
@@ -203,7 +216,7 @@ def test_tc_guide_060_each_pier_has_its_own_guider_connection(window, phd2):
 
 @pytest.mark.requirement("TC-GUIDE-080")
 @pytest.mark.priority("MVP")
-def test_tc_guide_080_page_displays_live_guiding_data(window, phd2):
+def test_tc_guide_080_page_displays_live_guiding_data(window, phd2, notices):
     """GUIDE-080: guide steps show up as deltas, pulses, RMS, SNR, graph samples, state lamps and log lines."""
     page, service = _connect(window, phd2)
     phd2.push({"Event": "StartGuiding"})
@@ -220,12 +233,12 @@ def test_tc_guide_080_page_displays_live_guiding_data(window, phd2):
     assert len(page.graph.samples) == 4 and len(page.scatter.points) == 4
     assert page.lamps["run"].styleSheet() != page.lamps["idle"].styleSheet()
     assert "State: Guiding" in page.state_label.text()
-    assert "Guiding started." in page.event_log.toPlainText()
+    assert any("Guiding started" in n for n in notices)
 
     phd2.push({"Event": "StarLost", "Frame": 5})
     assert _pump(window, lambda: service.model.app_state == "LostLock")
     page._tick()
-    assert page.event_log.toPlainText().splitlines()[0].endswith("reducing pulse duration.")  # newest first
+    assert any(n.endswith("reducing pulse duration") for n in notices)
 
 
 @pytest.mark.requirement("TC-GUIDE-080")
@@ -336,18 +349,18 @@ def test_tc_guide_090_buttons_send_commands_to_phd2(window, phd2):
 
 @pytest.mark.requirement("TC-GUIDE-090")
 @pytest.mark.priority("MVP")
-def test_tc_guide_090_rejected_command_is_visible_in_the_log(window, phd2):
-    """GUIDE-090: when PHD2 refuses a command the user sees why in the log pane."""
+def test_tc_guide_090_rejected_command_is_visible_in_a_notice(window, phd2, notices):
+    """GUIDE-090: when PHD2 refuses a command the user sees why in a notice."""
     page, service = _connect(window, phd2)
     page.loop_btn.click()  # the fake has no "loop" handler, so it answers with an error
     assert _pump(window, lambda: any("rejected loop" in line for line in service.model.snapshot().log))
     page._tick()
-    assert "PHD2 rejected loop" in page.event_log.toPlainText()
+    assert any("PHD2 rejected loop" in n for n in notices)
 
 
 @pytest.mark.requirement("TC-GUIDE-050")
 @pytest.mark.priority("MVP")
-def test_tc_guide_050_page_shows_a_lost_connection(window, phd2):
+def test_tc_guide_050_page_shows_a_lost_connection(window, phd2, notices):
     """GUIDE-050: if PHD2 goes away the page goes back to Not connected and offers Connect again."""
     page, service = _connect(window, phd2)
     assert phd2.wait_for_client()
@@ -355,7 +368,7 @@ def test_tc_guide_050_page_shows_a_lost_connection(window, phd2):
     assert _pump(window, lambda: not service.is_connected and not service.model.snapshot().connected)
     page._tick()
     assert page.connect_btn.isEnabled() and "Not connected" in page.status_label.text()
-    assert "Lost connection to PHD2." in page.event_log.toPlainText()
+    assert any("Lost connection to PHD2" in n for n in notices)
 
 
 def _snapshot(**kw):
@@ -386,7 +399,6 @@ def test_tc_guide_090_refresh_view_enables_controls_per_state_and_connection(win
     off = enabled(None)
     assert off == dict.fromkeys(off, False) | {"connect_btn": True, "host_edit": True, "port_spin": True}
     assert page.status_label.text().startswith("Not connected to PHD2.") and page.state_label.text() == ""
-    assert page.event_log.toPlainText() == ""
 
     table = {  # state: (loop, guide, stop, find, dither, clear_cal)
         "Stopped": (True, True, False, False, False, True),
@@ -412,7 +424,7 @@ def test_tc_guide_090_refresh_view_enables_controls_per_state_and_connection(win
     page.refresh_view(_snapshot(app_state="Guiding", settling=True, phase="guiding"))
     assert page.state_label.text() == "State: Guiding (settling)"
     assert page.status_label.text() == "Connected to PHD2 (PHD2 2.6.13) — equipment connected."
-    assert page.event_log.toPlainText() == "second\nfirst", "newest first"
+    assert not hasattr(page, "event_log"), "the log pane is gone (NOTE-010)"
     assert [page.exposure_combo.itemText(i) for i in range(page.exposure_combo.count())] == ["1 s", "2 s"]
     assert page.exposure_combo.currentText() == "2 s"
 

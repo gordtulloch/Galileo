@@ -784,13 +784,6 @@ class AppWindowMountPageMixin:
         for b in text_buttons:
             b.setFixedSize(uniform)
 
-        log_heading = QLabel("Log")
-        log_heading.setObjectName("CriteriaHeading")
-        layout.addWidget(log_heading)
-        log_pane = self._build_log_pane()
-        self._log_panes.append(log_pane)
-        layout.addWidget(log_pane)
-
         def save_mount_config() -> None:
             if self._current_pier is None:
                 QMessageBox.warning(

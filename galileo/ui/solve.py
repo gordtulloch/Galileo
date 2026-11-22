@@ -63,12 +63,10 @@ from galileo.ui.solve_build import (  # noqa: F401  (re-exported: constants/help
 from galileo.ui.solve_results import (  # noqa: F401  (re-exported: constants/helpers that used to live in this module)
     SolveResultsMixin,
     _ARCSEC_PER_RAD_UM_MM,
-    _LOG_TAIL_LINES,
 )
 
 logger = logging.getLogger(__name__)
 
-_LOG_REFRESH_MS = 1000
 _MAX_PREVIEW_PX = 2400          # larger frames are shown subsampled; the solver always gets the full frame
 _MOUNT_POLL_MS = 3000
 _POLAR_GOOD_ARCSEC = 60.0        # polar error readout: green below this,
@@ -218,14 +216,11 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._show_latest_frame()
         self.poll_mount()
         self._mount_timer.start(_MOUNT_POLL_MS)
-        self._refresh_log()
-        self._log_timer.start(_LOG_REFRESH_MS)
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._in_focus = False
         self._mount_timer.stop()
-        self._log_timer.stop()
 
     def _pier_key(self):
         from galileo.current_object import pier_key

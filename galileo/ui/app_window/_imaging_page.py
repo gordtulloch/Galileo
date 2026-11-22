@@ -31,7 +31,7 @@ class AppWindowImagingPageMixin:
         """Imaging tab (IMG-010 … IMG-100): a live, pan/zoomable auto-stretch
         preview with histogram, plus manual single-exposure capture —
         modeled on the classic CCD-capture-tool
-        split of capture settings on the left against preview/progress/log
+        split of capture settings on the left against preview/progress
         on the right (see assets/samples/ccd.png). Sequencing itself lives
         in the separate Sequence section; this page is for live preview and
         one-off manual shots, not a queue."""
@@ -56,7 +56,7 @@ class AppWindowImagingPageMixin:
 
         # --- left: capture + view settings ----------------------------------
         # In a scroll area because the panel also holds the nudge pad and, for a
-        # portrait frame, the histogram, progress bar and log (IMG-120).
+        # portrait frame, the histogram and progress bar (IMG-120).
         settings_scroll = QScrollArea()
         settings_scroll.setFixedWidth(300)
         settings_scroll.setWidgetResizable(True)
@@ -194,7 +194,7 @@ class AppWindowImagingPageMixin:
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
             "By default the page lays itself out for the shape of the frame: a portrait frame gets the "
-            "whole right side, with the histogram and log moved to the left (IMG-120). Tick this to "
+            "whole right side, with the histogram moved to the left (IMG-120). Tick this to "
             "pick the layout yourself."
         )
         view_form.addRow(orientation_check)
@@ -274,8 +274,7 @@ class AppWindowImagingPageMixin:
 
         # A column between the settings and the preview, used only for a portrait
         # frame (IMG-120): it takes the width the narrow preview leaves free and
-        # holds the nudge pad, stretch slider, histogram and progress bar — the log
-        # moves to its own full-width bar under the settings and this column (below),
+        # holds the nudge pad, stretch slider, histogram and progress bar,
         # so the preview keeps the full height of the page.
         dock_panel = QWidget()
         dock_layout = QVBoxLayout(dock_panel)
@@ -383,20 +382,6 @@ class AppWindowImagingPageMixin:
         progress_bar.setTextVisible(False)
         progress_row.addWidget(progress_bar, 1)
 
-        log_heading = QLabel("Log")
-        log_heading.setObjectName("CriteriaHeading")
-        log_pane = self._build_log_pane()
-        self._log_panes.append(log_pane)
-
-        # Portrait only (IMG-120): a full-width bar under the settings and dock
-        # columns holding the log, so it spans both of them without taking any
-        # height away from the preview, which stays a full-height column of its own.
-        log_bar = QWidget()
-        log_bar_layout = QVBoxLayout(log_bar)
-        log_bar_layout.setContentsMargins(8, 0, 8, 8)
-        log_bar_layout.setSpacing(4)
-        log_bar.setVisible(False)
-
         settings_dock_row = QWidget()
         settings_dock_row_layout = QHBoxLayout(settings_dock_row)
         settings_dock_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -409,26 +394,19 @@ class AppWindowImagingPageMixin:
         left_column_layout.setContentsMargins(0, 0, 0, 0)
         left_column_layout.setSpacing(0)
         left_column_layout.addWidget(settings_dock_row, 1)
-        left_column_layout.addWidget(log_bar)
         root.addWidget(left_column)
         left_column_index = root.indexOf(left_column)
         root.addWidget(content, 1)
 
         # --- landscape / portrait layout (IMG-120) -----------------------------
-        # Landscape: preview on top of the right side, histogram/progress/log
+        # Landscape: preview on top of the right side, histogram/progress
         # beneath it. Portrait: the preview is a full-height column one third of
         # the page wide, with the nudge pad, stretch slider, histogram and progress
-        # in the column to its left, beside the settings; the log drops to a
-        # full-width bar beneath both of those columns instead of squeezing into
-        # the narrow one.
+        # in the column to its left, beside the settings.
         secondary_widgets = (stretch_widget, histogram, progress_widget)
-        log_widgets = (log_heading, log_pane)
         nudge_slot = settings_layout.indexOf(nudge_group)   # where the nudge pad sits in landscape
         layout_state = {"orientation": None}
         unlimited_width = 16777215   # QWIDGETSIZE_MAX
-
-        def _log_height(lines: int) -> int:
-            return log_pane.fontMetrics().lineSpacing() * lines + log_pane.frameWidth() * 2 + 8
 
         def _fit_preview_width() -> None:
             """Portrait: the preview column is a third of the page's width."""
@@ -444,24 +422,19 @@ class AppWindowImagingPageMixin:
                 return
             layout_state["orientation"] = orientation
             portrait = orientation == PORTRAIT
-            for widget in (*secondary_widgets, *log_widgets, nudge_group):
+            for widget in (*secondary_widgets, nudge_group):
                 content_layout.removeWidget(widget)
                 dock_layout.removeWidget(widget)
-                log_bar_layout.removeWidget(widget)
                 settings_layout.removeWidget(widget)
             if portrait:
                 # The nudge pad leads the middle column; the rest follow, above its trailing stretch.
                 for i, widget in enumerate((nudge_group, *secondary_widgets)):
                     dock_layout.insertWidget(i, widget)
                     widget.setVisible(True)
-                # The log spans the settings and dock columns beside it, not just the dock's width.
-                for widget in log_widgets:
-                    log_bar_layout.addWidget(widget)
-                    widget.setVisible(True)
             else:
                 settings_layout.insertWidget(nudge_slot, nudge_group)
                 nudge_group.setVisible(True)
-                for widget in (*secondary_widgets, *log_widgets):
+                for widget in secondary_widgets:
                     content_layout.addWidget(widget)
                     widget.setVisible(True)
             # Move Annotate / Framing / Flats / Darks between the zoom toolbar (landscape)
@@ -482,14 +455,12 @@ class AppWindowImagingPageMixin:
                 zoom_toolbar.insertWidget(0, annotate_btn)
                 tools_group.setVisible(False)
             dock_panel.setVisible(portrait)
-            log_bar.setVisible(portrait)
-            # Landscape: dock/log are hidden, so left_column collapses to just Settings'
+            # Landscape: dock is hidden, so left_column collapses to just Settings'
             # fixed width and content (stretch 1) takes the rest. Portrait: content is
             # pinned to a fixed width below (_fit_preview_width), so giving left_column
             # a stretch too makes it — not empty space — absorb everything left over.
             root.setStretch(left_column_index, 1 if portrait else 0)
             histogram.setFixedHeight(120 if portrait else 80)
-            log_pane.setFixedHeight(_log_height(8 if portrait else 10))
             content_layout.setContentsMargins(*((8, 8, 8, 8) if portrait else (24, 20, 24, 20)))
             _fit_preview_width()
             _apply_user_layout()
@@ -505,7 +476,7 @@ class AppWindowImagingPageMixin:
             user_layout = ImagingLayout()
         panel_widgets = {
             "view": (view_group,), "nudge": (nudge_group,), "stretch": (stretch_widget,),
-            "histogram": (histogram,), "progress": (progress_widget,), "log": (log_heading, log_pane),
+            "histogram": (histogram,), "progress": (progress_widget,),
         }
         widget_panel = {w: pid for pid, ws in panel_widgets.items() for w in ws}
 
@@ -513,7 +484,7 @@ class AppWindowImagingPageMixin:
             """Reorder the panels inside whichever column holds them, and hide the ones
             the user switched off. Runs after every orientation change."""
             rank = {pid: i for i, pid in enumerate(user_layout.order)}
-            for lay in (settings_layout, content_layout, dock_layout, log_bar_layout):
+            for lay in (settings_layout, content_layout, dock_layout):
                 slots, present = [], []
                 for i in range(lay.count()):
                     w = layout_widget(lay, i)
@@ -796,10 +767,10 @@ class AppWindowImagingPageMixin:
         rotation_set_btn.clicked.connect(_rotation_set_clicked)
 
         self._imaging_ui = {
-            "settings_panel": settings_panel, "dock_panel": dock_panel, "log_bar": log_bar,
+            "settings_panel": settings_panel, "dock_panel": dock_panel,
             "left_column": left_column, "page": page,
             "fit_preview_width": _fit_preview_width, "content": content, "preview": preview_view,
-            "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget, "log": log_pane,
+            "histogram": histogram, "stretch_slider": stretch_slider, "progress": progress_widget,
             "orientation_check": orientation_check, "orientation_combo": orientation_combo,
             "apply_orientation": lambda: _apply_orientation(_current_service()), "layout_state": layout_state,
             "quantity": quantity_spin, "gain": gain_spin, "offset": offset_spin, "auto_save": auto_save_check,

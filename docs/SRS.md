@@ -613,8 +613,21 @@ Plugins are divided into two tiers: **first-party** (authored by the Galileo pro
 | LOG-030 | The system shall capture unhandled exceptions to the log with sufficient detail (stack trace, active sequence step, connected-device state) to diagnose post-hoc. | MVP |
 | LOG-040 | The system shall allow exporting a support bundle (recent logs plus non-sensitive configuration) for bug reports. | P2 |
 | LOG-050 | The logging service shall reset (start a new, truncated) datestamped log file at the beginning of every application run, rather than appending to a prior run's log. | MVP |
-| LOG-060 | The system shall display, on every Equipment device-category screen, a scrollable pane showing the most recent log lines (at least the last 10 visible at once) without requiring the user to open a separate log viewer. | P2 |
+| LOG-060 | *Retired.* The per-screen log pane is superseded by event notices (`NOTE-010`); the full log stays available through the log viewer (`LOG-020`). | — |
 | LOG-070 | The system shall install last-chance crash handlers at start-up (`sys.excepthook`, `threading.excepthook`, the asyncio loop exception handler and `faulthandler`) that write a crash report (traceback, version, platform, recent log tail, with credentials scrubbed) to a crash-reports directory under the platform data directory and, where the Qt application is running, show a fatal-error dialog. | MVP |
+
+### 4.21a `NOTE` — Event Notices
+
+Significant events are announced as brief floating panels instead of being read from a log pane on each screen. One notice is one `galileo.notices.NoticeEvent` on the event bus, so the desktop and the mobile apps show the same thing from the same source.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| NOTE-010 | The desktop shall show each notice as a floating panel over the top-right corner of the main window, whichever screen is showing, that closes itself after 10 seconds or when its close (×) control is clicked; panels stack, with at most five shown at once. No screen shall carry a log pane of its own. | MVP |
+| NOTE-020 | The system shall post a notice for every significant device command and its end: each exposure start (and abort), each slew start and end, parking and unparking, homing, sync, tracking changes, and focuser, filter-wheel, rotator, dome and flat-panel moves — from the INDI and Alpaca adapters' one command choke point each, so that every caller (screen, session, solver, autofocus, remote client) is covered. Continuous manual motion shall not be announced. | MVP |
+| NOTE-030 | The system shall translate events other modules already publish into notices: equipment connected, disconnected or in error; plate solve started, resolved, failed or cancelled; autofocus started and its result; unsafe conditions; session started and finished; and guiding progress (guiding started, star lost, a command rejected). | MVP |
+| NOTE-040 | The Control Surface event feed shall carry notices, and Connect Link shall deliver each to a connected mobile app as a `notice` stream frame, which the app shows as the same kind of panel (`MAPP-OVR-090`). | MVP |
+| NOTE-050 | Identical notices posted within a moment of each other shall be shown once, and posting a notice shall never raise into, or delay, the code that posted it. | P2 |
+| NOTE-060 | Notices shall not be announced while the application is starting up: from launch until the start-up splash and its status display have finished, notices are dropped, not queued, so initial equipment connections are not replayed once the window is up. | MVP |
 
 ### 4.22 `LIB` — Image Library & Repository Management (merged from AstroFiler)
 

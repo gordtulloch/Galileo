@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""The Library section's own submenu/settings pages and the Equipment section's device-category submenu, plus the shared recent-log pane."""
+"""The Library section's own submenu/settings pages and the Equipment section's device-category submenu."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._common import EQUIPMENT_CATEGORIES, OPTIONS_SECTION, LIBRARY_ITEMS, QWidget, QPlainTextEdit
-from ._widgets import _LogPane, _NavColumn
+from ._common import EQUIPMENT_CATEGORIES, OPTIONS_SECTION, LIBRARY_ITEMS, QWidget
+from ._widgets import _NavColumn
 from galileo.ui.help import tag_help_screen
 
 if TYPE_CHECKING:
@@ -101,48 +101,4 @@ class AppWindowLibraryEquipmentMixin:
         layout.addWidget(secondary)
         layout.addWidget(device_stack, 1)
 
-        from PySide6.QtCore import QTimer
-        log_timer = QTimer(page)
-        log_timer.timeout.connect(self._refresh_log_panes)
-        log_timer.start(1000)
-        self._refresh_log_panes()
-
         return page
-
-    def _build_log_pane(self: AppWindowState) -> QPlainTextEdit:
-        """A read-only, scrollable pane showing the tail of the run's log
-        (LOG-020) — 10 lines tall, but keeps more history to scroll back
-        through than that."""
-        from PySide6.QtWidgets import QPlainTextEdit
-        from PySide6.QtGui import QFontDatabase
-
-        pane = _LogPane()
-        pane.setObjectName("LogPane")
-        pane.setReadOnly(True)
-        pane.setUndoRedoEnabled(False)
-        pane.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        pane.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        line_height = pane.fontMetrics().lineSpacing()
-        pane.setFixedHeight(line_height * 10 + pane.frameWidth() * 2 + 8)
-        return pane
-
-    def _refresh_log_panes(self: AppWindowState) -> None:
-        from galileo.diagnostics import get_recent_log_lines
-
-        if not self._log_panes:
-            return
-        text = "\n".join(get_recent_log_lines(300))
-        for pane in self._log_panes:
-            self.set_log_pane_text(pane, text)
-
-    @staticmethod
-    def set_log_pane_text(pane: QPlainTextEdit, text: str) -> None:
-        """Show *text* in a log pane, staying scrolled to the newest line if it was
-        (and otherwise where the user left it). Shared by every screen with a live log tail."""
-        if pane.toPlainText() == text:
-            return
-        bar = pane.verticalScrollBar()
-        at_bottom = bar.value() >= bar.maximum() - 2
-        previous_value = bar.value()
-        pane.setPlainText(text)
-        bar.setValue(bar.maximum() if at_bottom else previous_value)

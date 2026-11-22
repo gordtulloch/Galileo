@@ -29,6 +29,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from galileo.notices import post_guiding_notice
+
 logger = logging.getLogger(__name__)
 
 DEC_GUIDE_MODES = ("Off", "Auto", "North", "South")
@@ -203,6 +205,7 @@ class GuideModel:
         with self._lock:
             self._log.append(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}")
             self._touch()
+        post_guiding_notice(message)
 
     def update(self, **fields) -> None:
         """Set plain attributes (``connected``, ``exposure_ms``, …) under the lock."""
@@ -367,6 +370,7 @@ class GuideModel:
 
     def _note(self, message: str) -> None:
         self._log.append(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}")
+        post_guiding_notice(message)
 
 
 def _options() -> dict:

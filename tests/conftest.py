@@ -410,6 +410,17 @@ def _no_modal_quit_dialog(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_notices():
+    """Notices are open and de-duplicated per process; start every test with the gate open and no memory."""
+    from galileo import notices
+
+    notices.set_notices_enabled(True)
+    notices._recent.clear()
+    yield
+    notices.set_notices_enabled(True)
+
+
+@pytest.fixture(autouse=True)
 def _cpu_work_in_threads(monkeypatch):
     """Run ``galileo.core.compute.run_cpu`` work in a thread, not the worker pool.
 

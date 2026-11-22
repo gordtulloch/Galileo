@@ -19,7 +19,7 @@ The TCP port of the Alpaca or INDI server. INDI almost always uses **7624**. Alp
 
 ## Scan
 
-Asks the server at **Server**:**Port** which devices of this type it offers and fills the **Device** list with them. The result (or the reason it failed) is written to the log pane at the bottom of the screen.
+Asks the server at **Server**:**Port** which devices of this type it offers and fills the **Device** list with them. The result (or the reason it failed) is written to Galileo's log (use **View Log**).
 
 ## Device
 
@@ -53,9 +53,9 @@ The description string the driver reports about itself (its manufacturer and mod
 
 The version number the driver reports. Useful when reporting a problem or checking that a driver update took effect.
 
-## Log
+## Event notices
 
-The most recent lines of Galileo's log, as they happen: connections, scan results, moves and errors. When something does not work, look here first; the full log is also written to a file in Galileo's log folder.
+Small panels that appear over the top-right corner of the window whenever something significant happens: an exposure starts, a slew begins or ends, a plate solve resolves or fails, an autofocus finishes, equipment connects or disconnects, guiding changes state, a session starts or ends, or conditions turn unsafe. Each closes itself after 10 seconds, or click the **×** in its corner. They replace the log panes the screens used to have; nothing is announced while Galileo is still starting up. For full detail use **View Log**.
 
 ## Fit
 
@@ -79,7 +79,7 @@ Opens this help window on the current screen. **F1** does the same for the contr
 
 ## View Log
 
-The page-of-text button at the bottom of the sidebar opens a window showing this run's full log file (`galileo_<date>.log`, reset each time Galileo starts), including debugging detail and error tracebacks, unlike the small log panes on each screen. Choose how much to show with the level box (Debug, Info, Warnings or Errors only; a traceback stays with its error line), type in the search box to show only matching lines, and leave **Auto-refresh** ticked to follow new lines as they are written. **Copy** puts the lines shown on the clipboard, handy when reporting a problem, and **Open Folder** opens the folder holding the log files.
+The page-of-text button at the bottom of the sidebar opens a window showing this run's full log file (`galileo_<date>.log`, reset each time Galileo starts), including debugging detail and error tracebacks. Choose how much to show with the level box (Debug, Info, Warnings or Errors only; a traceback stays with its error line), type in the search box to show only matching lines, and leave **Auto-refresh** ticked to follow new lines as they are written. **Copy** puts the lines shown on the clipboard, handy when reporting a problem, and **Open Folder** opens the folder holding the log files.
 
 ## Community & support
 

@@ -217,13 +217,6 @@ class AppWindowDeviceConfigMixin:
         save_row.addWidget(save_btn)
         layout.addLayout(save_row)
 
-        log_heading = QLabel("Log")
-        log_heading.setObjectName("CriteriaHeading")
-        layout.addWidget(log_heading)
-        log_pane = self._build_log_pane()
-        self._log_panes.append(log_pane)
-        layout.addWidget(log_pane)
-
         page_state["reload"] = lambda: self._load_device_config_into_page(cat_id, page_state)
         self._device_pages[cat_id] = page_state
         page_state["reload"]()

@@ -42,7 +42,6 @@ class AppWindowCoreMixin:
         self._observatories: dict[str, object] = {}
         self._current_observatory = None
         self._current_pier = None
-        self._log_panes: list = []
         self._device_pages: dict[str, dict] = {}
         # One ObservatoryScheduler per Pier, shared by Planning > Sessions (Schedule/Run/Deschedule)
         # and Planning > Schedule (the timeline view) — both must see the same jobs.
@@ -97,6 +96,12 @@ class AppWindowCoreMixin:
         self._window.resize(1400, 900)
         cast("AppWindowState", self)._install_quit_dialog_hook()
         self._help = HelpController(self._window, _MANUAL_URL)
+
+        # Event notices float over the top-right of the window (NOTE-010); they replace the per-screen log panes.
+        from galileo.ui.notice_toast import install_notice_toasts
+        from galileo.ui.theme import Theme
+        self._notice_toasts = install_notice_toasts(
+            self._window, lambda: self._theme.palette(), lambda: self._theme.current_theme == Theme.RED)
 
         # Set up before the Equipment page is built below, since building it
         # can immediately show a camera auto-connect result there.

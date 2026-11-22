@@ -299,6 +299,8 @@ class AlpacaAdapter(DeviceBackend):
         url = f"{self.base_url}/{attribute}"
         params = {k: v for k, v in body.items() if k not in ("ClientID", "ClientTransactionID")}
         logger.info("Alpaca %s device interaction: %s %s at %s", self.device_type, attribute, params, url)
+        from galileo.notices import notice_for_command
+        notice_for_command(str(self.device_type), attribute, getattr(self, "device_name", "") or "", **params)
         body.update({"ClientID": self._client_id, "ClientTransactionID": self._transaction_id})
         try:
             try:

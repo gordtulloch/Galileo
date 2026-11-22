@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget, QTabWidget, QVBoxLayout, QWidget
 from galileo.platesolve import SolveAction
 from galileo.ui._image_view import build_zoom_toolbar
@@ -68,7 +68,6 @@ class SolveBuildMixin(_MixinBase):
         lower.setContentsMargins(0, 0, 0, 0)
         lower.setSpacing(8)
         lower.addWidget(self._build_tabs(), 1)
-        lower.addWidget(self._build_log_pane())
         self._right_layout.addWidget(self._image_box, 3)
         self._right_layout.addWidget(self._results_box, 2)
         root.addWidget(self._right, 1)
@@ -457,11 +456,3 @@ class SolveBuildMixin(_MixinBase):
         layout.addWidget(self.polar_target, 1)
         return tab
 
-    def _build_log_pane(self) -> QWidget:
-        """The live log tail, the full width of the page. It is refreshed by a timer that only runs
-        while the page is on screen (the Equipment screens' panes refresh whether shown or not)."""
-        self.log_pane = self._window._build_log_pane()
-        self.log_pane.setFixedHeight(self.log_pane.fontMetrics().lineSpacing() * 7 + 12)
-        self._log_timer = QTimer(self)
-        self._log_timer.timeout.connect(self._refresh_log)
-        return self.log_pane

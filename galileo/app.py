@@ -83,6 +83,9 @@ def main() -> None:
     from galileo.diagnostics import DiagnosticsService
     DiagnosticsService()
     logger.info("Galileo %s starting", _version())
+    from galileo.notices import install_bridge, set_notices_enabled
+    set_notices_enabled(False)    # NOTE-060: nothing is announced until start-up (and its splash) has finished
+    install_bridge()          # NOTE-030: device, solve, focus, safety and session events become on-screen notices
 
     # Last-chance crash reporting (LOG-070): excepthooks, faulthandler, fatal-error dialog.
     startup_progress.report("Installing crash reporting")
@@ -113,6 +116,8 @@ def main() -> None:
 
     if splash is not None:
         _schedule_splash_finish(splash, getattr(window, "_window", None), splash_started_at)
+    else:
+        set_notices_enabled(True)
 
     _schedule_registration_ping()
     _schedule_library_preload()
@@ -157,7 +162,13 @@ def _schedule_splash_finish(splash, main_window, started_at: float) -> None:
 
     elapsed_ms = int((time.monotonic() - started_at) * 1000)
     delay_ms = max(_SPLASH_PAINT_GRACE_MS, _SPLASH_MINIMUM_MS - elapsed_ms)
-    QTimer.singleShot(delay_ms, lambda: splash.finish(main_window))
+
+    def finish() -> None:
+        splash.finish(main_window)
+        from galileo.notices import set_notices_enabled
+        set_notices_enabled(True)               # NOTE-060: start-up is over; from here on events are announced
+
+    QTimer.singleShot(delay_ms, finish)
 
 
 def _show_splash(app, compact: bool = False):

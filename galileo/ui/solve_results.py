@@ -11,7 +11,6 @@ from PySide6.QtWidgets import QTableWidgetItem
 from galileo.platesolve import j2000_to_mount_frame
 
 
-_LOG_TAIL_LINES = 300
 
 
 _ARCSEC_PER_RAD_UM_MM = 206.265  # plate scale in ″/px = 206.265 × pixel size (µm) / focal length (mm)
@@ -96,10 +95,6 @@ class SolveResultsMixin(_MixinBase):
             values["fnum"].setText(f"{solved_focal / aperture:.1f}" + (f" ({focal / aperture:.1f})" if focal else ""))
         else:
             values["fnum"].setText("—")
-
-    def _refresh_log(self) -> None:
-        from galileo.diagnostics import get_recent_log_lines
-        self._window.set_log_pane_text(self.log_pane, "\n".join(get_recent_log_lines(_LOG_TAIL_LINES)))
 
     def _update_frame_label(self) -> None:
         latest = self._rows[-1] if self._rows else None

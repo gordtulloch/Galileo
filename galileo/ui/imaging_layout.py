@@ -24,7 +24,6 @@ PANELS: tuple[tuple[str, str], ...] = (
     ("stretch", "Stretch slider"),
     ("histogram", "Histogram"),
     ("progress", "Progress"),
-    ("log", "Log"),
 )
 DEFAULT_ORDER: tuple[str, ...] = tuple(pid for pid, _ in PANELS)
 PANEL_LABELS: dict[str, str] = dict(PANELS)

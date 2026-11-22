@@ -257,5 +257,7 @@ class AlpacaMountAdapter(AlpacaAdapter):
         if status.get("tracking") is not None:
             self.is_tracking = status["tracking"]
         if status.get("slewing") is not None:
+            from galileo.notices import note_slew_state
+            note_slew_state(getattr(self, "device_name", "") or "", bool(self.is_slewing), bool(status["slewing"]))
             self.is_slewing = status["slewing"]
         return status

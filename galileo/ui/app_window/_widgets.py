@@ -9,7 +9,7 @@ import math
 from itertools import pairwise
 from typing import TYPE_CHECKING, ClassVar
 
-from ._common import Signal, _QLabelBase, _QPlainTextEditBase, _QWidgetBase
+from ._common import Signal, _QLabelBase, _QWidgetBase
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QButtonGroup
@@ -546,27 +546,6 @@ class _HistogramWidget(_QWidgetBase):
                 bar_h = (math.log1p(count) / math.log1p(max_count)) * h if count else 0
                 painter.drawRect(int(i * bar_w), int(h - bar_h), max(1, math.ceil(bar_w)), int(bar_h))
         painter.end()
-
-
-class _LogPane(_QPlainTextEditBase):
-    """A read-only QPlainTextEdit that ignores Ctrl+Wheel text-zoom.
-
-    A fixed-height log tail has no use for interactive font zoom, and Qt's
-    built-in zoom (QWidgetTextControl::zoomIn/zoomOut) does arithmetic on
-    QFont::pointSize() — which can be -1 for the system fixed-width font on
-    some Windows configurations, since a system font may be defined only by
-    pixel size — and can end up calling QFont::setPointSize() with a
-    non-positive result, printing "QFont::setPointSize: Point size <= 0" to
-    the console. Ignoring Ctrl+Wheel here (regular scroll still works)
-    avoids that regardless of the underlying font's point-size validity.
-    """
-
-    def wheelEvent(self, event) -> None:
-        from PySide6.QtCore import Qt
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            event.ignore()
-            return
-        super().wheelEvent(event)
 
 
 class _NavColumn(_QWidgetBase):
