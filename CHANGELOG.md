@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Draft Project Scope Document for a planned **INDI Server plugin** (`docs/plugins/indi_server/PSD.md`): a first-party plugin that would let Linux and macOS users run and supervise a local `indiserver` with nothing preinstalled (bundled INDI, detect-and-adopt a running server on start-up and add or remove its drivers, choose drivers live through the server's FIFO, restart on failure, a lifetime option) from a panel on Equipment > Control Panel. Scope includes per-platform build scripts, run by hand on each platform, that build INDI and publish the bundles, stored on the project website's own server, to the website by rsync over SSH, with the Linux x86-64 build run on a local server and macOS limited to Apple silicon. The bundles track the latest stable INDI release. All scope questions in the PSD are now answered, pending sign-off. Documentation only: no code, SRS/SDD/RTM, help or wiki changes yet; those follow once the remaining scope questions in the PSD are agreed.
+
 ## Releases
 
 | Version | Date | Notes |
