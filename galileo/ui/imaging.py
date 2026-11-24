@@ -351,29 +351,37 @@ class ImagingService:
         if stacking:
             self.stacker.reset()
             self.stack_started = None
-        for index in range(1, count + 1):
-            if self.stop_requested:
-                break
-            if on_frame_start is not None:
-                on_frame_start(index, count)
-            try:
-                # When stacking, it's the stack that gets shown and measured, not each sub.
-                await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
-                                               offset=self.offset or None, analyse=not stacking)
-            except Exception:
+        from galileo.notices import SUCCESS, clear_series_progress, post_notice, set_series_progress
+        try:
+            for index in range(1, count + 1):
                 if self.stop_requested:
                     break
-                raise
-            self.series_done = index
-            self.last_sub_frame = self.current_frame
-            # The sub is what goes to the Library; the stack is kept separately and saved on request.
-            if self.auto_save_to_library:
-                self._auto_save_to_library(index)
-            if stacking:
-                await self._stack_current_frame()
-            self._announce_frame()
-            if on_frame_done is not None:
-                on_frame_done(index, count)
+                set_series_progress(index, count)
+                if on_frame_start is not None:
+                    on_frame_start(index, count)
+                try:
+                    # When stacking, it's the stack that gets shown and measured, not each sub.
+                    await self.capture_and_preview(duration, filter_name, frame_type, gain=self.gain or None,
+                                                   offset=self.offset or None, analyse=not stacking)
+                except Exception:
+                    if self.stop_requested:
+                        break
+                    raise
+                self.series_done = index
+                self.last_sub_frame = self.current_frame
+                # The sub is what goes to the Library; the stack is kept separately and saved on request.
+                if self.auto_save_to_library:
+                    self._auto_save_to_library(index)
+                if stacking:
+                    await self._stack_current_frame()
+                self._announce_frame()
+                if on_frame_done is not None:
+                    on_frame_done(index, count)
+        finally:
+            clear_series_progress()
+        if count > 1 and not self.stop_requested and self.series_done == count:
+            label = f"{duration:g} s {frame_type}" + (f", {filter_name}" if filter_name else "")
+            post_notice("exposure.series_complete", "Exposures complete", f"{count} of {count} done: {label}", SUCCESS)
         return list(self.library_ids)
 
     def _announce_frame(self) -> None:
@@ -477,6 +485,8 @@ class ImagingService:
                     await self._settle_after_slew(settle_s)
                     if self.stop_requested:
                         break
+                from galileo.notices import set_series_progress
+                set_series_progress(index, count)
                 if on_frame_start is not None:
                     on_frame_start(index, count)
                 try:
@@ -504,7 +514,13 @@ class ImagingService:
         except BaseException:
             await self._finish_mosaic(solve_tasks, cancel=True, show=False)
             raise
+        finally:
+            from galileo.notices import clear_series_progress
+            clear_series_progress()
         await self._finish_mosaic(solve_tasks, cancel=self.stop_requested)
+        if count > 1 and not self.stop_requested and self.series_done == count:
+            from galileo.notices import SUCCESS, post_notice
+            post_notice("exposure.series_complete", "Exposures complete", f"{count} of {count} done", SUCCESS)
         return list(self.library_ids)
 
     async def _solve_mosaic_pane(self, pane_index: int, frame, centre: tuple[float, float], solver, lock) -> None:

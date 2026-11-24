@@ -385,6 +385,10 @@ class AppWindowCoreMixin:
         options_page = self._build_submenu_page(options_items, option_builders, help_prefix="options")
         tag_help_screen(options_page, "options")
         self._options_page = options_page
+        # A plugin's options page is reached from the gear on its tile under Options > Plugins, not
+        # from this menu, which would otherwise fill up with one item per plugin.
+        for _oid in self._plugin_options_built:
+            options_page._secondary_nav.hide_item(_oid)
         pages[OPTIONS_SECTION[0]] = options_page
         stack.addWidget(options_page)
 
@@ -578,7 +582,38 @@ class AppWindowCoreMixin:
             if not options._has_subpage(oid):
                 options._add_subpage(oid, plugin.options_label, "plugins",
                                      lambda _p=plugin: self._build_plugin_options_page(_p))
+                options._secondary_nav.hide_item(oid)   # reached from the gear on its Plugins tile
         self._plugin_options_built = current
+
+    def _plugin_options_id(self: AppWindowState, plugin_name: str) -> str | None:
+        """The Options page id (``plugin.<class name>``) of the plugin installed as *plugin_name*, or
+        None if it offers none. *plugin_name* is the manifest name Options > Plugins lists, which can
+        differ from the plugin class's own ``name`` (``allskycam`` loads ``AllSkyCamPlugin``) and can
+        cover several classes. Asks the registry, not ``_plugin_options_built``: a plugin installed
+        or reloaded live is in the registry at once, but the menu sync that fills
+        ``_plugin_options_built`` is deferred and the Installed tab redraws before it runs."""
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is None:
+            return None
+        names = set(pm.class_names(plugin_name)) | {plugin_name}
+        for p in pm.get_ui_registry().get_options_plugins():
+            if p.name in names:
+                return f"plugin.{p.name}"
+        return None
+
+    def _plugin_has_options(self: AppWindowState, plugin_name: str) -> bool:
+        """Whether the plugin offers an Options page (so its Plugins tile gets a gear)."""
+        return self._plugin_options_id(plugin_name) is not None
+
+    def _open_plugin_options(self: AppWindowState, plugin_name: str) -> None:
+        """Jump to a plugin's options page (the gear on its tile under Options > Plugins)."""
+        oid = self._plugin_options_id(plugin_name)
+        if oid is None:
+            return
+        if not self._options_page._has_subpage(oid):
+            self._sync_plugin_options_items()   # a live install whose deferred sync has not run yet
+        self._primary_nav.select(OPTIONS_SECTION[0])
+        self._options_page._secondary_nav.select(oid)
 
     def _sync_plugin_docks(self: AppWindowState) -> None:
         """Create the dock panes of newly loaded plugins and delete those of plugins that went."""

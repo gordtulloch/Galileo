@@ -135,6 +135,10 @@ def install_requirements(install_dir: Path, requires: list[str]) -> None:
         raise PluginInstallError(f"Could not install the plugin's dependencies {requires}: {tail}")
 
 
+GALILEO_ICON = Path(__file__).resolve().parents[2] / "assets" / "images" / "galileo.ico"
+"""The icon first-party plugins show on their tiles."""
+
+
 @dataclass
 class PluginRecord:
     """A discovered, possibly-loaded installed plugin."""
@@ -145,6 +149,19 @@ class PluginRecord:
     faulted: bool = False
     loaded_names: list[str] = field(default_factory=list)
     help_dir: Path | None = None
+
+    @property
+    def icon_path(self) -> Path | None:
+        """The image shown on the plugin's tile: Galileo's own icon for a first-party plugin, else the
+        ``icon.svg`` / ``icon.png`` the author put at the root of the plugin zip (None if there is
+        none, and the tile falls back to a star)."""
+        if self.manifest.tier == "first_party":
+            return GALILEO_ICON
+        for name in ("icon.svg", "icon.png"):
+            candidate = self.install_dir / name
+            if candidate.is_file():
+                return candidate
+        return None
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -679,6 +696,10 @@ class PluginManager:
         self._ui_registry._dock_plugins = [p for p in self._ui_registry._dock_plugins if p is not plugin]
         self._ui_registry._options_plugins = [p for p in self._ui_registry._options_plugins if p is not plugin]
         self._ui_registry._dashboard_plugins = [p for p in self._ui_registry._dashboard_plugins if p is not plugin]
+
+    def class_names(self, name: str) -> list[str]:
+        """Public form of :meth:`_class_names`: the plugin class names behind a manifest name."""
+        return self._class_names(name)
 
     def _class_names(self, name: str) -> list[str]:
         """The loaded plugin class names behind *name*, which is either a class name or the

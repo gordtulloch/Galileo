@@ -992,6 +992,16 @@ def test_tc_plug_170_plugin_options_page_appears_under_options(tmp_path, monkeyp
         assert [p.options_label for p in registry.get_options_plugins()] == ["Opt Thing", "Broken Thing"]
         texts = {w.text() for w in win._options_page.findChildren(QtWidgets.QLabel)}
         assert "opt page" in texts
+        # The menu stays uncluttered: the page is reached from the gear on the plugin's tile.
+        nav = win._options_page._secondary_nav
+        assert nav.has_item("plugin.OptPlugin") and nav._buttons["plugin.OptPlugin"].isHidden()
+        assert win._plugin_has_options("OptPlugin") and not win._plugin_has_options("nope")
+        # The Plugins tile knows the plugin by its manifest name, which differs from the class name.
+        from types import SimpleNamespace
+        win._plugin_manager._records["opt-manifest"] = SimpleNamespace(loaded_names=["OptPlugin"])
+        assert win._plugin_has_options("opt-manifest")
+        win._open_plugin_options("opt-manifest")
+        assert nav._buttons["plugin.OptPlugin"].isChecked()
     finally:
         win._window.close()
 
@@ -1478,3 +1488,26 @@ def test_tc_plug_200_requires_must_be_a_list_of_strings():
     with patch("galileo.plugins._run_pip", lambda a: calls.append(a) or (0, "")):
         plugins.install_requirements(Path("."), [])
     assert calls == []
+
+
+@pytest.mark.requirement("TC-PLUG-210")
+@pytest.mark.priority("P2")
+def test_tc_plug_210_plugin_tile_icon(tmp_path):
+    """PLUG-210: a first-party plugin shows Galileo's icon; a third-party plugin shows the icon.svg or
+    icon.png at the root of its ZIP, or none."""
+    from galileo.plugins import GALILEO_ICON, PluginManifest, PluginRecord
+
+    def record(tier):
+        m = PluginManifest(name="x", version="1", api_min="1", api_max="1", author="a",
+                           description="d", tier=tier)
+        return PluginRecord(manifest=m, install_dir=tmp_path)
+
+    assert GALILEO_ICON.is_file()
+    (tmp_path / "icon.png").write_bytes(b"png")
+    assert record("first_party").icon_path == GALILEO_ICON       # the zip's own icon is ignored
+    assert record("third_party").icon_path == tmp_path / "icon.png"
+    (tmp_path / "icon.svg").write_bytes(b"<svg/>")
+    assert record("third_party").icon_path == tmp_path / "icon.svg"
+    (tmp_path / "icon.svg").unlink()
+    (tmp_path / "icon.png").unlink()
+    assert record("third_party").icon_path is None

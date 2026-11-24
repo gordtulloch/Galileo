@@ -31,7 +31,7 @@ Galileo's built-in solvers are fast when told roughly where the telescope points
 
 ## 4. Non-Goals
 
-- **The plugin does not contain the Skyshot program.** Upstream publishes no binaries, so Galileo's own CI builds unmodified Skyshot from one pinned upstream commit for Windows x64, Linux x64, Linux ARM64 (Raspberry Pi 5) and macOS Apple silicon (`SKY-100`), and the plugin downloads the one for the user's computer (`SKY-080`). A computer with no published build (for example an Intel Mac) builds Skyshot itself (`cargo build --release --locked`) and points the plugin at it.
+- **The plugin does not contain the Skyshot program.** Upstream publishes no binaries, so Galileo's own CI builds unmodified Skyshot from one pinned upstream commit for Windows x64, Linux x64, Linux ARM64 (Raspberry Pi 5) and macOS Apple silicon (`SKY-100`), and the plugin downloads the one for the user's computer (`SKY-080`). A computer with no published build (for example an Intel Mac) builds Skyshot itself (`cargo build --release --locked`) and puts it in the plugin's `program` folder. The plugin never asks for the location of the program or the index: both live in a fixed folder inside Galileo's data folder (`SKY-120`).
 - **No code signing or notarization.** The builds are unsigned, as upstream's are; the plugin downloads them itself, so no browser quarantine flag is involved, and it says they are unsigned.
 - **No use of a position hint.** Skyshot is blind; Options > Solve's search radius and field-of-view hint do not apply to it.
 - **No index building.** Only the publisher's prebuilt indexes are downloaded.

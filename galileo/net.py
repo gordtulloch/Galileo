@@ -27,10 +27,24 @@ def http_request(url: str, **kwargs: Any) -> urllib.request.Request:
     return urllib.request.Request(check_http_url(url), **kwargs)  # noqa: S310 - scheme checked above
 
 
-def urlopen_http(req: str | urllib.request.Request, timeout: float | None = None, data: bytes | None = None):
-    """``urllib.request.urlopen`` restricted to http(s) URLs (usable as a context manager)."""
+def urlopen_http(req: str | urllib.request.Request, timeout: float | None = None, data: bytes | None = None,
+                 context: Any = None):
+    """``urllib.request.urlopen`` restricted to http(s) URLs (usable as a context manager). *context* is an
+    optional ``ssl.SSLContext`` (see :func:`certifi_ssl_context`)."""
     check_http_url(req if isinstance(req, str) else req.full_url)
-    return urllib.request.urlopen(req, data, timeout)  # noqa: S310 - scheme checked above
+    return urllib.request.urlopen(req, data, timeout, context=context)  # noqa: S310 - scheme checked above
+
+
+def certifi_ssl_context() -> Any:
+    """A verifying ``ssl.SSLContext`` that trusts the bundled Mozilla CA list (certifi) instead of the OS
+    store. Python on Windows reads the OS store, which can lack an intermediate a server omits from its chain
+    ("unable to get issuer certificate"); the bundled roots are complete. ``None`` when certifi is absent."""
+    import ssl
+    try:
+        import certifi
+    except ImportError:
+        return None
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 # --- Loopback guard (PROF-130, GUIDE-100) ------------------------------------------------------

@@ -17,6 +17,10 @@ Installs a plugin from a ZIP file on your computer. Only install plugins from so
 
 Untick to disable a plugin without removing it, or tick to enable it again. Takes effect after a restart.
 
+## Settings
+
+The gear (⚙) on the tile of a plugin that has settings of its own. It opens that plugin's settings page; plugins no longer have an item each in the Options menu.
+
 ## Update
 
 Appears on an installed plugin's tile, next to the **Update available** tag, when the marketplace has a newer version. Downloads it and swaps it in without restarting Galileo: the old version is unloaded, the new one started, and its screens are rebuilt. If the new version fails to start, the version you had is put back.

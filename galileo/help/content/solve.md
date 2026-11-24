@@ -145,7 +145,7 @@ Shows the frame on this screen with the Library's dark master subtracted, when o
 
 ## Solver Mode
 
-Which solver to use for this run. It starts as the one chosen for the Pier in Options › Solve. A solver added by a plugin, such as Skyshot, gets a button of its own here once the plugin is installed and enabled.
+Which solver to use. Galileo remembers the last one you pick here, for each Pier (it is the same setting as the solver in Options › Solve), so it is still selected next time. Solves started from the phone, a session's Plate Solve block, Imaging and the Star Atlas use it too. A solver added by a plugin, such as Skyshot, gets a button of its own here once the plugin is installed and enabled.
 
 ## ASTAP
 

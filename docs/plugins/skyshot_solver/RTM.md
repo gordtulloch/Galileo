@@ -11,9 +11,9 @@
 
 ---
 
-Test Case IDs follow `TC-<requirement ID>`. Tests are in `Galileo-Plugins/skyshot_solver/tests/test_skyshot.py`; they run with no network and no Skyshot program (downloads are served from memory and the program is replaced by a fake process). An opt-in test (`SKYSHOT_REAL_DIR`, `TC-SKY-010`) runs a real Skyshot build against Skyshot's synthetic demo. **Not covered:** a real frame and the full-sky index; any platform but Windows; the CI workflow itself, which has not yet been run.
+Test Case IDs follow `TC-<requirement ID>`. Tests are in `Galileo-Plugins/skyshot_solver/tests/test_skyshot.py`; they run with no network and no Skyshot program (downloads are served from memory and the program is replaced by a fake process). An opt-in test (`SKYSHOT_REAL_DIR`, `TC-SKY-010`) runs a real Skyshot build against Skyshot's synthetic demo. **Not covered:** a real frame and the full-sky index; the Linux and macOS builds through the plugin (they passed upstream's tests and packaged smoke solve in CI on 2026-11-24 and are published, but only the Windows build has been downloaded and run by the plugin). `SKY-100` evidence: run 45310212150 of `skyshot-engine.yml`, release `skyshot-engine-v0.1.0-76f0181`.
 
-**Coverage:** 11 requirements, 100% mapped to an SDD module; `SKY-100` is verified by inspection of the CI workflow (it runs only on GitHub), the rest by tests.
+**Coverage:** 12 requirements, 100% mapped to an SDD module; `SKY-100` is verified by inspection of the CI workflow (it runs only on GitHub), the rest by tests.
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
@@ -28,3 +28,4 @@ Test Case IDs follow `TC-<requirement ID>`. Tests are in `Galileo-Plugins/skysho
 | `SKY-090` | P2 | SDD §2 `engine`, `backend` (`find_executable`) | Test | `TC-SKY-090` |
 | `SKY-100` | P2 | SDD §3 build provenance (`skyshot-engine.yml`) | Inspection | n/a (runs in CI) |
 | `SKY-110` | P2 | SDD §2 `credits`, `ui`, `data` (`_check_bundle`), `engine`; core `THIRD_PARTY_NOTICES.md` | Test | `TC-SKY-110` |
+| `SKY-120` | P2 | SDD §2 `settings`, `engine` (`program_dir`), `backend` (`find_executable`), `ui` | Test | `TC-SKY-120` |

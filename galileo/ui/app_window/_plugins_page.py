@@ -77,6 +77,19 @@ class AppWindowPluginsPageMixin:
                 )
             return None
 
+        def _record_icon(record) -> QPixmap | None:
+            """The tile image for an installed plugin: Galileo's icon if first-party, else the
+            icon.svg / icon.png from its zip (unreadable or oversize files are ignored)."""
+            path = record.icon_path
+            if path is None:
+                return None
+            try:
+                if path.stat().st_size > 1_000_000:
+                    return None
+                return _make_icon_pixmap(path.read_bytes())
+            except OSError:
+                return None
+
         _client = MarketplaceClient()
         # Latest marketplace entry per plugin name; drives the "Update available" tags (PLUG-190).
         _latest: dict[str, MarketplaceEntry] = {}
@@ -149,10 +162,16 @@ class AppWindowPluginsPageMixin:
                     card_outer = QHBoxLayout(card)
                     card_outer.setSpacing(10)
 
-                    icon_lbl = QLabel("★")
+                    icon_lbl = QLabel()
                     icon_lbl.setFixedSize(48, 48)
                     icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    icon_lbl.setStyleSheet("font-size: 24px; border: none;")
+                    icon_px = _record_icon(record)
+                    if icon_px:
+                        icon_lbl.setPixmap(icon_px)
+                        icon_lbl.setStyleSheet("border: none;")
+                    else:
+                        icon_lbl.setText("★")
+                        icon_lbl.setStyleSheet("font-size: 24px; border: none;")
                     card_outer.addWidget(icon_lbl, 0, Qt.AlignmentFlag.AlignTop)
 
                     right_col = QVBoxLayout()
@@ -208,6 +227,16 @@ class AppWindowPluginsPageMixin:
                         )
                         header_row.addWidget(update_btn)
                     header_row.addWidget(toggle)
+                    if self._plugin_has_options(plugin_name):
+                        gear_btn = QPushButton("⚙")
+                        gear_btn.setFixedWidth(40)
+                        gear_btn.setStyleSheet("padding: 2px 0px; font-size: 16px;")
+                        gear_btn.setToolTip(f"Open {plugin_name} settings")
+                        gear_btn.setAccessibleName("Settings")
+                        gear_btn.clicked.connect(
+                            lambda _checked=False, n=plugin_name: self._open_plugin_options(n)
+                        )
+                        header_row.addWidget(gear_btn)
                     header_row.addWidget(remove_btn)
                     right_col.addLayout(header_row)
 
@@ -372,6 +401,10 @@ class AppWindowPluginsPageMixin:
                 icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 icon_lbl.setStyleSheet("border: none;")
                 px = _make_icon_pixmap(entry.icon_data) if entry.icon_data else None
+                if px is None and entry.tier == "first_party":
+                    from galileo.plugins import GALILEO_ICON
+                    with contextlib.suppress(OSError):
+                        px = _make_icon_pixmap(GALILEO_ICON.read_bytes())
                 if px:
                     icon_lbl.setPixmap(px)
                 else:

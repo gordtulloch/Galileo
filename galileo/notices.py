@@ -120,10 +120,27 @@ def _dms(dec: float) -> str:
     return f"{sign}{d:02d}°{(dec - d) * 60.0:02.0f}′"
 
 
+_series: tuple[int, int] | None = None     # (frame number, frames in the set) while a multi-frame series runs
+
+
+def set_series_progress(index: int, count: int) -> None:
+    """Record which frame of a multi-frame set is about to start, so the exposure notice can say
+    "Exposure 4 of 99 starting". Call :func:`clear_series_progress` when the set ends."""
+    global _series
+    _series = (int(index), int(count)) if int(count) > 1 else None
+
+
+def clear_series_progress() -> None:
+    global _series
+    _series = None
+
+
 def _exposure_text(p: dict[str, Any]) -> str:
     duration = p.get("duration")
     kind = str(p.get("frame_type") or "Light")
-    return f"{float(duration):g} s {kind}" if isinstance(duration, (int, float)) else kind
+    text = f"{float(duration):g} s {kind}" if isinstance(duration, (int, float)) else kind
+    series = _series
+    return f"Exposure {series[0]} of {series[1]} starting: {text}" if series else text
 
 
 # action -> (kind, title, severity, message builder)
@@ -359,4 +376,5 @@ def uninstall_bridge(bus: EventBus | None = None) -> None:
 
 
 __all__ = ["ERROR", "INFO", "SUCCESS", "WARNING", "NoticeEvent", "install_bridge", "note_slew_state",
-           "notice_for_command", "notices_enabled", "post_guiding_notice", "post_notice", "set_notices_enabled", "uninstall_bridge"]
+           "notice_for_command", "notices_enabled", "post_guiding_notice", "post_notice", "set_notices_enabled", "uninstall_bridge",
+           "set_series_progress", "clear_series_progress"]

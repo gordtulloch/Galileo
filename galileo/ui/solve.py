@@ -185,6 +185,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.solve_finished.connect(self._on_solve_finished)
         self.preview_ready.connect(self._on_preview_ready)
         self.subtract_dark_check.toggled.connect(self._on_subtract_dark_toggled)
+        for radio in self._mode_backends:
+            radio.toggled.connect(self._on_backend_toggled)
         self.mount_position.connect(self._on_mount_position)
         self.run_finished.connect(self._on_run_finished)
         self.polar_progress.connect(self._on_polar_progress)
@@ -280,9 +282,27 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         except Exception:
             logger.exception("Could not read the saved solver backend")
             return
-        for radio, name in self._mode_backends.items():
-            if name == backend:
-                radio.setChecked(True)
+        self._restoring_backend = True       # showing the saved choice is not a new choice to save
+        try:
+            for radio, name in self._mode_backends.items():
+                if name == backend:
+                    radio.setChecked(True)
+        finally:
+            self._restoring_backend = False
+
+    def _on_backend_toggled(self, checked: bool) -> None:
+        """Remember the Solver Mode picked here as the Pier's saved backend, so it is still
+        selected next time (and is what Options > Solve shows)."""
+        pier = self._window._current_pier
+        if not checked or pier is None or getattr(self, "_restoring_backend", False):
+            return
+        from galileo.observatory import get_solver_backend, save_solver_backend
+        try:
+            backend = self._selected_backend()
+            _, astrometry_exe, api_key = get_solver_backend(pier)
+            save_solver_backend(pier, backend, astrometry_exe, api_key)
+        except Exception:
+            logger.exception("Could not save the chosen solver backend")
 
     def _selected_backend(self) -> str:
         return next((name for radio, name in self._mode_backends.items() if radio.isChecked()), "astap")
