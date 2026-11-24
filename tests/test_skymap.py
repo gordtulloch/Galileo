@@ -262,13 +262,48 @@ def test_tc_skymap_100_no_tile_means_no_failure_and_a_good_one_is_cached(tmp_pat
 
 @pytest.mark.requirement("TC-SKYMAP-100")
 @pytest.mark.priority("P2")
+def test_tc_skymap_100_a_mirror_that_answers_404_does_not_stop_the_others_being_asked(monkeypatch):
+    """SKYMAP-100: CDS's hosts dropped the survey (404 for every tile), so a 404 from one mirror must not end the search."""
+    import urllib.error
+    import urllib.request
+
+    from galileo.planning import sky_survey as ss
+    two = ("https://mirror-a.example/s", "https://mirror-b.example/s")
+    monkeypatch.setattr(ss, "_MIRRORS", two)
+    monkeypatch.setattr(ss, "_mirrors", list(two))
+    monkeypatch.setattr(ss, "_offline_until", 0.0)
+    good = two[-1]
+
+    class Answer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"\xff\xd8ok"
+
+    def only_last_has_it(request, timeout=0):
+        if request.full_url.startswith(good):
+            return Answer()
+        raise urllib.error.HTTPError(request.full_url, 404, "no", None, None)
+    monkeypatch.setattr(urllib.request, "urlopen", only_last_has_it)
+    assert ss._unpatched_fetch_tile(3, 300) == b"\xff\xd8ok"
+    assert ss._mirrors[0] == good, "the mirror that has it is asked first from now on"
+
+
+@pytest.mark.requirement("TC-SKYMAP-100")
+@pytest.mark.priority("P2")
 def test_tc_skymap_100_a_mirror_that_fails_is_tried_last_and_none_at_all_is_not_a_crash(monkeypatch):
     """SKYMAP-100: one survey mirror being down costs nothing, as the other answers; no such tile isn't an outage."""
     import urllib.error
     import urllib.request
 
     from galileo.planning import sky_survey as ss
-    monkeypatch.setattr(ss, "_mirrors", list(ss._MIRRORS))
+    two = ("https://mirror-a.example/s", "https://mirror-b.example/s")
+    monkeypatch.setattr(ss, "_MIRRORS", two)
+    monkeypatch.setattr(ss, "_mirrors", list(two))
     monkeypatch.setattr(ss, "_offline_until", 0.0)
     fetch = ss._unpatched_fetch_tile                                          # conftest keeps tests off the network
     tried = []

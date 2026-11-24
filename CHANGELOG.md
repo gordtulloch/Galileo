@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Star Atlas Milky Way background (Mellinger survey) was never populated.** CDS's hosts (`alasky.cds.unistra.fr`, `alasky.u-strasbg.fr`) now answer 404 to every Mellinger tile, and the tile fetcher took the first 404 to mean "this tile doesn't exist" without asking the remaining mirrors, so the independent IAS Orsay mirror (which still serves the survey) was never reached and the sky stayed blank. A 404 now moves on to the next mirror, the tile is reported missing only if every mirror says so, and the mirror that answers is tried first from then on. The dead CDS mirrors are also removed from the list, leaving IAS Orsay as the only (and so primary) source. Internal fetch behaviour only; no new controls, so no help or wiki change. Test `TC-SKYMAP-100` added.
+
 ### Added
 
 - Draft Project Scope Document for a planned **INDI Server plugin** (`docs/plugins/indi_server/PSD.md`): a first-party plugin that would let Linux and macOS users run and supervise a local `indiserver` with nothing preinstalled (bundled INDI, detect-and-adopt a running server on start-up and add or remove its drivers, choose drivers live through the server's FIFO, restart on failure, a lifetime option) from a panel on Equipment > Control Panel. Scope includes per-platform build scripts, run by hand on each platform, that build INDI and publish the bundles, stored on the project website's own server, to the website by rsync over SSH, with the Linux x86-64 build run on a local server and macOS limited to Apple silicon. The bundles track the latest stable INDI release. All scope questions in the PSD are now answered, pending sign-off. Documentation only: no code, SRS/SDD/RTM, help or wiki changes yet; those follow once the remaining scope questions in the PSD are agreed.

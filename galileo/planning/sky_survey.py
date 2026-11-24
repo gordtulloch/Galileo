@@ -33,11 +33,10 @@ SURVEY_CREDIT = "Mellinger color optical survey - (c) Axel Mellinger, via CDS"
 MAX_ORDER = 4                         # the survey's finest: about 25 arcsec per pixel, as fine as the mosaic is
 TILE_SIDE = 512
 FETCH_ABOVE_FOV_DEG = 3.0             # a view narrower than this fetches nothing: it draws what is already held
-# Tried in turn; the first that answers is remembered. The first two are CDS's own pair, the third is CDS's older host
-# name (a separate DNS entry), the last is the registry's independent mirror at IAS Orsay (a different institution, so it
-# survives a CDS-wide outage).
-_MIRRORS = ("https://alasky.cds.unistra.fr/MellingerRGB", "https://alaskybis.cds.unistra.fr/MellingerRGB",
-            "https://alasky.u-strasbg.fr/MellingerRGB", "https://healpix.ias.u-psud.fr/CDS_P_Mellinger_color")
+# Tried in turn; the first that answers is remembered. IAS Orsay's is the only one that serves the survey now: CDS's own
+# hosts (alasky.cds.unistra.fr, alasky.u-strasbg.fr) answer 404 to every Mellinger tile and alaskybis does not answer.
+# Add any further mirror here; a 404 or an outage on one moves on to the next.
+_MIRRORS = ("https://healpix.ias.u-psud.fr/CDS_P_Mellinger_color",)
 _ORDER0_DEG_PER_PIXEL = 58.63 / TILE_SIDE
 _MEMORY_TILES = 128                   # decoded, at 0.75 MB each
 _MAX_VIEW_TILES = 96                  # never ask for more than memory can hold at once
@@ -121,21 +120,32 @@ def _fetch_tile(order: int, npix: int) -> bytes | None:
         raise OSError("not trying again yet")
     with _fetch_lock:
         order_tried = list(_mirrors)
+    missing = False
     for base in order_tried:
         request = urllib.request.Request(f"{base}/{_tile_path(order, npix)}", headers={"User-Agent": "Galileo"})  # noqa: S310 - fixed https mirrors
         try:
             with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed https mirrors
-                return response.read()
+                data = response.read()
+            with _fetch_lock:                 # try the one that works first from now on
+                if base in _mirrors and _mirrors[0] != base:
+                    _mirrors.remove(base)
+                    _mirrors.insert(0, base)
+            return data
         except urllib.error.HTTPError as exc:
+            # A mirror may have dropped the survey altogether (CDS's hosts answer 404 to everything now), so a 404 from
+            # one is not proof the tile doesn't exist: ask the others before giving up.
             if exc.code == 404:
-                return None
+                missing = True
+                continue
             logger.debug("Sky survey mirror %s answered %s", base, exc.code)
         except OSError:
             logger.debug("Sky survey mirror %s unreachable", base)
-        with _fetch_lock:                     # try the one that works first from now on
+        with _fetch_lock:
             if base in _mirrors and len(_mirrors) > 1:
                 _mirrors.remove(base)
                 _mirrors.append(base)
+    if missing:
+        return None
     _offline_until = time.monotonic() + _OFFLINE_PAUSE_S
     raise OSError("no sky survey mirror reachable")
 
