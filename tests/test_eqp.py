@@ -1300,6 +1300,30 @@ def test_tc_eqp_mnt_020_park_and_tracking_controls_and_status_text(window):
 
 @pytest.mark.requirement("TC-EQP-MNT-010")
 @pytest.mark.priority("MVP")
+def test_tc_eqp_mnt_010_held_jog_button_is_highlighted_until_released(window):
+    """EQP-MNT-010: a jog button that is held down is highlighted until it is released, since the
+    screen has no log tail to confirm the press."""
+    from PySide6 import QtWidgets
+    page = window._build_mount_page()
+    mount = MagicMock()
+    mount.get_status = AsyncMock(return_value={})
+    mount.move_axis = AsyncMock()
+    state = window._device_pages["mount"]
+    state["adapter"] = mount
+    jog = state["jog_controller"]
+    east = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() == "→")
+    before = east.styleSheet()
+    east.pressed.emit()
+    assert "highlight" in east.styleSheet()
+    east.released.emit()
+    jog.flush()
+    assert east.styleSheet() == before
+    jog.stop_all()
+    assert east.styleSheet() == before
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
 def test_tc_eqp_mnt_010_jog_pad_lists_the_drivers_slew_rates_and_mirrors_its_reversal(window):
     """EQP-MNT-010: with an INDI mount the Rate drop-down lists the driver's own slew rates (choosing one
     selects it in the driver, a jog then sends only the direction), and Primary/Secondary reversed show

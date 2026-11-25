@@ -75,6 +75,10 @@ class HoldToMove(QObject):
 
     failed = Signal(str)
 
+    #: Look of a button while it is held down, from the active palette so it suits light and dark themes.
+    _HELD_STYLE = ("QPushButton { background-color: palette(highlight); color: palette(highlighted-text); "
+                   "border: 1px solid palette(highlight); }")
+
     def __init__(self, get_mount: Callable[[], object], get_rate: Callable[[], float],
                  get_reversed: Callable[[], tuple], parent: QObject | None = None,
                  get_rate_index: Callable[[], int | None] | None = None) -> None:
@@ -86,6 +90,8 @@ class HoldToMove(QObject):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mount-motion")
         self._active: dict[int, str] = {}   # axis -> direction currently being held
         self._mount: dict[int, object] = {}  # axis -> the mount that axis was started on
+        self._buttons: dict[str, object] = {}      # direction -> its button
+        self._saved_style: dict[str, str] = {}     # direction -> stylesheet to restore on release
         app = QGuiApplication.instance()
         if app is not None:
             app.applicationStateChanged.connect(self._app_state_changed)
@@ -96,6 +102,22 @@ class HoldToMove(QObject):
         button.released.connect(lambda d=direction: self.stop(d))
         button.installEventFilter(self)
         button.setProperty("holdDirection", direction)
+        self._buttons[direction] = button
+
+    def _highlight(self, direction: str, held: bool) -> None:
+        """Show *direction*'s button as held (the screens no longer have a log tail to confirm a press)."""
+        button = self._buttons.get(direction)
+        if button is None:
+            return
+        try:
+            if held and direction not in self._saved_style:
+                self._saved_style[direction] = button.styleSheet()
+                button.setStyleSheet(self._HELD_STYLE)
+            elif not held and direction in self._saved_style:
+                button.setStyleSheet(self._saved_style.pop(direction))
+        except RuntimeError:   # the button was deleted with its page
+            self._buttons.pop(direction, None)
+            self._saved_style.pop(direction, None)
 
     def eventFilter(self, watched, event) -> bool:
         kind = event.type()
@@ -124,6 +146,7 @@ class HoldToMove(QObject):
             self._active[axis] = direction
             self._mount[axis] = mount
             self._submit(mount, axis, signed)
+        self._highlight(direction, True)
         logger.info("Mount: hold %s at %s", direction,
                     jog_level_text(rate) if index is None else f"driver slew rate {index}")
         return True
@@ -137,6 +160,7 @@ class HoldToMove(QObject):
 
     def stop(self, direction: str) -> None:
         """Stop the axes *direction* started (a release of a stale press does nothing)."""
+        self._highlight(direction, False)
         for leg in direction:
             axis = 1 if leg.upper() in ("N", "S") else 0
             if self._active.get(axis) == direction:
@@ -145,6 +169,8 @@ class HoldToMove(QObject):
     def stop_all(self) -> None:
         """Stop both axes, whether or not a button is held."""
         mount = self._get_mount()
+        for direction in list(self._saved_style):
+            self._highlight(direction, False)
         for axis in (0, 1):
             self._active.pop(axis, None)
             target = self._mount.pop(axis, None) or mount
