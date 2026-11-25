@@ -1093,8 +1093,8 @@ def test_loop_blocks_in_palette_and_round_trip_indent():
     loop = ui_mod.ForFilterBlock(filters=["Ha"], indent=0)
     child = ui_mod.ImageBlock(indent=1)
     for b in (loop, child):
-        restored = ui_mod._block_from_dict(ui_mod._block_to_dict(b))
-        assert restored == b
+        restored = ui_mod._block_from_dict(ui_mod._block_to_dict(b))      # blocks compare by identity (SES-120)
+        assert type(restored) is type(b) and ui_mod._block_to_dict(restored) == ui_mod._block_to_dict(b)
 
 
 def test_flat_and_dark_capture_blocks_mirror_imaging_assistants():
@@ -1107,7 +1107,8 @@ def test_flat_and_dark_capture_blocks_mirror_imaging_assistants():
                                    adu_method="Median", exposure_increment=0.2)
     dark = ui_mod.DarkCaptureBlock(filter="Ha", exposures=[5.0, 30.0], close_cover=True)
     for b in (flat, dark):
-        assert ui_mod._block_from_dict(ui_mod._block_to_dict(b)) == b
+        restored = ui_mod._block_from_dict(ui_mod._block_to_dict(b))      # blocks compare by identity (SES-120)
+        assert type(restored) is type(b) and ui_mod._block_to_dict(restored) == ui_mod._block_to_dict(b)
     old = ui_mod._block_from_dict({"_type": "FlatCaptureBlock", "count": 3, "target_adu": 30000.0, "indent": 0})
     assert old.count == 3 and old.filter == "All"
 

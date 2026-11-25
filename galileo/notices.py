@@ -375,6 +375,20 @@ def uninstall_bridge(bus: EventBus | None = None) -> None:
         bus.unsubscribe(event_type, handler)
 
 
-__all__ = ["ERROR", "INFO", "SUCCESS", "WARNING", "NoticeEvent", "install_bridge", "note_slew_state",
-           "notice_for_command", "notices_enabled", "post_guiding_notice", "post_notice", "set_notices_enabled", "uninstall_bridge",
-           "set_series_progress", "clear_series_progress"]
+__all__ = [
+    "ERROR",
+    "INFO",
+    "SUCCESS",
+    "WARNING",
+    "NoticeEvent",
+    "clear_series_progress",
+    "install_bridge",
+    "note_slew_state",
+    "notice_for_command",
+    "notices_enabled",
+    "post_guiding_notice",
+    "post_notice",
+    "set_notices_enabled",
+    "set_series_progress",
+    "uninstall_bridge",
+]

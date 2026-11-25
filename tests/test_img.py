@@ -446,7 +446,7 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     import numpy as np
     ui, service = window._imaging_ui, window._imaging_service
     dock, content = ui["dock_panel"], ui["content"]
-    nudge, settings = ui["nudge_group"], ui["settings_panel"]
+    nudge = ui["nudge_group"]
     assert nudge.window() is ui["nudge_dialog"], "the nudge pad lives in the Mount Control dialog, in any layout"
     secondary = (ui["histogram"], ui["progress"])
 

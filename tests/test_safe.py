@@ -220,7 +220,6 @@ async def test_tc_safe_040_nothing_restarts_until_safe_long_enough_and_acknowled
 @pytest.mark.priority("P2")
 async def test_tc_safe_050_weather_forecast_advisory_only(safety_service):
     """SAFE-050: Internet weather forecast displayed as planning aid only; must never trigger automated abort."""
-    safe_mod = pytest.importorskip("galileo.safety")
     forecast_client = MagicMock()
     forecast_client.get_forecast = AsyncMock(return_value={"precipitation_mm": 5.0, "cloud_cover_pct": 90})
 
@@ -373,28 +372,6 @@ async def test_tc_safe_080_tier2_software_monitor_equally_trusted():
 @pytest.mark.priority("MVP")
 async def test_tc_safe_080_in_process_plugin_backend_equally_trusted():
     """SAFE-080: A Tier-2 monitor may be an in-process device backend a plugin registers through PLUG-010 implementing the identical port interface, rather than only an external INDI/Alpaca driver — trusted equally for automated abort decisions regardless of which."""
-    safe_mod = pytest.importorskip("galileo.safety")
-
-    ml_monitor = MagicMock(name="MLAllSkySafetyMonitor")
-    ml_monitor.device_type = "SafetyMonitor"
-    ml_monitor.name = "AllSkySafetyMonitor"
-    ml_monitor.tier = 2
-    ml_monitor.is_safe = False
-    ml_monitor.explanation = "Clouds detected by classifier"
-    ml_monitor.poll = AsyncMock()
-
-    svc = safe_mod.SafetyMonitorService(monitor=ml_monitor, event_bus=event_bus)
-    mock_mount = MagicMock(park=AsyncMock())
-    svc.register_mount(mock_mount)
-
-    await svc.poll_and_react()
-    mock_mount.park.assert_called()
-
-
-@pytest.mark.requirement("TC-SAFE-080")
-@pytest.mark.priority("MVP")
-async def test_tc_safe_080_in_process_plugin_backend_equally_trusted(event_bus):
-    """SAFE-080: A Tier-2 monitor may be an in-process device backend a plugin registers through PLUG-010 implementing the identical port interface, rather than only an external INDI/Alpaca driver — trusted equally for automated abort decisions regardless of which."""
     devices = pytest.importorskip("galileo.core.devices")
     plugins = pytest.importorskip("galileo.plugins")
 
@@ -433,7 +410,6 @@ async def test_tc_safe_080_in_process_plugin_backend_equally_trusted(event_bus):
 @pytest.mark.priority("P3")
 async def test_tc_safe_090_aurora_advisory_display(safety_service):
     """SAFE-090: Optionally display aurora activity estimate (Kp index) as an advisory-only planning aid."""
-    safe_mod = pytest.importorskip("galileo.safety")
     kp_client = MagicMock()
     kp_client.get_kp_index = AsyncMock(return_value=3.5)
 
@@ -462,7 +438,6 @@ async def test_tc_safe_090_aurora_advisory_is_none_not_zero_when_unconfigured(sa
 @pytest.mark.priority("P3")
 async def test_tc_safe_100_smoke_transparency_advisory(safety_service):
     """SAFE-100: Optionally display smoke/transparency estimate as advisory-only planning aid; never drives abort."""
-    safe_mod = pytest.importorskip("galileo.safety")
     smoke_client = MagicMock()
     smoke_client.get_smoke_aqi = AsyncMock(return_value=42)
 
