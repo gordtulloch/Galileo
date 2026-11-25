@@ -442,21 +442,21 @@ def test_tc_img_120_service_follows_the_frame_unless_the_user_chooses(imaging_se
 @pytest.mark.requirement("TC-IMG-120")
 @pytest.mark.priority("P2")
 def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_the_rest_left(window):
-    """IMG-120: for a portrait frame the preview becomes a full-height column one third of the page wide, the nudge pad/stretch slider/histogram/progress sit to its left; the log pane no longer exists (NOTE-010)."""
+    """IMG-120: for a portrait frame the preview becomes a full-height column one third of the page wide, the stretch slider/histogram/progress sit to its left; the log pane no longer exists (NOTE-010)."""
     import numpy as np
     ui, service = window._imaging_ui, window._imaging_service
     dock, content = ui["dock_panel"], ui["content"]
     nudge, settings = ui["nudge_group"], ui["settings_panel"]
+    assert nudge.window() is ui["nudge_dialog"], "the nudge pad lives in the Mount Control dialog, in any layout"
     secondary = (ui["histogram"], ui["progress"])
 
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary), "landscape keeps them under the preview"
-    assert nudge.parentWidget() is settings, "and the nudge pad in the settings panel"
     assert "log" not in ui and "log_bar" not in ui, "the imaging page has no log pane"
 
     service.current_frame = np.zeros((300, 200), dtype=np.uint16)
     ui["apply_orientation"]()
-    assert all(w.parentWidget() is dock for w in (nudge, *secondary))
+    assert all(w.parentWidget() is dock for w in secondary)
     assert ui["preview"].parentWidget() is content
     assert content.layout().count() == 2, "only the preview and its Fit/1:1/+/- toolbar are left on the right"
 
@@ -483,7 +483,6 @@ def test_tc_img_120_portrait_frame_gives_the_preview_the_right_side_and_docks_th
     service.current_frame = np.zeros((200, 300), dtype=np.uint16)
     ui["apply_orientation"]()
     assert all(w.parentWidget() is content for w in secondary)
-    assert nudge.parentWidget() is settings, "the nudge pad goes back to the settings panel"
     assert content.maximumWidth() > 10000, "landscape lets the preview take the whole right side again"
 
 
@@ -2741,3 +2740,264 @@ def test_dark_master_dark_for_frame_notes(monkeypatch, caplog):
     assert any("Master-Dark.fits" in r.getMessage() for r in caplog.records)   # the master's name is logged
     data, note = dark_master.dark_for_frame("T", "C", 30.0, 1, 1, (5, 5))
     assert data is None and "not subtracted" in note
+
+
+@pytest.mark.requirement("TC-IMG-130")
+@pytest.mark.priority("P2")
+def test_tc_img_130_mount_control_button_opens_the_nudge_dialog_in_front_of_the_page(window):
+    """IMG-130: the nudge pad is in a modeless Mount Control dialog, opened by a button, that floats above the window."""
+    from PySide6.QtCore import Qt
+    ui = window._imaging_ui
+    dialog, button = ui["nudge_dialog"], ui["mount_control_btn"]
+    assert button.text() == "Mount Control"
+    assert not dialog.isModal() and bool(dialog.windowFlags() & Qt.WindowType.Tool)
+    assert dialog.parentWidget() is window._window and not dialog.isVisible()
+    button.click()
+    assert dialog.isVisible() and ui["nudge_group"].isVisibleTo(dialog)
+    dialog.hide()
+
+
+@pytest.mark.requirement("TC-IMG-130")
+@pytest.mark.priority("P2")
+def test_tc_img_130_mount_control_dialog_buttons_run_the_mount_commands(window, monkeypatch):
+    """IMG-130: Park/Unpark, Home, Track On/Off and Do Meridian Flip in the Mount Control dialog drive the mount."""
+    from galileo.device_ops import OK
+    from PySide6.QtWidgets import QMessageBox
+    ui = window._imaging_ui
+    ops, buttons = ui["mount_ops"], ui["mount_actions"]
+    assert set(buttons) == {"park", "home", "track_on", "track_off", "flip"}
+    assert buttons["flip"].text() == "Do Meridian Flip"
+    seen = []
+    for name, call in (("park", "park"), ("unpark", "unpark"), ("home", "find_home")):
+        monkeypatch.setattr(ops, call, lambda n=name: seen.append(n) or OK)
+    monkeypatch.setattr(ops, "set_tracking", lambda on: seen.append("track_on" if on else "track_off") or OK)
+    monkeypatch.setattr(ops, "meridian_flip", lambda: seen.append("flip") or OK)
+    monkeypatch.setattr(window, "_track_when_slew_finishes", lambda *a, **k: seen.append("resume"))
+    window._device_pages["mount"]["adapter"] = object()
+    monkeypatch.setattr(window, "_poll_pier_pointing", lambda on_done=None: on_done and on_done())
+    for key in ("park", "home", "track_on", "track_off"):
+        buttons[key].click()
+    assert seen == ["park", "home", "track_on", "track_off"]
+
+    # The one Park button follows the mount's reported park state.
+    from galileo.current_object import pier_key
+    seen.clear()
+    window._pier_pointing[pier_key(window._current_pier)] = {"at_park": True}
+    ui["mount_control_btn"].click()
+    assert buttons["park"].text() == "Unpark"
+    buttons["park"].click()
+    assert seen == ["unpark"]
+    window._pier_pointing[pier_key(window._current_pier)] = {"at_park": False}
+    ui["mount_control_btn"].click()
+    assert buttons["park"].text() == "Park"
+    ui["nudge_dialog"].hide()
+
+    seen.clear()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    buttons["flip"].click()
+    assert seen == [], "declining the confirmation does nothing"
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    buttons["flip"].click()
+    assert seen == ["flip", "resume"]
+
+    # The red emergency stop aborts the slew and halts both axes.
+    seen.clear()
+    monkeypatch.setattr(ops, "abort_slew", lambda: seen.append("abort") or OK)
+    ui["emergency_stop"].click()
+    assert seen == ["abort"]
+    assert ui["emergency_stop"].text() == "EMERGENCY STOP" and "c62828" in ui["emergency_stop"].styleSheet()
+
+
+@pytest.mark.requirement("TC-IMG-130")
+@pytest.mark.priority("P2")
+def test_tc_img_130_meridian_flip_reslews_to_the_current_position():
+    """IMG-130: the manual flip slews the mount to where it points now, so it lands on the other pier side."""
+    import asyncio
+    from galileo.mount_ops import MountOps
+
+    class Mount:
+        slews: list = []
+
+        async def get_status(self):
+            return {"right_ascension": 6.0, "declination": 20.0}
+
+        async def slew_to_coordinates(self, *, ra, dec):
+            self.slews.append((ra, dec))
+
+    mount = Mount()
+    assert MountOps(lambda: mount).meridian_flip().ok
+    assert mount.slews == [(90.0, 20.0)]
+    assert not MountOps(lambda: None).meridian_flip().ok
+
+
+@pytest.mark.requirement("TC-IMG-150")
+@pytest.mark.priority("P2")
+def test_tc_img_150_the_gain_and_offset_entered_reach_the_camera_and_the_fits_header(window, tmp_path):
+    """IMG-150: the Gain and Offset typed on the page — not any camera default — are what is sent to the camera and
+    what the saved frame's GAIN and OFFSET cards say, whatever they are changed to between captures."""
+    from astropy.io import fits
+    from galileo.current_object import pier_key
+    ui, service = window._imaging_ui, window._imaging_service
+    camera = _CountingCamera()
+    window._camera_backends["primary camera"] = camera
+    ui["auto_save"].setChecked(False)
+
+    for gain, offset in ((120, 30), (275, 55)):
+        ui["gain"].setValue(gain)
+        ui["offset"].setValue(offset)
+        ui["capture_button"].click()
+        thread = window._imaging_capture_threads.get(pier_key(window._current_pier))
+        thread.wait(10000)
+        window.app.processEvents()
+        assert camera.exposures[-1]["gain"] == gain and camera.exposures[-1]["offset"] == offset
+        path = tmp_path / f"frame_{gain}.fits"
+        service.save_current_frame(path)
+        header = fits.getheader(path)
+        assert header["GAIN"] == gain and header["OFFSET"] == offset
+
+
+@pytest.mark.requirement("TC-IMG-140")
+@pytest.mark.priority("P2")
+def test_tc_img_140_object_field_follows_the_current_object_and_can_be_overridden(window, tmp_path):
+    """IMG-140: the Object field above Capture shows "Unknown" with no current object, follows the selected one, and
+    whatever it holds is the OBJECT card of the captured frame."""
+    from astropy.io import fits
+    from galileo.current_object import get_current_objects, pier_key
+    ui, service = window._imaging_ui, window._imaging_service
+    edit = ui["object_edit"]
+    get_current_objects().clear(window._current_pier)
+    window._refresh_current_object()
+    assert edit.text() == "Unknown"
+
+    get_current_objects().set(window._current_pier, _m31())
+    window._refresh_current_object()
+    assert edit.text() == "M 31"
+
+    edit.setText("My Own Target")                      # an override survives a refresh with the same object
+    window._refresh_current_object()
+    assert edit.text() == "My Own Target"
+
+    camera = _CountingCamera()
+    window._camera_backends["primary camera"] = camera
+    ui["auto_save"].setChecked(False)
+    ui["capture_button"].click()
+    window._imaging_capture_threads.get(pier_key(window._current_pier)).wait(10000)
+    window.app.processEvents()
+    assert service.object_name == "My Own Target"
+    service.save_current_frame(tmp_path / "f.fits")
+    assert fits.getheader(tmp_path / "f.fits")["OBJECT"] == "My Own Target"
+
+    edit.setText("")                                    # cleared: never a blank name
+    edit.editingFinished.emit()
+    assert edit.text() == "Unknown"
+
+
+@pytest.mark.requirement("TC-IMG-140")
+@pytest.mark.priority("P2")
+def test_tc_img_140_entering_an_object_name_makes_it_the_current_object(window, monkeypatch):
+    """IMG-140: a catalog name typed into the Imaging Object field becomes the Pier's current object; an unknown one
+    leaves the current object alone."""
+    from types import SimpleNamespace
+    from galileo.ui.imaging import exact_object_match
+    m31 = SimpleNamespace(primary_name="M 31", designations=["NGC 224"], ra_deg=10.68, dec_deg=41.27)
+    m310 = SimpleNamespace(primary_name="M 310", designations=[], ra_deg=1.0, dec_deg=1.0)
+    assert exact_object_match([m310, m31], "m31") is m31 and exact_object_match([m310, m31], "ngc224") is m31
+    assert exact_object_match([m310], "M 31") is None
+
+    class _Atlas:
+        def search(self, query):
+            return [m31] if not query else []
+
+        async def search_online(self, query):
+            return []
+
+    monkeypatch.setattr(window, "_shared_sky_atlas", lambda: _Atlas())
+    edit = window._imaging_ui["object_edit"]
+    edit.setText("ngc 224")
+    edit.editingFinished.emit()
+    current = window.current_object()
+    assert current.name == "ngc 224" and (current.ra_deg, current.dec_deg) == (10.68, 41.27)
+    assert "ngc 224" in window._current_object_label.text()
+
+    edit.setText("My Own Target")
+    edit.editingFinished.emit()
+    assert window.current_object() == current, "an unfound name does not replace the current object"
+    assert edit.text() == "My Own Target"
+
+
+@pytest.mark.requirement("TC-IMG-150")
+@pytest.mark.priority("P2")
+@pytest.mark.parametrize("reported, expected", [
+    ({"gain": 0.0, "offset": 0.0}, (0, 0)),             # a reported zero gets a zero card
+    ({"gain": 200.0, "offset": 8.0}, (200, 8)),         # the camera's value beats what was asked for
+    ({"gain": None, "offset": None}, (120, 30)),        # can't say: what was requested
+])
+async def test_tc_img_150_gain_and_offset_cards_are_read_back_from_the_camera(tmp_path, reported, expected):
+    """IMG-150: GAIN and OFFSET are what the camera reports after the exposure, zero included."""
+    from astropy.io import fits
+    from galileo.ui.imaging import ImagingService
+
+    class _Reporting(_CountingCamera):
+        async def read_gain_offset(self):
+            return reported
+
+    service = ImagingService(camera=_Reporting())
+    await service.capture_and_preview(1.0, gain=120, offset=30)
+    service.save_current_frame(tmp_path / "f.fits")
+    header = fits.getheader(tmp_path / "f.fits")
+    assert (header["GAIN"], header["OFFSET"]) == expected
+
+
+def test_dark_availability_is_shown_and_ticks_subtract_dark(window, monkeypatch):
+    """The Imaging page says whether a dark master matches, ticks Subtract dark if so, and keeps an override."""
+    from types import SimpleNamespace
+
+    import galileo.observatory
+    from galileo import dark_master
+    monkeypatch.setattr(window, "active_optical_tube", lambda pier=None: SimpleNamespace(name="T"))
+    monkeypatch.setattr(galileo.observatory, "get_device_config",
+                        lambda *a, **k: SimpleNamespace(device_name="C", sensor_name="", bayer_pattern=None))
+    monkeypatch.setattr(window, "_current_pier", window._current_pier or SimpleNamespace(name="P", id=1))
+    monkeypatch.setattr(dark_master, "find_dark_master_path",
+                        lambda telescope, instrument, exposure, bx, by: "/x/Master-Dark.fits" if exposure == 7.0 else None)
+    ui = window._imaging_ui
+    exposure, box, label = ui["exposure"], ui["subtract_dark"], ui["dark_available"]
+
+    exposure.setValue(7.0)
+    assert label.text() == "Dark available" and box.isChecked()
+    exposure.setValue(8.0)
+    assert label.text() == "No dark available" and not box.isChecked()
+    exposure.setValue(7.0)
+    box.click()                                        # the user overrides
+    exposure.setValue(8.0)
+    exposure.setValue(7.0)
+    assert not box.isChecked()                         # remembered for that setup
+
+
+async def test_dark_subtract_reaches_stack_and_solver_but_not_saved_subs(monkeypatch, tmp_path):
+    """Subtract dark: the live stack and the solver's frame have the dark off; the sub itself stays raw."""
+    import datetime
+
+    import numpy as np
+    from astropy.io import fits
+
+    from galileo.ui import imaging
+    dark = np.full((8, 8), 100.0, dtype=np.float32)
+    monkeypatch.setattr(imaging, "dark_for_frame", lambda *a: (dark, "Dark subtracted (D.fits)."))
+    raw = np.full((8, 8), 500, dtype=np.uint16)
+    service = imaging.ImagingService(camera=None)
+    service.current_frame, service.last_shot = raw, {"duration": 5.0, "frame_type": "Light", "filter": "", "gain": None,
+                                                  "offset": None, "started": datetime.datetime.now(datetime.UTC),
+                                                  "ended": datetime.datetime.now(datetime.UTC)}
+    service.subtract_dark = service._stack_dark = True
+
+    seen = []
+
+    class Solver:
+        async def solve(self, path, hint=None):
+            seen.append(float(fits.getdata(path).mean()))
+
+    await service.solve_current_frame(Solver())
+    assert seen == [400.0] and float(service.current_frame.mean()) == 500.0
+    assert float(service._frame_for_stack().mean()) == 400.0
+    assert service.stack_metadata()["dark_master"] == "D.fits" and float(raw.mean()) == 500.0

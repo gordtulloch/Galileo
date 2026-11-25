@@ -48,6 +48,7 @@ class WeatherSafetyRuleRecord(BaseModel):
     safety_related = pw.BooleanField(default=False)
     operator = pw.TextField(default=">=")
     threshold = pw.FloatField(default=0.0)
+    action = pw.TextField(default="stop")      # SAFE-030: stop or warn
 
     class Meta:
         table_name = "observatory_safety_rules"

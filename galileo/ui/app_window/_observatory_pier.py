@@ -656,6 +656,7 @@ class AppWindowObservatoryPierMixin:
                 timed("camera combo", self._refresh_camera_combo, "Selecting camera")
                 timed("camera imaging defaults", self._apply_camera_imaging_defaults, "Applying camera defaults")
                 timed("imaging filters", self._refresh_imaging_filters, "Loading filters")
+                timed("dark masters", self._refresh_dark_availability, "Looking for dark masters")
                 timed("current object", self._refresh_current_object, "Restoring current target")
                 refresh_star_atlas_site = getattr(self, "_star_atlas_refresh_site", None)
                 if refresh_star_atlas_site is not None:
@@ -826,7 +827,8 @@ class AppWindowObservatoryPierMixin:
                 if ra_hours is not None and dec is not None:
                     from galileo.platesolve import mount_frame_to_j2000
                     ra_deg, dec_deg = mount_frame_to_j2000(ra_hours * 15.0, dec, status.get("equatorial_system"))
-                    pointing = {"ra_deg": ra_deg, "dec_deg": dec_deg, "slewing": bool(status.get("slewing"))}
+                    pointing = {"ra_deg": ra_deg, "dec_deg": dec_deg, "slewing": bool(status.get("slewing")),
+                                "at_park": bool(status.get("at_park"))}
             if pointing is None:
                 self._pier_pointing.pop(key, None)
             else:

@@ -56,7 +56,7 @@ def build_notify_service(observatory: Any) -> Any:
 def assemble_context(
     *, pier: Any, key: Any, camera_slot: str, camera: Any, mount: Any, filter_wheel: Any, focuser: Any,
     rotator: Any, dome: Any, dome_service: Any, guider: Any, flat_panel: Any, arbiter: Any, observatory: Any,
-    notify_service: Any, location: Any, frame_context: dict,
+    notify_service: Any, location: Any, frame_context: dict, is_safe: Any, roof_mounts: Any,
 ) -> SessionContext:
     """The context for one run on *pier* from the devices already gathered. Anything ``None`` is not
     connected; the executor's pre-flight reports it."""
@@ -65,6 +65,7 @@ def assemble_context(
         camera=camera, mount=mount, filter_wheel=filter_wheel, focuser=focuser, rotator=rotator,
         dome=dome, dome_service=dome_service, arbiter=arbiter, guider=guider, flat_panel=flat_panel,
         observatory=observatory, notify_service=notify_service, history=get_history(), location=location,
+        is_safe=is_safe, roof_mounts=roof_mounts,
     )
     if pier is not None and camera is not None:
         try:

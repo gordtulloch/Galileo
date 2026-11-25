@@ -20,7 +20,6 @@ from pathlib import Path
 #: controls and is not listed because it must always stay reachable.
 PANELS: tuple[tuple[str, str], ...] = (
     ("view", "View settings"),
-    ("nudge", "Mount Nudge"),
     ("stretch", "Stretch slider"),
     ("histogram", "Histogram"),
     ("progress", "Progress"),

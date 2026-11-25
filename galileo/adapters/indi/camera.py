@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from galileo.adapters import indi_client as ic
 from galileo.adapters.indi._base import IndiAdapter
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceCategory
 from galileo.exceptions import DeviceError, DevicePropertyError
+
+logger = logging.getLogger(__name__)
 
 
 class IndiCameraAdapter(IndiAdapter):
@@ -40,7 +43,7 @@ class IndiCameraAdapter(IndiAdapter):
         return DeviceCapabilities(
             has_cooler=self._has("CCD_TEMPERATURE"),
             can_set_gain=self._has("CCD_GAIN") or self._sw_or_num_gain() is not None,
-            can_set_offset=self._has("CCD_OFFSET"),
+            can_set_offset=self._has("CCD_OFFSET") or self._num("CCD_CONTROLS", "Offset") is not None,
             can_bin=binning is not None and binning.perm != "ro",
             max_bin_x=max_bin("HOR_BIN"),
             max_bin_y=max_bin("VER_BIN"),
@@ -87,8 +90,14 @@ class IndiCameraAdapter(IndiAdapter):
                 self._set_num("CCD_GAIN", {"GAIN": gain})
             elif self._sw_or_num_gain() is not None:
                 self._set_num("CCD_CONTROLS", {"Gain": gain})
-        if offset and self._has("CCD_OFFSET"):
-            self._set_num("CCD_OFFSET", {"OFFSET": offset})
+        if offset:
+            if self._has("CCD_OFFSET"):
+                self._set_num("CCD_OFFSET", {"OFFSET": offset})
+            elif self._num("CCD_CONTROLS", "Offset") is not None:      # ZWO and similar drivers
+                self._set_num("CCD_CONTROLS", {"Offset": offset})
+            else:
+                logger.warning("%s has no offset control; exposing without setting offset %s",
+                               self.device_name, offset)
         if self._has("CCD_BINNING") and self._num("CCD_BINNING", "HOR_BIN") != binning:
             self._set_num("CCD_BINNING", {"HOR_BIN": binning, "VER_BIN": binning})
         if self._has("CCD_FRAME_TYPE"):
@@ -96,6 +105,18 @@ class IndiCameraAdapter(IndiAdapter):
         self._exposure_s = float(duration)
         self._blob_seq0 = self._c().blob_seq(self.device_name, "CCD1")
         self._c().send_number(self.device_name, "CCD_EXPOSURE", {"CCD_EXPOSURE_VALUE": duration})
+
+    async def read_gain_offset(self) -> dict:
+        """The gain and offset the driver currently reports (``None`` where it has no such control), for
+        the frame's header. The client only updates these from the driver, never from what was sent."""
+        def first(*sources):
+            for prop, element in sources:
+                value = self._num(prop, element)
+                if value is not None:
+                    return value
+            return None
+        return {"gain": first(("CCD_GAIN", "GAIN"), ("CCD_CONTROLS", "Gain")),
+                "offset": first(("CCD_OFFSET", "OFFSET"), ("CCD_CONTROLS", "Offset"))}
 
     async def abort_exposure(self) -> None:
         self._log_interaction("abort_exposure")
@@ -149,6 +170,22 @@ class IndiCameraAdapter(IndiAdapter):
 
     def get_cooler_power(self) -> float:
         return self._num("CCD_COOLER_POWER", "CCD_COOLER_VALUE") or 0.0
+
+    async def set_cooler(self, on: bool) -> None:
+        """Switch the cooler on or off without touching the target temperature."""
+        self._log_interaction("set_cooler", on=on)
+        if self._has("CCD_COOLER"):
+            self._set_sw("CCD_COOLER", {"COOLER_ON": on, "COOLER_OFF": not on})
+
+    async def read_cooling(self) -> dict:
+        """Live cooling state: sensor ``temperature`` (°C, NaN if unknown), ``power`` (%),
+        ``cooler_on`` (None if the driver has no cooler switch) and the ``target`` (°C or None)."""
+        return {
+            "temperature": self.get_temperature(),
+            "power": self.get_cooler_power(),
+            "cooler_on": self._sw("CCD_COOLER", "COOLER_ON") if self._has("CCD_COOLER") else None,
+            "target": None,
+        }
 
     async def warm_up(self) -> None:
         self._log_interaction("warm_up")

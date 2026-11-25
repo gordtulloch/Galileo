@@ -455,6 +455,10 @@ class CameraController(DeviceController):
     async def abort_exposure(self) -> None:
         await cast(_CameraBackend, self._backend).abort_exposure()
 
+    async def read_gain_offset(self) -> dict:
+        reader = getattr(self._backend, "read_gain_offset", None)
+        return await reader() if reader is not None else {"gain": None, "offset": None}
+
     async def get_image_array(self):
         return await self._backend.get_image_array()
 

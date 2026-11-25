@@ -625,6 +625,7 @@ async def test_tc_csurf_220_after_a_safety_stop_only_acknowledging_is_offered(ri
     and restarts nothing; afterwards the operations are offered again."""
     from galileo.control_surface.safety import GuardSafety, register_safety_operations
     from galileo.engine.guard import Guard
+    from galileo.safety_supervisor import MemoryStore, SafetySettings
 
     registry, access, *_ = rig
 
@@ -639,14 +640,28 @@ async def test_tc_csurf_220_after_a_safety_stop_only_acknowledging_is_offered(ri
         def stop(self, pier):
             return True
 
-    guard = Guard(Devices(), Runner(), bus=EventBus())
+    class Monitor:
+        is_connected, is_safe, explanation = True, True, "Rain detected"
+
+        async def poll(self):
+            pass
+
+    monitor = Monitor()
+    clock = {"now": 0.0}
+    devices = Devices()
+    devices.controller = lambda pier, category, slot="primary": (
+        {"mount": access.mount, "safety": monitor}.get(category))
+    guard = Guard(devices, Runner(), bus=EventBus(), store=MemoryStore(), settings=SafetySettings,
+                  clock=lambda: clock["now"])
+    # The stop closes nothing until the mount says it is parked.
+    access.mount.get_status = lambda: {"at_park": ("park",) in access.mount.calls}
     register_safety_operations(registry, GuardSafety(guard))
     assert (await registry.invoke("safety.acknowledge", {}, "p1", "c1")).status == "refused"       # nothing to acknowledge
 
-    guard.unsafe["p1"] = "Rain detected"
-    await guard._act("p1", "Rain detected")
+    monitor.is_safe = False
+    await guard.check_once()
     events = (await registry.invoke("safety.events", {}, "p1", "c1")).value
-    assert events["pending"] == 1 and events["events"][0]["why"] == "Rain detected" and ("park",) in access.mount.calls
+    assert events["pending"] == 1 and "Rain detected" in events["events"][0]["why"] and ("park",) in access.mount.calls
 
     blocked = await registry.invoke("mount.unpark", {}, "p1", "c1")
     assert blocked.status == "unavailable" and blocked.reason == "a safety stop must be acknowledged first"
@@ -658,7 +673,10 @@ async def test_tc_csurf_220_after_a_safety_stop_only_acknowledging_is_offered(ri
     still = await registry.invoke("safety.acknowledge", {}, "p1", "c1")
     assert still.status == "refused" and "still unsafe" in still.reason
 
-    guard.unsafe.clear()
+    monitor.is_safe = True
+    await guard.check_once()
+    clock["now"] += 901
+    await guard.check_once()
     done = await registry.invoke("safety.acknowledge", {}, "p1", "c1")
     assert done.ok and done.value == {"acknowledged": 1}
     assert guard.events[0]["acknowledged_by"] == "c1"

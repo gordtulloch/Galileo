@@ -1,0 +1,299 @@
+# Episode 8: Plugins and the Marketplace
+
+Target running time: 30 minutes. Lines beginning with `>` are production directions and are not narrated.
+
+## 1. Opening
+
+> SCREEN: Options, Plugins.
+
+Welcome back. Not every observer needs every feature. Galileo keeps its core focused and lets you add the rest as plugins. In this episode we'll cover how to install and manage plugins, then walk through the ones that add equipment support, science tools and extra views. The three plugins that connect phones, browsers and other computers get their own episodes.
+
+## 2. What a plugin is
+
+> SCREEN: Diagram: Galileo core with plugged-in modules.
+
+A plugin is a package that Galileo loads and treats as part of itself. It might add a new kind of device, a plate solver, a screen in the sidebar, a panel on an equipment page, or a view on the Dashboard.
+
+Plugins use the same internal connection points that Galileo's own features use. If a plugin fails while loading, Galileo logs it, marks it as faulted and carries on.
+
+> PAUSE: 11
+
+But understand this. A plugin runs inside Galileo with the same access Galileo has to your computer and your equipment. There is no sandbox. Only install plugins from sources you trust, just as you would any other program.
+
+## 3. The Marketplace
+
+> SCREEN: Options, Plugins, Marketplace tab.
+
+Open Options, Plugins. There are two tabs. Installed lists what you have, with each plugin's version, author, and whether it's first-party or third-party. Marketplace lists what you can download. Press Refresh to fetch the current list.
+
+> PAUSE: 16
+
+To install, find the plugin and press Install. Its screens appear in the sidebar and menus straight away, without a restart. One exception: a panel that lives on an Equipment page appears after the next start.
+
+> SCREEN: Install AllSkyCam and watch the sidebar icon appear.
+
+> PAUSE: 27
+
+## 4. Installing from a file
+
+> SCREEN: Installed tab, Install from file.
+
+If you've been given a plugin as a ZIP file, or you want one before it reaches the Marketplace, use Install from file and choose the ZIP. Please don't unpack it or copy files into Galileo's folders by hand. Let the installer do it.
+
+> PAUSE: 19
+
+## 5. Updating, disabling and removing
+
+> SCREEN: A tile with the Update available tag. Press Update.
+
+When the Marketplace has a newer version, the plugin's tile says Update available. Press Update. The old version is unloaded and the new one started while Galileo keeps running, and if the new one fails to start, your old version is put back.
+
+> PAUSE: 19
+
+One habit to learn: updating Galileo does not update your plugins. Galileo runs the copy of each plugin that you installed. If a new feature seems to be missing after you update Galileo, check your plugins are up to date, and restart.
+
+> SCREEN: Untick Enabled on a plugin.
+
+Untick Enabled to switch a plugin off without removing it. That takes effect after a restart. Remove uninstalls it after you confirm. If its files are in use, they're deleted at the next start, and a banner tells you when a restart is needed.
+
+> PAUSE: 16
+
+## 6. Plugin settings
+
+> SCREEN: Click the gear on a plugin tile.
+
+A plugin with settings of its own shows a gear on its tile. Click it to open the settings page. Plugin pages have the same built-in help as the rest of Galileo: the question mark, F 1 and hover text.
+
+> PAUSE: 13
+
+## 7. VSTarget: planning variable-star observations
+
+> SCREEN: Install vstarget. Science section appears.
+
+Let's tour the plugins, starting with the most substantial. VSTarget is for observers who measure variable stars for the American Association of Variable Star Observers, the AAVSO. Install it and a Science section appears in the sidebar, with Variable Stars and VS Analysis.
+
+> PAUSE: 19
+
+> SCREEN: Science, Variable Stars. Open Settings.
+
+Open Variable Stars. The left side is the list of possible targets, and the right side is your plan for the night. First press Settings and enter your AAVSO API key, which you get from the AAVSO, and your telescope location.
+
+> PAUSE: 16
+
+Tick the sections that interest you: alerts and campaigns, cataclysmic variables, eclipsing binaries, short-period pulsators, long-period variables, young stellar objects, high-energy targets, exoplanets and miscellaneous. All and None set them quickly. Tick Observable only to get just the stars visible from your site in the next night. Then press Download.
+
+> SCREEN: Choose sections and Download.
+
+> PAUSE: 32
+
+Narrow the list with Priority only, Hide solar conjunction, which removes stars too close to the Sun, and the search box. Then add stars to your plan, by double-clicking, with Add Selected, or Add All Visible. Move them up and down to set the order.
+
+> SCREEN: Add several targets and reorder them.
+
+> PAUSE: 32
+
+## 8. VSTarget: from plan to session
+
+> SCREEN: Capture settings and Session Options.
+
+For each target set the filters, the number of exposures, the exposure length and binning. Apply to All Targets copies these to the whole plan. Suggest Exposures from Calibration picks an exposure for each star from its faintness, using your stored calibration, and limits it so comparison stars don't saturate.
+
+> PAUSE: 19
+
+Open Session Options to add a plate solve, autofocus, dithering or guiding for each target. Press Preview Session to see the blocks, then Create Session. It appears on Planning, Sessions, ready to run or schedule, just like a session you built yourself.
+
+> SCREEN: Preview Session, then Create Session, then show it in Planning.
+
+> PAUSE: 40
+
+## 9. VSTarget: analysis and reporting
+
+> SCREEN: Science, VS Analysis.
+
+After imaging, open VS Analysis. It works from sessions in your Library. Select one or more, check the target star, which is filled in from the session, set the filter band if the catalog left it blank, and set the aperture radius. The surrounding sky ring scales with it.
+
+> PAUSE: 16
+
+Press Run Photometry. The plugin measures the star in each frame against comparison stars and fills the results table. Stop keeps what's measured so far.
+
+> SCREEN: Run photometry and show the results.
+
+> PAUSE: 40
+
+Then Export AAVSO Report writes an AAVSO extended format file, ready to submit yourself. Before sending anything, check your results: saturation, the right target, sensible errors. The database is only as good as what we put in it.
+
+> SCREEN: Export the report and open it in a text editor.
+
+> PAUSE: 19
+
+## 10. AllSkyCam
+
+> SCREEN: AllSkyCam settings.
+
+If you run an indi-allsky all-sky camera, AllSkyCam brings its view into Galileo. Open its settings, enter the same address you use in your browser, and press Test connection. Set how often to check and how many images to keep for the animation, then Save.
+
+> PAUSE: 21
+
+> SCREEN: Latest tab, then Animation tab.
+
+You get the latest picture and a looping animation of recent ones, which is the best way I know to see cloud coming. It only downloads when there's a new image.
+
+> PAUSE: 27
+
+Tick Show animation pane to dock it to the window so it stays visible on every screen. Tick Publish on Dashboard to put it above your Pier timelines. Pause during daytime stops fetching while the Sun is up, using your Observatory's location.
+
+> SCREEN: Dock the pane, then show it on the Dashboard.
+
+> PAUSE: 32
+
+Its limits: it can't log in, so the camera's images must be viewable without a password; it doesn't check the camera server's certificate, so use it only on a network you trust; and the animation starts empty after a restart.
+
+## 11. Switch plugins: Kasa
+
+> SCREEN: Equipment, Switches, Scan for KASA switches.
+
+Three plugins add things you can switch, all on Equipment, Switches. The first is for TP-Link Kasa smart plugs and power strips. Press Scan for KASA switches to find them, or Add by IP for one on another part of your network. Each outlet gets On and Off buttons.
+
+> PAUSE: 27
+
+If the strip works in the Kasa app but Galileo can't reach it, newer firmware has local control switched off. In the Kasa app, turn on Third-Party Compatibility in the device's settings, then scan again.
+
+## 12. Switch plugins: SwitchBot and network relays
+
+> SCREEN: Scan for SwitchBots.
+
+A SwitchBot Bot is a small motorised finger that presses buttons. Stick one over the power button of a smart telescope and Galileo can switch it on and off. It uses Bluetooth, so the computer needs a Bluetooth adapter in range, and the plugin needs a Python package called bleak. The Bot shows On, Off, Press and its battery level. The state shown is the last command sent, so confirm by eye the first few times.
+
+> PAUSE: 27
+
+> SCREEN: Internet Relay panel, Add device dialog.
+
+The generic relay plugin drives the inexpensive network relay boards that switch a relay when you visit a web address. Enter the board's address, the number of relays, and if your board differs from the default, edit the address pattern. These boards usually can't report their state, so again the display is what was last commanded. Be careful what you connect to a mains relay.
+
+> PAUSE: 32
+
+## 13. WandererBox
+
+> SCREEN: Switches page with a WandererBox.
+
+The WandererBox plugin supports Wanderer Astro's Pro version 3 and Plus version 3 power boxes and the Dew Terminator. Their drivers describe themselves in their own way, so the plugin translates. Once installed they look like any other power box, with named ports, dew heaters as percentages, and readings for voltage, current, temperature, humidity and dew point. The Lite version 3 has no control interface and can't be used.
+
+This plugin was built from the driver source and tested against recorded data. It has not yet been tried on a real box, so please report how you get on.
+
+> PAUSE: 21
+
+Other power boxes that follow INDI's standard interface need no plugin at all.
+
+## 14. Using switches while imaging
+
+> SCREEN: Tick Show on imaging, then Imaging screen, More menu.
+
+Whichever box you use, tick Show on imaging next to the channels you care about, and they appear under More on the Imaging screen, and on the web and phone versions. Switching something off during a session asks you to confirm.
+
+> PAUSE: 21
+
+## 15. Skyshot Solver
+
+> SCREEN: Skyshot settings page.
+
+Skyshot Solver adds a fast blind plate solver, by Adam Jesionkiewicz. Blind means it needs no idea of where you're pointing, so it works even when the mount is badly wrong.
+
+Open its settings. Press Download Skyshot program, where a build exists for your computer. Then Download Full index, which is nearly a gigabyte. The optional Deep index for long focal lengths is several gigabytes more. Galileo shows the sizes before starting, checks every file, and lets you resume a cancelled download.
+
+> PAUSE: 27
+
+Then choose Skyshot as the solver under Options, Solve, or on the Solve screen. Treat it as experimental and keep ASTAP as your everyday solver until Skyshot has proven itself on your own images. The star indexes have their own licence, which their author describes as non-commercial, so read it.
+
+> SCREEN: Solve with Skyshot.
+
+> PAUSE: 21
+
+## 16. The connection plugins
+
+> SCREEN: Marketplace showing nodeconnect, webconnect, mobileconnect.
+
+You'll also see NodeConnect, WebConnect and MobileConnect. They open Galileo to other computers, browsers and phones, and they all rely on a feature called Connect Link, which is off until you switch it on. They're early releases, and episodes nine and ten cover what works and what doesn't yet.
+
+> PAUSE: 13
+
+## 17. Choosing which plugins you need
+
+> SCREEN: A table: need on the left, plugin on the right.
+
+Here's a quick guide by need. If you contribute variable-star measurements, install VSTarget. If you have an all-sky camera running indi-allsky, install AllSkyCam. If you power equipment from smart plugs, install the Kasa plugin. If you need to press a physical power button remotely, SwitchBot. If you have a network relay board, the generic relay. If you own a supported WandererBox, that plugin. If you want a blind solver to experiment with, Skyshot.
+
+> PAUSE: 27
+
+And if none of those describe you, install nothing. Galileo is complete without them.
+
+## 18. A worked example: remote power
+
+> SCREEN: Install kasa_switch, scan, tick Show on imaging, toggle from Imaging.
+
+Let's set up remote power from start to finish. Plug a harmless lamp into a smart strip for the first test. Install the Kasa plugin, and restart so its panel appears on the Switches page.
+
+> PAUSE: 32
+
+Open Equipment, Switches, and scan. Switch the lamp's outlet on and off and watch it. Only when you're sure which outlet is which should you move your equipment to the strip. Name the outlets sensibly in the Kasa app, because those names are what you'll see.
+
+> PAUSE: 32
+
+Think about what must never be switched off unexpectedly: a mount mid-slew, a camera mid-download, or a cooler at its coldest. Galileo asks before switching something off during a session, but only through its own screens.
+
+> PAUSE: 13
+
+## 19. A worked example: variable stars
+
+> SCREEN: Follow the full VSTarget cycle.
+
+And a complete variable-star cycle. Download targets with Observable only ticked. Filter to priority stars. Add a few long-period variables, which suit beginners because they're bright at times and change slowly.
+
+> PAUSE: 32
+
+Set a filter, usually a photometric V, with several short exposures, and let Suggest Exposures help. Take care not to saturate: a saturated star cannot be measured. Create the session and run it.
+
+> PAUSE: 27
+
+Next day, make sure the frames are in the Library with the right object name, calibrate them, and use the photometric stack if you want to combine frames. Then run the analysis, check the numbers against recent reports for that star, and submit if they make sense. If they don't, look for saturation, the wrong star, or cloud.
+
+> PAUSE: 40
+
+## 20. Plugins and your night
+
+> SCREEN: Installed plugin list.
+
+A thought about plugins and reliability. Each one adds something that can fail: a network request, a Bluetooth link, an extra download. None of that should surprise you at midnight. After installing or updating, run through the plugin's screens in daylight. Check what happens when its device is unplugged.
+
+> PAUSE: 21
+
+Switch plugins that remember the last command, such as SwitchBot and the relay boards, deserve particular care. The display can say off while the device is on. For anything important, confirm in another way, for instance by whether the device still answers on the network.
+
+> PAUSE: 16
+
+And remember where plugins appear. Science tools are under Science. Switch plugins are on the Equipment Switches page. AllSkyCam has its own sidebar icon. Solvers join the list under Solve. Settings are always behind the gear on the plugin's tile.
+
+> SCREEN: Visit each location in turn.
+
+> PAUSE: 40
+
+## 21. When a plugin misbehaves
+
+> SCREEN: View Log showing a plugin load message; disable the plugin.
+
+If a plugin's screen is blank or missing, check it's enabled, restart, and look in the log for its name. Check whether an update is available. Some plugins need an extra Python package or hardware, as SwitchBot needs Bluetooth.
+
+> PAUSE: 21
+
+When you report a problem, say which plugin and version, which Galileo version, and attach the log.
+
+## 22. Good practice, and wrap-up
+
+> SCREEN: Installed tab with several plugins.
+
+Some advice. Install only what you use. Update one thing at a time, and never just before an important night. If something misbehaves after installing a plugin, disable it, restart, and see whether the problem goes. And check View Log, which names a plugin that failed to load.
+
+> PAUSE: 13
+
+Plugins are open to anyone to write, and episode eleven shows how. Next time: linking computers, browsers and the public. Clear skies.
+
+> PAUSE: 11

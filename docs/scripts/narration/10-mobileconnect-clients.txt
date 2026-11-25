@@ -1,0 +1,107 @@
+Welcome back. MobileConnect puts your observatory on a tablet or phone, so you can run the night from beside the telescope or from the sofa.
+
+Before anything else, here's where it stands. These apps are in development. They've been built and tested mainly against simulated equipment, and they have not been proven against real equipment through a whole night. The virtual reality client is earlier still. What you can download, and from where, may have changed since this was recorded, so check the project page. Don't make them your only way of stopping your equipment.
+
+MobileConnect has two parts. The plugin runs inside Galileo on your Master computer. The app runs on your device. They talk over Connect Link, the encrypted link we met in episode nine.
+
+The apps are native: one for iPhone and iPad, one for Android. The tablet is the main design target, with a phone layout too.
+
+The guiding principle is that the apps operate, they never configure. Equipment profiles, observatory location, safety limits, options and plugin settings stay on the desktop. Setting a value for one run, such as an exposure time or a focus step, is operating, and that's available.
+
+On the Master, install the mobileconnect plugin from the Marketplace or from its ZIP, restart Galileo, and enable Connect Link under Options.
+
+Keep the plugin current. After you update Galileo or the app, update the plugin and restart. If a screen in the app says this Master doesn't offer this yet, the Master is running an older plugin or an older Galileo.
+
+Check the project page for how to get the app for your device. During development this means test builds, not ordinary store releases. The apps themselves are free to use at first, but unlike Galileo they're not open source. The plugin and the protocol it speaks are open, so others can write clients of their own.
+
+There's also a demo mode, which lets you explore the screens with a simulated observatory and nothing at stake. That's the best first step.
+
+Put your device on the same network as the Master. In the app, find your Master, or type its address, and ask to pair. A code appears on both. Compare them, then approve the app on the Master, on the MobileConnect settings page.
+
+Give it the role of Viewer or Operator. A viewer sees everything and changes nothing. You can change roles or revoke a device at any time. If the app can't find the Master, check both are on the same network, that guest isolation is off, and that Connect Link is listening on the right address.
+
+Only one controller drives a Pier at a time, through a control lease shared between desktop, browser and apps. Destructive actions ask for confirmation. Actions are recorded in an audit log.
+
+Closing the app or losing Wi-Fi never stops the night. The exception is held motion: mount and focuser movements that happen only while your finger is on the button, and stop the moment you let go or the connection drops.
+
+The safety rules of the desktop apply. The app can acknowledge a safety event and ask for a retry that Galileo itself judges, but it cannot disable the safety monitor or override a limit. A one-touch stop and park is always there.
+
+The app opens on Overview. You get the activity timeline and alerts for your working Pier, the list of Piers, the computer's health and the current session. Connect All Devices brings up everything configured on the Pier.
+
+Event notices from the desktop appear here too: exposure started, slew complete, solve succeeded, equipment disconnected. They fade after ten seconds.
+
+Alerts reach you only while the app is open and connected. For news while it's closed, use the desktop's notifications through ntfy or e-mail, from episode nine.
+
+Sky is a planetarium showing where your telescope points and its field of view. Search for a target, go to it, and work with framing and mosaics. You can choose which catalogs are drawn.
+
+Targets lists what you saved on the desktop, with pictures. Slew to one, slew and centre it, or remove it. It's a very quick way to move on to the next object.
+
+Mount Control is a full screen of eight arrows, including diagonals, a stop button and a speed slider matching the mount's nine speeds. Each arrow moves only while held. Large targets, because you'll be using it in the dark with cold fingers, often while looking at the telescope and not the screen. Try it at low speed first to learn which way is which.
+
+Focus puts autofocus first, with a progress bar, the latest and best star size, the V-curve and the result. For manual focus there are large Hold in and Hold out buttons that move the focuser only while pressed. Standing at the telescope with a Bahtinov mask, that's exactly what you want.
+
+This may be the best single reason to have the app. Start polar alignment, and the app shows your total error and the north to south and east to west parts, with which way to turn. The picture refreshes in a loop, with a circle where the mount's axis points, a cross at the pole, and an arrow between them. Turn the mechanical adjusters and watch the arrow shrink. No more running indoors between turns.
+
+You need the same things as at the desktop: camera, mount, observatory location, and no session or solve running.
+
+Imaging lets you set up and take frames, with a live preview, stretch, histogram and star statistics. A line shows which exposure of how many is integrating, then downloading. You can use the flat panel, and the power and dew channels you marked on the desktop, from the same screen.
+
+Pictures arrive as ready-made, stretched previews, not full FITS files, so it works comfortably over a weak Wi-Fi link. The original data stays on the Master.
+
+Solve has Capture and Solve, Load and Slew, and Stop. Choose sync, slew to target or nothing. A bullseye shows how close you are, with the offsets in each direction, and you can pick the exposure and camera. Load and Slew offers recent frames from the Library.
+
+Guiding offers Connect, which also connects PHD 2's equipment, Loop, Start guiding, Stop and dither, with the error trace, the guide statistics and the guide star picture. For choosing stars by tapping a full frame, and for advanced analysis and tuning, use the desktop and PHD 2.
+
+The usual pattern is to build sessions on the desktop, press Save and name them, and run them from the device. The app lists the saved sessions of your Pier, each with Run. Templates are not listed.
+
+If a job is already running, the app tells you. If jobs are waiting, it asks whether to pre-empt them: your session runs now and the others stay queued. Under Queued jobs, pause or stop the running one, hold and drag to reorder the others, or remove them from the queue, which does not delete the saved session. The desktop application must be running, and the Pier must be the one selected on the desktop.
+
+Safety shows every safety input, lets you acknowledge an event, and offers stop and park.
+
+Equipment connects devices and operates the mount, camera, filter wheel, rotator and dome. The meridian flip lives here too, with its state, and the choice to flip now or defer.
+
+Settings is the app's own: appearance and theme. Use the night theme outdoors, and turn your screen brightness down as well, because no theme can do that for you completely.
+
+The app pairs with one computer, the Master. The design is that paired spoke computers are operated through it, where each has allowed it, but relaying to spokes is not complete in the current plugin. With several observatories, Piers are labelled with both names.
+
+Outreach events, set up on the desktop as in episode nine, can also serve visitors using apps. They watch the Piers you offered and touch nothing.
+
+Finally, something different. A Meta Quest edition is being developed, with the Quest 2 as the main target, because second-hand headsets are affordable. It has had a successful feasibility test, but it is not a finished product, so treat this as a look ahead.
+
+The plan is the operating screens as floating panels, plus two immersive scenes: a planetarium dome all around you, and a large image viewer where you can stand in front of your own picture of a nebula. You'd use controllers or your hands, with a quick way back to seeing the real room.
+
+It needs a Master that's a PC or Mac class computer to stream the sky; a Raspberry Pi can serve phones and tablets, and can sit behind a bigger Master as a spoke. And never walk around a dark observatory in a headset. Tripod legs and cables don't care how good the view is.
+
+The app can only operate what the desktop has configured, so prepare there first. Every device should be saved on its Pier. Optical tubes should be set up. Targets you're interested in should be saved. Sessions should be built, saved and named in a way you'll recognise on a small screen, such as the target and filters.
+
+Set your safety devices, limits and notifications. Check the computer won't sleep. And stop and park once from the app while you're standing beside the mount, so you know it works for you.
+
+Here's the whole routine from beside the telescope. Open the app and check Overview. Press Connect All Devices and wait for each to report.
+
+Go to Polar Alignment and adjust the mount. Go to Targets or Sky, choose a bright star or your object, and slew. Go to Solve and capture and solve with slew to target.
+
+Go to Focus. Hold in or hold out until the stars tighten, then run autofocus. Take off any mask first.
+
+Go to Guiding, connect, loop, then start guiding. Take one frame on Imaging and zoom in to check the stars. Then run your saved session and go inside for something warm.
+
+A quick map of the menu. To see what's happening, Overview. To choose, Sky or Targets. To move by hand, Mount Control. To sharpen, Focus. To align the mount, Polar Alignment. To take pictures, Imaging. To check pointing, Solve. To guide, Guiding. To automate, Sessions. To react, Safety. To connect and operate devices, Equipment.
+
+Recent sessions and frames from your Library are also viewable as previews. Remember the apps have no equivalent of the desktop's Options. If you're hunting for a setting that changes how the observatory behaves, it's on the Master.
+
+On a tablet there's room to see the picture and controls together. On a phone, screens scroll, with the most used controls first. A tablet in a protective case is a fine observatory console. A phone is perfect for a quick check from bed, or for the polar alignment turn at the mount.
+
+Some practical advice. Charge your device, because cold drains batteries. Use the night theme and low brightness. Check the Wi-Fi signal where you'll stand, since a weak signal makes held motion stop, which is safe but annoying. Keep an eye on which Pier you're operating before you press anything that moves.
+
+If someone else is controlling the Pier, you'll be able to watch but not drive. Talk to each other.
+
+If the app says this Master doesn't offer something yet, update the plugin from its ZIP and restart Galileo. If it refuses your actions, check your role and who holds control. If sessions are missing, save them on the desktop and check the Pier. If queued jobs don't respond, make sure the desktop application is running.
+
+If the picture on the guiding screen is empty, PHD 2 probably isn't looping or its camera isn't connected. Press Connect, then Loop. And if the connection keeps dropping, check the network before blaming the app.
+
+When you report a problem, include the device, its system version, the app version, the plugin version and the Master's log.
+
+Here's how it fits together. At dusk, polar align from your phone at the mount. Go indoors. Connect all devices, pick a target from your saved list, slew and centre, check focus, run a saved session, and watch the Overview. If the weather turns, the app shows you, and you check that your equipment is safe, stopping and parking if it isn't.
+
+Keep in mind the limits: no configuration, no running without a connection to the Master, no cloud relay, and no push alerts from the app when it's closed.
+
+If you try these apps, your reports are what will turn them into something dependable. Next, the final episode, for those who want to build their own plugin. Clear skies.

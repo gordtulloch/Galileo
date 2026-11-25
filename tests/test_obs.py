@@ -92,19 +92,32 @@ def test_tc_obs_030_safety_monitor_is_shared_by_every_pier():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.requirement("TC-OBS-040")
-@pytest.mark.priority("P2")
-async def test_tc_obs_040_observatory_safety_abort_all_piers(two_pier_observatory, event_bus):
-    """OBS-040: Observatory-scoped unsafe condition pauses/aborts and parks equipment across ALL member Piers."""
-    obs, pier1, pier2 = two_pier_observatory
-    obs._event_bus = event_bus
+@pytest.mark.priority("MVP")
+async def test_tc_obs_040_observatory_safety_stop_parks_all_piers():
+    """OBS-040: an Observatory-scoped unsafe report parks equipment across ALL member Piers."""
+    from galileo.safety_supervisor import MemoryStore, SafetySettings, SafetySupervisor, Site, Source
 
-    pier1.abort_and_park = AsyncMock()
-    pier2.abort_and_park = AsyncMock()
+    class Mount:
+        def __init__(self):
+            self.parked = False
 
-    await obs.handle_safety_unsafe(source="observatory", explanation="Rain detected")
+        async def get_status(self):
+            return {"at_park": self.parked}
 
-    pier1.abort_and_park.assert_called_once()
-    pier2.abort_and_park.assert_called_once()
+        async def park(self):
+            self.parked = True
+
+    class Monitor:
+        is_connected, is_safe, explanation = True, False, "Rain detected"
+
+        async def poll(self):
+            pass
+
+    mounts = [("Pier-1", Mount()), ("Pier-2", Mount())]
+    site = Site(sources=[Source("m", "Rain sensor", "safety_monitor", adapter=Monitor())], mounts=mounts)
+    supervisor = SafetySupervisor(lambda: site, settings=SafetySettings, store=MemoryStore(), bus=MagicMock())
+    await supervisor.tick()
+    assert all(mount.parked for _name, mount in mounts)
 
 
 # ---------------------------------------------------------------------------

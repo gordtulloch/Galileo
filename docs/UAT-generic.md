@@ -226,7 +226,7 @@ No hardware needed.
 | 9.2 | Compare pixel scale with A3. | Within a few percent. | |
 | 9.3 | Set *Solver Action* = **Sync**, solve. | Sync reported; later solves show a small pointing error. | |
 | 9.4 | Set **Slew to Target**, set **Accuracy**, solve. | Mount slews, re-solves, repeats until within Accuracy. | |
-| 9.5 | **Load & Slew…** with an existing FITS file of your **secondary target**. | Solves; no motion unless the action says so. | |
+| 9.5 | **Load & Slew…** (**From disk…**, and once **From the Library…**) with an existing frame of your **secondary target**. | Solves; no motion unless the action says so. | |
 | 9.6 | Back on **Imaging**, capture and **Annotate**. | Your target is labelled at or near centre. | |
 | 9.7 | Solve a frame that cannot solve (very short exposure). | Clean failure message; mount does not move. | |
 

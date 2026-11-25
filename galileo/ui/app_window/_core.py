@@ -402,6 +402,7 @@ class AppWindowCoreMixin:
             self._refresh_optics_combo()
             self._refresh_camera_combo()
             self._refresh_imaging_filters()
+            self._refresh_dark_availability()
 
         # Equipment is a one-time-per-session setup step rather than a screen
         # you switch to and from while working, so it's pinned at the bottom
@@ -508,11 +509,20 @@ class AppWindowCoreMixin:
             return
         for step in (self._sync_science_page, self._sync_plugin_top_sections,
                      self._sync_plugin_options_items, self._sync_plugin_docks,
-                     self._sync_plugin_dashboard):
+                     self._sync_plugin_dashboard, self._sync_solver_choices):
             try:
                 step()
             except Exception:
                 logger.exception("Updating the plugin UI failed in %s", step.__name__)
+
+    def _sync_solver_choices(self: AppWindowState) -> None:
+        """Offer the plate-solvers plugins provide now (PLUG-220) on Solve and Options > Solve."""
+        solve = self._device_pages.get("solve")
+        if solve is not None:
+            solve["refresh_solver_modes"]()
+        refresh = getattr(self, "_solve_choices_refresh", None)
+        if refresh is not None:
+            refresh()
 
     def _sync_science_page(self: AppWindowState) -> None:
         """Rebuild the Science submenu from the panels loaded now (it holds nothing but plugins)."""

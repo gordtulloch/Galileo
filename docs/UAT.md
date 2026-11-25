@@ -181,7 +181,7 @@ This section works without any hardware.
 | 9.2 | Check pixel scale. | Within a few percent of the expected scale for your optics. | |
 | 9.3 | Set *Solver Action* to **Sync** and solve. | Mount reports a sync; later solves show a small pointing error. | |
 | 9.4 | If 9.1 solved: set *Solver Action* to **Slew to Target** (M13 is the current object), set **Accuracy**, and solve. | The mount slews, re-solves and repeats until M13 is within Accuracy. Final pointing error is below Accuracy. | |
-| 9.5 | Use **Load & Slew…** on an existing FITS file of a different object. | File solves; no mount motion unless the action says so. | |
+| 9.5 | Use **Load & Slew… > From disk…** (and once **From the Library…**) on an existing frame of a different object. | File solves; no mount motion unless the action says so. | |
 | 9.6 | Return to **Imaging**, take a frame and click **Annotate**. | M13 is labelled at the frame centre. | |
 | 9.7 | Run a solve that cannot succeed (e.g. very short exposure). | Solve fails gracefully with a clear message, and the mount does not move. | |
 | 9.8 | If the simulator frames never solve, record that and mark 9.2–9.6 `N/A`. | The failure is clean (message, no hang) each time. | |

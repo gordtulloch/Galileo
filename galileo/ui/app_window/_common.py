@@ -117,6 +117,7 @@ SCIENCE_ITEMS: list[tuple[str, str, str]] = []
 LIBRARY_ITEMS = [
     ("images", "Images", "images"),
     ("sessions", "Sessions", "sessions"),
+    ("calibration", "Calibration", "calibration"),
     ("mappings", "Mappings", "mappings"),
     ("dedup", "Dedup", "dedup"),
     ("merge", "Merge Objects", "merge"),

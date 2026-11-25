@@ -64,6 +64,15 @@ class AppWindowTopbarOpticsCameraMixin:
         self._push_context_to_devices()
         self._refresh_imaging_filters()
         self._refresh_focus_context()
+        self._refresh_dark_availability()
+
+    def _refresh_dark_availability(self: AppWindowState) -> None:
+        """The Pier, optics or camera changed, or the screen did: the dark master shown as available
+        on the Imaging and Solve screens may no longer match."""
+        for holder in (self.__dict__.get("_imaging_ui"), self._device_pages.get("solve")):
+            refresh = (holder or {}).get("refresh_dark_available")
+            if refresh is not None:
+                refresh()
 
     def _refresh_focus_context(self: AppWindowState) -> None:
         """Tell the Focus page the Optics selection changed, so it shows that tube's focuser."""
@@ -229,6 +238,7 @@ class AppWindowTopbarOpticsCameraMixin:
         if slot:
             self._active_camera_slot = slot
             self._apply_camera_imaging_defaults()
+            self._refresh_dark_availability()
 
     def _apply_camera_imaging_defaults(self: AppWindowState) -> None:
         """Set the Imaging page's Gain and Offset from the active camera's saved defaults (Equipment >

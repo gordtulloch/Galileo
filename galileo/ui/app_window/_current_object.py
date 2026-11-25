@@ -185,3 +185,6 @@ class AppWindowCurrentObjectMixin:
         refresh_markers = getattr(self, "_star_atlas_refresh_markers", None)
         if refresh_markers is not None:
             refresh_markers()
+        refresh_imaging_object = getattr(self, "_imaging_refresh_object", None)
+        if refresh_imaging_object is not None:
+            refresh_imaging_object()

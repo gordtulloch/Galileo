@@ -106,6 +106,21 @@ class MountOps:
         return self._call("set home position", lambda a: a.set_home_position(), "Set Home Position failed — see log.",
                           ok_log="Mount: home position set to current position")
 
+    def meridian_flip(self) -> Outcome:
+        """Flip the mount to the other side of the pier by re-slewing to where it is now pointing (the
+        same flip the automatic one does). The slew is only *started*; the caller resumes tracking once it ends."""
+        async def flip(adapter) -> None:
+            from galileo.meridianflip import MeridianFlipConfig, MeridianFlipService
+            status = await adapter.get_status() or {}
+            ra, dec = status.get("right_ascension"), status.get("declination")
+            if ra is None or dec is None:
+                raise RuntimeError("the mount did not report its position")
+            service = MeridianFlipService(mount=adapter, config=MeridianFlipConfig(
+                pre_flip_settle_s=0, post_flip_recenter=False, post_flip_restart_guiding=False))
+            await service.execute_flip(target_ra=ra * 15.0, target_dec=dec)
+        return self._call("meridian flip", flip, "Meridian flip failed — see log.", obstructed=True, limit=True,
+                          ok_log="Mount: meridian flip requested")
+
     def set_tracking(self, enabled: bool) -> Outcome:
         return self._call("set_tracking", lambda a: a.set_tracking(enabled), "Tracking change failed — see log.",
                           ok_log="Mount: tracking %s requested", ok_log_args=("on" if enabled else "off",))

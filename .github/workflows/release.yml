@@ -117,6 +117,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For docs/release-notes/<tag>.md. Must come first: checkout empties the workspace, including out/.
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -125,6 +127,7 @@ jobs:
         with:
           files: out/*
           body_path: docs/release-notes/${{ github.ref_name }}.md
+          prerelease: true
 
   # Rebuilds every plugin ZIP and its release in gordtulloch/Galileo-Plugins by dispatching that repo's workflow.
   # Needs a repo secret PLUGINS_REPO_TOKEN: a fine-grained PAT on Galileo-Plugins with Actions read/write.

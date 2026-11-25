@@ -964,6 +964,13 @@ class FocusPage(QWidget):
             self._manual_active[key] = False
             self._run_finished.emit(key)
 
+    def stop_for_safety(self) -> None:
+        """End autofocus runs and manual loops on every Pier (protective stop)."""
+        for service in list(self._services.values()):
+            service.cancel()
+        for stop_event in list(self._manual_stop.values()):
+            stop_event.set()
+
     def stop_loop(self) -> None:
         stop_event = self._manual_stop.get(self._pier_key())
         if stop_event is not None:

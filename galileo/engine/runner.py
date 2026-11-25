@@ -148,6 +148,14 @@ class SessionRunner:
         run.executor.stop()
         return True
 
+    def stop_for_safety(self, pier: str) -> bool:
+        """End the Pier's run as part of a protective stop (SAFE-150)."""
+        run = self._run(pier)
+        if run is None:
+            return False
+        run.executor.stop(reason="safety")
+        return True
+
     def skip(self, pier: str) -> str | None:
         """Skip the block the Pier's session is on (CSURF-360); returns its display text, ``None`` when no session runs.
         Raises ``SkipRefused`` when the block must not be skipped."""

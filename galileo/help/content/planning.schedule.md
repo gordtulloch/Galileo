@@ -67,7 +67,7 @@ In the *Set Time* dialog: tick to give the entry an explicit end. Without one, t
 
 ## Duration
 
-How long, in minutes, the block lasts when no end time is set. It also sizes the block on the calendar.
+How long, in minutes, the block lasts when no end time is set. It also sizes the block on the calendar. A session starts out with its estimated total time from Planning › Sessions; you can change it.
 
 ## Edit…
 

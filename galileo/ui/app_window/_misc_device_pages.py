@@ -50,6 +50,8 @@ class AppWindowMiscDevicePagesMixin:
         from galileo.ui.focus import FocusPage
         page = FocusPage(self)
         self._device_pages["focus"] = {"reload": page.reload, "page": page}
+        from galileo.ui.safety_host import register_stopper
+        register_stopper(self, "focus", page.stop_for_safety)
         return page
 
     def _scheduler_for_pier(self: AppWindowState, pier_name: str | None) -> ObservatoryScheduler:
@@ -81,6 +83,9 @@ class AppWindowMiscDevicePagesMixin:
         """``(any safety device connected, safe, reasons)`` for the current Observatory — shared
         by all its Piers — from the Equipment > Safety page; ``(False, True, [])`` while that page
         or its devices don't exist."""
+        host = getattr(self, "_safety_host", None)
+        if host is not None:          # the protective stop's verdict, including a stop awaiting acknowledgement
+            return host.evaluation()
         evaluate = (getattr(self, "_device_pages", {}).get("weather") or {}).get("evaluate")
         if evaluate is None:
             return False, True, []
@@ -130,6 +135,10 @@ class AppWindowMiscDevicePagesMixin:
         screen."""
         from galileo.ui.solve import SolvePage
         page = SolvePage(self)
+        from galileo.ui.safety_host import register_stopper
+        register_stopper(self, "solve", page.stop_for_safety)
         self._device_pages["solve"] = {"reload": page.reload, "refresh_target": page.refresh_target,
-                                          "capture_and_solve": page.capture_and_solve}
+                                          "refresh_solver_modes": page.refresh_solver_modes,
+                                          "capture_and_solve": page.capture_and_solve,
+                                          "refresh_dark_available": page.refresh_dark_available}
         return page

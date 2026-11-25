@@ -173,6 +173,10 @@ Tells the current Pier's mount that it is pointing at the selected object. Use i
 
 Creates a new session on Planning › Sessions that already contains a Target block for the selected object.
 
+## Park
+
+The last button in the details column parks or unparks the current Pier's mount, whichever is next: it reads **Park** while the mount is unparked and **Unpark** while it is parked, and updates every few seconds. It does not depend on the selected object. Disabled when no mount is connected.
+
 ## Save to Targets
 
 Keeps the selected star or deep-sky object on Planning › Targets. A saved target is always plotted on the map (orange, with its name) whatever catalogs and magnitude limit are set, and on the mobile apps' atlases. Greyed out for planets, comets, asteroids and satellites, which move, so a saved position would be wrong.

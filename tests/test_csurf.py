@@ -1437,7 +1437,7 @@ def test_tc_csurf_185_estimate_run_totals_and_warns():
     est = estimate_run(blocks, start=t0, width_px=4000, height_px=3000, free_bytes=1000,
                        dawn=t0 + timedelta(minutes=10), sets_at=t0 + timedelta(minutes=15),
                        flip_at=t0 + timedelta(minutes=5))
-    assert est.frames == 20 and est.exposure_s == 1200 and est.duration_s == 60 + 20 * 63
+    assert est.frames == 20 and est.exposure_s == 1200 and est.duration_s == 60 + 2 * 10 + 20 * 63   # slew, a filter change per pass, frames
     assert est.storage_bytes == 20 * (4000 * 3000 * 2 + 5760)
     assert len(est.warnings) == 4
     quiet = estimate_run(blocks, start=t0)

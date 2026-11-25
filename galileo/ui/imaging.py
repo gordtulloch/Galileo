@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import inspect
 import logging
 import math
 import time
@@ -21,6 +22,7 @@ from galileo.livestack import LIVE_STACK_MIN_FRAMES, LiveStacker, MosaicStacker
 logger = logging.getLogger(__name__)
 
 DEFAULT_GAIN = 110      # what the Imaging page's Gain field starts at (IMG-150)
+UNKNOWN_OBJECT = "Unknown"   # what the Imaging page's Object field shows when nothing is selected
 DEFAULT_OFFSET = 0      # what the Imaging page's Offset field starts at (IMG-150)
 
 # Auto-stretch slider (IMG-190): 0..100, where 0 clips almost nothing of each tail (a flat,
@@ -78,6 +80,18 @@ def nudge_command(direction: str, rate: float, reversed_axes: tuple = (False, Fa
     return axis, sign * abs(rate)
 
 
+def exact_object_match(objects, name: str):
+    """The catalog object whose name or designation is *name*, ignoring case and spaces ("m31" is
+    "M 31", but not "M 310"), or ``None``."""
+    wanted = "".join(name.split()).lower()
+    if not wanted:
+        return None
+    for obj in objects:
+        if any("".join(str(n).split()).lower() == wanted for n in (obj.primary_name, *obj.designations)):
+            return obj
+    return None
+
+
 class ImagingService:
     """Domain-layer service for the imaging tab; no PySide6 dependency."""
 
@@ -117,6 +131,9 @@ class ImagingService:
         self.subtract_dark: bool = False
         self.dark_note: str = ""                   # whether a dark was used, or why not, for the UI to show
         self._dark_data = None                     # the dark master being subtracted, if any
+        self._subtracted_stack = None              # the stack/mosaic frame that already has darks taken off
+        self._stack_dark = False                   # Subtract dark as it was when the running series began
+        self._stack_dark_name = ""                 # the master the stack's frames had taken off
         # Auto-stretch strength (IMG-190), set by the slider above the histogram. Preview-only —
         # never affects current_frame, frame_stats, frame_histogram or a saved file.
         self.stretch_level: int = DEFAULT_STRETCH_LEVEL
@@ -188,7 +205,8 @@ class ImagingService:
 
         from galileo.platesolve import _write_frame
         path = Path(tempfile.gettempdir()) / "galileo_solve_current.fits"
-        await asyncio.to_thread(_write_frame, self.current_frame, path, self.frame_metadata())
+        frame = self._dark_subtracted(self.current_frame, self.subtract_dark)
+        await asyncio.to_thread(_write_frame, frame, path, self.frame_metadata())
         self.last_solve = await solver.solve(path)
         return self.last_solve
 
@@ -283,9 +301,9 @@ class ImagingService:
             frame_type = shot["frame_type"]
             meta.update(frame_type=frame_type, exposure_s=shot["duration"],
                         date_obs_utc=_fits_time(shot["started"]), date_end_utc=_fits_time(shot["ended"]))
-            if shot.get("gain"):
+            if shot.get("gain") is not None:
                 meta["gain"] = shot["gain"]
-            if shot.get("offset"):
+            if shot.get("offset") is not None:
                 meta["offset"] = shot["offset"]
             meta.setdefault("binning_x", 1)
             meta.setdefault("binning_y", 1)
@@ -349,6 +367,7 @@ class ImagingService:
         # Only a run of more than two frames stacks; below that there is nothing to build up.
         stacking = self.live_stack_enabled and count >= LIVE_STACK_MIN_FRAMES
         if stacking:
+            self._stack_dark, self._stack_dark_name = self.subtract_dark, ""
             self.stacker.reset()
             self.stack_started = None
         from galileo.notices import SUCCESS, clear_series_progress, post_notice, set_series_progress
@@ -460,6 +479,7 @@ class ImagingService:
         stacking = self.live_stack_enabled
         solving = stacking and solver is not None
         if stacking:
+            self._stack_dark, self._stack_dark_name = self.subtract_dark, ""
             from galileo.mosaic_place import MosaicSky
             self.mosaic_stacker = MosaicStacker(mosaic.cols, mosaic.rows, mosaic.overlap_pct,
                                                 sky=MosaicSky.from_mosaic(mosaic))
@@ -505,7 +525,8 @@ class ImagingService:
                     solve_queued.add(step.pane_index)
                     pane = panels[step.pane_index]
                     solve_tasks.append(asyncio.ensure_future(self._solve_mosaic_pane(
-                        step.pane_index, self.current_frame, (pane.ra_deg, pane.dec_deg), solver, solve_lock)))
+                        step.pane_index, self._dark_subtracted(self.current_frame, self._stack_dark),
+                        (pane.ra_deg, pane.dec_deg), solver, solve_lock)))
                 if stacking:
                     await self._stack_current_mosaic_pane(step.pane_index)
                 self._announce_frame()
@@ -563,6 +584,8 @@ class ImagingService:
         canvas = stacker.finish()
         if canvas is not None:
             self.current_frame = canvas
+            if self._stack_dark_name:
+                self._subtracted_stack = canvas
             await self._analyse_current_frame()
             self._announce_frame()
 
@@ -582,20 +605,24 @@ class ImagingService:
         assert self.mosaic_stacker is not None
         if self.stack_started is None:
             self.stack_started = self.last_shot.get("started")
-        canvas = await self.mosaic_stacker.add_async(pane_index, self.current_frame,
+        canvas = await self.mosaic_stacker.add_async(pane_index, self._frame_for_stack(),
                                                       self.last_shot.get("duration", 0.0))
         if canvas is not None:
             self.current_frame = canvas
+            if self._stack_dark_name:
+                self._subtracted_stack = canvas
             await self._analyse_current_frame()
 
     async def _stack_current_frame(self) -> None:
         """Add the frame just captured to the live stack and show the stack in its place."""
         if self.stack_started is None:
             self.stack_started = self.last_shot.get("started")
-        await self.stacker.add_async(self.current_frame, self.last_shot.get("duration", 0.0))
+        await self.stacker.add_async(self._frame_for_stack(), self.last_shot.get("duration", 0.0))
         stacked = self.stacker.result
         if stacked is not None:
             self.current_frame = stacked
+            if self._stack_dark_name:
+                self._subtracted_stack = stacked
             await self._analyse_current_frame()
 
     # --- The stack (IMG-160, IMG-180) --------------------------------------
@@ -622,6 +649,8 @@ class ImagingService:
         meta = self.frame_metadata()
         meta["frames_combined"] = self.active_stacker.frames
         meta["total_exposure_s"] = self.active_stacker.total_exposure_s
+        if self._stack_dark_name:
+            meta["dark_master"] = self._stack_dark_name
         if self.stack_started is not None:
             meta["date_obs_utc"] = _fits_time(self.stack_started)      # the stack covers from the first sub
         return meta
@@ -757,12 +786,16 @@ class ImagingService:
         try:
             await self._camera.start_exposure(duration=duration, frame_type=frame_type, **options)
             data = await self._camera.get_image_array()
+            actual = await self._read_gain_offset()
         finally:
             self.exposure_started_at = None
         self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.UTC),
                           "duration": float(duration), "frame_type": frame_type,
-                          "filter": filter_name, "gain": int(gain) if gain else None,
-                          "offset": int(offset) if offset else None}
+                          "filter": filter_name,
+                          # What the camera says it used (0 included); what was asked for only if it can't say.
+                          "gain": actual["gain"] if actual["gain"] is not None else (int(gain) if gain else None),
+                          "offset": actual["offset"] if actual["offset"] is not None
+                          else (int(offset) if offset else None)}
 
         self.current_frame = data
         self.last_saved_array = data
@@ -789,6 +822,23 @@ class ImagingService:
 
             await asyncio.to_thread(_write)
             self.last_saved_path = p
+
+    async def _read_gain_offset(self) -> dict:
+        """The camera's own gain and offset after an exposure; ``None`` for either it can't report."""
+        result = {"gain": None, "offset": None}
+        reader = getattr(self._camera, "read_gain_offset", None)
+        if not inspect.iscoroutinefunction(reader):
+            return result
+        try:
+            values = await reader()
+        except Exception:
+            logger.warning("Could not read the camera's gain and offset back", exc_info=True)
+            return result
+        for key in result:
+            value = values.get(key)
+            if isinstance(value, (int, float)) and math.isfinite(value):
+                result[key] = int(value) if float(value).is_integer() else float(value)
+        return result
 
     async def capture_single(self, duration: float, filter_name: str = "", frame_type: str = "Light"):
         """Manual single-exposure capture independent of any sequence (IMG-070)."""
@@ -888,6 +938,31 @@ class ImagingService:
         if rebuild:
             self._rebuild_preview()
 
+    def _lookup_dark(self, frame) -> tuple:
+        """``(dark or None, note)`` for *frame*, taken as the last shot was."""
+        meta = self.frame_metadata()
+        return dark_for_frame(meta.get("telescope"), meta.get("instrument"), self.last_shot.get("duration"),
+                              meta.get("binning_x", 1), meta.get("binning_y", 1), frame.shape)
+
+    def _dark_subtracted(self, frame, wanted: bool):
+        """*frame* with its dark master taken off, for the solver or a stack, when *wanted* and one fits;
+        else *frame*. A stack that already had darks taken off is left alone. Saved subs stay raw."""
+        if not wanted or frame is None or frame is self._subtracted_stack or not self.last_shot:
+            return frame
+        return subtract(frame, self._lookup_dark(frame)[0])
+
+    def _frame_for_stack(self):
+        """The sub just captured, as it goes into the live stack or mosaic."""
+        frame = self.current_frame
+        if not self._stack_dark or frame is None or not self.last_shot:
+            return frame
+        dark, note = self._lookup_dark(frame)
+        self.dark_note = note
+        if dark is None:
+            return frame
+        self._stack_dark_name = note.partition("(")[2].rpartition(")")[0] or "dark master"
+        return subtract(frame, dark)
+
     def resolve_dark_master(self) -> bool:
         """Find the dark master for the camera and optics of the frame on screen and load it, setting
         :attr:`dark_note` to say what happened. Call from the UI/event-loop thread, not a render thread.
@@ -900,13 +975,14 @@ class ImagingService:
             return False
         frame = self.current_frame
         shot = self.last_shot
+        if frame is not None and frame is self._subtracted_stack:
+            self.dark_note = f"Dark subtracted from the stacked frames ({self._stack_dark_name})."
+            return False
         if frame is None or not shot:
             self.dark_note = "Subtract dark: capture a frame first." if frame is None else \
                 "Subtract dark: the frame's exposure is unknown."
             return False
-        meta = self.frame_metadata()
-        data, note = dark_for_frame(meta.get("telescope"), meta.get("instrument"), shot["duration"],
-                                    meta.get("binning_x", 1), meta.get("binning_y", 1), frame.shape)
+        data, note = self._lookup_dark(frame)
         self.dark_note = note
         if data is None:
             return False
@@ -916,7 +992,7 @@ class ImagingService:
     def _render_preview(self, data) -> tuple:
         """``(preview, debayer note)`` for *data*: the 8-bit stretch, debayered if asked to."""
         shown, note = data, ""
-        dark = self._dark_data if self.subtract_dark else None
+        dark = self._dark_data if self.subtract_dark and data is not self._subtracted_stack else None
         if dark is not None and getattr(shown, "shape", None) == dark.shape:
             # Subtract on the raw mosaic, before debayering, as calibration does.
             shown = subtract(shown, dark)

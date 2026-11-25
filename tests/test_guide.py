@@ -390,3 +390,29 @@ def test_tc_guide_110_remote_phd2_frame_falls_back_to_a_large_star_image():
     assert snap.frame is not None and snap.frame.shape == (120, 120)
     assert client.sizes[0] == 480 and client.sizes[-1] == 120 and 240 in client.sizes and service.frame_is_wide_view
     assert service.wide_view_to_frame(60.0, 60.0) == (300.0, 200.0)            # the star is the common point
+
+
+@pytest.mark.requirement("TC-GUIDE-080")
+@pytest.mark.priority("MVP")
+def test_tc_guide_080_star_leaving_its_square_during_calibration_is_not_a_lost_star(monkeypatch):
+    """GUIDE-080: while PHD2 calibrates, StarLost keeps the Calibrating state and the model reports
+    calibration progress, then the successful or failed end."""
+    # Keep this test's notices out of the shared de-duplication window the page tests rely on.
+    monkeypatch.setattr("galileo.guiding.post_guiding_notice", lambda message: None)
+    model = GuideModel()
+    model.apply_event({"Event": "StartCalibration", "Mount": "Mount"})
+    model.apply_event({"Event": "Calibrating", "dir": "West", "dist": 4.2, "dx": 1.0, "dy": 0.0,
+                       "step": 3, "State": "West phase"})
+    snap = model.snapshot()
+    assert "West phase" in snap.calibration_status and "step 3" in snap.calibration_status
+    model.apply_event({"Event": "StarLost", "Frame": 4})
+    assert model.app_state == "Calibrating"
+    model.apply_event({"Event": "CalibrationComplete", "Mount": "Mount"})
+    assert "complete" in model.snapshot().calibration_status.lower()
+    model.apply_event({"Event": "StartGuiding"})
+    assert model.snapshot().calibration_status == "" and model.app_state == "Guiding"
+
+    model.apply_event({"Event": "StartCalibration"})
+    model.apply_event({"Event": "CalibrationFailed", "Reason": "Star lost"})
+    assert model.app_state != "Calibrating"
+    assert model.snapshot().calibration_status == "Calibration failed: Star lost"

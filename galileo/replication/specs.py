@@ -135,7 +135,7 @@ PAYLOAD_COLUMNS: dict[str, tuple[str, ...]] = {
                       "description", "saved_at"),
     "piers": ("connect_on_startup",),
     "horizon_points": ("altitude_deg",),
-    "observatory_safety_rules": ("label", "unit", "safety_related", "operator", "threshold"),
+    "observatory_safety_rules": ("label", "unit", "safety_related", "operator", "threshold", "action"),
     "safety_device_configs": ("driver", "server", "port", "device_name"),
     "optical_tubes": ("name", "focal_length_mm", "aperture_mm", "optical_system", "image_reversed",
                       "image_inverted", "associated_devices"),

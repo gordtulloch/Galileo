@@ -20,7 +20,7 @@ class RegionLockedError(Exception):
     """A scheduled (locked) session region was edited."""
 
 
-@dataclass
+@dataclass(eq=False)
 class SessionBlock:
     """Base for every action block. Subclasses are plain dataclasses; ``label`` is
     the palette's display text for that block type (a class attribute, not a field).
@@ -28,7 +28,10 @@ class SessionBlock:
     ``indent`` is the block's nesting depth: a block indented one level deeper than
     the loop block (``LoopBlock``) above it is that loop's body. It is keyword-only so
     it never disturbs a subclass's own positional fields, and ``SessionRegion``
-    keeps it consistent (no indent without a loop above to own it)."""
+    keeps it consistent (no indent without a loop above to own it).
+
+    Blocks compare by identity (every subclass is ``eq=False``): a session can hold two blocks
+    with the same settings, and ``blocks.index``/``remove`` must find the one that was meant."""
     label: ClassVar[str] = "Block"
     indent: int = field(default=0, kw_only=True)
 
@@ -40,7 +43,7 @@ class SessionBlock:
         return self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class TargetBlock(SessionBlock):
     label: ClassVar[str] = "Slew To"
     name: str = ""
@@ -53,7 +56,7 @@ class TargetBlock(SessionBlock):
         return f"{self.label}: {self.name}" if self.name else self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class ImageBlock(SessionBlock):
     """Mirrors the Imaging tab's own capture-parameter model (exposure, count, filter,
     binning, gain/offset, frame type), plus its own Framing… control (SES-130, FRAME-070)
@@ -113,7 +116,7 @@ class ImageBlock(SessionBlock):
         logger.info("Framing Assistant requested for an Image block (FRAME-070 not yet built).")
 
 
-@dataclass
+@dataclass(eq=False)
 class FilterChangeBlock(SessionBlock):
     label: ClassVar[str] = "Filter Change"
     filter: str = ""
@@ -123,7 +126,7 @@ class FilterChangeBlock(SessionBlock):
         return f"{self.label}: {self.filter}" if self.filter else self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class CoolCameraBlock(SessionBlock):
     label: ClassVar[str] = "Cool Camera"
     setpoint_c: float = -10.0
@@ -133,12 +136,12 @@ class CoolCameraBlock(SessionBlock):
         return f"{self.label}: {self.setpoint_c:g}°C"
 
 
-@dataclass
+@dataclass(eq=False)
 class WarmCameraBlock(SessionBlock):
     label: ClassVar[str] = "Warm Camera"
 
 
-@dataclass
+@dataclass(eq=False)
 class AutofocusBlock(SessionBlock):
     label: ClassVar[str] = "Autofocus"
     filter: str | None = None  # None = focus on the current filter
@@ -148,12 +151,12 @@ class AutofocusBlock(SessionBlock):
         return f"{self.label}: {self.filter}" if self.filter else self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class PlateSolveBlock(SessionBlock):
     label: ClassVar[str] = "Plate Solve"
 
 
-@dataclass
+@dataclass(eq=False)
 class GuideStartBlock(SessionBlock):
     label: ClassVar[str] = "Guide Start"
     calibrate: bool = False
@@ -163,17 +166,17 @@ class GuideStartBlock(SessionBlock):
         return f"{self.label} + Calibrate" if self.calibrate else self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class GuideStopBlock(SessionBlock):
     label: ClassVar[str] = "Guide Stop"
 
 
-@dataclass
+@dataclass(eq=False)
 class DitherBlock(SessionBlock):
     label: ClassVar[str] = "Dither"
 
 
-@dataclass
+@dataclass(eq=False)
 class FlatCaptureBlock(SessionBlock):
     """Same parameters as the Imaging page's Flats Assistant (CAL-060): flat method,
     exposure (0 = calculate), frame count, filter ("All" = every filter in turn),
@@ -193,7 +196,7 @@ class FlatCaptureBlock(SessionBlock):
         return f"{self.label}: {' '.join(bits)}"
 
 
-@dataclass
+@dataclass(eq=False)
 class DarkCaptureBlock(SessionBlock):
     """Same parameters as the Imaging page's Darks Assistant: one dark frame at each
     exposure length, optionally selecting a filter first."""
@@ -213,32 +216,32 @@ class DarkCaptureBlock(SessionBlock):
         return f"{self.label}: {' '.join(bits)}"
 
 
-@dataclass
+@dataclass(eq=False)
 class ParkMountBlock(SessionBlock):
     label: ClassVar[str] = "Park Mount"
 
 
-@dataclass
+@dataclass(eq=False)
 class UnparkMountBlock(SessionBlock):
     label: ClassVar[str] = "Unpark Mount"
 
 
-@dataclass
+@dataclass(eq=False)
 class MeridianFlipBlock(SessionBlock):
     label: ClassVar[str] = "Meridian Flip"
 
 
-@dataclass
+@dataclass(eq=False)
 class DomeOpenBlock(SessionBlock):
     label: ClassVar[str] = "Dome Open"
 
 
-@dataclass
+@dataclass(eq=False)
 class DomeCloseBlock(SessionBlock):
     label: ClassVar[str] = "Dome Close"
 
 
-@dataclass
+@dataclass(eq=False)
 class DomeSyncBlock(SessionBlock):
     label: ClassVar[str] = "Dome Sync"
 
@@ -248,7 +251,7 @@ class LoopBlock(SessionBlock):
     label: ClassVar[str] = "Loop"
 
 
-@dataclass
+@dataclass(eq=False)
 class ForFilterBlock(LoopBlock):
     """FOR [filter] in <list>: repeat the indented blocks once per filter."""
     label: ClassVar[str] = "FOR Filter"
@@ -259,7 +262,7 @@ class ForFilterBlock(LoopBlock):
         return f"FOR Filter in [{', '.join(self.filters)}]" if self.filters else self.label
 
 
-@dataclass
+@dataclass(eq=False)
 class ForObjectBlock(LoopBlock):
     """FOR [object] in <list>: repeat the indented blocks once per object."""
     label: ClassVar[str] = "FOR Object"
@@ -276,7 +279,7 @@ class ForObjectBlock(LoopBlock):
         return f"FOR Object in [{text}]"
 
 
-@dataclass
+@dataclass(eq=False)
 class NotificationBlock(SessionBlock):
     label: ClassVar[str] = "Notification"
     message: str = ""

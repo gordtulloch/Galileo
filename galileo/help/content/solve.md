@@ -17,7 +17,12 @@ Takes an exposure with the selected camera, solves it, and then performs the Sol
 
 ## Load & Slew
 
-Solves a FITS file from your disk, then slews the mount to where that image points. Useful for returning to a previous night's framing. Once the slew finishes, that position becomes the Pier's current object (named from the file's `OBJECT` card, or its coordinates if it has none), so later solves and captures aim at it rather than at the previously selected object.
+Solves an existing image, then slews the mount to where that image points. Pressing the button offers two sources:
+
+- **From the Library…** lists the Library's light frames, newest first (up to 500). Click a column header to sort by it, and again to reverse the order (sorting reorders the frames listed; use the search to reach older ones). The selected frame is shown in inverse colours. Type in the search box to narrow them by object, file name, filter, telescope or date, then pick one and press **Load & Slew** (or double-click it). A frame held on the Master is fetched back first; **Stop** cancels that too.
+- **From disk…** opens a file chooser for any FITS file.
+
+Useful for returning to a previous night's framing. Once the slew finishes, that position becomes the Pier's current object (named from the file's `OBJECT` card, or its coordinates if it has none), so later solves and captures aim at it rather than at the previously selected object.
 
 ## Stop
 
@@ -141,11 +146,13 @@ The filter to solve through. The first entry reads **Current (*filter*)**, namin
 
 ## Subtract dark
 
-Shows the frame on this screen with the Library's dark master subtracted, when one exists for the frame's telescope and camera at the same binning and an exposure within 1%. The line under the picture says which master was used, or why none was. It changes only the picture: the solver is always given the frame as saved. Ticking or unticking it redraws the frame on show.
+Takes the Library's dark master off each frame **before it is solved**, when one exists for the frame's telescope and camera at the same binning and an exposure within 1%. It applies to Capture & Solve, Auto-Centre, Polar Alignment and Load & Slew (a loaded file is matched by its own headers, and one already dark-subtracted is left alone). The line under the picture says which master was used, or why none was. Your own files are never changed; the subtraction is done on Galileo's working copy. A frame already solved with its dark removed is shown that way even if you then untick the box; the change applies from the next frame.
+
+The label beside it reads **Dark available** or **No dark available** for the optics and camera selected at the top of the window and the **Exp** and **Bin** set above; hold the pointer over it to see which master matches. The box is ticked for you when one is available and unticked when none is. You can override it either way, and your choice is kept for that combination of optics, camera, exposure and binning until Galileo is closed.
 
 ## Solver Mode
 
-Which solver to use. Galileo remembers the last one you pick here, for each Pier (it is the same setting as the solver in Options › Solve), so it is still selected next time. Solves started from the phone, a session's Plate Solve block, Imaging and the Star Atlas use it too. A solver added by a plugin, such as Skyshot, gets a button of its own here once the plugin is installed and enabled.
+Which solver to use. Galileo remembers the last one you pick here, for each Pier (it is the same setting as the solver in Options › Solve), so it is still selected next time. Solves started from the phone, a session's Plate Solve block, Imaging and the Star Atlas use it too. A solver added by a plugin, such as Skyshot, gets a button of its own here as soon as the plugin is installed and enabled, without restarting Galileo.
 
 ## ASTAP
 

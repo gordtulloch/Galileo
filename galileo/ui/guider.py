@@ -535,7 +535,10 @@ class GuiderPage(QWidget):
         self._render_choices(snap)
         for key, lamp in self.lamps.items():
             lamp.set_on(snap is not None and connected and snap.phase == key)
-        self.state_label.setText(f"State: {state}{' (settling)' if snap and snap.settling else ''}" if connected else "")
+        state_text = f"State: {state}{' (settling)' if snap and snap.settling else ''}" if connected else ""
+        if connected and snap.calibration_status and state != "Guiding":
+            state_text += "\n" + snap.calibration_status      # calibration progress, and how it ended
+        self.state_label.setText(state_text)
 
         tube = self.train_combo.currentData()
         self._render_scope(tube, snap)

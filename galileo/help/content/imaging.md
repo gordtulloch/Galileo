@@ -3,9 +3,9 @@
 
 The Imaging screen takes pictures through your camera and shows them as they arrive. Use it for framing and test exposures, for taking a run of frames by hand, and for calibration frames (flats and darks). For unattended multi-target nights use Planning › Sessions instead.
 
-**Left:** capture settings, view options, and the mount nudge pad. **Right:** the live preview, a stretch control and histogram, and progress. **Bottom:** the log.
+**Left:** capture settings, view options, and the **Mount Control** button. **Right:** the live preview, a stretch control and histogram, and progress. **Bottom:** the log.
 
-Before you start: connect a camera (Equipment › Camera) and pick the Optics and Camera in the top bar. Connect a filter wheel to see your filters, and a mount to use Mount Nudge.
+Before you start: connect a camera (Equipment › Camera) and pick the Optics and Camera in the top bar. Connect a filter wheel to see your filters, and a mount to use Mount Control.
 
 ## Capture Settings
 
@@ -14,6 +14,10 @@ The settings used for each exposure when you press **Capture**.
 ## Exposure
 
 The length of each exposure, in seconds (as short as 0.001 s). Long exposures show fainter detail but trail if guiding is poor and saturate bright stars.
+
+## Object
+
+The name of the object being imaged, written to each frame's OBJECT header card and used in its file name. It follows the selected object (Star Atlas, Targets) and shows **Unknown** when nothing is selected. Type a name and press Enter (or click elsewhere) to make that object the **current object** of the Pier, as if you had picked it in the Star Atlas: it is looked up in the offline catalog, and online (Simbad) if not there. A name that can't be found still names your frames, but the current object stays as it was (it needs coordinates). Selecting a different object replaces what you typed, and clearing the box puts Unknown back without clearing the current object. Dark, flat and bias frames never carry an object.
 
 ## Quantity
 
@@ -27,6 +31,8 @@ The camera's gain for each exposure. Higher gain boosts a faint signal at the co
 
 The camera's offset (black level) for each exposure — keeps the darkest pixels above zero. 0 leaves the camera as configured.
 
+The saved frame's GAIN and OFFSET header cards are read back from the camera after the exposure, so they show what it really used (a value of 0 is recorded as 0). If a camera can't report a value, what you entered is recorded instead.
+
 ## Type
 
 What kind of frame this is: **Light** (the sky), **Dark** (shutter closed), **Flat** (evenly lit) or **Bias** (shortest possible exposure, shutter closed). The type is written into the saved file so the Library can sort and calibrate it. For a dark or bias, cover the telescope yourself — or use the Darks and Flats assistants, which handle that.
@@ -34,6 +40,18 @@ What kind of frame this is: **Light** (the sky), **Dark** (shutter closed), **Fl
 ## Filter
 
 The filter to use, from the filter wheel associated with the selected optics (connect the wheel on Equipment › Filter Wheel to fill this in). Choosing one turns the wheel. You can also type a name if no wheel is connected, and it is recorded in the frames.
+
+## Camera Temp
+
+The camera's current sensor temperature, refreshed every few seconds, with the cooler power in brackets when the camera reports it. Shows a dash when no camera is connected or it cannot report a temperature.
+
+## Target
+
+The sensor temperature to cool to, in °C. It is sent to the camera when you tick **Cooler on**, and again if you change it while the cooler is on.
+
+## Cooler on
+
+Switches the camera's cooler on (cooling to **Target**) or off. The box follows the camera, so if the cooler is switched elsewhere it updates within a few seconds. Cooling and warming too fast can stress the sensor — step the target gradually.
 
 ## Capture
 
@@ -77,7 +95,9 @@ Shows the preview in colour by debayering the camera's mosaic. It is ticked auto
 
 ## Subtract dark
 
-Subtracts the Library's dark master from the preview when one exists for this camera and optics. A master matches when it was made with the same telescope and camera, at the same binning and an exposure within 1% of the frame's. The newest match is used; the status line says which master was applied, or why none was (no match, a different frame size, or no frame yet). Only the preview changes — statistics, the histogram and **Save Frame** keep the camera's raw data. The setting lasts for the session.
+Subtracts the Library's dark master from the preview, from the frames added to a Live Stack or mosaic, and from the frame given to the solver (Annotate), when one exists for this camera and optics. A master matches when it was made with the same telescope and camera, at the same binning and an exposure within 1% of the frame's. The newest match is used; the status line says which master was applied, or why none was (no match, a different frame size, or no frame yet). Each frame filed in the Library or saved with **Save Frame** stays raw, as do its statistics and histogram. A stack is different: it is built from dark-subtracted frames, so its statistics, **Save Stack** and saving the stack to the Library carry the subtraction, recorded in its `DARKMAST` header so the Library does not calibrate the dark off a second time. Whether a run's stack subtracts darks is decided when the run starts. The setting lasts for the session.
+
+The label beside it reads **Dark available** or **No dark available** for the optics and camera selected at the top of the window and the **Exposure** set above (at the capture's binning, 1x1 unless set otherwise); hold the pointer over it to see which master matches. The box is ticked for you when one is available and unticked when none is. You can override it either way, and your choice is kept for that combination of optics, camera, exposure and binning until Galileo is closed.
 
 ## Live Stack
 
@@ -95,6 +115,38 @@ By default the screen arranges itself to suit the frame: a portrait frame gets t
 
 A group for extra tools that plugins add. Hidden when none are installed.
 
+## Mount Control
+
+Opens the mount nudge pad in a small window that stays in front of the Imaging screen without blocking it, so you can nudge while watching the preview. It closes itself when you leave the Imaging screen; press the button again to bring it back. Below the nudge pad it also holds the mount's Park / Unpark, Home, Track On, Track Off and Do Meridian Flip buttons.
+
+## Park
+
+Parks the mount at its park position (set on Equipment › Mount). Same command as the Mount screen's Park. This button reads **Park** while the mount is unparked and **Unpark** while it is parked, and follows the mount's own status while the window is open.
+
+## Unpark
+
+Unparks the mount so it can slew and track again. Shown in place of **Park** while the mount is parked.
+
+## Home
+
+Sends the mount to its home position (the driver's Find Home).
+
+## Track On
+
+Turns mount tracking on.
+
+## Track Off
+
+Turns mount tracking off.
+
+## EMERGENCY STOP
+
+The red button under the meridian-flip button: stops all mount motion at once — it abandons a slew in progress and halts both axes, including any nudge still held. Tracking is left as it is. Use it the moment something looks wrong.
+
+## Do Meridian Flip
+
+Flips the mount to the other side of the pier, after you confirm: it slews to where it is pointing now (so the mount chooses the other side) and resumes tracking when the slew ends. Use it once the target has crossed the meridian and the cables are clear; it does not re-centre or restart guiding.
+
 ## Mount Nudge
 
 Nudges the telescope while you are looking at the preview — to centre a star, say. Uses the mount connected on Equipment › Mount, with the same directions as its jog pad.
@@ -105,7 +157,7 @@ Hold an arrow button to move the mount north (↑), south (↓), east (→) or w
 
 ## Mount Nudge Stop
 
-Stops both axes immediately, in case a button was not released cleanly.
+The red centre button. Stops both axes immediately, in case a button was not released cleanly.
 
 ## Mount Nudge Speed
 

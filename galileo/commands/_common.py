@@ -30,8 +30,9 @@ def load_config(config_path: str | None = None) -> configparser.ConfigParser:
 
     Selecting it also redirects every later read of the library settings inside
     ``galileo.library`` to the same file. Raises :class:`FileNotFoundError` if
-    the file doesn't exist, so a mistyped ``--config`` fails loudly rather than
-    silently running on defaults.
+    a named file doesn't exist, so a mistyped ``--config`` fails loudly rather than
+    silently running on defaults. With no ``--config`` and nothing saved yet, the
+    default folders apply, as they do in the GUI.
     """
     if config_path:
         set_config_path(config_path)
@@ -39,9 +40,8 @@ def load_config(config_path: str | None = None) -> configparser.ConfigParser:
         # The default settings live in the database; make sure it is initialised first.
         from galileo.library.database import setup_database
         setup_database()
-    if not config_exists():
-        raise FileNotFoundError(
-            f"Configuration not found: {get_config_path()} "
-            "(set the repository folders under Options > Library, or pass --config)"
-        )
+    if not has_config_override():
+        config_exists()        # imports a legacy library.ini the first time
+    elif not config_exists():
+        raise FileNotFoundError(f"Configuration not found: {get_config_path()}")
     return _load_library_config()

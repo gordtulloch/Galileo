@@ -202,16 +202,25 @@ class AppWindowStarAtlasPageMixin:
             details_form.addRow(label, value)
         details_layout.addLayout(details_form)
 
-        action_row = QHBoxLayout()
+        action_row = QVBoxLayout()      # one full-width button per row, so no label is clipped
+        action_row.setSpacing(6)
         detail_goto_btn = QPushButton("Goto")
         detail_goto_btn.setToolTip("Slew the current Pier's mount to this object")
+        detail_centre_btn = QPushButton("Goto and Centre")
+        detail_centre_btn.setToolTip(
+            "Slew the current Pier's mount to this object, then plate solve (using the Solve screen's "
+            "settings) to centre it")
         detail_sync_btn = QPushButton("Sync")
         detail_sync_btn.setToolTip("Tell the current Pier's mount it is pointing at this object")
         detail_session_btn = QPushButton("Add to Session")
         detail_session_btn.setToolTip("Create a new session pre-populated with a Target block for this object")
-        for btn in (detail_goto_btn, detail_sync_btn, detail_session_btn):
+        for btn in (detail_goto_btn, detail_centre_btn, detail_sync_btn, detail_session_btn):
             btn.setEnabled(False)
             action_row.addWidget(btn)
+        # Not tied to the selected object: it parks or unparks the Pier's mount, whichever is next.
+        detail_park_btn = QPushButton("Park")
+        detail_park_btn.setEnabled(False)
+        action_row.addWidget(detail_park_btn)
         details_layout.addLayout(action_row)
 
         hint = QLabel("Click an object to identify it. Double-click to centre and track it. "
@@ -340,6 +349,7 @@ class AppWindowStarAtlasPageMixin:
             # A satellite crosses the sky in minutes: there is nothing to slew to, sync on or plan.
             targetable = has_obj and obj.get("type") != "Satellite"
             detail_goto_btn.setEnabled(targetable)
+            detail_centre_btn.setEnabled(targetable)
             detail_sync_btn.setEnabled(targetable)
             detail_session_btn.setEnabled(targetable)
             if not has_obj:
@@ -347,8 +357,40 @@ class AppWindowStarAtlasPageMixin:
                     detail_values[key].setText("—")
 
         view.selectionChanged.connect(on_selection_changed)
+
+        from galileo.mount_ops import MountOps as _MountOps
+        panel_mount_ops = _MountOps(lambda: (self._device_pages.get("mount") or {}).get("adapter"))
+        park_state = {"at_park": False}
+
+        def refresh_park_button() -> None:
+            """Label the button for what it will do: Park when the mount is unparked, Unpark when parked.
+            The park state comes from the same off-thread mount poll as the telescope reticles (SKYMAP-090),
+            so this never reads the mount on the UI thread. Disabled, with the reason, when no mount is
+            connected; a mount that doesn't say is offered as Park."""
+            from galileo.current_object import pier_key
+            connected = (self._device_pages.get("mount") or {}).get("adapter") is not None
+            pointing = self._pier_pointing.get(pier_key(self._current_pier)) or {}
+            park_state["at_park"] = bool(connected and pointing.get("at_park"))
+            verb = "Unpark" if park_state["at_park"] else "Park"
+            detail_park_btn.setText(verb)
+            detail_park_btn.setEnabled(connected)
+            detail_park_btn.setToolTip(f"{verb} the current Pier's mount" if connected
+                                       else "No mount is connected — connect it on Equipment > Mount")
+
+        def on_park_clicked() -> None:
+            verb = "Unpark" if park_state["at_park"] else "Park"
+            outcome = panel_mount_ops.unpark() if park_state["at_park"] else panel_mount_ops.park()
+            if outcome.ok:
+                self._window.statusBar().showMessage(f"Mount {verb.lower()} requested.", 4000)
+            else:
+                self._window.statusBar().showMessage(f"{verb}: {outcome.message or 'failed — see log.'}", 6000)
+            self._poll_pier_pointing(on_done=refresh_markers)     # re-read soon, so the label follows
+
+        detail_park_btn.clicked.connect(on_park_clicked)
         detail_goto_btn.clicked.connect(
             lambda: self._mount_to_object("goto", view.selected) if view.selected is not None else None)
+        detail_centre_btn.clicked.connect(
+            lambda: self._mount_to_object("goto", view.selected, then_solve=True) if view.selected is not None else None)
         detail_sync_btn.clicked.connect(
             lambda: self._mount_to_object("sync", view.selected) if view.selected is not None else None)
         detail_session_btn.clicked.connect(
@@ -483,6 +525,7 @@ class AppWindowStarAtlasPageMixin:
         def refresh_markers() -> None:
             view.set_pier_markers(self.pier_markers())
             view.set_current_objects(self.atlas_current_objects())      # SKYMAP-130
+            refresh_park_button()
 
         def poll_markers() -> None:
             view.reload_saved_targets()       # a target saved on another node arrives by replication, not the bus

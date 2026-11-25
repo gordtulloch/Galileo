@@ -183,6 +183,8 @@ class AppWindowDarksMixin:
             svc.pier_key = key          # announces each dark, so the Imaging preview (and remote clients) show it
             svc.frame_context = self._imaging_frame_context()
             run_state["service"] = svc
+            from galileo.ui.safety_host import register_stopper
+            register_stopper(self, f"darks assistant {key}", svc.request_stop)
 
             filter_name = filter_combo.currentText() if filter_combo.currentIndex() > 0 else ""
             # Parented to the window, not the dialog: the dialog is deleted when closed idle, which

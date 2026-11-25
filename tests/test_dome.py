@@ -118,11 +118,15 @@ async def test_tc_dome_010_forced_sync_works_with_slaving_off(mock_dome):
 async def test_tc_dome_020_session_uses_dome_service_and_session_sync(mock_dome):
     """DOME-020: a session's Dome blocks go through the DomeService, and shutter open/close+park
     follow the session start/end only when the operator enabled it."""
+    from unittest.mock import AsyncMock
+
     from galileo.dome import DomeService
     from galileo.session_exec import SessionContext, SessionExecutor
     from galileo.ui.sessions import DomeCloseBlock, DomeOpenBlock, DomeSyncBlock
 
-    service = DomeService(dome=mock_dome, mount=_tracking_mount(77.0))
+    mount = _tracking_mount(77.0)
+    mount.park = AsyncMock(side_effect=lambda: mount.get_status.return_value.update(at_park=True))
+    service = DomeService(dome=mock_dome, mount=mount)
     ctx = SessionContext(dome=mock_dome, mount=service.mount, dome_service=service)
     await SessionExecutor(ctx, name="t").run([DomeOpenBlock(), DomeSyncBlock(), DomeCloseBlock()])
     assert mock_dome.open_shutter.await_count == 1  # block only; session sync disabled

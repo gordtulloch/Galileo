@@ -376,6 +376,9 @@ class AppWindowDomePageMixin:
             service = get_service()
             if service is None or not service.slaving_enabled:
                 return
+            from galileo.ui.safety_host import safety_holding
+            if safety_holding(self):          # the dome does not move while a stop is in force
+                return
             slave_step(service)
             _update_slave_status()
 

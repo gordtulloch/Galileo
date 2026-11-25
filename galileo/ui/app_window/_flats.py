@@ -258,6 +258,8 @@ class AppWindowFlatsMixin:
                 mount=mount, output_dir=service._scratch_folder() / "flats",
             )
             run_state["service"] = svc
+            from galileo.ui.safety_host import register_stopper
+            register_stopper(self, f"flats assistant {key}", svc.request_stop)
 
             filter_selected = filter_combo.currentText()
             filters = None if filter_selected == "All" else [filter_selected]

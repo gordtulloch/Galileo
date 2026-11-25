@@ -195,6 +195,7 @@ class AppWindowPluginsPageMixin:
                         m = _mgr()
                         if m:
                             m.set_enabled(name, checked)
+                            self._sync_solver_choices()     # these change at once
                             restart_banner.setVisible(True)
 
                     def _on_remove(checked: bool = False, name: str = plugin_name) -> None:

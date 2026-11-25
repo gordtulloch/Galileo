@@ -30,6 +30,7 @@ import time
 import numpy as np
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QMessageBox,
     QWidget,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from galileo.bus import SolveCompleteEvent, SolveStartedEvent, get_bus
 from galileo.current_object import get_current_objects
+from galileo.library.core.location import ensure_local
 from galileo.observatory import make_pier_solver
 from galileo.platesolve import (
     PlateSolver,
@@ -49,6 +51,8 @@ from galileo.platesolve import (
     nearest_object_name,
 )
 from galileo.polaralign import POLAR_SETTLE_S, PolarAlignProgress, PolarAlignSettings, PolarAlignWorkflow, format_angle
+from galileo.ui.dark_label import show_dark_availability
+from galileo.ui.solve_library_picker import LibraryFrameDialog
 from galileo.ui.solve_widgets import (  # noqa: F401  (re-exported: these used to live in this module)
     SolveErrorPlot,
     SolveImageView,
@@ -91,7 +95,10 @@ def load_preview(path: str, bayer_pattern: str | None = None, subtract_dark: boo
             data = np.asarray(hdul[0].data)
             header = hdul[0].header
             header_pattern = str(header.get("BAYERPAT", "")).strip().upper()
-        if subtract_dark:
+        if header.get("DARKMAST"):                   # taken off before solving: not twice
+            if notes is not None:
+                notes.append(f"Dark subtracted ({header['DARKMAST']}).")
+        elif subtract_dark:
             from galileo.dark_master import dark_for_frame, subtract
             exposure = header.get("EXPTIME", header.get("EXPOSURE"))
             dark, note = dark_for_frame(header.get("TELESCOP"), header.get("INSTRUME"), exposure,
@@ -166,6 +173,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self._loading_path: str | None = None
         self._preview_note = ""                  # what dark subtraction did to the frame on show, if it is on
         self._mount_busy: dict = {}
+        self._dark_choice: tuple | None = None   # (telescope, camera, exposure, binning) the dark label describes
+        self._dark_overrides: dict = {}          # that setup -> the user's own tick/untick of Subtract dark
         self._exposures: dict = {}               # pier key -> (monotonic start, duration_s, label) while exposing
         self._displayed_pier = _UNSET            # which Pier the results above belong to
         self.make_solver = self._default_solver  # replaced by tests
@@ -185,6 +194,9 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.solve_finished.connect(self._on_solve_finished)
         self.preview_ready.connect(self._on_preview_ready)
         self.subtract_dark_check.toggled.connect(self._on_subtract_dark_toggled)
+        self.subtract_dark_check.clicked.connect(self._on_subtract_dark_clicked)
+        self.exposure_spin.valueChanged.connect(lambda _=None: self.refresh_dark_available())
+        self.bin_combo.currentIndexChanged.connect(lambda _=None: self.refresh_dark_available())
         for radio in self._mode_backends:
             radio.toggled.connect(self._on_backend_toggled)
         self.mount_position.connect(self._on_mount_position)
@@ -215,6 +227,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.refresh_target()
         self.refresh_filters()
         self.refresh_view()
+        self.refresh_dark_available()
         self._show_latest_frame()
         self.poll_mount()
         self._mount_timer.start(_MOUNT_POLL_MS)
@@ -261,6 +274,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.refresh_filters()
         if self.isVisible():
             self.refresh_view()
+            self.refresh_dark_available()
             self.poll_mount()
 
     def _clear_for_pier_switch(self) -> None:
@@ -273,6 +287,19 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.image_view.clear_image()
         if self.isVisible():
             self.refresh_view()
+
+    def refresh_solver_modes(self) -> None:
+        """A plugin was installed, updated, removed, enabled or disabled: update Solver Mode without
+        a restart (PLUG-190, PLUG-220)."""
+        for radio in self._add_plugin_modes():
+            radio.toggled.connect(self._on_backend_toggled)
+        if not any(radio.isChecked() for radio in self._mode_backends):
+            self._restoring_backend = True       # the chosen solver has just gone
+            try:
+                self.astap_radio.setChecked(True)
+            finally:
+                self._restoring_backend = False
+        self._select_saved_backend()
 
     def _select_saved_backend(self) -> None:
         """Preselect the Solver Mode saved for the current Pier in Options > Solve."""
@@ -347,6 +374,29 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if wheel is None or callable(getattr(wheel, "move_to_filter", None)):
             return wheel
         return _WheelByName(wheel, self._wheel_names(wheel))
+
+    # --- Dark master ------------------------------------------------------
+
+    def refresh_dark_available(self) -> None:
+        """Say whether the Library holds a dark master for the selected optics and camera at the Exp
+        and Bin set here, and tick Subtract dark to match unless the user has chosen otherwise for
+        that setup. Does nothing while the screen is not on show."""
+        if self.isVisible():
+            self._apply_dark_availability()
+
+    def _apply_dark_availability(self) -> None:
+        meta = self._frame_metadata()      # the names the solve frame will be saved with
+        telescope, instrument = meta.get("telescope"), meta.get("instrument")
+        exposure, binning = self.exposure_spin.value(), self.bin_combo.currentIndex() + 1
+        available = show_dark_availability(self.dark_available_label, telescope, instrument, exposure,
+                                           binning, binning)
+        self._dark_choice = (telescope, instrument, exposure, binning)
+        self.subtract_dark_check.setChecked(self._dark_overrides.get(self._dark_choice, available))
+
+    def _on_subtract_dark_clicked(self, checked: bool) -> None:
+        """The user's own tick or untick: keep it for this setup."""
+        if self._dark_choice is not None:
+            self._dark_overrides[self._dark_choice] = checked
 
     # --- Bus (worker threads) ---------------------------------------------
 
@@ -444,7 +494,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if not self.subtract_dark_check.isChecked():
             self._preview_note = ""
             self._update_frame_label()
-        if self._latest_path:
+        if self._latest_path and self.isVisible():
             self._loading_path = None
             self._load_preview_async(self._latest_path)
 
@@ -635,7 +685,7 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         logger.info("%s", message)
 
     def _begin(self, run, use_current_object: bool = False, make_workflow=None) -> None:
-        # Re-entrancy is enforced by capture_and_solve()/load_and_slew() (the
+        # Re-entrancy is enforced by capture_and_solve()/load_from_*() (the
         # only production entry points), not here — matching the original
         # single-Pier code, where _begin() itself never checked _running either.
         key = self._pier_key()
@@ -645,6 +695,8 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         workflow = self._workflows[key] = (make_workflow or SolveWorkflow)(
             solver, camera=self._camera(), mount=self._mount(), log=self._post,
             frame_metadata=self._frame_metadata(), filter_wheel=self._wheel_for_workflow())
+        self._apply_dark_availability()      # the box may not have been refreshed if the screen is hidden
+        workflow.library_dark = self.subtract_dark_check.isChecked()
         workflow.on_exposure = lambda duration, label, key=key: self._emit("exposure_changed", key, duration, label)
         obj = self.current_object() if use_current_object else None   # Load & Slew has its own idea of where to go
         if obj is not None:
@@ -767,7 +819,23 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         if not self._running.get(key):                    # no usable solver (the user has been told why)
             self.auto_centre_check.setChecked(False)
 
-    def load_and_slew(self) -> None:
+    def load_from_library(self) -> None:
+        """Load & Slew on a frame chosen from the Library (one held on the Master is fetched first)."""
+        if self._running.get(self._pier_key()):
+            return
+        dialog = LibraryFrameDialog(self._window._window, self._window._theme)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        frame = dialog.selected()
+        if frame is None:
+            return
+
+        async def fetch():
+            return await ensure_local(frame["id"])
+
+        self._begin(lambda workflow: workflow.solve_fetched(fetch, slew=True))
+
+    def load_from_disk(self) -> None:
         if self._running.get(self._pier_key()):
             return
         path, _ = QFileDialog.getOpenFileName(self._window._window, "Load & Slew", "", "FITS files (*.fits *.fit *.fts)")
@@ -853,6 +921,12 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.auto_centre_check.setChecked(False)          # Stop also ends the repeating solves
         workflow = self._workflows.get(self._pier_key())
         if workflow is not None:
+            workflow.stop()
+
+    def stop_for_safety(self) -> None:
+        """End auto-centring, solves and polar alignment on every Pier (protective stop)."""
+        self.auto_centre_check.setChecked(False)
+        for workflow in list(self._workflows.values()):
             workflow.stop()
 
     def end_polar_alignment(self) -> None:

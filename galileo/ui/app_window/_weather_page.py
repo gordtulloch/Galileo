@@ -174,14 +174,14 @@ class AppWindowWeatherPageMixin:
 
         # --- readings + per-measure safety rules --------------------------
         parameters = list(param_info.keys())
-        rules_table = QTableWidget(len(parameters), 5)
-        rules_table.setHorizontalHeaderLabels(["Measure", "Current", "Blocks Dome Opening", "Unsafe When", "Threshold"])
+        rules_table = QTableWidget(len(parameters), 6)
+        rules_table.setHorizontalHeaderLabels(["Measure", "Current", "Blocks Dome Opening", "Unsafe When", "Threshold", "When breached"])
         rules_table.verticalHeader().setVisible(False)
         rules_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         rules_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         header = rules_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in range(1, 5):
+        for column in range(1, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
 
         row_widgets: dict[str, dict] = {}
@@ -210,6 +210,12 @@ class AppWindowWeatherPageMixin:
             threshold_spin.setDecimals(2)
             rules_table.setCellWidget(row, 4, threshold_spin)
 
+            action_combo = QComboBox()
+            action_combo.addItems(["Stop", "Warn"])
+            action_combo.setEnabled(False)
+            rules_table.setCellWidget(row, 5, action_combo)
+            safety_box.toggled.connect(action_combo.setEnabled)
+
             def _apply_enabled(checked: bool, operator_combo=operator_combo, threshold_spin=threshold_spin) -> None:
                 operator_combo.setEnabled(checked)
                 threshold_spin.setEnabled(checked)
@@ -219,7 +225,7 @@ class AppWindowWeatherPageMixin:
 
             row_widgets[parameter] = {
                 "current": current_item, "safety": safety_box,
-                "operator": operator_combo, "threshold": threshold_spin,
+                "operator": operator_combo, "threshold": threshold_spin, "action": action_combo,
                 "label": label, "unit": unit,
             }
 
@@ -235,6 +241,7 @@ class AppWindowWeatherPageMixin:
                     safety_related=widgets["safety"].isChecked(),
                     operator=widgets["operator"].currentText(),
                     threshold=widgets["threshold"].value(),
+                    action=widgets["action"].currentText().lower(),
                 ))
             return rules
 
@@ -465,6 +472,8 @@ class AppWindowWeatherPageMixin:
                     if idx >= 0:
                         widgets["operator"].setCurrentIndex(idx)
                     widgets["threshold"].setValue(rule.threshold)
+                    widgets["action"].setCurrentText("Warn" if rule.action == "warn" else "Stop")
+                widgets["action"].setEnabled(bool(rule and rule.safety_related))
                 widgets["operator"].setEnabled(widgets["safety"].isChecked())
                 widgets["threshold"].setEnabled(widgets["safety"].isChecked())
                 widgets["safety"].blockSignals(False)
@@ -504,6 +513,7 @@ class AppWindowWeatherPageMixin:
             "connected": lambda: state.get("adapter") is not None,
             "poll_once": _poll_once,
             "evaluate_one": _evaluate_one,
+            "adapter": lambda: state.get("adapter"),
             "get_rules": _current_rules,
             "get_latest_readings": lambda: state.get("latest_readings") or {},
             "device_type": device_type, "slot": slot,
@@ -522,6 +532,7 @@ class AppWindowWeatherPageMixin:
         "Blocks Dome Opening" on its tab."""
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, QPushButton, QMenu, QMessageBox, QTabBar,
+            QCheckBox, QGroupBox, QSpinBox,
         )
 
         page = QWidget()
@@ -621,6 +632,7 @@ class AppWindowWeatherPageMixin:
             if loaded["built"] and loaded["key"] == key:
                 return
             loaded["built"], loaded["key"] = True, key
+            load_stop_settings()
             # Rebuild the extra tabs from what the selected Observatory has saved;
             # the primary weather tab is permanent and just reloads.
             for api in panels[1:]:
@@ -654,11 +666,93 @@ class AppWindowWeatherPageMixin:
 
         _add_panel("weather", "primary")
 
+        def sources() -> list:
+            """Every saved or connected safety device, with the rules **saved** for it (SAFE-130). An unsaved
+            edit on this page has no effect."""
+            from galileo.observatory import get_weather_safety_rules, list_safety_device_slots
+            from galileo.safety import default_weather_safety_rules
+            from galileo.safety_supervisor import Source
+            observatory = self._safety_observatory()
+            adapters = {(p["device_type"], p["slot"]): p["adapter"]() for p in panels}
+            wanted = {key for key, adapter in adapters.items() if adapter is not None}
+            if observatory is not None:
+                for type_id in _SAFETY_DEVICE_TYPES:
+                    try:
+                        wanted |= {(type_id, slot) for slot in list_safety_device_slots(observatory, type_id)}
+                    except Exception:
+                        logger.exception("Could not list saved %s devices", type_id)
+            found = []
+            for type_id, slot in sorted(wanted):
+                rules = []
+                if type_id != "safety_monitor":
+                    try:
+                        rules = get_weather_safety_rules(observatory, slot)
+                    except Exception:
+                        logger.exception("Could not read the saved safety rules")
+                    rules = rules or default_weather_safety_rules()
+                label = _SAFETY_DEVICE_TYPES[type_id][0]
+                found.append(Source(key=f"{type_id}:{slot}", name=label if slot == "primary" else f"{label} ({slot})",
+                                    kind=type_id, adapter=adapters.get((type_id, slot)), rules=rules))
+            return found
+
+        # --- the protective stop's settings (SAFE-030, SAFE-040, SAFE-140) ------------------------------
+        from galileo.safety_supervisor import MIN_STABLE_S, load_settings, save_settings
+        stop_box = QGroupBox("Protective stop")
+        stop_row = QHBoxLayout(stop_box)
+        stop_check = QCheckBox("Park and stop when unsafe")
+        roof_check = QCheckBox("Close the roof")
+        restart_check = QCheckBox("Restart scheduled sessions")
+        grace_spin = QSpinBox()
+        grace_spin.setRange(0, 3600)
+        grace_spin.setSuffix(" s")
+        stable_spin = QSpinBox()
+        stable_spin.setRange(int(MIN_STABLE_S // 60), 1440)
+        stable_spin.setSuffix(" min")
+        for widget in (stop_check, roof_check):
+            stop_row.addWidget(widget)
+        stop_row.addWidget(QLabel("Lost device grace"))
+        stop_row.addWidget(grace_spin)
+        stop_row.addWidget(QLabel("Safe for"))
+        stop_row.addWidget(stable_spin)
+        stop_row.addWidget(restart_check)
+        stop_row.addStretch(1)
+        layout.addWidget(stop_box)
+
+        def _scope() -> str:
+            return str(self._safety_observatory_key() or "")
+
+        stop_widgets = (stop_check, roof_check, restart_check, grace_spin, stable_spin)
+
+        def load_stop_settings() -> None:
+            settings = load_settings(_scope())
+            for widget in stop_widgets:
+                widget.blockSignals(True)
+            stop_check.setChecked(settings.enabled)
+            roof_check.setChecked(settings.close_roof)
+            restart_check.setChecked(settings.auto_restart)
+            grace_spin.setValue(int(settings.grace_s))
+            stable_spin.setValue(int(settings.stable_s // 60))
+            for widget in stop_widgets:
+                widget.blockSignals(False)
+
+        def save_stop_settings(*_args) -> None:
+            settings = load_settings(_scope())
+            settings.enabled, settings.close_roof = stop_check.isChecked(), roof_check.isChecked()
+            settings.auto_restart = restart_check.isChecked()
+            settings.grace_s, settings.stable_s = float(grace_spin.value()), stable_spin.value() * 60.0
+            save_settings(settings, _scope())
+
+        for check in (stop_check, roof_check, restart_check):
+            check.toggled.connect(save_stop_settings)
+        for spin in (grace_spin, stable_spin):
+            spin.valueChanged.connect(save_stop_settings)
+
         primary = panels[0]
         self._device_pages["weather"] = {
             "reload": reload_page, "autoconnect": autoconnect_page, "disconnect": disconnect_page,
             "connected": lambda: any(api["connected"]() for api in panels),
             "evaluate": evaluate,
+            "sources": sources,
             # Not a Pier's devices: the top-bar Pier Connect/Disconnect leave these alone, since
             # tearing them down would blind every other Pier of the Observatory.
             "observatory_scoped": True,

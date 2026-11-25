@@ -3,15 +3,11 @@
 
 """Safety and the watchdog in the engine (HEAD-160): they run whether or not any screen or client is attached.
 
-``Guard`` has one loop on its own thread. Every second it beats the crash/hang watchdog (``SAFE-060``), which has
-its own thread and so still fires if this loop hangs; every ``interval_s`` it polls each Pier's safety monitor.
-When a monitor reports unsafe (or a connected monitor cannot be read, which counts as unsafe), the Pier is acted
-on once for that episode: its running session is stopped and its mount is parked. A ``SafetyUnsafeEvent`` reaches
-the bus, as the desktop's own monitor does, so notifications and attached clients see it. When the monitor
-reports safe again the episode ends; resuming is a person's decision (``SAFE-040``), not the guard's.
+``Guard`` is the engine's side of ``galileo.safety_supervisor`` (SAFE-180): it tells the supervisor what the engine
+holds, connects the Observatory's safety devices, gives it the engine's activities to stop, and has one loop on its
+own thread that calls it. The same thread beats the crash/hang watchdog (``SAFE-060``), which has a thread of its own.
 
-The guard imports nothing from Qt. The watchdog's e-mail / SMS notification is still built by the desktop and is
-not part of this step.
+The guard imports nothing from Qt.
 """
 
 from __future__ import annotations
@@ -22,85 +18,181 @@ import threading
 import time
 from typing import Any
 
+from galileo.safety_supervisor import DatabaseStore, Roof, SafetySupervisor, Site, Source, State
+
 logger = logging.getLogger(__name__)
 
 SAFETY_INTERVAL_S = 10.0
+_DEVICE_CATEGORY = {"weather": "weather", "safety_monitor": "safety"}
 
 
 class Guard:
     def __init__(self, devices: Any, runner: Any, interval_s: float = SAFETY_INTERVAL_S,
-                 watchdog: Any = None, bus: Any = None) -> None:
+                 watchdog: Any = None, bus: Any = None, *, guiding: Any = None, notify: Any = None,
+                 store: Any = None, settings: Any = None, clock: Any = time.monotonic) -> None:
         self._devices, self._runner, self._interval_s = devices, runner, interval_s
         self.watchdog = watchdog
-        self._bus = bus
-        self.unsafe: dict[str, str] = {}                           # pier -> why it is unsafe right now
-        self._acted: set[str] = set()
-        self.events: list[dict[str, Any]] = []                     # safety stops, newest last (CSURF-220)
-        self._next_event = 1
+        self._guiding = guiding
+        self._observatory_adapters: dict[str, Any] = {}      # "category:slot" -> the Observatory's safety device
+        self._site = Site()
+        self.supervisor = SafetySupervisor(
+            lambda: self._site, scope=str(getattr(self._observatory(), "id", "") or ""), settings=settings,
+            notify=notify, store=store if store is not None else DatabaseStore(), bus=bus, clock=clock)
+        self.activities = self.supervisor.activities
+        self.activities.register("sessions", self._stop_sessions)
+        self.activities.register("devices", self._abort_devices)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._task: asyncio.Task | None = None
 
-    # -- one check -------------------------------------------------------------------------------
-    async def check_once(self) -> None:
-        for pier in self._devices.pier_ids():
-            monitor = self._devices.controller(pier, "safety")
-            if monitor is None or not getattr(monitor, "is_connected", False):
-                self.unsafe.pop(pier, None)                        # nothing to gate on (as the scheduler's rule)
-                self._acted.discard(pier)
-                continue
-            try:
-                await monitor.poll()
-                safe, why = bool(monitor.is_safe), str(getattr(monitor, "explanation", "") or "")
-            except Exception:
-                logger.exception("Could not read the safety monitor of Pier %s", pier)
-                safe, why = False, "the safety monitor could not be read"
-            if safe:
-                self.unsafe.pop(pier, None)
-                self._acted.discard(pier)
-                continue
-            self.unsafe[pier] = why or "the safety monitor reports unsafe conditions"
-            if pier not in self._acted:
-                self._acted.add(pier)
-                await self._act(pier, self.unsafe[pier])
-
-    async def _act(self, pier: str, why: str) -> None:
-        logger.warning("Pier %s is unsafe (%s): stopping its session and parking the mount", pier, why)
+    # -- what the engine holds ----------------------------------------------------------------------
+    def _record(self, pier: str) -> Any:
         try:
-            self._runner.stop(pier)
+            return self._devices.pier_record(pier)
         except Exception:
-            logger.exception("Pier %s: could not stop the session", pier)
-        mount = self._devices.controller(pier, "mount")
-        if mount is not None and getattr(mount, "is_connected", False):
+            return None
+
+    def _observatory(self) -> Any:
+        home = getattr(self._devices, "home_observatory", None)
+        try:
+            for pier in self._devices.pier_ids():
+                observatory = getattr(self._record(pier), "observatory", None)
+                if observatory is not None and (home is None or observatory.name == home):
+                    return observatory
+        except Exception:
+            logger.debug("Could not find the engine's Observatory", exc_info=True)
+        return None
+
+    async def _observatory_sources(self, observatory: Any) -> list:
+        """The Observatory's saved safety devices (OBS-030), connecting any that are not held."""
+        if observatory is None:
+            return []
+        from galileo.observatory import get_safety_device_config, get_weather_safety_rules, list_safety_device_slots
+        from galileo.safety import default_weather_safety_rules
+        found = []
+        for kind, category in _DEVICE_CATEGORY.items():
             try:
-                await mount.park()
+                slots = list_safety_device_slots(observatory, kind)
             except Exception:
-                logger.exception("Pier %s: could not park the mount", pier)
-        self.events.append({"id": self._next_event, "pier": pier, "why": why, "at": time.time(),
-                            "acknowledged_by": "", "acknowledged_at": None})
-        self._next_event += 1
-        del self.events[:-50]
-        from galileo.bus import SafetyUnsafeEvent, get_bus
-        (self._bus or get_bus()).publish(SafetyUnsafeEvent(source=f"pier:{pier}", pier=pier, explanation=why))
+                logger.exception("Could not list the Observatory's safety devices")
+                continue
+            for slot in slots:
+                key = f"{kind}:{slot}"
+                adapter = self._observatory_adapters.get(key)
+                if adapter is None or getattr(adapter, "is_connected", True) is False:
+                    adapter = await self._connect(category, get_safety_device_config(observatory, kind, slot))
+                    self._observatory_adapters[key] = adapter
+                rules = []
+                if kind == "weather":
+                    rules = get_weather_safety_rules(observatory, slot) or default_weather_safety_rules()
+                name = "weather station" if kind == "weather" else "safety monitor"
+                found.append(Source(key=key, name=name if slot == "primary" else f"{name} ({slot})", kind=kind,
+                                    adapter=adapter, rules=rules))
+        return found
+
+    async def _connect(self, category: str, config: Any) -> Any | None:
+        try:
+            adapter = self._devices.build_adapter(category, config.driver, config.server, config.port,
+                                                  config.device_name or "")
+            await asyncio.wait_for(adapter.connect(), 30)
+            return adapter
+        except Exception:
+            logger.warning("Could not connect the Observatory's %s", category, exc_info=True)
+            return None
+
+    async def _build_site(self) -> Site:
+        from galileo.engine.sessions import mounts_under_roof
+        sources = await self._observatory_sources(self._observatory())
+        guiders, roofs, own = [], [], []
+        mounts = mounts_under_roof(self._devices)
+        for pier in self._devices.pier_ids():
+            record = self._record(pier)
+            name = getattr(record, "name", "") or pier
+            # A monitor saved on a Pier (as the engine's device service holds it) counts as well.
+            monitor = self._devices.controller(pier, "safety")
+            if monitor is not None and not any(s.adapter is monitor for s in sources + own):
+                own.append(Source(key=f"pier:{pier}", name="safety monitor", kind="safety_monitor", adapter=monitor))
+            if self._guiding is not None:
+                guider = self._guiding.service(pier)
+                if guider is not None and getattr(guider, "is_connected", False):
+                    guiders.append((name, guider))
+            dome = self._devices.controller(pier, "dome")
+            configured = False
+            try:
+                from galileo.observatory import get_device_config
+                configured = record is not None and get_device_config(record, "dome") is not None
+            except Exception:
+                logger.debug("Pier %s: could not read its dome configuration", pier, exc_info=True)
+            if dome is not None or configured:
+                roofs.append(Roof(name=f"the dome of {name}", dome=dome, mounts=mounts))
+        connected = [r for r in roofs if r.dome is not None]
+        return Site(sources=sources + own, mounts=mounts, guiders=guiders, roofs=connected or roofs)
+
+    # -- stopping ------------------------------------------------------------------------------------
+    async def _stop_sessions(self) -> None:
+        for pier in self._devices.pier_ids():
+            stop = getattr(self._runner, "stop_for_safety", None) or self._runner.stop
+            try:
+                stop(pier)
+            except Exception:
+                logger.exception("Pier %s: could not stop the session", pier)
+        running = getattr(self._runner, "is_running", None)
+        while running is not None and running():      # noqa: ASYNC110 - runs end on their own threads
+            await asyncio.sleep(0.5)
+
+    async def _abort_devices(self) -> None:
+        for pier in self._devices.pier_ids():
+            for category, method in (("camera", "abort_exposure"), ("mount", "abort_slew")):
+                device = self._devices.controller(pier, category)
+                if device is not None and getattr(device, method, None) is not None:
+                    try:
+                        await asyncio.wait_for(getattr(device, method)(), 10)
+                    except Exception:
+                        logger.debug("Pier %s: %s failed during the safety stop", pier, method, exc_info=True)
+
+    # -- one check -----------------------------------------------------------------------------------
+    async def check_once(self) -> None:
+        self._site = await self._build_site()
+        await self.supervisor.tick()
+
+    # -- what clients see (CSURF-220) ------------------------------------------------------------------
+    @property
+    def unsafe(self) -> dict[str, str]:
+        """Pier -> why it is unsafe right now."""
+        verdict = self.supervisor.verdict
+        why = "; ".join(verdict.reasons)
+        return dict.fromkeys(self._devices.pier_ids(), why) if verdict.blocking else {}
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        """The protective stops, newest last, one entry per Pier (they apply to the whole Observatory)."""
+        found = []
+        for record in self.supervisor.history():
+            for pier in self._devices.pier_ids():
+                found.append({"id": record["id"], "pier": pier, "why": record["reason"], "at": record["at"],
+                              "outcome": record["outcome"], "problems": record["problems"],
+                              "acknowledged_by": record["acknowledged_by"],
+                              "acknowledged_at": record["acknowledged_at"]})
+        return found
 
     def pending(self, pier: str) -> list[dict[str, Any]]:
         """The Pier's safety stops nobody has acknowledged yet."""
+        if self.supervisor.state == State.READY:
+            return []
         return [e for e in self.events if e["pier"] == pier and not e["acknowledged_by"]]
 
     def acknowledge(self, pier: str, who: str) -> int:
-        """Record that *who* has seen the Pier's safety stops (CSURF-220). Refused while the monitor still reports
-        unsafe: acknowledging is not resuming, and a person cannot acknowledge away a live hazard. Returns how many
-        events were acknowledged."""
-        if pier in self.unsafe:
-            raise ValueError(f"conditions are still unsafe: {self.unsafe[pier]}")
-        marked = self.pending(pier)
-        for event in marked:
-            event["acknowledged_by"], event["acknowledged_at"] = who, time.time()
-        return len(marked)
+        """Acknowledge the protective stop (SAFE-040); raises ``ValueError`` while conditions are unsafe or have not
+        been safe long enough. It restarts nothing."""
+        waiting = len(self.pending(pier))
+        if waiting:
+            self.supervisor.acknowledge(who)
+        return waiting
 
     def status(self) -> dict[str, Any]:
         wd = self.watchdog
-        return {"unsafe": dict(self.unsafe), "watchdog": wd.status if wd is not None else "off"}
+        return {"unsafe": self.unsafe, "watchdog": wd.status if wd is not None else "off",
+                "safety": self.supervisor.status()}
 
     # -- the loop ----------------------------------------------------------------------------------
     def start(self) -> None:
@@ -178,7 +270,8 @@ def build_watchdog(devices: Any, bus: Any = None) -> Any:
             await _each(devices, "dome", "close_shutter")
 
     from galileo.bus import get_bus
-    return WatchdogService(mount=_EveryPier(), dome=_EveryPier(),
+    from galileo.engine.sessions import mounts_under_roof
+    return WatchdogService(mount=_EveryPier(), dome=_EveryPier(), roof_mounts=lambda: mounts_under_roof(devices),
                            timeout_s=settings["timeout_s"], event_bus=bus or get_bus())
 
 

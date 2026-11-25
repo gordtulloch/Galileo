@@ -26,6 +26,18 @@ from galileo.engine.service import EXIT_ALREADY_RUNNING, StopSignal, run_until_s
 logger = logging.getLogger(__name__)
 
 
+def _safety_notifier(observatory_name: str | None) -> Any:
+    """Send a safety message through the notification channels (SAFE-170)."""
+    async def notify(message: str) -> None:
+        from galileo.notify import NotificationEvent
+        from galileo.observatory import list_observatories
+        from galileo.session_context import build_notify_service
+        observatory = next((o for o in list_observatories() if o.name == observatory_name), None)
+        await build_notify_service(observatory).emit(NotificationEvent.SAFETY_ABORT, message)
+
+    return notify
+
+
 class Engine:
     """Owns what the engine starts and stops, in order. Safe to ``stop()`` after a partial ``start()``."""
 
@@ -122,7 +134,8 @@ class Engine:
         register_pier_operations(self.registry, EnginePiers(self.devices, sessions))             # CSURF-100
         from galileo.control_surface.imaging import register_imaging_operations
         from galileo.engine.imaging import EngineImaging
-        register_imaging_operations(self.registry, EngineImaging(self.devices, self.runner, self.state))      # CSURF-120
+        imaging = EngineImaging(self.devices, self.runner, self.state)
+        register_imaging_operations(self.registry, imaging)                                       # CSURF-120
         from galileo.control_surface.flips import register_flip_operations
         from galileo.engine.flips import EngineFlips
         register_flip_operations(self.registry, EngineFlips(self.devices, self.runner))           # CSURF-170
@@ -140,8 +153,9 @@ class Engine:
         register_polar_operations(self.registry, polar)                                           # CSURF-145
         from galileo.control_surface.autofocus import register_autofocus_operations
         from galileo.engine.autofocus import EngineAutofocus
-        register_autofocus_operations(self.registry, EngineAutofocus(                              # CSURF-340
-            self.devices, self.runner, self.state, busy=lambda pier: solve.running(pier) or polar.running(pier)))
+        autofocus = EngineAutofocus(
+            self.devices, self.runner, self.state, busy=lambda pier: solve.running(pier) or polar.running(pier))
+        register_autofocus_operations(self.registry, autofocus)                                   # CSURF-340
         from galileo.control_surface.guiding import register_guiding_operations
         register_guiding_operations(self.registry, self.guiding)                                  # CSURF-160
         from galileo.control_surface.sky import register_sky_operations
@@ -163,7 +177,12 @@ class Engine:
             self.helpers.start()
             from galileo.engine.guard import Guard, build_watchdog
 
-            self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices))   # HEAD-160
+            self.guard = Guard(self.devices, self.runner, watchdog=build_watchdog(self.devices),   # HEAD-160
+                               guiding=self.guiding, notify=_safety_notifier(self.observatory))
+            self.guard.activities.register("remote operations", self._stop_operations(imaging, solve, polar, autofocus))
+            from galileo.engine.sessions import set_safety_gate
+            supervisor = self.guard.supervisor
+            set_safety_gate(lambda: "" if supervisor.is_safe() or not supervisor.checked else supervisor.gate_reason())
             self.guard.start()
             from galileo.control_surface.safety import GuardSafety, register_safety_operations
             register_safety_operations(self.registry, GuardSafety(self.guard))                   # CSURF-220
@@ -239,6 +258,29 @@ class Engine:
             registry=self.registry, leases=self.leases, gateway=self.gateway, state=self.state,
             piers=lambda: asyncio.run_coroutine_threadsafe(self.channel._piers_list(), loop).result(10),
             feed=self.feed, previews=self.previews))                    # CSURF-260, PREV-070
+
+    def _stop_operations(self, imaging: Any, solve: Any, polar: Any, autofocus: Any) -> Any:
+        """The protective stop's handle on the work remote clients start (SAFE-150). It lives on the channel's loop."""
+        async def stop_all() -> None:
+            async def on_channel() -> None:
+                for pier in self.devices.pier_ids():
+                    for stop in (imaging.stop, solve.stop, polar.stop):
+                        try:
+                            await stop(pier)
+                        except Exception:
+                            logger.debug("Pier %s: stopping an operation failed", pier, exc_info=True)
+                    try:
+                        autofocus.cancel(pier)
+                    except Exception:
+                        logger.debug("Pier %s: stopping autofocus failed", pier, exc_info=True)
+
+            loop = self._channel_loop
+            if loop is not None and loop.is_running():
+                await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(on_channel(), loop))
+            else:
+                await on_channel()
+
+        return stop_all
 
     def _session_running(self) -> bool:
         """Whether any Pier has a session running, so previews shrink rather than compete with imaging (PREV-040)."""

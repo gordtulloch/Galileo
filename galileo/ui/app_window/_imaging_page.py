@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+from galileo.ui.dark_label import show_dark_availability
 from galileo.ui.qt_helpers import layout_widget
 from typing import TYPE_CHECKING, Any
 
 import logging
 
-from ._common import _camera_backend_key_for_slot, _new_form_layout, _PARKED_MESSAGE, QWidget
+from ._common import _camera_backend_key_for_slot, _new_form_layout, _OBSTRUCTED_MESSAGE, _PARKED_MESSAGE, QWidget
 from ._hold_to_move import HoldToMove, combo_rate, combo_rate_index
 from ._threads import _PreviewRenderThread, _CaptureThread, _MosaicCaptureThread, _AnnotateThread
 from ._widgets import _HistogramWidget
@@ -38,14 +39,14 @@ class AppWindowImagingPageMixin:
         from PySide6.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
             QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QProgressBar,
-            QFrame, QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu, QSlider,
+            QFrame, QFileDialog, QMessageBox, QGridLayout, QScrollArea, QMenu, QSlider, QDialog, QLineEdit,
         )
         from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 
         from galileo.livestack import LIVE_STACK_MIN_FRAMES
         from galileo.ui._image_view import ImagePreviewView, build_zoom_toolbar
         from galileo.ui.imaging import (
-            DEFAULT_GAIN, DEFAULT_OFFSET, DEFAULT_STRETCH_LEVEL, ImagingService, PORTRAIT, LANDSCAPE,
+            UNKNOWN_OBJECT, exact_object_match, DEFAULT_GAIN, DEFAULT_OFFSET, DEFAULT_STRETCH_LEVEL, ImagingService, PORTRAIT, LANDSCAPE,
         )
 
         page = QWidget()
@@ -55,7 +56,7 @@ class AppWindowImagingPageMixin:
         root.setSpacing(0)
 
         # --- left: capture + view settings ----------------------------------
-        # In a scroll area because the panel also holds the nudge pad and, for a
+        # In a scroll area because the panel also holds, for a
         # portrait frame, the histogram and progress bar (IMG-120).
         settings_scroll = QScrollArea()
         settings_scroll.setFixedWidth(300)
@@ -72,6 +73,15 @@ class AppWindowImagingPageMixin:
         heading = QLabel("Imaging")
         heading.setObjectName("PageTitle")
         settings_layout.addWidget(heading)
+
+        # The object the frames are of: follows the Pier's current object ("Unknown" when there is none)
+        # until the user types over it. Written to the OBJECT card and used in file names.
+        object_edit = QLineEdit(UNKNOWN_OBJECT)
+        object_edit.setToolTip("The object being imaged, written to each frame's OBJECT header. Follows the "
+                               "selected object (Star Atlas, Targets); type a name to make it the current object.")
+        object_form = _new_form_layout()
+        object_form.addRow("Object", object_edit)
+        settings_layout.addLayout(object_form)
 
         capture_group = QGroupBox("Capture Settings")
         capture_form = _new_form_layout(capture_group)
@@ -118,6 +128,24 @@ class AppWindowImagingPageMixin:
 
         settings_layout.addWidget(capture_group)
 
+        cooling_group = QGroupBox("Camera Cooling")
+        cooling_form = _new_form_layout(cooling_group)
+        camera_temp_label = QLabel("—")
+        camera_temp_label.setToolTip("The camera's sensor temperature and, when it reports one, the cooler power.")
+        cooling_form.addRow("Camera Temp", camera_temp_label)
+        target_temp_spin = QDoubleSpinBox()
+        target_temp_spin.setRange(-60.0, 40.0)
+        target_temp_spin.setDecimals(1)
+        target_temp_spin.setValue(-10.0)
+        target_temp_spin.setSuffix(" °C")
+        target_temp_spin.setToolTip("The sensor temperature to cool to. Applied when Cooler on is ticked, "
+                                    "and again if you change it while the cooler is on.")
+        cooling_form.addRow("Target", target_temp_spin)
+        cooler_check = QCheckBox("Cooler on")
+        cooler_check.setToolTip("Switch the camera's cooler on (cooling to Target) or off.")
+        cooling_form.addRow(cooler_check)
+        settings_layout.addWidget(cooling_group)
+
         mosaic_indicator = QLabel("")
         mosaic_indicator.setProperty("helpKey", "mosaic")
         mosaic_indicator.setObjectName("StatusHint")
@@ -125,18 +153,32 @@ class AppWindowImagingPageMixin:
         mosaic_indicator.setVisible(False)
         settings_layout.addWidget(mosaic_indicator)
 
+        def _red_button_style(name: str) -> str:
+            return (f"QPushButton#{name} {{ background-color: #c62828; color: white; font-weight: bold; "
+                    "border: 1px solid #8e0000; border-radius: 4px; }"
+                    f"QPushButton#{name}:hover {{ background-color: #e53935; }}"
+                    f"QPushButton#{name}:pressed {{ background-color: #8e0000; }}")
+
         capture_row = QHBoxLayout()
         capture_btn = QPushButton("Capture")
         capture_btn.setObjectName("AccentButton")
-        capture_row.addWidget(capture_btn)          # sized to its label, not stretched across the panel
+        capture_btn.ensurePolished()
+        capture_btn.setMinimumSize(capture_btn.sizeHint() * 2)     # the main action: twice the usual size
+        capture_row.addWidget(capture_btn)          # not stretched across the panel
+        loop_stop_column = QVBoxLayout()            # stacked, so the row fits the settings panel
         loop_btn = QPushButton("Loop")
         loop_btn.setToolTip("Capture repeatedly: as soon as one Quantity-frame run finishes, start the next. "
                             "Stop ends the loop.")
-        capture_row.addWidget(loop_btn)
+        loop_stop_column.addWidget(loop_btn)
         stop_capture_btn = QPushButton("Stop")
         stop_capture_btn.setToolTip("Abandon the exposure in progress and take no more frames.")
         stop_capture_btn.setEnabled(False)
-        capture_row.addWidget(stop_capture_btn)
+        stop_capture_btn.setObjectName("CaptureStopButton")
+        stop_capture_btn.setStyleSheet(
+            _red_button_style("CaptureStopButton") + "QPushButton#CaptureStopButton { padding: 6px 14px; }"
+            "QPushButton#CaptureStopButton:disabled { background-color: #6d3535; color: #c9b4b4; }")
+        loop_stop_column.addWidget(stop_capture_btn)
+        capture_row.addLayout(loop_stop_column)
         capture_row.addStretch(1)
         settings_layout.addLayout(capture_row)
 
@@ -188,8 +230,16 @@ class AppWindowImagingPageMixin:
         subtract_dark_check.setToolTip(
             "Subtract the Library's dark master from the preview when one exists for this camera and "
             "optics, at the same exposure and binning. The status line says which master was used, or why "
-            "none was. Only the preview changes — statistics, the histogram and saved frames keep the raw data.")
-        view_form.addRow(subtract_dark_check)
+            "none was. Applies to the preview, to Live Stack and mosaic stacks, and to the frame given to the solver "
+            "(Annotate); each frame saved on its own stays raw. "
+            "Ticked for you when a matching master is available; your own choice is kept for that setup.")
+        dark_available_label = QLabel()
+        dark_available_label.setProperty("helpKey", "subtract dark")
+        dark_row = QHBoxLayout()
+        dark_row.addWidget(subtract_dark_check)
+        dark_row.addWidget(dark_available_label)
+        dark_row.addStretch(1)
+        view_form.addRow(dark_row)
 
         orientation_check = QCheckBox("Choose layout manually")
         orientation_check.setToolTip(
@@ -226,7 +276,12 @@ class AppWindowImagingPageMixin:
             btn.setToolTip({"N": "North", "S": "South", "E": "East", "W": "West"}.get(_key, _key))
         for btn in (*nudge_dir_buttons.values(), nudge_stop_btn):
             btn.setObjectName("AccentButton")
-            btn.setFixedSize(44, 44)
+            btn.setFixedSize(44, 44)            # all one size, so the pad's columns are evenly spaced
+            btn.setStyleSheet("padding: 0px;")  # the theme's side padding would clip "Stop" at this width
+        nudge_stop_btn.setObjectName("NudgeStopButton")
+        nudge_stop_btn.setStyleSheet(_red_button_style("NudgeStopButton") +
+                                     "QPushButton#NudgeStopButton { padding: 0px; }")
+        nudge_grid.setSpacing(8)
         nudge_grid.addWidget(nudge_north_btn, 0, 1)
         nudge_grid.addWidget(nudge_west_btn, 1, 0)
         nudge_grid.addWidget(nudge_stop_btn, 1, 1)
@@ -250,7 +305,50 @@ class AppWindowImagingPageMixin:
             "Nudge the telescope while exposing (IMG-130): hold a button to move the mount, release to stop. "
             "Uses the mount connected on Equipment > Mount, with the same axis directions as its jog pad."
         )
-        settings_layout.addWidget(nudge_group)
+        # The nudge pad lives in a small modeless tool dialog that floats above the main window, so
+        # it frees the settings column yet stays usable (and visible) while watching the preview.
+        mount_control_btn = QPushButton("Mount Control")
+        mount_control_btn.setToolTip("Open the mount nudge pad in a small window that stays in front of "
+                                     "the Imaging screen (IMG-130).")
+        settings_layout.addWidget(mount_control_btn)
+        nudge_dialog = QDialog(self._window)
+        nudge_dialog.setObjectName("MountControlDialog")
+        nudge_dialog.setWindowTitle("Mount Control")
+        nudge_dialog.setWindowFlag(Qt.WindowType.Tool, True)
+        nudge_dialog.setModal(False)
+        nudge_dialog_layout = QVBoxLayout(nudge_dialog)
+        nudge_dialog_layout.addWidget(nudge_group)
+
+        # Mount actions beside the pad, so a night's housekeeping doesn't need the Mount screen.
+        mount_actions_group = QGroupBox("Mount")
+        mount_actions_grid = QGridLayout(mount_actions_group)
+        mount_action_buttons = {
+            "park": QPushButton("Park"), "home": QPushButton("Home"),
+            "track_on": QPushButton("Track On"), "track_off": QPushButton("Track Off"),
+            "flip": QPushButton("Do Meridian Flip"),
+        }
+        mount_action_buttons["flip"].setToolTip(
+            "Flip the mount to the other side of the pier: it slews to where it is pointing now, then "
+            "resumes tracking. Only do this once the target has crossed the meridian.")
+        for i, key in enumerate(("park", "home", "track_on", "track_off")):
+            mount_actions_grid.addWidget(mount_action_buttons[key], i // 2, i % 2)
+        mount_actions_grid.addWidget(mount_action_buttons["flip"], 2, 0, 1, 2)
+        emergency_stop_btn = QPushButton("EMERGENCY STOP")
+        emergency_stop_btn.setObjectName("EmergencyStopButton")
+        emergency_stop_btn.setMinimumHeight(40)
+        emergency_stop_btn.setStyleSheet(_red_button_style("EmergencyStopButton"))
+        emergency_stop_btn.setToolTip(
+            "Stop all mount motion immediately: aborts a slew in progress and halts both axes. "
+            "Tracking is left as it is.")
+        mount_actions_grid.addWidget(emergency_stop_btn, 3, 0, 1, 2)
+        nudge_dialog_layout.addWidget(mount_actions_group)
+
+        def _show_mount_control() -> None:
+            nudge_dialog.show()
+            nudge_dialog.raise_()
+            nudge_dialog.activateWindow()
+
+        mount_control_btn.clicked.connect(_show_mount_control)
 
         rotator_group = QGroupBox("Rotator")
         rotator_layout = QVBoxLayout(rotator_group)
@@ -268,13 +366,13 @@ class AppWindowImagingPageMixin:
         rotator_row.addWidget(rotation_spin, 1)
         rotator_row.addWidget(rotation_set_btn)
         rotator_layout.addLayout(rotator_row)
-        settings_layout.addWidget(rotator_group)
+        settings_layout.insertWidget(settings_layout.indexOf(cooling_group) + 1, rotator_group)   # under Camera Cooling
 
         settings_layout.addStretch(1)
 
         # A column between the settings and the preview, used only for a portrait
         # frame (IMG-120): it takes the width the narrow preview leaves free and
-        # holds the nudge pad, stretch slider, histogram and progress bar,
+        # holds the stretch slider, histogram and progress bar,
         # so the preview keeps the full height of the page.
         dock_panel = QWidget()
         dock_layout = QVBoxLayout(dock_panel)
@@ -329,7 +427,7 @@ class AppWindowImagingPageMixin:
             "of the frame. Display only — saved frames are unaffected."
         )
         crosshair_btn.toggled.connect(preview_view.set_crosshair)
-        zoom_toolbar.insertWidget(0, crosshair_btn)
+        zoom_toolbar.insertWidget(zoom_toolbar.indexOf(annotate_status) + 1, crosshair_btn)   # beside Fit
         more_btn = QPushButton("More")
         more_btn.setToolTip(
             "Switch channels you ticked Show on imaging on Equipment > Switches: a power port on or off, "
@@ -401,10 +499,9 @@ class AppWindowImagingPageMixin:
         # --- landscape / portrait layout (IMG-120) -----------------------------
         # Landscape: preview on top of the right side, histogram/progress
         # beneath it. Portrait: the preview is a full-height column one third of
-        # the page wide, with the nudge pad, stretch slider, histogram and progress
+        # the page wide, with the stretch slider, histogram and progress
         # in the column to its left, beside the settings.
         secondary_widgets = (stretch_widget, histogram, progress_widget)
-        nudge_slot = settings_layout.indexOf(nudge_group)   # where the nudge pad sits in landscape
         layout_state = {"orientation": None}
         unlimited_width = 16777215   # QWIDGETSIZE_MAX
 
@@ -422,18 +519,16 @@ class AppWindowImagingPageMixin:
                 return
             layout_state["orientation"] = orientation
             portrait = orientation == PORTRAIT
-            for widget in (*secondary_widgets, nudge_group):
+            for widget in secondary_widgets:
                 content_layout.removeWidget(widget)
                 dock_layout.removeWidget(widget)
                 settings_layout.removeWidget(widget)
             if portrait:
-                # The nudge pad leads the middle column; the rest follow, above its trailing stretch.
-                for i, widget in enumerate((nudge_group, *secondary_widgets)):
+                # The rest follow, above the column's trailing stretch.
+                for i, widget in enumerate(secondary_widgets):
                     dock_layout.insertWidget(i, widget)
                     widget.setVisible(True)
             else:
-                settings_layout.insertWidget(nudge_slot, nudge_group)
-                nudge_group.setVisible(True)
                 for widget in secondary_widgets:
                     content_layout.addWidget(widget)
                     widget.setVisible(True)
@@ -475,7 +570,7 @@ class AppWindowImagingPageMixin:
             from galileo.ui.imaging_layout import ImagingLayout
             user_layout = ImagingLayout()
         panel_widgets = {
-            "view": (view_group,), "nudge": (nudge_group,), "stretch": (stretch_widget,),
+            "view": (view_group,), "stretch": (stretch_widget,),
             "histogram": (histogram,), "progress": (progress_widget,),
         }
         widget_panel = {w: pid for pid, ws in panel_widgets.items() for w in ws}
@@ -512,12 +607,112 @@ class AppWindowImagingPageMixin:
             def eventFilter(self, obj, event):
                 if event.type() == QEvent.Resize:
                     _fit_preview_width()
+                elif event.type() == QEvent.Hide:
+                    nudge_dialog.hide()     # don't leave the pad floating over another screen
                 return False
 
         resize_watcher = _PageResizeWatcher(page)
         page.installEventFilter(resize_watcher)
 
         # --- wiring -----------------------------------------------------------
+        import contextlib
+        import threading
+        from PySide6.QtCore import Signal as Signal_
+
+        object_state = {"shown": None}      # the current object's name the field last followed
+
+        def _refresh_object_field() -> None:
+            """Follow the Pier's current object. A new selection replaces anything typed over the old one;
+            the same object leaves the user's override alone."""
+            current = self.current_object()
+            name = current.name if current is not None and current.name else UNKNOWN_OBJECT
+            if name != object_state["shown"]:
+                object_state["shown"] = name
+                object_edit.setText(name)
+
+        def _object_name() -> str:
+            """The name entered on the page (never blank — "Unknown" when cleared)."""
+            _refresh_object_field()     # the current object may have changed without the page being told
+            return object_edit.text().strip() or UNKNOWN_OBJECT
+
+        # A name typed here becomes the Pier's current object (IMG-140), which needs coordinates, so it is
+        # looked up: exactly in the offline catalog at once, else online (Simbad) on a worker thread.
+        class _ObjectResolved(QObject):
+            found = Signal_(str, object, object)     # (typed name, DeepSkyObject or None, Pier key)
+
+        object_resolved = _ObjectResolved(page)
+        looked_up = {"name": None}
+
+        def _make_current(name: str, match, key) -> None:
+            from galileo.current_object import pier_key
+            if key != pier_key(self._current_pier) or object_edit.text().strip() != name:
+                return      # the user has moved on while the lookup ran
+            if match is None:
+                looked_up["name"] = None      # allow another try (e.g. once back online)
+                self._window.statusBar().showMessage(
+                    f"{name!r} was not found in the catalogs: it names the frames, but the current object "
+                    "is unchanged.", 8000)
+                return
+            self._set_current_object({"name": name, "ra_deg": match.ra_deg, "dec_deg": match.dec_deg,
+                                      "designation": match.primary_name})
+
+        object_resolved.found.connect(_make_current, Qt.ConnectionType.QueuedConnection)
+
+        def _resolve_online(atlas, name: str, key) -> None:
+            import asyncio
+            match = None
+            try:
+                results = asyncio.run(atlas.search_online(name))
+                match = exact_object_match(results, name)
+                if match is None and results and not atlas.search(name):
+                    match = results[0]      # Simbad answers one name with that object, under its own spelling
+            except Exception:
+                logger.info("Could not look up %r", name, exc_info=True)
+            with contextlib.suppress(RuntimeError):     # the page may already be gone
+                object_resolved.found.emit(name, match, key)
+
+        def _object_entered() -> None:
+            from galileo.current_object import pier_key
+            name = object_edit.text().strip() or UNKNOWN_OBJECT
+            object_edit.setText(name)
+            current = self.current_object()
+            if name == UNKNOWN_OBJECT or (current is not None and current.name == name):
+                return
+            key = pier_key(self._current_pier)
+            if looked_up["name"] == (name, key):
+                return
+            looked_up["name"] = (name, key)
+            try:
+                atlas = self._shared_sky_atlas()
+                match = exact_object_match(atlas.search(""), name)
+            except Exception:
+                logger.warning("Could not search the catalog for %r", name, exc_info=True)
+                return
+            if match is not None:
+                _make_current(name, match, key)
+            else:
+                threading.Thread(target=_resolve_online, args=(atlas, name, key), daemon=True).start()
+
+        object_edit.editingFinished.connect(_object_entered)
+
+        # The current object can also change from elsewhere (a session, a remote client): show it as it happens.
+        # The bus handler runs on the publisher's thread, so a queued signal moves the update to the UI thread.
+        class _ObjectChanged(QObject):
+            changed = Signal_()
+
+        from galileo.bus import CurrentObjectChangedEvent, get_bus as _get_bus
+        object_changed = _ObjectChanged(page)
+        object_changed.changed.connect(_refresh_object_field, Qt.ConnectionType.QueuedConnection)
+
+        def _on_object_changed(_event) -> None:
+            with contextlib.suppress(RuntimeError):     # the page may already be gone
+                object_changed.changed.emit()
+
+        _get_bus().subscribe(CurrentObjectChangedEvent, _on_object_changed)
+        page.destroyed.connect(lambda *_: _get_bus().unsubscribe(CurrentObjectChangedEvent, _on_object_changed))
+        self._imaging_refresh_object = _refresh_object_field
+        _refresh_object_field()
+
         def _selected_camera_backend():
             # Reads the top-bar Camera selector (shown only when the current
             # Pier has more than one configured camera) fresh each time,
@@ -572,6 +767,48 @@ class AppWindowImagingPageMixin:
             service.set_subtract_dark(checked, rebuild=False)
             status_label.setText(service.preview_note)
             _render_stretch_preview()
+
+        dark_choice: dict = {"setup": None}      # (telescope, camera, exposure, binning) the dark label describes
+        dark_overrides: dict = {}                # that setup -> the user's own tick/untick of Subtract dark
+
+        def _dark_rig() -> tuple:
+            """Telescope and camera names as saved frames carry them. Not ``_imaging_frame_context``,
+            which also reads the mount and so must not run each time Exposure changes."""
+            tube = self.active_optical_tube()
+            cfg = None
+            if self._current_pier is not None:
+                from galileo.observatory import get_device_config
+                try:
+                    cfg = get_device_config(self._current_pier, "camera", slot=self._active_camera_slot)
+                except Exception:
+                    logger.exception("Could not read the camera's configuration for the dark master")
+            if cfg is not None:
+                instrument = cfg.device_name or cfg.sensor_name
+            else:
+                instrument = getattr(_selected_camera_backend(), "device_name", None)
+            return getattr(tube, "name", None), instrument
+
+        def _refresh_dark_available(*_args) -> None:
+            """Say whether a dark master matches the optics, camera and Exposure now set, and tick
+            Subtract dark to match unless the user has chosen otherwise for that setup. Leaves the
+            status line alone, so a capture's countdown is not overwritten."""
+            service = _current_service()
+            telescope, instrument = _dark_rig()
+            exposure, binning = exposure_spin.value(), service.binning
+            available = show_dark_availability(dark_available_label, telescope, instrument, exposure,
+                                               binning, binning)
+            dark_choice["setup"] = (telescope, instrument, exposure, binning)
+            wanted = dark_overrides.get(dark_choice["setup"], available)
+            subtract_dark_check.blockSignals(True)
+            subtract_dark_check.setChecked(wanted)
+            subtract_dark_check.blockSignals(False)
+            if wanted != service.subtract_dark:
+                service.set_subtract_dark(wanted, rebuild=False)
+                _render_stretch_preview()
+
+        def _subtract_dark_clicked(checked: bool) -> None:
+            if dark_choice["setup"] is not None:
+                dark_overrides[dark_choice["setup"]] = checked
 
         def _refresh_preview(service) -> None:
             _sync_debayer_check(service)
@@ -689,6 +926,8 @@ class AppWindowImagingPageMixin:
         stretch_slider.valueChanged.connect(_stretch_slider_changed)
         debayer_check.toggled.connect(_debayer_toggled)
         subtract_dark_check.toggled.connect(_subtract_dark_toggled)
+        subtract_dark_check.clicked.connect(_subtract_dark_clicked)
+        exposure_spin.valueChanged.connect(_refresh_dark_available)
         self._imaging_stretch_slider = stretch_slider
 
         def _orientation_choice_changed(*_args) -> None:
@@ -742,6 +981,99 @@ class AppWindowImagingPageMixin:
             nudge_motion.attach(btn, direction)
             btn.pressed.connect(lambda d=direction: _nudge_pressed(d))
 
+        # Park / Unpark / Home / Tracking / Meridian Flip: the Mount page's own commands (galileo.mount_ops).
+        from galileo.mount_ops import LIMIT as _LIMIT, MountOps, NOT_CONNECTED as _NOT_CONNECTED
+        from galileo.mount_ops import OBSTRUCTED as _OBSTRUCTED, PARKED as _PARKED
+        mount_ops = MountOps(_nudge_mount_adapter)
+
+        def _mount_outcome(outcome) -> bool:
+            """Tell the person how a mount command went (in the status bar); True when it worked."""
+            if outcome.ok:
+                return True
+            if outcome.kind == _NOT_CONNECTED:
+                message = "Connect the mount on Equipment > Mount first."
+            elif outcome.kind == _PARKED:
+                message = _PARKED_MESSAGE
+            elif outcome.kind == _OBSTRUCTED:
+                message = _OBSTRUCTED_MESSAGE
+            else:
+                message = outcome.message or "The mount command failed — see log."
+            self._window.statusBar().showMessage(message, 8000 if outcome.kind == _LIMIT else 6000)
+            return False
+
+        def _mount_action(name: str, run, done: str) -> None:
+            if _mount_outcome(run()):
+                self._window.statusBar().showMessage(done, 4000)
+
+        def _do_meridian_flip() -> None:
+            if _nudge_mount_adapter() is None:
+                _mount_outcome(mount_ops.meridian_flip())      # reports "not connected"
+                return
+            answer = QMessageBox.question(
+                self._window, "Meridian flip",
+                "Flip the mount to the other side of the pier now? "
+                "It will slew to its current position "
+                "and then resume tracking. Make sure the target has crossed the meridian and the cables are clear.")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            if _mount_outcome(mount_ops.meridian_flip()):
+                self._window.statusBar().showMessage("Meridian flip started; tracking resumes when the slew ends.", 6000)
+                self._track_when_slew_finishes(_nudge_mount_adapter())
+
+        buttons = mount_action_buttons
+
+        # One Park / Unpark button, labelled for what it will do. The park state comes from the
+        # off-thread mount poll, so the mount is never read on the UI thread.
+        park_state = {"at_park": False}
+
+        def _refresh_park_button() -> None:
+            from galileo.current_object import pier_key
+            pointing = self._pier_pointing.get(pier_key(self._current_pier)) or {}
+            park_state["at_park"] = bool(_nudge_mount_adapter() is not None and pointing.get("at_park"))
+            verb = "Unpark" if park_state["at_park"] else "Park"
+            buttons["park"].setText(verb)
+            buttons["park"].setToolTip(f"{verb} the current Pier's mount")
+
+        def _poll_park_state() -> None:
+            if nudge_dialog.isVisible():
+                _refresh_park_button()
+                self._poll_pier_pointing(on_done=_refresh_park_button)
+
+        def _park_or_unpark() -> None:
+            if park_state["at_park"]:
+                _mount_action("unpark", mount_ops.unpark, "Mount unparked.")
+            else:
+                _mount_action("park", mount_ops.park, "Parking the mount.")
+            self._poll_pier_pointing(on_done=_refresh_park_button)     # re-read soon, so the label follows
+
+        park_timer = QTimer(nudge_dialog)
+        park_timer.timeout.connect(_poll_park_state)
+        park_timer.start(2000)
+        mount_control_btn.clicked.connect(_poll_park_state)     # right label as soon as the window opens
+        _refresh_park_button()
+        buttons["park"].clicked.connect(_park_or_unpark)
+        buttons["home"].clicked.connect(lambda: _mount_action("home", mount_ops.find_home, "Finding home."))
+        buttons["track_on"].clicked.connect(
+            lambda: _mount_action("track on", lambda: mount_ops.set_tracking(True), "Tracking on."))
+        buttons["track_off"].clicked.connect(
+            lambda: _mount_action("track off", lambda: mount_ops.set_tracking(False), "Tracking off."))
+        buttons["flip"].clicked.connect(_do_meridian_flip)
+
+        def _emergency_stop() -> None:
+            """Halt everything the mount is doing: held jogs first, then any slew in progress."""
+            if _nudge_mount_adapter() is None:
+                self._window.statusBar().showMessage("Connect the mount on Equipment > Mount first.", 4000)
+                return
+            try:
+                nudge_motion.stop_all()
+                nudge_motion.flush()
+            except Exception:
+                logger.exception("Emergency stop: could not halt the jog axes")
+            if _mount_outcome(mount_ops.abort_slew()):
+                self._window.statusBar().showMessage("Emergency stop: mount motion halted.", 6000)
+
+        emergency_stop_btn.clicked.connect(_emergency_stop)
+
         nudge_stop_btn.clicked.connect(nudge_motion.stop_all)
 
         # --- rotator rotation field ----------------------------------------------
@@ -776,7 +1108,7 @@ class AppWindowImagingPageMixin:
             "quantity": quantity_spin, "gain": gain_spin, "offset": offset_spin, "auto_save": auto_save_check,
             "more_button": more_btn, "more_menu": more_menu, "capture_button": capture_btn, "loop_button": loop_btn, "stop_button": stop_capture_btn, "status": status_label,
             "annotate_button": annotate_btn, "annotate_status": annotate_status,
-            "nudge_group": nudge_group, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
+            "object_edit": object_edit, "nudge_group": nudge_group, "nudge_dialog": nudge_dialog, "mount_actions": mount_action_buttons, "emergency_stop": emergency_stop_btn, "mount_ops": mount_ops, "mount_control_btn": mount_control_btn, "nudge_buttons": nudge_dir_buttons, "nudge_stop": nudge_stop_btn,
             "nudge_rate": nudge_rate_combo,
             "nudge_state": nudge_state,
         }
@@ -989,8 +1321,7 @@ class AppWindowImagingPageMixin:
 
             if loop:
                 looping.add(key)
-            current = self.current_object()
-            service.object_name = current.name if current is not None else ""
+            service.object_name = _object_name()
             duration = exposure_spin.value()
             quantity = quantity_spin.value()
             frame_type = frame_type_combo.currentText()
@@ -1160,6 +1491,92 @@ class AppWindowImagingPageMixin:
 
         stop_capture_btn.clicked.connect(stop_capture)
 
+        def stop_every_capture() -> None:       # every Pier, for a protective stop (the host aborts the cameras)
+            looping.clear()
+            for service in list(getattr(self, "_imaging_services", {}).values()):
+                service.request_stop()
+            nudge_motion.stop_all()
+
+        from galileo.ui.safety_host import register_stopper
+        register_stopper(self, "imaging", stop_every_capture)
+
+        # --- Camera cooling: live temperature readout, target and cooler switch ---------------
+        # Device calls run on a short-lived worker thread (an Alpaca poll is an HTTP round trip) and
+        # hand the result back to the UI thread through a queued signal.
+        from PySide6.QtCore import Signal as _Signal
+
+        class _CoolingBridge(QObject):
+            state = _Signal(object)        # dict from read_cooling(), or None when unavailable
+            failed = _Signal(str)
+
+        cooling_bridge = _CoolingBridge(page)
+        cooling_busy = threading.Event()
+
+        def _cooling_worker(camera, action) -> None:
+            import asyncio
+
+            async def run():
+                if action is not None:
+                    await action(camera)
+                return await camera.read_cooling()
+            try:
+                cooling_bridge.state.emit(asyncio.run(run()))
+            except Exception as exc:
+                logger.debug("Camera cooling call failed", exc_info=True)
+                cooling_bridge.failed.emit(str(exc))
+            finally:
+                cooling_busy.clear()
+
+        def _cooling_call(action=None) -> None:
+            camera = _selected_camera_backend()
+            if camera is None or not hasattr(camera, "read_cooling") or cooling_busy.is_set():
+                if action is None:
+                    camera_temp_label.setText("—")
+                return
+            cooling_busy.set()
+            threading.Thread(target=_cooling_worker, args=(camera, action), daemon=True).start()
+
+        def _on_cooling_state(info) -> None:
+            import math
+            temp = info.get("temperature")
+            text = "—" if temp is None or math.isnan(temp) else f"{temp:.1f} °C"
+            if info.get("power"):
+                text += f"  ({info['power']:.0f}% power)"
+            camera_temp_label.setText(text)
+            on = info.get("cooler_on")
+            if on is not None and on != cooler_check.isChecked():
+                cooler_check.blockSignals(True)
+                cooler_check.setChecked(on)
+                cooler_check.blockSignals(False)
+
+        def _on_cooling_failed(message: str) -> None:
+            self._window.statusBar().showMessage(f"Camera cooling: {message}", 6000)
+
+        cooling_bridge.state.connect(_on_cooling_state, Qt.ConnectionType.QueuedConnection)
+        cooling_bridge.failed.connect(_on_cooling_failed, Qt.ConnectionType.QueuedConnection)
+
+        def _apply_cooler(on: bool) -> None:
+            target = target_temp_spin.value()
+
+            async def action(camera):
+                if on:
+                    await camera.set_temperature(target)    # also switches the cooler on (INDI)
+                await camera.set_cooler(on)
+            _cooling_call(action)
+
+        cooler_check.toggled.connect(_apply_cooler)
+
+        def _retarget() -> None:
+            if cooler_check.isChecked():
+                _apply_cooler(True)
+
+        target_temp_spin.editingFinished.connect(_retarget)
+
+        cooling_timer = QTimer(page)
+        cooling_timer.timeout.connect(lambda: _cooling_call())
+        cooling_timer.start(5000)
+        QTimer.singleShot(500, lambda: _cooling_call())
+
         def _populate_more_menu() -> None:
             """Rebuild the More menu from the connected switch device: one row per channel ticked Show on
             imaging (EQP-SW-150) — a toggle, plus a percentage for a dew heater."""
@@ -1272,8 +1689,7 @@ class AppWindowImagingPageMixin:
             service = _current_service()
             if service.current_frame is None:
                 return
-            current = self.current_object()
-            service.object_name = current.name if current is not None else ""
+            service.object_name = _object_name()
             path, _ = QFileDialog.getSaveFileName(
                 self._window, "Save Frame", service.suggested_filename(), service.save_file_filter,
             )
@@ -1308,8 +1724,7 @@ class AppWindowImagingPageMixin:
 
         def save_stack_to_library() -> None:
             service = _current_service()
-            current = self.current_object()
-            service.object_name = current.name if current is not None else ""
+            service.object_name = _object_name()
             try:
                 file_id = service.save_stack_to_library()
             except Exception:
@@ -1340,7 +1755,8 @@ class AppWindowImagingPageMixin:
 
         save_stack_btn.clicked.connect(save_stack)
         self._imaging_ui.update({
-            "live_stack": live_stack_check, "debayer": debayer_check, "subtract_dark": subtract_dark_check,"save_stack_button": save_stack_btn,
+            "live_stack": live_stack_check, "debayer": debayer_check, "subtract_dark": subtract_dark_check, "exposure": exposure_spin, "dark_available": dark_available_label,
+            "refresh_dark_available": _refresh_dark_available, "save_stack_button": save_stack_btn,
             "save_stack_to_library": save_stack_to_library, "save_stack_to_file": save_stack_to_file,
         })
 

@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 _ARBITERS: dict[str, Any] = {}
+_SAFETY_GATE: Any = None       # the guard's verdict, once the engine has one
+
+
+def set_safety_gate(gate: Any) -> None:
+    """``gate() -> reason or \"\"``: why nothing may be started (SAFE-150); ``None`` removes it."""
+    global _SAFETY_GATE
+    _SAFETY_GATE = gate
 
 
 def _arbiter(observatory_name: str) -> Any:
@@ -103,6 +110,27 @@ async def frame_context(devices: Any, pier: str, record: Any, camera_slot: str) 
     return {k: v for k, v in context.items() if v not in (None, "")}
 
 
+def mounts_under_roof(devices: Any, observatory: Any = None) -> list:
+    """``(pier name, mount or None)`` for every Pier (of *observatory*, when given) that has a mount, connected or
+    only configured (SAFE-110)."""
+    from galileo.observatory import get_device_config
+    found = []
+    for pier in devices.pier_ids():
+        record = None
+        mount = devices.controller(pier, "mount")
+        try:
+            record = devices.pier_record(pier)
+            if observatory is not None and record.observatory != observatory:
+                continue
+            configured = get_device_config(record, "mount") is not None
+        except Exception:
+            logger.debug("Pier %s: could not read its mount configuration", pier, exc_info=True)
+            configured = True      # unknown: do not assume there is no telescope there
+        if mount is not None or configured:
+            found.append((getattr(record, "name", "") or pier, mount))
+    return found
+
+
 async def build_context(devices: Any, pier: str, camera_slot: str = "primary", guider: Any = None) -> Any:
     from galileo.current_object import pier_key
     record = devices.pier_record(pier)
@@ -120,6 +148,14 @@ async def build_context(devices: Any, pier: str, camera_slot: str = "primary", g
     except Exception:
         logger.exception("Pier %s: could not read its Observatory", pier)
     cameras = devices.controllers(pier, "camera")
+
+    def is_safe() -> bool:
+        if _SAFETY_GATE is not None and _SAFETY_GATE():
+            return False
+        # The engine's guard keeps the monitor polled; nothing connected means nothing to gate on.
+        monitor = devices.controller(pier, "safety")
+        return monitor is None or not getattr(monitor, "is_connected", False) or bool(monitor.is_safe)
+
     return assemble_context(
         pier=record, key=pier_key(record), camera_slot=camera_slot,
         camera=cameras.get(camera_slot) or devices.controller(pier, "camera"),
@@ -130,7 +166,8 @@ async def build_context(devices: Any, pier: str, camera_slot: str = "primary", g
         flat_panel=devices.controller(pier, "flat_panel"),
         arbiter=_arbiter(getattr(observatory, "name", "") or ""), observatory=observatory,
         notify_service=build_notify_service(observatory), location=location,
-        frame_context=await frame_context(devices, pier, record, camera_slot))
+        frame_context=await frame_context(devices, pier, record, camera_slot),
+        is_safe=is_safe, roof_mounts=lambda: mounts_under_roof(devices, observatory))
 
 
 class EngineSessions:
@@ -213,6 +250,9 @@ class EngineSessions:
         problems = preflight(blocks, context)
         if problems:
             raise SessionRefused(" ".join(problems))
+        reason = _SAFETY_GATE() if _SAFETY_GATE is not None else ""
+        if reason:
+            raise SessionRefused(f"Conditions are unsafe: {reason}.")
         safety = self._devices.controller(pier, "safety")
         if safety is not None and getattr(safety, "is_connected", False) and not safety.is_safe:
             raise SessionRefused(f"Conditions are unsafe: {safety.explanation}.")

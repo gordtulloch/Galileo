@@ -11,7 +11,7 @@ import datetime as dt
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -169,6 +169,7 @@ class SolveWorkflow:
         self.on_frame: Callable[[Any], None] | None = None
         # J2000 (ra_deg, dec_deg) the mount should end up at; taken from the mount when a run
         # starts if not already set.
+        self.library_dark = False          # subtract the Library's dark master before each frame is solved
         self.target: tuple[float, float] | None = None
         self.object_name = ""              # what the target is called; goes into the solve frames' file names
         self._target_preset = False        # the caller chose the target, so the mount isn't already "there"
@@ -264,6 +265,13 @@ class SolveWorkflow:
         file it is given — and, if *slew*, slew the mount to the solved coordinates."""
         return await self._run(self._solve_file(Path(fits_path), slew))
 
+    async def solve_fetched(self, fetch: Callable[[], Awaitable[Path | str]], slew: bool = True) -> list[SolveResult]:
+        """:meth:`solve_file` for a file that has to be fetched first. The fetch is part of the run, so
+        :meth:`stop` cancels it and nothing is solved or slewed afterwards."""
+        async def fetch_and_solve() -> None:
+            await self._solve_file(Path(await fetch()), slew)
+        return await self._run(fetch_and_solve())
+
     async def _run(self, coro) -> list[SolveResult]:
         self.results, self.stopped = [], False
         self.slewed_to = None
@@ -356,6 +364,8 @@ class SolveWorkflow:
         except Exception as exc:
             self._log(f"Could not read {source.name}: {exc}")
             return
+        if self.library_dark:
+            self._log(await asyncio.to_thread(_dark_subtract_file, frame))
         result = await self._solve(frame, None, SolveSettings())
         if not (result.success and slew) or result.ra_deg is None or result.dec_deg is None:
             return
@@ -408,8 +418,16 @@ class SolveWorkflow:
                 dark = await self._expose(settings.exposure_s, "Dark", options, "Exposing dark")
                 if dark is not None:
                     data = _subtract_dark(data, dark)
+            master_name = ""
+            if self.library_dark and not settings.subtract_dark:
+                data, master_name, note = await asyncio.to_thread(
+                    _subtract_library_dark, data, self.frame_metadata.get("telescope"),
+                    self.frame_metadata.get("instrument"), settings.exposure_s, settings.binning)
+                self._log(note)
             frame = self._work_path(self._frame_stem(str(attempt)))
             await asyncio.to_thread(_write_frame, data, frame, self.frame_metadata)
+            if master_name:
+                await asyncio.to_thread(_mark_dark_subtracted, frame, master_name)
             if self.on_frame is not None:
                 try:
                     self.on_frame(data)
@@ -500,6 +518,45 @@ def _subtract_dark(light, dark):
     if light.shape != dark.shape:
         return light
     return np.clip(light.astype(np.float32) - dark.astype(np.float32), 0.0, None)
+
+
+def _subtract_library_dark(data, telescope, instrument, exposure_s, binning=1, binning_y=None) -> tuple:
+    """``(data, master file name, note)``: *data* less the Library's dark master for this rig, exposure
+    and binning, or unchanged (with an empty name) if there is none that fits."""
+    import numpy as np
+    from galileo.dark_master import dark_for_frame
+    dark, note = dark_for_frame(telescope, instrument, exposure_s, binning, binning_y or binning, np.shape(data))
+    if dark is None:
+        return data, "", note
+    name = note.partition("(")[2].rpartition(")")[0] or "dark master"
+    return _subtract_dark(data, dark), name, note
+
+
+def _mark_dark_subtracted(path: Path, master_name: str) -> None:
+    """Record in the file that its dark has been taken off, so nothing subtracts it again."""
+    from astropy.io import fits
+    fits.setval(path, "DARKMAST", value=master_name, comment="Master dark subtracted by Galileo")
+
+
+def _dark_subtract_file(path: Path) -> str:
+    """Take the Library's dark master off the loaded frame at *path* (a working copy), matched by the
+    frame's own headers; a frame that says it already had a dark taken off is left alone. Returns
+    what happened, for the log."""
+    from astropy.io import fits
+    with fits.open(path, memmap=False) as hdul:
+        header, data = hdul[0].header.copy(), hdul[0].data
+    if header.get("DARKMAST") or "D" in str(header.get("CALSTAT", "")).upper():
+        return "Subtract dark: the frame already had a dark subtracted."
+    data, name, note = _subtract_library_dark(
+        data, header.get("TELESCOP"), header.get("INSTRUME"), header.get("EXPTIME", header.get("EXPOSURE")),
+        header.get("XBINNING", 1), header.get("YBINNING", 1))
+    if name:
+        from galileo.metadata import normalise_pixels
+        for key in ("BITPIX", "BZERO", "BSCALE", "BLANK"):
+            header.remove(key, ignore_missing=True)
+        header["DARKMAST"] = (name, "Master dark subtracted by Galileo")
+        fits.writeto(path, normalise_pixels(data), header, overwrite=True)
+    return note
 
 
 def frame_for_solver(data):

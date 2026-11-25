@@ -145,7 +145,7 @@ Lit red while PHD2 is actively guiding.
 
 ## Guiding state
 
-Text from PHD2 describing what it is doing now (calibrating, guiding, settling, star lost…).
+Text from PHD2 describing what it is doing now (calibrating, guiding, settling, star lost…). While PHD2 calibrates it adds a second line with the calibration progress (direction, step and distance moved) and, afterwards, whether the calibration succeeded or failed and why; guiding then starts on its own if you pressed Guide. The guide star moving out of its square during calibration is normal and is not reported as a lost star.
 
 ## Guide star
 

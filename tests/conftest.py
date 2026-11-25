@@ -515,18 +515,23 @@ def _bootstrap_sky_atlas_catalog(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _isolate_config_dir(tmp_path_factory, monkeypatch):
-    """Point the per-user config (and data) folder at a throwaway one for every test.
+    """Point the per-user config (and data) folder, and the installed-plugins folder, at throwaway ones for every test.
 
     Configuration lives in the shared database, but the one-time legacy import looks for old
     ``*.json`` / ``library.ini`` files in the config folder (and renames them), so a test must
-    never see -- or consume -- the developer's real ones. Tests that need their own folder
-    re-patch ``get_config_dir`` themselves."""
+    never see -- or consume -- the developer's real ones. Likewise the developer's installed plugins must not be
+    loaded: they change what screens show and leave their packages importable for every later test. Tests that
+    need their own folder re-patch ``get_config_dir`` / ``get_plugins_dir`` themselves."""
     import galileo.library.config as library_config_mod
     import galileo.platform as platform_mod
 
     config_dir = tmp_path_factory.mktemp("config")      # not under tmp_path: tests list that folder
     monkeypatch.setattr(platform_mod, "get_config_dir", lambda: config_dir)
     monkeypatch.setattr(library_config_mod, "get_config_dir", lambda: config_dir)
+
+    plugins_dir = config_dir / "plugins"
+    plugins_dir.mkdir()
+    monkeypatch.setattr(platform_mod, "get_plugins_dir", lambda: plugins_dir)
 
 
 @pytest.fixture(autouse=True)

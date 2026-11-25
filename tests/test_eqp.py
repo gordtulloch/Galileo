@@ -1899,3 +1899,52 @@ def test_tc_eqp_aux_010_aux_ops_write_read_and_rebuild(monkeypatch):
 
     monkeypatch.setattr(AuxController, "get_property_groups", broken)
     assert ops.read_groups() is None
+
+
+@pytest.mark.requirement("TC-EQP-CAM-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_cam_010_alpaca_applies_the_requested_gain_and_offset(monkeypatch):
+    """EQP-CAM-010: an Alpaca exposure sets both the Gain and the Offset asked for (the offset used to be dropped,
+    so the camera's own default was used), and sets neither when they are 0 ("leave as configured")."""
+    cam = _alpaca_camera(monkeypatch, {"imageready": [True], "camerastate": [2]})
+    sent = []
+
+    async def put(attribute, **body):
+        sent.append((attribute, body))
+
+    monkeypatch.setattr(cam, "_put", put)
+    await cam.start_exposure(duration=5.0, gain=120, offset=30, binning=1)
+    assert ("gain", {"Gain": 120}) in sent and ("offset", {"Offset": 30}) in sent
+    assert [a for a, _ in sent].index("gain") < [a for a, _ in sent].index("startexposure")
+    assert [a for a, _ in sent].index("offset") < [a for a, _ in sent].index("startexposure")
+    sent.clear()
+    await cam.start_exposure(duration=5.0, gain=0, offset=0, binning=1)
+    assert not any(a in ("gain", "offset") for a, _ in sent)
+
+
+@pytest.mark.requirement("TC-EQP-CAM-010")
+@pytest.mark.priority("MVP")
+async def test_tc_eqp_cam_010_indi_offset_uses_ccd_controls_and_is_read_back():
+    """EQP-CAM-010: a driver with gain and offset in CCD_CONTROLS (ZWO) has both set there and read back."""
+    from galileo.adapters.indi.camera import IndiCameraAdapter
+    cam = IndiCameraAdapter.__new__(IndiCameraAdapter)
+    values = {("CCD_CONTROLS", "Gain"): 50.0, ("CCD_CONTROLS", "Offset"): 0.0}
+    sent = []
+    cam._num = lambda prop, element: values.get((prop, element))
+    cam._has = lambda prop: prop == "CCD_CONTROLS"
+    cam._set_num = lambda prop, new: sent.append((prop, new))
+    cam._require = cam._prepare_transfer = lambda *a: None
+    cam._log_interaction = lambda *a, **k: None
+    cam.device_name = "ZWO"
+
+    class _Client:
+        def blob_seq(self, *a):
+            return 0
+
+        def send_number(self, *a):
+            pass
+
+    cam._c = lambda: _Client()
+    await cam.start_exposure(duration=1.0, gain=120, offset=30)
+    assert ("CCD_CONTROLS", {"Gain": 120}) in sent and ("CCD_CONTROLS", {"Offset": 30}) in sent
+    assert await cam.read_gain_offset() == {"gain": 50.0, "offset": 0.0}

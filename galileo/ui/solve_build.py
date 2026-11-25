@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget, QTabWidget, QVBoxLayout, QWidget
 from galileo.platesolve import SolveAction
 from galileo.ui._image_view import build_zoom_toolbar
 from galileo.ui.frame_layout import FrameLayoutChoice
@@ -126,8 +126,13 @@ class SolveBuildMixin(_MixinBase):
         self.capture_btn.clicked.connect(self.capture_and_solve)
         layout.addWidget(self.capture_btn)
         self.load_btn = QPushButton("Load && Slew…")
-        self.load_btn.setToolTip("Solve a FITS file from disk and slew the mount to where it points.")
-        self.load_btn.clicked.connect(self.load_and_slew)
+        self.load_btn.setToolTip("Solve a frame from the Library or disk and slew the mount to where it points.")
+        load_menu = QMenu(self.load_btn)
+        self.load_library_action = load_menu.addAction("From the Library…")
+        self.load_library_action.triggered.connect(self.load_from_library)
+        self.load_disk_action = load_menu.addAction("From disk…")
+        self.load_disk_action.triggered.connect(self.load_from_disk)
+        self.load_btn.setMenu(load_menu)
         layout.addWidget(self.load_btn)
         stop_row = QHBoxLayout()
         self.stop_btn = QPushButton("Stop")
@@ -277,10 +282,17 @@ class SolveBuildMixin(_MixinBase):
         layout.addLayout(form)
         self.subtract_dark_check = QCheckBox("Subtract dark")
         self.subtract_dark_check.setToolTip(
-            "Show the frame with the Library's dark master subtracted, when one exists for this camera and "
-            "optics at the same exposure and binning. This only changes the picture; the solver gets the "
-            "frame as saved. The line under the picture says which master was used, or why none was.")
-        layout.addWidget(self.subtract_dark_check)
+            "Subtract the Library's dark master from each frame before it is solved and shown, when one exists "
+            "for this camera and optics at the same exposure and binning. Your own files are not changed. The line "
+            "under the picture says which master was used, or why none was. "
+            "Ticked for you when a matching master is available; your own choice is kept for that setup.")
+        self.dark_available_label = QLabel()
+        self.dark_available_label.setProperty("helpKey", "subtract dark")
+        dark_row = QHBoxLayout()
+        dark_row.addWidget(self.subtract_dark_check)
+        dark_row.addWidget(self.dark_available_label)
+        dark_row.addStretch(1)
+        layout.addLayout(dark_row)
         box.addWidget(options)
 
         # Solver Mode ------------------------------------------------------
@@ -304,18 +316,37 @@ class SolveBuildMixin(_MixinBase):
         mode_row.addWidget(self.tetra3_radio)
         self._mode_backends = {self.astap_radio: "astap", self.astrometry_radio: "astrometry_local",
                                self.nova_radio: "astrometry_web", self.tetra3_radio: "tetra3"}
-        # Solvers added by plugins (PLUG-220), e.g. Skyshot, get a button of their own.
-        from galileo.platesolve import SolverBackendRegistry
-        for key, label in SolverBackendRegistry.offered().items():
-            radio = QRadioButton(label)
-            radio.setToolTip(f"{label}, added by a plugin. Set it up under its own page in Options.")
-            mode_row.addWidget(radio)
-            self._mode_backends[radio] = key
+        self._mode_row = mode_row
+        self._plugin_radios: dict[str, QRadioButton] = {}
+        self._add_plugin_modes()
         layout.addLayout(mode_row)
         box.addWidget(mode)
 
         box.addStretch(1)
         return column
+
+    def _add_plugin_modes(self) -> list[QRadioButton]:
+        """Bring the plugin solvers' buttons (PLUG-220), e.g. Skyshot, in line with what is offered
+        now: drop those that have gone, add those that are new. Returns the new buttons."""
+        from galileo.platesolve import SolverBackendRegistry
+        offered = SolverBackendRegistry.offered()
+        for key in [k for k, r in self._plugin_radios.items() if offered.get(k) != r.text()]:
+            radio = self._plugin_radios.pop(key)
+            del self._mode_backends[radio]
+            self._mode_row.removeWidget(radio)
+            radio.setParent(None)
+            radio.deleteLater()
+        added = []
+        for key, label in offered.items():
+            if key in self._plugin_radios:
+                continue
+            radio = QRadioButton(label)
+            radio.setToolTip(f"{label}, added by a plugin. Set it up under its own page in Options.")
+            self._mode_row.addWidget(radio)
+            self._mode_backends[radio] = key
+            self._plugin_radios[key] = radio
+            added.append(radio)
+        return added
 
     def _build_image_tools(self) -> QHBoxLayout:
         self.frame_label = QLabel("No frame yet")

@@ -211,6 +211,13 @@ class DeviceService:
     def cancel_retries(self) -> None:
         self._cancel.set()
 
+    def build_adapter(self, category: str, driver: str, server: str, port: int, device_name: str = "") -> Any:
+        """An unconnected adapter for a device no Pier holds, such as the Observatory's weather station."""
+        wanted = self._category_of(category)
+        if wanted is None:
+            raise LookupError(f"there is no device category {category!r}")
+        return self._factory(wanted, driver, server, int(port), device_name)
+
     async def _connect_one(self, pier: str, cfg: Any) -> bool:
         key = (pier, str(cfg.category).lower(), cfg.slot or PRIMARY)
         existing = self._adapters.get(key)

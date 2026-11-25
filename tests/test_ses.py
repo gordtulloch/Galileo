@@ -201,6 +201,27 @@ def test_tc_ses_110_concurrent_session_regions_with_controls():
 
 @pytest.mark.requirement("TC-SES-120")
 @pytest.mark.priority("MVP")
+def test_tc_ses_120_identical_blocks_are_told_apart():
+    """SES-120: Blocks are insertable between and freely reorderable, including when two have identical settings."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+
+    region = ui_mod.SessionRegion(name="Test")
+    first, second = ui_mod.TargetBlock(), ui_mod.TargetBlock()
+    region.insert_block(first)
+    region.insert_block(second)
+    warm = ui_mod.WarmCameraBlock()
+    region.insert_block(warm, before=second)
+    assert [id(b) for b in region.blocks] == [id(first), id(warm), id(second)]
+
+    region.reorder_block(second, index=0)
+    assert [id(b) for b in region.blocks] == [id(second), id(first), id(warm)]
+
+    region.remove_block(first)
+    assert [id(b) for b in region.blocks] == [id(second), id(warm)]
+
+
+@pytest.mark.requirement("TC-SES-120")
+@pytest.mark.priority("MVP")
 def test_tc_ses_120_action_palette_drag_insert_reorder():
     """SES-120: Provide a single right-hand action palette from which blocks are dragged into a session region, insertable before/after/between existing blocks, and freely reorderable afterward."""
     ui_mod = pytest.importorskip("galileo.ui.sessions")
@@ -453,6 +474,40 @@ def test_tc_ses_200_schedule_control_is_the_only_side_effect():
 
     region.schedule()
     scheduler.add_job.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TC-SES-240
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("TC-SES-240")
+@pytest.mark.priority("MVP")
+def test_tc_ses_240_estimated_time_is_shown_and_sets_the_scheduled_duration():
+    """SES-240: Each session shows the estimated total time of all its operations, and scheduling it uses that as the job's duration."""
+    ui_mod = pytest.importorskip("galileo.ui.sessions")
+    import types
+    from PySide6.QtWidgets import QApplication
+    from galileo.scheduler import ObservatoryScheduler
+    from galileo.session_estimate import format_duration
+
+    _app = QApplication.instance() or QApplication([])
+    scheduler = ObservatoryScheduler()
+    region = ui_mod.SessionRegion(name="M42 Session", scheduler=scheduler)
+    assert region.estimated_duration_minutes() is None
+    region.insert_block(ui_mod.TargetBlock(name="M42", ra_deg=83.8, dec_deg=-5.4))
+    region.insert_block(ui_mod.ImageBlock(exposure=300.0, count=20))
+    assert region.estimated_seconds() == 60 + 20 * 303
+
+    palette = ui_mod._build_palette()
+    widget = ui_mod._RegionWidget(region, palette, lambda *_: None, types.SimpleNamespace())
+    assert widget._estimate_label.text() == "Estimated total time: 1 h 42 min"
+    region.blocks[1].count = 2
+    widget._on_block_change(None)
+    assert widget._estimate_label.text() == "Estimated total time: 12 min"
+    assert format_duration(3600) == "1 h 00 min"
+
+    region.schedule()
+    assert scheduler.jobs[0].duration_minutes == 12
 
 
 # ---------------------------------------------------------------------------

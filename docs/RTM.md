@@ -105,7 +105,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `EQP-SW-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SW-010` |
 | `EQP-FP-010` | MVP | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-FP-010` |
 | `EQP-WX-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-WX-010` |
-| `EQP-WX-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-WX-020` |
+| `EQP-WX-020` | MVP | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-WX-020` |
 | `EQP-DOME-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-DOME-010` |
 | `EQP-SAFE-010` | P2 | SDD 4.2 `galileo.adapters.indi` | Test | `TC-EQP-SAFE-010` |
 | `EQP-SAFE-020` | P2 | SDD 4.16 `galileo.safety`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-EQP-SAFE-020` |
@@ -151,7 +151,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `OBS-010` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-010` |
 | `OBS-020` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` | Test | `TC-OBS-020` |
 | `OBS-030` | P2 | SDD 4.4a `galileo.observatory`; SDD 4.4b `galileo.ui.app_window` (`_weather_page.py`) | Test | `TC-OBS-030` |
-| `OBS-040` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-040` |
+| `OBS-040` | MVP | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-040` |
 | `OBS-050` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-050` |
 | `OBS-060` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-060` |
 | `OBS-070` | P2 | SDD 4.4a `galileo.observatory` | Test | `TC-OBS-070` |
@@ -218,6 +218,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `SES-210` | MVP | SDD 4.6a `galileo.ui.sessions`; SDD 4.9b `galileo.scheduler` | Test | `TC-SES-210` |
 | `SES-220` | MVP | SDD 4.6a `galileo.ui.sessions` | Test | `TC-SES-220` |
 | `SES-230` | P2 | SDD 4.6a `galileo.ui.sessions` / SDD 4.9 `galileo.planning.framing` | Test | `TC-SES-230` |
+| `SES-240` | MVP | SDD 4.6a `galileo.ui.sessions` / `galileo.session_estimate` | Test | `TC-SES-240` |
 | `SES-300` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-300` |
 | `SES-310` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-310` |
 | `SES-320` | P2 | SDD 4.7 `galileo.session_exec` / `galileo.ui.sessions` | Test | `TC-SES-320` |
@@ -401,16 +402,24 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 
 | SRS ID | Priority | SDD Component | Verification | Test Case |
 |---|---|---|---|---|
-| `SAFE-010` | P2 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-010` |
+| `SAFE-010` | MVP | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-010` |
 | `SAFE-020` | P3 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-020` |
 | `SAFE-030` | P2 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-030` |
-| `SAFE-040` | P2 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-040` |
+| `SAFE-040` | MVP | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-040` |
 | `SAFE-050` | P2 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-050` |
 | `SAFE-060` | MVP | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-060` |
 | `SAFE-070` | P2 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-070` |
 | `SAFE-080` | MVP | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-080` |
 | `SAFE-090` | P3 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-090` |
 | `SAFE-100` | P3 | SDD 4.16 `galileo.safety` | Test | `TC-SAFE-100` |
+| `SAFE-110` | MVP | SDD 4.16 `galileo.roof`, `galileo.session_exec`, `galileo.safety` | Test | `TC-SAFE-110` |
+| `SAFE-120` | MVP | SDD 4.16 `galileo.session_exec`, `galileo.session_context`, `galileo.ui.session_runner` | Test | `TC-SAFE-120` |
+| `SAFE-130` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-130` |
+| `SAFE-140` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-140` |
+| `SAFE-150` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-150` |
+| `SAFE-160` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-160` |
+| `SAFE-170` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-170` |
+| `SAFE-180` | MVP | SDD 4.16a `galileo.safety_supervisor` | Test | `TC-SAFE-180` |
 
 ### `HIST` — Session History & Statistics
 
@@ -691,6 +700,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-200` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-200` |
 | `LIB-210` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-210` |
 | `LIB-220` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-220` |
+| `LIB-230` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-230` |
 
 ### `VST` / `VST-AN` — Moved
 
@@ -790,7 +800,7 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `MFLIP` | 4 | 0 | 4 | 0 |
 | `GUIDE` | 10 | 8 | 2 | 0 |
 | `DOME` | 3 | 0 | 3 | 0 |
-| `SAFE` | 10 | 2 | 5 | 3 |
+| `SAFE` | 18 | 12 | 3 | 3 |
 | `HIST` | 5 | 1 | 3 | 1 |
 | `META` | 5 | 3 | 1 | 1 |
 | `NOTIF` | 5 | 0 | 1 | 4 |
@@ -815,4 +825,4 @@ Kasa smart-plug/power-strip control and generic HTTP relay-board control are, li
 | `NFR-SEC` | 3 | 1 | 2 | 0 |
 | `NFR-OFFLINE` | 2 | 2 | 0 | 0 |
 | `NFR-INSTALL` | 3 | 3 | 0 | 0 |
-| **Total** | **433** | **290** | **125** | **18** |
+| **Total** | **441** | **302** | **121** | **18** |

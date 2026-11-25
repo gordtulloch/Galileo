@@ -1,0 +1,111 @@
+Welcome back. This episode is about deciding what to image, and when. We'll explore the Star Atlas, rank tonight's targets, search the deep-sky catalog, keep a target list and compose the shot. Carrying the plan out, with sessions and scheduling, has its own episode.
+
+None of this needs equipment connected, so it's an ideal cloudy-night activity. It does need your Observatory's latitude and longitude, so set those first, as shown in episode two.
+
+The Star Atlas is a live planetarium of the sky over your site. On the left are the time, location and display options. In the centre is the sky. On the right are details of whatever you've selected, with buttons to act on it.
+
+Drag to pan. Scroll to zoom. Click an object to identify it. Double-click to centre on it and keep tracking it.
+
+Behind the stars is a real all-sky photograph of the Milky Way by Axel Mellinger. Tiles download as they come into view and are kept on your computer, so what you've already visited is available offline. You can turn it off with Sky survey.
+
+With Live ticked, the map follows your clock. Edit the time, or use the step buttons to move by an hour or a day, and Live turns off so the sky stays where you put it. This is an easy way to see when something rises, or to preview next week.
+
+Latitude and longitude come from the Observatory, but you can edit them here to look from somewhere else, without changing your saved site.
+
+Two sliders set how faint stars and deep-sky objects can be. Six is about what you'd see by eye from a dark site.
+
+You can switch on a coordinate grid, constellation boundaries and outlines, abbreviated constellation names and object labels.
+
+Deep-sky objects come from the Messier, Caldwell, NGC and IC catalogs. Add or remove catalogs with the plus and cross buttons.
+
+You can show the Sun, the Moon with its phase, and the planets. You can also turn on comets, asteroids and satellites, including the space station. Their orbital elements are downloaded when you first enable them and refreshed when they get old.
+
+Ground hides everything below the horizon behind an artificial landscape. Daylight sky brightens the background when the Sun is up. Field of view draws your camera and telescope's rectangle on the sky around the current object, so you can see how it frames. Telescope markers show where each Pier's mount is pointing right now.
+
+Most of us have trees or a house in the way. Describe them once and Galileo takes them into account.
+
+Under Options, Star Atlas, you'll find a horizon table. Each row is a compass direction and the height of the obstruction in that direction. Upload a text file with one pair per line, or add points by hand, then press Save Changes. Each Observatory keeps its own horizon.
+
+Back in the atlas, tick Horizon and the blocked sky is filled in translucent red. If you also turn on Do not slew where obstructed, under Options, Planning, Galileo refuses to send the mount there from any screen or any session.
+
+Type a name or catalog number in Find and press Enter. Everything that might match is plotted in yellow, however faint, even from a catalog that's switched off. The best match is centred and selected, and you can click any of the others instead.
+
+The panel on the right shows the name, type, magnitude, constellation, coordinates, altitude and azimuth.
+
+Selecting an object makes it the Pier's current object. The top bar shows it on every screen. Frames you capture are named after it, the Solve screen can slew back to it, and What's Up Tonight pins it. It's kept for the current run of Galileo, and each Pier has its own.
+
+With a mount connected, you can act directly from the sky. Goto slews to the selected object. Goto and Centre slews, then takes a picture, plate solves it and corrects the pointing, using the settings on the Solve screen. Sync tells the mount that it's pointing at this object. Add to Session starts a new session with a slew to this target already in it. Park or unpark is there too. You can also right-click empty sky and go to that spot.
+
+Save to Targets keeps a star or deep-sky object for later. Saved targets are always drawn on the map in orange, and they also appear in the mobile apps. Planets, comets, asteroids and satellites can't be saved, because they move.
+
+Now open Planning. The first page is What's Up Tonight, which ranks deep-sky objects for a night at your site, best first.
+
+The ranking considers how high each object gets and for how long, how close it is to the Moon, whether it fits your telescope's field of view, the weather forecast, aurora activity and smoke, and how much you've already imaged it.
+
+Set the observing date, which defaults to tonight, the faintest magnitude to consider, the minimum altitude and the catalogs. Then press Rank Tonight.
+
+Across the top is a day and night band from noon to noon, showing day, the three kinds of twilight, and true night, with their times. Deep-sky imaging is best in the night segment.
+
+Below it are advisories for tonight: weather, aurora and smoke. These need an internet connection and apply to today only.
+
+If you have an Astrospheric Professional membership, enter your key under Options, Planning, and you'll get hour by hour rows of cloud, seeing, transparency, temperature, dew point and wind, lined up under the night band, plus smoke and aurora rows that need no key. Astrospheric covers North America, Greenland, Iceland, Ireland and the United Kingdom.
+
+Each tile shows the rank, name, type, brightness, size, constellation, best altitude, and the reasons for its score. If you already have data on it, you'll see the hours you've collected. A Reduced confidence badge means some input, such as your horizon or the forecast, wasn't available; hover over it to see which.
+
+Thumbnails appear only if they're already on your computer. To get them all, use Download Catalog Images under Options, Planning. It's one large download, it can be cancelled, and afterwards pictures work offline, including the enlarged view.
+
+From a tile you can Save it to Targets, Select it as the current object, Slew To it, Goto and Centre, or Add to Session.
+
+When you know what kind of thing you want, use Search. Filter the catalog by name, object type, constellation, magnitude, minimum size, minimum altitude tonight and catalog, in any combination. Results are limited to two hundred, so tighten the criteria if you hit that.
+
+The tiles have the same actions, and their altitude charts show your horizon shaded in, so you can see at once when your neighbour's tree gets in the way.
+
+Targets is your own list. Press Save on a tile in Search or What's Up Tonight, or save from the atlas, and it appears here, newest first, kept between runs. Remove takes it off. It's shared with your other Galileo computers if you use NodeConnect, and it appears in the mobile apps, so you can choose tonight's target from the list on your phone.
+
+Before building a session, think about framing. The Framing Assistant, opened from the Imaging screen or from a session's Image block, draws your field of view on a real survey picture.
+
+Set the target and the rotation. If a rotator is connected, pressing OK turns it. Determine Rotation plate solves your last frame to read the camera's true angle.
+
+If the object is bigger than your sensor, set mosaic columns, rows and overlap. Ten to twenty percent overlap is usual. The assistant shows the footprint of the whole grid.
+
+The tools give you numbers. Here's how to read them. Altitude matters most. Low down you look through much more air, so stars are soft and faint detail washes out. Try to catch your object while it's high, ideally near its highest as it crosses the meridian.
+
+Then consider the Moon. A bright Moon nearby drowns faint galaxies and reflection nebulae. Clusters, and emission nebulae through narrowband filters, cope much better.
+
+Then size. A large nebula on a long telescope needs a mosaic. A tiny planetary nebula on a short lens will be a dot. The field of view overlay in the atlas answers this at a glance.
+
+Finally, time. A faint object needs many hours. The hours integrated on a tile show what you already have, so you can choose to deepen last week's data instead of starting something new.
+
+Let's plan a real night. Open What's Up Tonight, leave the date on today, set a minimum altitude of thirty degrees, and tick Messier and NGC. Press Rank Tonight.
+
+Check the night band for when true darkness begins and ends. Read the advisories. Now look at the first few tiles and their reasons. Click a thumbnail to see what the object looks like.
+
+Save three candidates. Open each in the Star Atlas, step the time forward to midnight and then to three in the morning, and see which ones clear your horizon.
+
+Pick one, select it, and check its framing. Then press Add to Session. You now have the start of a plan, with the slew already filled in. Building the rest of that session is the subject of episode five.
+
+Change the observing date to plan a future night, perhaps a weekend near new Moon. The sky is recomputed for that date. Weather, aurora and smoke are only available for today, so those scores carry reduced confidence, which the badge tells you.
+
+Over a season, your target list becomes a record of intentions: what's rising now, and what you must catch before it sets in the west for another year.
+
+If you're newer to this, two coordinate systems appear all over these screens. Right ascension and declination are fixed to the stars, like longitude and latitude on the sky. They're how an object's address is written. Altitude and azimuth are local: how high above your horizon, and which compass direction. Those change minute by minute as the Earth turns.
+
+The meridian is the line from north to south passing overhead. An object is highest when it crosses it. That's the best time to image it, and also the moment a German equatorial mount has to think about flipping.
+
+Twilight comes in three stages. In civil twilight it's still quite bright. In nautical twilight the brighter stars are out. In astronomical twilight the sky looks dark to your eye, but not yet to a long exposure. True night begins after that. At high latitudes in summer, true night may not happen at all, and the day and night band will show you so.
+
+A good horizon file is worth an evening. Stand where the telescope stands, at about its height. Work around the compass. At each obstacle, note the direction with a compass and the height with a phone inclinometer, or point the telescope at the edge of the obstacle and read its altitude and azimuth from the Mount page.
+
+Add a point at each corner, such as both edges of a roofline, since points are joined by straight lines. Remember that a compass reads magnetic north, so correct it to true north, or use the telescope method. Save, turn on Horizon in the atlas, and compare the red shape with what you see. If you have two sites, each Observatory has its own.
+
+One more example, from the other direction. This time we know we want something big. In Search, choose galaxies, set a minimum size of sixty arcminutes and a minimum altitude, and press Search.
+
+The Andromeda Galaxy will be among them in autumn. Select it, open it in the atlas and turn on Field of view. On most telescopes it spills over the edges.
+
+Open the Framing Assistant, turn the camera angle to follow the long axis of the galaxy, and see whether one pane is enough. If not, try two panes along that axis before you try six. Every extra pane divides your time, so each part of the final picture gets less of it.
+
+If the sky looks wrong, check latitude, longitude and the sign of each. West is negative. Check your computer's time and time zone. If objects you expect are missing, check which catalogs and magnitude limits are on. If there are no pictures on the tiles, download the catalog images. And if a slew is refused, look for the reason in the status bar: usually a parked mount, a mount limit or your horizon.
+
+The rest of the Planning section is about carrying your plan out. Sessions lists the steps of a night as blocks. Schedule places sessions on a calendar of nights. History shows how they went. These deserve an episode to themselves, and they get one: episode five.
+
+That's planning: find it in the atlas or let Galileo suggest it, check it clears your horizon, save it and frame it. Next time, the longest episode of the series, where we focus, align, solve, guide and image. Clear skies.

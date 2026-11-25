@@ -72,21 +72,6 @@ class Pier:
     def set_dome(self, dome) -> None:
         self.dome = dome
 
-    async def abort_and_park(self) -> None:
-        """Abort any running sequence and park the mount."""
-        if self.sequence_runner is not None:
-            try:
-                await self.sequence_runner.abort()
-            except Exception:
-                logger.exception("Pier %r: error aborting sequence", self.name)
-
-        if self.device_pool is not None:
-            mount = self.device_pool.get("Mount")
-            if mount is not None:
-                try:
-                    await mount.park()
-                except Exception:
-                    logger.exception("Pier %r: error parking mount", self.name)
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +272,6 @@ class Observatory:
                 "active_job": active,
             })
         return rows
-
-    async def handle_safety_unsafe(self, source: str = "", explanation: str = "") -> None:
-        """Abort and park ALL Piers when an Observatory-scoped unsafe event fires."""
-        logger.warning("Observatory %r safety unsafe: %s — %s", self.name, source, explanation)
-        await asyncio.gather(
-            *(pier.abort_and_park() for pier in self.piers),
-            return_exceptions=True,
-        )
 
     async def connect_all_piers(self) -> None:
         """Connect device sets of all Piers concurrently (OBS-080)."""
@@ -754,6 +731,7 @@ def get_weather_safety_rules(observatory: ObservatoryRecord | None, slot: str = 
         WeatherSafetyRule(
             parameter=record.parameter, label=record.label, unit=record.unit,
             safety_related=record.safety_related, operator=record.operator, threshold=record.threshold,
+            action=record.action or "stop",
         )
         for record in WeatherSafetyRuleRecord.select().where(
             (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)
@@ -767,7 +745,7 @@ def save_weather_safety_rule(observatory: ObservatoryRecord, rule: WeatherSafety
     from galileo.library.models.weather_safety_rule import WeatherSafetyRuleRecord
     fields = {
         "label": rule.label, "unit": rule.unit, "safety_related": rule.safety_related,
-        "operator": rule.operator, "threshold": rule.threshold,
+        "operator": rule.operator, "threshold": rule.threshold, "action": rule.action,
     }
     record = WeatherSafetyRuleRecord.get_or_none(
         (WeatherSafetyRuleRecord.observatory == observatory) & (WeatherSafetyRuleRecord.slot == slot)

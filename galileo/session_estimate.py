@@ -11,6 +11,7 @@ figures, not measurements: they make a session of 3 hours come out as about 3 ho
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -84,7 +85,8 @@ def _block_cost(block: Any, state: dict) -> tuple[float, float, int, int]:
         for exposure in block.exposures:
             add(1, float(exposure))
     elif name == "FlatCaptureBlock":
-        add(max(1, int(block.count)), float(block.exposure or 1.0))
+        filters = state["filter_count"] if block.filter == "All" else 1
+        add(max(1, int(block.count)) * filters, float(block.exposure or 1.0))
     elif name == "FilterChangeBlock" and block.filter:
         state["filter"] = block.filter
     elif name == "GuideStartBlock" and getattr(block, "calibrate", False):
@@ -95,23 +97,31 @@ def _block_cost(block: Any, state: dict) -> tuple[float, float, int, int]:
 def estimate_run(blocks: list, *, start: datetime, width_px: int | None = None, height_px: int | None = None,
                  bytes_per_frame: int | None = None, free_bytes: int | None = None,
                  dawn: datetime | None = None, sets_at: datetime | None = None,
-                 flip_at: datetime | None = None) -> RunEstimate:
+                 flip_at: datetime | None = None, filter_count: int = 1) -> RunEstimate:
     """Estimate running *blocks* from *start*. Times are timezone-aware datetimes; each of *dawn* (when the sky
     gets too bright), *sets_at* (when the target drops below the horizon limit) and *flip_at* (when it reaches
-    the meridian) may be ``None`` when the caller cannot tell."""
-    state: dict = {"width": width_px, "height": height_px, "frame_bytes": bytes_per_frame, "filter": None}
+    the meridian) may be ``None`` when the caller cannot tell. *filter_count* is how many filters an "All"
+    filters flat capture goes through."""
+    state: dict = {"width": width_px, "height": height_px, "frame_bytes": bytes_per_frame, "filter": None,
+                   "filter_count": max(1, filter_count)}
     est = RunEstimate(start=start, free_bytes=free_bytes, flip_at=flip_at)
     elapsed = 0.0
     known_size = bool(width_px and height_px) or bool(bytes_per_frame)
     last_image_end = 0.0
 
-    def walk(nodes: list, times: int) -> None:
+    def walk(nodes: list) -> None:
         nonlocal elapsed, last_image_end
         for node in nodes:
             name = type(node.block).__name__
             if name in _LOOP_BLOCKS:
-                for _ in range(times * _loop_passes(node.block)):
-                    walk(node.children, 1)
+                for i in range(_loop_passes(node.block)):
+                    # Each pass first does what the executor does for it: select the filter, or slew to the object.
+                    if name == "ForObjectBlock":
+                        elapsed += BLOCK_OVERHEAD_S["TargetBlock"]
+                    elif node.block.filters and node.block.filters[i] != state["filter"]:
+                        elapsed += BLOCK_OVERHEAD_S["FilterChangeBlock"]
+                        state["filter"] = node.block.filters[i]
+                    walk(node.children)
                 continue
             seconds, exposing, frames, storage = _block_cost(node.block, state)
             elapsed += seconds
@@ -123,7 +133,7 @@ def estimate_run(blocks: list, *, start: datetime, width_px: int | None = None, 
             if frames:
                 last_image_end = elapsed
 
-    walk(build_tree(blocks), 1)
+    walk(build_tree(blocks))
     est.duration_s = elapsed
     est.finish = start + timedelta(seconds=elapsed)
     if not known_size:
@@ -143,4 +153,10 @@ def estimate_run(blocks: list, *, start: datetime, width_px: int | None = None, 
     return est
 
 
-__all__ = ["RunEstimate", "estimate_run", "frame_bytes"]
+def format_duration(seconds: float) -> str:
+    """A duration as ``45 min`` or ``2 h 05 min``, rounded up to the whole minute."""
+    hours, minutes = divmod(math.ceil(seconds / 60.0), 60)
+    return f"{hours} h {minutes:02d} min" if hours else f"{minutes} min"
+
+
+__all__ = ["RunEstimate", "estimate_run", "format_duration", "frame_bytes"]

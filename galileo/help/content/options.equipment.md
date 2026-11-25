@@ -5,7 +5,7 @@ Settings that apply to the whole application. Each device's driver, server, port
 
 ## Enable watchdog
 
-Turns the crash/hang watchdog on or off. While it is on, Galileo checks that it is still responding; if it is not for the whole timeout, the mount is parked and the dome closed so the equipment is left safe, and an alert is sent through Options > Notifications. Takes effect the next time Galileo starts.
+Turns the crash/hang watchdog on or off. While it is on, Galileo checks that it is still responding; if it is not for the whole timeout, every mount under the roof is parked and, only once all are confirmed parked, the dome is closed, and an alert is sent through Options > Notifications. Takes effect the next time Galileo starts.
 
 ## Watchdog timeout
 

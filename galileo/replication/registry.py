@@ -26,6 +26,7 @@ NOT_CONFIGURATION = frozenset({
     "fitsfile", "fitssession", "mapping", "Masters", "VariableStars",          # the Library catalog
     "link_peers", "link_audit",                                                # node-local: peers and audit
     "saved_sessions",                                                          # node-local: sessions built on this Pier
+    "safety_events",   # node-local: what this computer did to the equipment it holds
     "user_objects",                                                            # catalog data found by name search
     "migratehistory", "sqlite_sequence",                                       # schema bookkeeping
     "repl_state", "repl_revisions", "repl_tombstones",                         # replication bookkeeping

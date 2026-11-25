@@ -483,6 +483,10 @@ class AppWindowMountPageMixin:
             if last_flip is not None and _time.monotonic() - last_flip < FLIP_COOLDOWN_S:
                 import dataclasses
                 limits = dataclasses.replace(limits, flip_enabled=False)
+            from galileo.ui.safety_host import safety_holding
+            if safety_holding(self):          # no automatic flip while unsafe or a stop is in force
+                import dataclasses
+                limits = dataclasses.replace(limits, flip_enabled=False)
             from ._threads import _MountGuardThread
             # Unparented (guard_state holds the reference) and deleted when finished, so a thread
             # object isn't left behind as a child of the window every tick.
@@ -686,6 +690,8 @@ class AppWindowMountPageMixin:
         az_slew_btn.clicked.connect(_slew_altaz_clicked)
 
         # Hold a button to move, release to stop (as KStars' mount motion pad does).
+        from galileo.ui.safety_host import register_stopper
+        register_stopper(self, "mount jog", lambda: jog_motion.stop_all())
         jog_motion = HoldToMove(
             lambda: state.get("adapter"), lambda: combo_rate(jog_rate_combo), _axis_reversed, page,
             get_rate_index=lambda: combo_rate_index(jog_rate_combo))

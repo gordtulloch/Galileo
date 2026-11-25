@@ -30,6 +30,11 @@ def main() -> None:
     import multiprocessing
     multiprocessing.freeze_support()
 
+    # `Galileo --auto-calibration [switches]`: how Library > Calibration runs the command in a frozen build,
+    # which has no `python -m` (LIB-230).
+    if sys.argv[1:2] == ["--auto-calibration"]:
+        sys.exit(_run_auto_calibration(sys.argv[2:]))
+
     # `Galileo --selftest [REPORT_FILE]`: headless check of an installed/frozen build (CI runs it).
     if "--selftest" in sys.argv:
         from galileo.selftest import run
@@ -98,7 +103,7 @@ def main() -> None:
 
     startup_progress.report("Loading user interface code")
     from galileo.ui.app_window import AppWindow, PRIMARY_SECTIONS
-    startup_progress.add_steps(len(PRIMARY_SECTIONS) + 1)   # one per screen, plus Options
+    startup_progress.add_steps(len(PRIMARY_SECTIONS) + 2)   # one per screen, plus Options
     window = AppWindow()
 
     startup_progress.report("Starting watchdog")
@@ -108,6 +113,14 @@ def main() -> None:
         start_watchdog(window)
     except Exception:
         logger.exception("Could not start the watchdog")
+
+    startup_progress.report("Starting the safety watch")
+    # The protective stop (SAFE-130 … SAFE-180). The watchdog above covers a hang; this covers the weather.
+    try:
+        from galileo.ui.safety_host import start_safety
+        start_safety(window)
+    except Exception:
+        logger.exception("Could not start the safety watch")
 
     startup_progress.set_reporter(None)
     if progress is not None:
@@ -154,6 +167,20 @@ def main() -> None:
     from galileo.core.compute import shutdown_cpu_executor
     shutdown_cpu_executor(wait=False)
     sys.exit(exit_code)
+
+
+def _run_auto_calibration(args: list[str]) -> int:
+    """Run the auto-calibration command in this process, writing to the pipe the UI reads."""
+    # A windowed build starts with no sys.stdout/stderr even when the parent has redirected them.
+    for name, descriptor in (("stdout", 1), ("stderr", 2)):
+        try:
+            stream = open(descriptor, "w", encoding="utf-8", errors="replace", buffering=1, closefd=False)  # noqa: SIM115 -- lives as long as the process
+            setattr(sys, name, stream)
+        except OSError:
+            logger.debug("No %s to write the command's output to", name, exc_info=True)
+    from galileo.commands.auto_calibration import main as auto_calibration_main
+    sys.argv = ["galileo-auto-calibration", *args]
+    return auto_calibration_main()
 
 
 def _schedule_splash_finish(splash, main_window, started_at: float) -> None:

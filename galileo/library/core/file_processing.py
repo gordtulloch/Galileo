@@ -534,6 +534,9 @@ class FileProcessor:
             elif precalibrated:
                 is_precalibrated = True
                 logger.debug(f"Marking file as pre-calibrated (downloaded from a Seestar): {fileName}")
+            elif hdr.get("DARKMAST"):
+                is_precalibrated = True      # its dark is already off; calibrating would take it off twice
+                logger.debug(f"Marking file as pre-calibrated (dark already subtracted): {fileName}")
 
             # Create new file record
             if hdr.get("OBJECT"):

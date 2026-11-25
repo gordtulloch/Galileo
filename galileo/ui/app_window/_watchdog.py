@@ -26,6 +26,8 @@ def status_text(watchdog: Any) -> str:
         return "Watchdog: off"
     status = watchdog.status
     if status == "tripped":
+        if getattr(watchdog, "roof_left_open", False):
+            return "Watchdog: TRIPPED — ROOF NOT CLOSED: a mount is not confirmed parked"
         return "Watchdog: TRIPPED — mount parked, dome closed"
     if status == "armed":
         return f"Watchdog: armed ({watchdog.timeout_s:g} s)"
@@ -39,7 +41,9 @@ def start_watchdog(window: Any) -> Any:
     from PySide6.QtWidgets import QApplication, QLabel
     from galileo.bus import get_bus
     from galileo.safety import WatchdogService
-    from galileo.ui.session_runner import _build_notify_service, _page_adapter
+    from galileo.ui.session_runner import (
+        _build_notify_service, _page_adapter, refresh_roof_mounts, safety_snapshot,
+    )
     from galileo.watchdog_settings import load_watchdog_settings
 
     label = QLabel()
@@ -61,6 +65,7 @@ def start_watchdog(window: Any) -> Any:
         dome=lambda: _page_adapter(window, "dome"),
         timeout_s=settings["timeout_s"],
         event_bus=get_bus(),
+        roof_mounts=safety_snapshot(window).mounts,
     )
 
     def _notify(detail: str) -> None:  # runs on the watchdog thread
@@ -90,6 +95,8 @@ def start_watchdog(window: Any) -> Any:
         state["ticks"] += 1
         if state["ticks"] % 30 == 0:
             window._watchdog_notify_service = _build_notify_service(window)
+        if state["ticks"] % 5 == 0:
+            refresh_roof_mounts(window)
 
     timer = QTimer(window._window)
     timer.timeout.connect(_tick)

@@ -592,6 +592,9 @@ class _Mount:
     def __init__(self):
         self.parked = 0
 
+    async def get_status(self):
+        return {"at_park": self.parked > 0}
+
     async def park(self):
         self.parked += 1
 
@@ -627,7 +630,13 @@ def _guard_world():
     class Bus:
         def publish(self, event):
             events.append(event)
-    return Guard(Devices(), Runner(), bus=Bus()), mount, monitor, stopped, events
+
+    from galileo.safety_supervisor import MemoryStore, SafetySettings
+    clock = {"now": 0.0}
+    guard = Guard(Devices(), Runner(), bus=Bus(), store=MemoryStore(), settings=SafetySettings,
+                  clock=lambda: clock["now"])
+    guard.clock = clock
+    return guard, mount, monitor, stopped, events
 
 
 @pytest.mark.requirement("TC-HEAD-160")
@@ -644,19 +653,19 @@ def test_tc_head_160_engine_main():
     monitor.is_safe, monitor.explanation = False, "rain"
     aio.run(guard.check_once())
     aio.run(guard.check_once())
-    assert guard.unsafe == {"1": "rain"} and stopped == ["1"] and mount.parked == 1  # acted once, not every poll
-    assert len(events) == 1 and events[0].explanation == "rain"
+    assert "rain" in guard.unsafe["1"] and stopped == ["1"] and mount.parked == 1    # acted once, not every poll
+    assert len(events) == 1 and "rain" in events[0].explanation
     monitor.is_safe = True
     aio.run(guard.check_once())
-    assert not guard.unsafe                                                         # the episode ends; no auto-resume
-    monitor.is_safe = False
+    assert not guard.unsafe and guard.pending("1")                                  # no auto-resume
+    guard.clock["now"] += 901
     aio.run(guard.check_once())
-    assert mount.parked == 2                                                        # a new episode acts again
-    monitor.is_safe = True
-    aio.run(guard.check_once())
+    assert guard.acknowledge("1", "me") == 1 and not guard.pending("1")
     monitor.fail = True                                                             # an unreadable monitor is unsafe
     aio.run(guard.check_once())
-    assert "could not be read" in guard.unsafe["1"] and mount.parked == 3
+    guard.clock["now"] += 61                                                        # acted on after the grace period
+    aio.run(guard.check_once())
+    assert "cannot be read" in guard.unsafe["1"] and guard.pending("1")
 
     # the watchdog is the engine's own, armed with no client attached, and parks every Pier's mount when it trips
     import galileo.watchdog_settings as ws

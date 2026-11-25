@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from galileo.roof import park_roof_mounts, roof_left_open_message
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,6 +181,8 @@ class SessionContext:
     observatory: Any = None
     # The Observatory's ``ResourceArbiter`` (OBS-100); ``None`` = no cross-Pier arbitration.
     arbiter: Any = None
+    # ``() -> [(pier name, mount or None)]`` for every mount under the roof (SAFE-110); ``None`` = just this one.
+    roof_mounts: Callable[[], list] | None = None
     location: Any = None
     max_well_depth: int | None = None
     # True while conditions are safe; ``None`` means no safety monitor is configured.
@@ -337,6 +341,8 @@ class SessionExecutor:
         self.target: tuple[str, float, float] | None = None   # (name, ra_deg, dec_deg), J2000
         self.current_filter: str | None = None
         self._unsafe_logged = False
+        self._roof_left_open = False
+        self.stop_reason = ""
         self._history_started = False
 
     def set_progress_callback(self, callback: Callable[[SessionProgress], None] | None) -> None:
@@ -345,9 +351,11 @@ class SessionExecutor:
 
     # --- Control ------------------------------------------------------------
 
-    def stop(self) -> None:
-        """End the run: ask whatever is in progress to stop, abort the camera and mount, and
+    def stop(self, reason: str = "") -> None:
+        """End the run (``reason="safety"`` for a protective stop, which then owns the roof): ask whatever is in progress to stop, abort the camera and mount, and
         have ``run`` return a ``STOPPED`` result. Safe from any thread."""
+        if reason:
+            self.stop_reason = reason
         if self._stop.is_set():
             return
         self._stop.set()
@@ -485,7 +493,8 @@ class SessionExecutor:
             self._set_state(RunState.COMPLETED, f"Session {self.name!r} completed — {self.frames_captured} frame(s) captured.")
         except _Stopped:
             self._current_block = None
-            self._set_state(RunState.STOPPED, "Session stopped by the user.")
+            self._set_state(RunState.STOPPED, "Session stopped for safety." if self.stop_reason == "safety"
+                            else "Session stopped by the user.")
         except SessionBlockError as exc:
             self._set_state(RunState.ERROR)
             self._record(f"Session ended: {exc}", error=True)
@@ -498,7 +507,13 @@ class SessionExecutor:
             self._set_state(RunState.ERROR)
             self._record(f"Unexpected error: {exc}", error=True)
             self._emit(str(exc))
-        await self._dome_session_sync(start=False)
+        if self.stop_reason != "safety":       # a protective stop parks and closes itself (SAFE-150)
+            await self._dome_session_sync(start=False)
+        if self.state == RunState.COMPLETED and (self._unsafe_logged or self._roof_left_open):
+            # Not "completed": a completed session is removed (SES-210), and this one did not do its work.
+            reason = "unsafe conditions skipped blocks" if self._unsafe_logged else "the roof was left open"
+            self._set_state(RunState.ERROR)
+            self._record(f"Session ended: {reason}.", error=True)
         if arbiter is not None:
             arbiter.end_activity(self.context.pier_name, "dome")
         if self._history_started:
@@ -524,6 +539,8 @@ class SessionExecutor:
             if start:
                 await service.on_sequence_start()
             else:
+                await self._arbitrate_dome("close")      # not while another Pier is imaging under it
+                await self._park_before_closing()        # SAFE-110
                 await service.on_sequence_end()
         except Exception as exc:
             self._record(f"Dome {'open' if start else 'close/park'} with the session failed: {exc}", error=True)
@@ -575,7 +592,9 @@ class SessionExecutor:
         name = type(block).__name__
         label = getattr(block, "display_text", name)
         self._current_block, self._current_index = block, node.index
-        if self._unsafe() and name not in _SHUTDOWN_BLOCKS:
+        if name not in _SHUTDOWN_BLOCKS and self._unsafe():
+            await self._checkpoint()      # a run held for the weather waits here, and is judged again on resume
+        if name not in _SHUTDOWN_BLOCKS and self._unsafe():
             if not self._unsafe_logged:
                 self._unsafe_logged = True
                 self._record("Conditions are unsafe — skipping everything except shutdown blocks.", error=True)
@@ -613,6 +632,17 @@ class SessionExecutor:
             if name in _FATAL_BLOCKS and getattr(exc, "fatal", True):
                 raise SessionAbort(f"{label} failed: {exc}") from exc
             self._record(f"{label} failed: {exc} — continuing.", error=True)
+
+    async def _notify_urgent(self, message: str) -> None:
+        """A safety alert that must reach the operator now, not just the session log."""
+        service = self.context.notify_service
+        if service is None:
+            return
+        try:
+            from galileo.notify import NotificationEvent
+            await service.emit(NotificationEvent.SAFETY_ABORT, message)
+        except Exception:
+            logger.exception("Could not send a safety alert")
 
     async def _notify_unsafe(self) -> None:
         service = self.context.notify_service
@@ -954,6 +984,33 @@ class SessionExecutor:
         if not decision.granted:
             raise SessionBlockError(decision.reason, fatal=False)
 
+    def _mounts_under_roof(self) -> list:
+        ctx = self.context
+        own = [(ctx.pier_name or "this Pier", ctx.mount)] if ctx.mount is not None else []
+        shared = ctx.arbiter is None or ctx.arbiter.scope("dome") == "observatory"
+        if ctx.roof_mounts is None or not shared:
+            return own
+        try:
+            return list(ctx.roof_mounts()) or own
+        except Exception:
+            logger.exception("Could not list the mounts under the roof")
+            return [*own, ("the Observatory", None)]      # park what we can; do not close
+
+    async def _park_before_closing(self) -> None:
+        """SAFE-110: every mount under the roof is parked and confirmed parked, or the roof is not closed."""
+        if self.context.guider is not None:
+            try:
+                await self.context.guider.stop_guiding()
+            except Exception:
+                logger.debug("Could not stop guiding before parking", exc_info=True)
+        unconfirmed = await park_roof_mounts(self._mounts_under_roof())
+        if not unconfirmed:
+            return
+        self._roof_left_open = True
+        message = roof_left_open_message(unconfirmed)
+        await self._notify_urgent(f"Session {self.name!r}: {message}")
+        raise SessionBlockError(message, fatal=False)
+
     async def _do_DomeOpenBlock(self, block: Any) -> None:
         await self._arbitrate_dome("open")
         # DOME-020: through the Pier's DomeService when the app built one.
@@ -963,6 +1020,7 @@ class SessionExecutor:
     async def _do_DomeCloseBlock(self, block: Any) -> None:
         await self._arbitrate_dome("close")
         dome = self._need("dome")
+        await self._park_before_closing()
         await (self.context.dome_service or dome).close_shutter()
 
     async def _do_DomeSyncBlock(self, block: Any) -> None:

@@ -581,6 +581,7 @@ ICONS: dict[str, DrawFn] = {
     "images": _images,
     "sessions": _sessions,
     "mappings": _mappings,
+    "calibration": _flat_panel,
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,

@@ -7,7 +7,7 @@ A session is a plan for a stretch of imaging, built from **blocks** laid out in 
 
 **Loops:** the *FOR Filter* and *FOR Object* blocks repeat everything indented beneath them — once per filter or once per object. Only indented blocks are inside the loop: to put a block in a loop's scope, drag it to the right until it is indented under the loop tile; to take a block out of the loop, drag it to the left. A block that is not indented runs once, after the loop finishes. A loop moves with its body.
 
-**Running:** Galileo first checks the equipment each block needs is connected and the order is valid, and lists any problems rather than starting. While it runs, the card shows the block and frame in progress and a green ▶ on the executing block; it is locked against edits. A bad frame is logged and skipped (three in a row abandon that Image block); a failed slew, plate solve, park or dome-open ends the session so the equipment is not left in a bad state. If the safety monitor reports unsafe, only shutdown blocks (park, dome close, guide stop, warm) still run.
+**Running:** Galileo first checks the equipment each block needs is connected and the order is valid, and lists any problems rather than starting. While it runs, the card shows the block and frame in progress and a green ▶ on the executing block; it is locked against edits. A bad frame is logged and skipped (three in a row abandon that Image block); a failed slew, plate solve, park or dome-open ends the session so the equipment is not left in a bad state. If conditions turn unsafe, every session, however it was started, is stopped by the protective stop: the exposure in progress is abandoned, the mounts are parked and the roof closed. Blocks later in the session, including its Park and Dome Close, do not run; the protective stop does that itself. See the Safety page.
 
 A scheduled session is outlined in red and read-only until it is descheduled.
 
@@ -27,6 +27,10 @@ Lists your saved templates and adds a new session containing all of the chosen t
 
 The blocks you can add. Drag one into a session. A block that needs a Target before it (Plate Solve) can only be dropped below one.
 
+## Estimated total time
+
+The line under each session's blocks: how long all of its operations are expected to take together — exposures and their download, loop repeats, and an allowance for each slew, filter change, autofocus, plate solve, cool-down and so on. It updates as you edit. These are planning figures, not measurements; retries, and any autofocus or meridian flip the session does not list, are not counted. **Schedule** uses it as the session's duration on the calendar.
+
 ## Save
 
 Keeps this session. The first time, it asks for a **name** (it starts with the session's current one); if a saved session of that name already exists on this Pier it asks before replacing it. That name is what the saved session is called on a phone or tablet running MobileConnect, which lists the saved sessions of the Pier it is working on and can run one. A saved (or scheduled) session stays on this screen, with any later edits, even after you close Galileo, until it has completed or you delete it. A session you never saved or scheduled is not kept.
@@ -41,7 +45,7 @@ Fills this session from a saved template. The session must already contain a **S
 
 ## Schedule
 
-Puts this session on the Schedule calendar (Planning › Schedule) so it can be given a start time and run by itself. The card is then outlined in red and read-only. The button becomes **Deschedule**.
+Puts this session on the Schedule calendar (Planning › Schedule) so it can be given a start time and run by itself. Its duration there is the **Estimated total time**. The card is then outlined in red and read-only. The button becomes **Deschedule**.
 
 ## Deschedule
 
@@ -137,7 +141,7 @@ Opens the dome shutter. Refused if the safety monitor says conditions are unsafe
 
 ## Dome Close
 
-Closes the dome shutter.
+Closes the dome shutter. First every mount under the roof (all this Observatory's Piers) is parked and confirmed parked; if one cannot be confirmed, for example because it is not connected, the roof is **left open**, you are alerted and the session ends in error.
 
 ## Dome Sync
 

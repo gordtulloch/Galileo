@@ -427,7 +427,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     # Science has no built-in items; Variable Stars comes only from the VSTarget plugin.
     assert SCIENCE_ITEMS == []
     assert [i[:2] for i in LIBRARY_ITEMS] == [
-        ("images", "Images"), ("sessions", "Sessions"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
+        ("images", "Images"), ("sessions", "Sessions"), ("calibration", "Calibration"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
     ]
 
     from PySide6 import QtWidgets
@@ -441,7 +441,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
     # Science), so check that the core items come first rather than that the menu is exactly them.
     assert ["What's Up Tonight", "Search", "Targets", "Sessions", "Schedule", "History"] in menus
-    assert ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
+    assert ["Images", "Sessions", "Calibration", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 
 @pytest.mark.requirement("TC-UI-020")
@@ -1420,3 +1420,31 @@ def test_star_atlas_failing_minor_kind_does_not_hide_the_others(view, monkeypatc
     view.show_comets = view.show_asteroids = view.show_satellites = True
     view._recompute_minor()
     assert {b["kind"] for b in view._minor} == {mb.COMET, mb.ASTEROID}
+
+
+@pytest.mark.requirement("TC-SKYMAP-020")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("parked, label", [(False, "Park"), (True, "Unpark")])
+def test_star_atlas_details_column_has_full_width_buttons_and_a_park_toggle(window, parked, label):
+    """SKYMAP-020: the details column has Goto, Goto and Centre, Sync and Add to Session, then a Park/Unpark
+    button, one per row; the last reads Park when the mount is unparked and Unpark when it is parked."""
+    from PySide6 import QtWidgets
+    class _Mount:
+        async def get_status(self):
+            return {"at_park": parked, "right_ascension": 1.0, "declination": 10.0}
+
+    _two_piers(window)
+    window._device_pages["mount"]["adapter"] = _Mount()
+    page = window._build_star_atlas_page()
+    names = ["Goto", "Goto and Centre", "Sync", "Add to Session"]
+    buttons = {b.text(): b for b in page.findChildren(QtWidgets.QPushButton)}
+    assert all(n in buttons for n in names), "Goto and Centre is now a button, not only a menu item"
+    assert not buttons["Goto and Centre"].isEnabled(), "needs a selected object, like Goto"
+    _poll(window)             # the park state arrives with the off-thread mount poll
+    window._star_atlas_refresh_markers()
+    park = next(b for b in page.findChildren(QtWidgets.QPushButton) if b.text() in ("Park", "Unpark"))
+    assert park.text() == label and park.isEnabled()
+    column = buttons["Goto"].parentWidget().layout()
+    nested = next(column.itemAt(i).layout() for i in range(column.count()) if column.itemAt(i).layout() is not None
+                  and column.itemAt(i).layout().indexOf(buttons["Goto"]) >= 0)
+    assert [nested.itemAt(i).widget().text() for i in range(nested.count())] == [*names, label]

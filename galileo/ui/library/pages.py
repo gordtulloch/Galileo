@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""The Library section's pages: Images, Sessions, Mappings, Dedup and Cloud.
+"""The Library section's pages: Images, Sessions, Calibration, Mappings, Dedup, Merge and Cloud.
 
-The five screens share state (Images refreshes after a Merge or a Mappings
+The screens share state (Images refreshes after a Merge or a Mappings
 change, and asks Sessions to regenerate after an import), so they are built
 together, once, the first time any of them is shown — opening Galileo on
 another section doesn't pay for reading the whole catalog.
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from galileo.ui.qt_helpers import need
 
 if TYPE_CHECKING:
+    from galileo.ui.library.calibration_widget import CalibrationWidget
     from galileo.ui.library.cloud_sync_dialog import CloudSyncWidget
     from galileo.ui.library.duplicates_widget import DuplicatesWidget
     from galileo.ui.library.images_widget import ImagesWidget
@@ -40,6 +41,7 @@ class LibraryScreens:
         # Built together on first use (see _build); typed non-Optional because nothing reads them before then.
         self.images: ImagesWidget = None  # type: ignore[assignment]
         self.sessions: SessionsWidget = None  # type: ignore[assignment]
+        self.calibration: CalibrationWidget = None  # type: ignore[assignment]
         self.mappings: MappingsWidget = None  # type: ignore[assignment]
         self.duplicates: DuplicatesWidget = None  # type: ignore[assignment]
         self.merge: MergeWidget = None  # type: ignore[assignment]
@@ -58,6 +60,7 @@ class LibraryScreens:
     def _build(self) -> None:
         if self._pages is not None:
             return
+        from galileo.ui.library.calibration_widget import CalibrationWidget
         from galileo.ui.library.cloud_sync_dialog import CloudSyncWidget
         from galileo.ui.library.duplicates_widget import DuplicatesWidget
         from galileo.ui.library.images_widget import ImagesWidget
@@ -67,6 +70,7 @@ class LibraryScreens:
 
         self.images = ImagesWidget()
         self.sessions = SessionsWidget()
+        self.calibration = CalibrationWidget()
         self.mappings = MappingsWidget()
         self.duplicates = DuplicatesWidget()
         self.merge = MergeWidget()
@@ -81,6 +85,7 @@ class LibraryScreens:
         self._pages = {
             "images": self.images,
             "sessions": self.sessions,
+            "calibration": self.calibration,
             "mappings": self.mappings,
             "dedup": self.duplicates,
             "merge": self.merge,

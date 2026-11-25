@@ -37,6 +37,12 @@ class AlpacaCameraAdapter(AlpacaAdapter):
                 await self._put("gain", Gain=int(gain))
             except Exception:
                 logger.warning("Could not set gain %s on %s; exposing with its current gain", gain, self.base_url)
+        offset = int(kwargs.get("offset") or 0)      # was silently dropped, so the camera's own offset was used
+        if offset:
+            try:
+                await self._put("offset", Offset=offset)
+            except Exception:
+                logger.warning("Could not set offset %s on %s; exposing with its current offset", offset, self.base_url)
         binning = int(kwargs.get("binning") or 1)
         if binning != getattr(self, "_binning", 1):
             try:
@@ -50,6 +56,15 @@ class AlpacaCameraAdapter(AlpacaAdapter):
         dark = any(word in frame_type.lower() for word in ("dark", "bias"))
         await self._put("startexposure", Duration=duration, Light=not dark)
         self._exposure_s = float(duration)
+
+    async def read_gain_offset(self) -> dict:
+        """The camera's current ``Gain`` and ``Offset``; ``None`` for one it does not have."""
+        async def read(attribute: str):
+            try:
+                return await self._get(attribute)
+            except Exception:
+                return None
+        return {"gain": await read("gain"), "offset": await read("offset")}
 
     async def abort_exposure(self) -> None:
         await self._put("abortexposure")
@@ -90,6 +105,33 @@ class AlpacaCameraAdapter(AlpacaAdapter):
 
     def get_cooler_power(self) -> float:
         return float(self._properties.get("COOLER_POWER", 0.0))
+
+    async def set_cooler(self, on: bool) -> None:
+        """Switch the cooler on or off without touching the target temperature."""
+        await self._put("cooleron", CoolerOn=bool(on))
+
+    async def read_cooling(self) -> dict:
+        """Poll the camera for its cooling state (see the INDI adapter for the keys). Each
+        ASCOM property is optional, so one the driver lacks reads as unknown rather than failing."""
+        async def read(attribute: str):
+            try:
+                return await self._get(attribute)
+            except Exception:
+                return None
+        temperature = await read("ccdtemperature")
+        power = await read("coolerpower")
+        cooler_on = await read("cooleron")
+        target = await read("setccdtemperature")
+        if temperature is not None:
+            self._properties["CCD_TEMPERATURE"] = temperature
+        if power is not None:
+            self._properties["COOLER_POWER"] = power
+        return {
+            "temperature": float("nan") if temperature is None else float(temperature),
+            "power": 0.0 if power is None else float(power),
+            "cooler_on": None if cooler_on is None else bool(cooler_on),
+            "target": None if target is None else float(target),
+        }
 
     async def warm_up(self) -> None:
         await self._put("cooleron", CoolerOn=False)

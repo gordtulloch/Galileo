@@ -562,8 +562,13 @@ class AppWindowSettingsPagesMixin:
         layout.addLayout(form)
 
         backend_combo = QComboBox()
-        for key, label in all_backends().items():
-            backend_combo.addItem(label, key)
+
+        def fill_backends() -> None:
+            backend_combo.clear()
+            for key, label in all_backends().items():
+                backend_combo.addItem(label, key)
+
+        fill_backends()
         backend_combo.setToolTip("Which solver the application uses by default: ASTAP, a local astrometry.net "
                                  "installation, the nova.astrometry.net web service, ESA's tetra3, or one "
                                  "added by a plugin (such as Skyshot).")
@@ -810,7 +815,19 @@ class AppWindowSettingsPagesMixin:
                 solve_page["reload"]()
             self._window.statusBar().showMessage(f"Saved Solve settings for Pier {self._current_pier.name!r}.", 4000)
 
+        def refresh_choices() -> None:
+            """Relist the solvers after a plugin change, leaving the other fields as they are."""
+            chosen = backend_combo.currentData()
+            saved = get_solver_backend(self._current_pier)[0]
+            fill_backends()
+            # ASTAP is also what shows when the saved solver was missing, so prefer the saved one then.
+            index = backend_combo.findData(saved if chosen == "astap" else chosen)
+            if index < 0:
+                index = backend_combo.findData(saved)
+            backend_combo.setCurrentIndex(max(index, 0))
+
         save_btn.clicked.connect(save)
         self._solve_settings_refresh = refresh
+        self._solve_choices_refresh = refresh_choices
         refresh()
         return page

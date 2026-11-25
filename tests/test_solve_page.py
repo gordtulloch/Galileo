@@ -182,7 +182,8 @@ def test_tc_plt_070_solve_is_a_top_level_section(window):
     assert [s[0] for s in PRIMARY_SECTIONS].index("solve") > [s[0] for s in PRIMARY_SECTIONS].index("imaging")
     assert ("solve", "Solve", "solve") in OPTIONS_ITEMS
     assert "solve" in ICONS and not make_icon("solve", "#ffffff").isNull()
-    assert set(window._device_pages["solve"]) == {"reload", "refresh_target", "capture_and_solve"}      # and no auto-connect
+    assert set(window._device_pages["solve"]) == {"reload", "refresh_target", "refresh_solver_modes",
+                                                    "capture_and_solve", "refresh_dark_available"}      # and no auto-connect
 
 
 @pytest.mark.requirement("TC-PLT-060")
@@ -590,7 +591,7 @@ def test_tc_plt_070_load_and_slew_solves_the_chosen_file(window, page, tmp_path,
     frame = _frame(tmp_path, "picked.fits")
     devices = _Devices(window, page, GOOD)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(frame), "")))
-    page.load_btn.click()
+    page.load_disk_action.trigger()
     assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
     assert [c[0] for c in devices.calls] == ["slew"]
     assert page._rows[0].status == "solved"
@@ -600,8 +601,69 @@ def test_tc_plt_070_cancelling_the_file_dialog_does_nothing(window, page, monkey
     """PLT-070: Dismissing the Load & Slew file dialog starts nothing."""
     _open(window)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
-    page.load_btn.click()
+    page.load_disk_action.trigger()
     assert not page._running.get(page._pier_key()) and page.table.rowCount() == 0
+
+
+def _library_row(frame_id: str, path, frame_type: str = "LIGHT FRAME", name: str = "M 31"):
+    from galileo.library.models.fits_file import fitsFile
+    fitsFile.create(fitsFileId=frame_id, fitsFileName=str(path), fitsFileType=frame_type, fitsFileObject=name,
+                    fitsFileDate="2026-11-01")
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_load_and_slew_solves_a_library_frame(window, page, tmp_path, monkeypatch):
+    """PLT-070: Load & Slew solves the Library frame picked in the chooser and slews the mount to its position."""
+    from galileo.ui.solve_library_picker import LibraryFrameDialog
+    _open(window)
+    _library_row("a", _frame(tmp_path, "library.fits"))
+    devices = _Devices(window, page, GOOD)
+
+    def choose(dialog):
+        dialog.table.selectRow(0)
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(LibraryFrameDialog, "exec", choose)
+    page.load_library_action.trigger()
+    assert _pump(window, lambda: not page._running.get(page._pier_key()) and page.table.rowCount() == 1)
+    assert [c[0] for c in devices.calls] == ["slew"]
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_library_chooser_lists_and_searches_light_frames(window, tmp_path):
+    """PLT-070: The chooser offers only light frames, narrowed by the search, and nothing is loadable until one is picked."""
+    from galileo.ui.solve_library_picker import LibraryFrameDialog
+    _library_row("a", tmp_path / "a.fits", name="M 31")
+    _library_row("b", tmp_path / "b.fits", name="M 42")
+    _library_row("c", tmp_path / "c.fits", frame_type="DARK FRAME")
+    dialog = LibraryFrameDialog()
+    assert dialog.table.rowCount() == 2 and not dialog.load_button.isEnabled()
+    dialog.search.setText("42")
+    assert dialog.table.rowCount() == 1
+    dialog.table.selectRow(0)
+    assert dialog.selected()["id"] == "b" and dialog.load_button.isEnabled()
+
+
+@pytest.mark.requirement("TC-PLT-070")
+@pytest.mark.priority("MVP")
+def test_tc_plt_070_library_chooser_sorts_by_column_header(window, tmp_path):
+    """PLT-070: Clicking a header sorts the chooser, numbers as numbers, and the picked row is still the frame loaded."""
+    from galileo.ui.solve_library_picker import LibraryFrameDialog
+    for frame_id, name in (("a", "M 31"), ("b", "M 2"), ("c", "m 110")):
+        _library_row(frame_id, tmp_path / f"{frame_id}.fits", name=name)
+    dialog = LibraryFrameDialog(theme=window._theme)
+
+    def objects():
+        return [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())]
+
+    dialog.table.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
+    assert objects() == ["M 2", "M 31", "m 110"]
+    dialog.table.selectRow(0)
+    assert dialog.selected()["id"] == "b"
+    dialog.search.setText("m")                         # a refreshed list keeps the chosen order
+    assert objects() == ["M 2", "M 31", "m 110"]
 
 
 # ---------------------------------------------------------------------------
@@ -920,3 +982,83 @@ def test_tc_img_110_solve_preview_is_debayered_when_the_camera_or_header_says_co
     header["BAYERPAT"] = "GRBG"
     fits.writeto(tagged, data, header)
     assert load_preview(str(tagged)).ndim == 3
+
+
+@pytest.mark.requirement("TC-PLUG-220")
+@pytest.mark.priority("P2")
+def test_tc_plug_220_solver_installed_while_running_is_offered_at_once(window, page):
+    """PLUG-220 / PLUG-190: a solver registered after the window is built gets a Solver Mode button and an
+    Options > Solve entry without a restart, and both go when it is unregistered."""
+    from PySide6.QtWidgets import QComboBox
+
+    from galileo.platesolve import SolverBackend, SolverBackendRegistry
+
+    class Late(SolverBackend):
+        key = "late"
+        label = "Late solver"
+
+    window._on_pier_changed()
+    combo = next(w for w in window._options_page.findChildren(QComboBox) if w.toolTip().startswith("Which solver"))
+    SolverBackendRegistry.register(Late(), owner="LatePlugin")
+    try:
+        window._sync_solver_choices()
+        window._sync_solver_choices()                      # repeating adds nothing twice
+        radios = [r for r, name in page._mode_backends.items() if name == "late"]
+        assert [r.text() for r in radios] == ["Late solver"]
+        assert combo.findData("late") >= 0
+        radios[0].setChecked(True)
+        assert page._selected_backend() == "late"
+    finally:
+        SolverBackendRegistry.unregister_owner("LatePlugin")
+    window._sync_solver_choices()
+    assert "late" not in page._mode_backends.values() and combo.findData("late") < 0
+    assert page.astap_radio.isChecked()
+
+
+def test_tc_plt_070_dark_availability_is_shown_and_ticks_subtract_dark(window, page, monkeypatch):
+    """PLT-070: the screen says whether a dark master matches, ticks Subtract dark if so, and keeps an override."""
+    from galileo import dark_master
+    monkeypatch.setattr(page, "_frame_metadata", lambda: {"telescope": "T", "instrument": "C"})
+    monkeypatch.setattr(dark_master, "find_dark_master_path",
+                        lambda telescope, instrument, exposure, bx, by: "/x/Master-Dark.fits" if exposure == 5.0 else None)
+    _open(window)
+    page.refresh_dark_available()
+    assert page.dark_available_label.text() == "Dark available" and page.subtract_dark_check.isChecked()
+    assert "Master-Dark.fits" in page.dark_available_label.toolTip()
+
+    page.exposure_spin.setValue(7.0)
+    assert page.dark_available_label.text() == "No dark available" and not page.subtract_dark_check.isChecked()
+
+    page.exposure_spin.setValue(5.0)
+    page.subtract_dark_check.click()                       # the user overrides
+    page.refresh_dark_available()
+    assert not page.subtract_dark_check.isChecked()
+    page.exposure_spin.setValue(7.0)
+    page.exposure_spin.setValue(5.0)
+    assert not page.subtract_dark_check.isChecked()        # remembered for that setup
+
+
+def test_tc_plt_070_subtract_dark_is_applied_before_solving(window, page, monkeypatch):
+    """PLT-070: with Subtract dark ticked, the solver is given the frame with the dark master taken off."""
+    from galileo.platesolve import SolveAction
+    from astropy.io import fits
+
+    from galileo import dark_master
+    devices = _Devices(window, page, GOOD)
+    monkeypatch.setattr(page, "_frame_metadata", lambda: {"telescope": "T", "instrument": "C"})
+    monkeypatch.setattr(dark_master, "find_dark_master_path", lambda *a: "/x/Master-Dark.fits")
+    monkeypatch.setattr(dark_master, "load_master_data", lambda path: np.full((60, 80), 10000.0, dtype=np.float32))
+    seen = []
+
+    async def solve(path, *args, **kwargs):
+        header = fits.getheader(path)
+        seen.append((header.get("DARKMAST"), float(fits.getdata(path).max())))
+        return GOOD
+
+    devices.solver.solve = solve
+    page.action_radios[SolveAction.NOTHING].setChecked(True)
+    _open(window)
+    page.capture_and_solve()
+    assert _pump(window, lambda: bool(seen))
+    assert seen[0] == ("Master-Dark.fits", 0.0)         # every pixel was below the dark
+    _pump(window, lambda: not page._running.get(page._pier_key()))

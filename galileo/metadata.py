@@ -51,6 +51,7 @@ _KEYWORD_MAP = {
     "software": "SWCREATE",
     "total_exposure_s": "EXPTOTAL",
     "frames_combined": "NCOMBINE",
+    "dark_master": "DARKMAST",
 }
 
 

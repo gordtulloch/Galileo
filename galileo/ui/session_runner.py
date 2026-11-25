@@ -33,6 +33,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from galileo.engine.runner import run_session
+from galileo.roof import SafetySnapshot
 from galileo.session_context import assemble_context
 from galileo.session_exec import (
     SessionContext,
@@ -99,6 +100,66 @@ def _build_notify_service(window: Any) -> Any:
     return build_notify_service(getattr(window, "_current_observatory", None))
 
 
+def _observatory_piers(window: Any) -> list[Any]:
+    """The selected Pier first, then every other Pier of the selected Observatory (OBS-140)."""
+    from galileo.current_object import pier_key
+    selected = getattr(window, "_current_pier", None)
+    piers = [selected] if selected is not None else []
+    observatory = getattr(window, "_current_observatory", None)
+    if observatory is None:
+        return piers
+    try:
+        from galileo.observatory import list_piers
+        others = list_piers(observatory)
+    except Exception:
+        logger.exception("Could not list the Observatory's Piers")
+        return piers
+    return piers + [p for p in others if pier_key(p) != pier_key(selected)]
+
+
+def _roof_mounts(window: Any) -> list[tuple[str, Any]]:
+    """``(pier name, mount or None)`` for every Pier under the roof that has a mount, connected or configured."""
+    from galileo.current_object import pier_key
+    selected_key = pier_key(getattr(window, "_current_pier", None))
+    piers = _observatory_piers(window)
+    if not piers:
+        mount = _page_adapter(window, "mount")
+        return [("this Pier", mount)] if mount is not None else []
+    found = []
+    for pier in piers:
+        key = pier_key(pier)
+        mount = _page_adapter(window, "mount", key, key == selected_key)
+        try:
+            from galileo.observatory import get_device_config
+            configured = get_device_config(pier, "mount") is not None
+        except Exception:
+            logger.debug("Could not read a Pier's mount configuration", exc_info=True)
+            configured = True      # unknown: do not assume there is no telescope there
+        if mount is not None or configured:
+            found.append((getattr(pier, "name", "") or "this Pier", mount))
+    return found
+
+
+def safety_snapshot(window: Any) -> SafetySnapshot:
+    """The window's one ``SafetySnapshot``, which session and watchdog threads read."""
+    snapshot = getattr(window, "_safety_snapshot", None)
+    if snapshot is None:
+        snapshot = window._safety_snapshot = SafetySnapshot()
+    return snapshot
+
+
+def refresh_safety_verdict(window: Any) -> None:
+    """Judge the Safety page now and publish the result. UI thread only (the rules are widget state)."""
+    from galileo.safety import LiveSafetyMonitor
+    evaluate = getattr(window, "_safety_evaluation", None)
+    safety_snapshot(window).set_safe(evaluate is None or LiveSafetyMonitor(evaluate).is_safe)
+
+
+def refresh_roof_mounts(window: Any) -> None:
+    """Publish the mounts under the roof as they are connected now. UI thread only."""
+    safety_snapshot(window).set_mounts(_roof_mounts(window))
+
+
 def build_session_context(window: Any, pier: Any = None, camera_slot: str | None = None) -> SessionContext:
     """Snapshot a Pier's connected devices and services for one run. Call on the UI thread.
     Anything not connected is left ``None``; the executor's pre-flight reports it.
@@ -157,13 +218,18 @@ def build_session_context(window: Any, pier: Any = None, camera_slot: str | None
         logger.exception("Could not gather the FITS header context")
         frame_context = {}
 
+    refresh_safety_verdict(window)
+    refresh_roof_mounts(window)
+    snapshot = safety_snapshot(window)
+
     return assemble_context(
         pier=pier, key=key, camera_slot=camera_slot, camera=camera, mount=mount, filter_wheel=wheel,
         focuser=focuser, rotator=_page_adapter(window, "rotator", key, selected),
         dome=_page_adapter(window, "dome", key, selected), dome_service=_dome_service(window, key, selected),
         guider=guider, flat_panel=_page_adapter(window, "flat_panel", key, selected),
         arbiter=_observatory_arbiter(window), observatory=getattr(window, "_current_observatory", None),
-        notify_service=_build_notify_service(window), location=location, frame_context=frame_context)
+        notify_service=_build_notify_service(window), location=location, frame_context=frame_context,
+        is_safe=snapshot.is_safe, roof_mounts=snapshot.mounts)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +286,6 @@ class SessionRunController(QObject):
         self._timer.timeout.connect(self._tick)
         self._takeover: dict[Any, Any] = {}         # Pier key -> session whose Run is waiting for a scheduled run to stop
         self._blocked: dict[Any, str] = {}          # Pier key -> why the safety monitor holds its jobs
-        self._safety_paused: set[Any] = set()       # runs we paused for unsafe conditions
         self._preconnected: set[int] = set()        # ids of scheduled jobs whose Pier was connected ahead of their start
         self._armed_start: Any = None               # the start time a one-shot tick is already armed for
         self._safety_timer = QTimer(self)
@@ -347,7 +412,6 @@ class SessionRunController(QObject):
 
     def _on_finished(self, key: Any, state: str) -> None:
         run = self._runs.pop(key, None)
-        self._safety_paused.discard(key)
         if run is None:
             return
         if run.thread is not None:
@@ -395,41 +459,25 @@ class SessionRunController(QObject):
         """Why the Pier's scheduled jobs are held by the safety monitor, or ``""``."""
         return self._blocked.get(self._key() if key is None else key, "")
 
+    def stop_all_for_safety(self) -> None:
+        """The protective stop (SAFE-150): end every run, manual or scheduled, and drop any queued takeover."""
+        self._takeover.clear()
+        for run in list(self._runs.values()):
+            run.executor.stop(reason="safety")
+
     def _enforce_safety(self) -> None:
-        """Pause a scheduler-started run while conditions are unsafe and resume it once they
-        are safe again (SCHED-060). A manual Run is left to the user. Runs on the UI thread
-        every few seconds, since the safety page's rules are Qt-side state."""
+        """Every few seconds, on the UI thread: say why scheduled jobs are held, and publish the verdict and the
+        roof's mounts to running sessions. Stopping them is the protective stop's job (``galileo.safety_supervisor``)."""
         for key, run in list(self._runs.items()):
-            if run.manual:
+            if run.manual or run.scheduler is None:
                 continue
-            reason = run.scheduler.safety_block_reason()
-            if reason:
-                self._set_blocked(key, reason)
-                if run.executor.state.value == "running":
-                    run.job.run_log.append(f"Paused: conditions are unsafe ({reason}).")
-                    run.executor.pause()
-                    self._safety_paused.add(key)
-            elif key in self._safety_paused:
-                self._safety_paused.discard(key)
-                self._set_blocked(key, "")
-                run.job.run_log.append("Conditions are safe again — resuming.")
-                run.executor.resume()
+            self._set_blocked(key, run.scheduler.safety_block_reason())
+        if self._runs:
+            refresh_safety_verdict(self._window)
+            refresh_roof_mounts(self._window)
 
     def _observatory_piers(self) -> list[Any]:
-        """The selected Pier first, then every other Pier of the selected Observatory (OBS-140)."""
-        from galileo.current_object import pier_key
-        selected = getattr(self._window, "_current_pier", None)
-        piers = [selected] if selected is not None else []
-        observatory = getattr(self._window, "_current_observatory", None)
-        if observatory is None:
-            return piers
-        try:
-            from galileo.observatory import list_piers
-            others = list_piers(observatory)
-        except Exception:
-            logger.exception("Could not list the Piers to service their scheduled sessions")
-            return piers
-        return piers + [p for p in others if pier_key(p) != pier_key(selected)]
+        return _observatory_piers(self._window)
 
     def _tick(self) -> None:
         """Start each Pier's next due scheduled job, for every Pier of the Observatory that is idle

@@ -11,65 +11,22 @@ import operator
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+
+from galileo.roof import park_roof_mounts, roof_left_open_message
 
 logger = logging.getLogger(__name__)
 
 
-class SafetyState(Enum):
-    SAFE = "safe"
-    WARNING = "warning"
-    ABORTED = "aborted"
-    IDLE = "idle"
-
-
-@dataclass
-class SafetyPolicy:
-    """Per-Observatory safety response policy (SAFE-030)."""
-    abort_on_unsafe: bool = True
-    warn_on_borderline: bool = True
-
-
 class SafetyMonitorService:
-    """Polls a safety monitor device and acts on unsafe conditions (SAFE-010 … SAFE-100)."""
+    """The internet advisory data sources (SAFE-050, SAFE-090, SAFE-100). Display only: what stops equipment is
+    ``galileo.safety_supervisor``."""
 
-    def __init__(self, monitor=None, event_bus=None, policy: SafetyPolicy | None = None) -> None:
-        self._monitor = monitor
-        self._event_bus = event_bus
-        self.policy = policy or SafetyPolicy()
-        self._state_value = SafetyState.IDLE  # backing store
-        self._require_user_confirm = False
-        self._sequences: list = []
-        self._mounts: list = []
+    def __init__(self) -> None:
         self._forecast_client = None
         self._kp_client = None
         self._smoke_client = None
-        self.last_abort_trigger: str = ""
-
-    @property
-    def state(self) -> SafetyState:
-        return self._state_value
-
-    @state.setter
-    def state(self, value: SafetyState) -> None:
-        self._state_value = value
-
-    # Alias so tests can set safety_service._state directly
-    @property
-    def _state(self) -> SafetyState:
-        return self._state_value
-
-    @_state.setter
-    def _state(self, value: SafetyState) -> None:
-        self._state_value = value
 
     # --- Configuration ---------------------------------------------------
-
-    def register_sequence(self, seq) -> None:
-        self._sequences.append(seq)
-
-    def register_mount(self, mount) -> None:
-        self._mounts.append(mount)
 
     def set_forecast_client(self, client) -> None:
         self._forecast_client = client
@@ -79,42 +36,6 @@ class SafetyMonitorService:
 
     def set_smoke_client(self, client) -> None:
         self._smoke_client = client
-
-    # --- Polling (SAFE-010, SAFE-070, SAFE-080) --------------------------
-
-    async def poll_and_react(self) -> None:
-        """Poll the monitor; abort sequences and park mounts if unsafe."""
-        await self._monitor.poll()
-
-        if not self._monitor.is_safe:
-            self.state = SafetyState.ABORTED
-            self.last_abort_trigger = f"SafetyMonitor:{getattr(self._monitor, 'name', '')}"
-
-            if self.policy.abort_on_unsafe:
-                await asyncio.gather(
-                    *(seq.abort() for seq in self._sequences),
-                    return_exceptions=True,
-                )
-                await asyncio.gather(
-                    *(mount.park() for mount in self._mounts),
-                    return_exceptions=True,
-                )
-
-            if self._event_bus:
-                from galileo.bus import SafetyUnsafeEvent
-                self._event_bus.publish(SafetyUnsafeEvent(
-                    source=getattr(self._monitor, "name", ""),
-                    explanation=getattr(self._monitor, "explanation", ""),
-                ))
-
-    # --- Resume guard (SAFE-040) -----------------------------------------
-
-    async def can_resume(self) -> bool:
-        if self.state != SafetyState.ABORTED:
-            return True
-        if not self._monitor.is_safe:
-            return False
-        return not self._require_user_confirm
 
     # --- Advisory data sources (SAFE-050, SAFE-090, SAFE-100) -----------
 
@@ -220,6 +141,7 @@ class WeatherSafetyRule:
     safety_related: bool = False
     operator: str = ">="
     threshold: float = 0.0
+    action: str = "stop"      # SAFE-030: "stop" or "warn"
 
     def __post_init__(self) -> None:
         if self.operator not in UNSAFE_OPERATORS:
@@ -264,17 +186,18 @@ class WeatherSafetyStatus:
 
     is_safe: bool = True
     violations: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> WeatherSafetyStatus:
     """Evaluate *rules* (an Observatory's saved weather safety rules) against
     *readings* (``WeatherController.get_readings()``) and return the overall
-    verdict plus which rules tripped. Advisory/display-only (EQP-WX-020) —
-    the caller must not treat this as an automated-abort trigger; see this
-    module's note above. A rule not marked ``safety_related``, or whose
+    verdict plus which rules tripped (EQP-WX-020). A breached ``stop`` rule is
+    authoritative; a ``warn`` rule only appears in ``warnings`` (SAFE-030). A rule not marked ``safety_related``, or whose
     reading is currently unavailable (``None``), is skipped rather than
     counted as either safe or unsafe."""
     violations = []
+    warnings = []
     for rule in rules:
         if not rule.safety_related:
             continue
@@ -286,8 +209,8 @@ def evaluate_weather_safety(readings: dict, rules: list[WeatherSafetyRule]) -> W
         except TypeError:
             continue
         if unsafe:
-            violations.append(rule.describe())
-    return WeatherSafetyStatus(is_safe=not violations, violations=violations)
+            (warnings if rule.action == "warn" else violations).append(rule.describe())
+    return WeatherSafetyStatus(is_safe=not violations, violations=violations, warnings=warnings)
 
 
 class LiveSafetyMonitor:
@@ -332,22 +255,25 @@ class WatchdogService:
     fires when the Qt/asyncio loop is hung or blocked — which is the whole point: a
     watchdog scheduled on the loop it is watching would hang with it. The application calls
     :meth:`heartbeat` from its event loop; if no heartbeat arrives for *timeout_s* seconds
-    the watchdog trips once: it parks the mount, then closes the dome shutter (each on a
-    private event loop in the watchdog thread), publishes a ``SafetyUnsafeEvent`` on the
+    the watchdog trips once: it parks every mount under the roof, then closes the dome shutter only if all are
+    confirmed parked (SAFE-110; each on a private event loop in the watchdog thread), publishes a ``SafetyUnsafeEvent`` on the
     bus and invokes the *on_trip* callbacks (notifications, UI). It does not protect
     against the whole process being killed; where an INDI server is in use the server-side
     ``indi_watchdog`` driver covers that (SDD 4.16).
 
     *mount* / *dome* may be devices or zero-argument callables returning the device that is
-    connected **now** (``None`` if none), so devices connected after start-up are covered.
+    connected **now** (``None`` if none), so devices connected after start-up are covered. *roof_mounts* is
+    ``() -> [(pier name, mount or None)]`` for every mount under the roof; without it *mount* is the only one.
     """
 
-    #: Longest a single park/close call may take before the watchdog moves on (seconds).
+    #: Longest the roof close may take before the watchdog moves on (seconds).
     ACTION_TIMEOUT_S = 120.0
 
     def __init__(self, mount=None, dome=None, timeout_s: float = 300.0, event_bus=None,
-                 on_trip=None) -> None:
+                 on_trip=None, roof_mounts=None) -> None:
         self._mount = mount
+        self._roof_mounts = roof_mounts
+        self.roof_left_open = False
         self._dome = dome
         self.timeout_s = timeout_s
         self._event_bus = event_bus
@@ -376,6 +302,7 @@ class WatchdogService:
             return
         self._stop_event.clear()
         self._tripped = False
+        self.roof_left_open = False
         self.trip_detail = ""
         self.heartbeat()
         self._thread = threading.Thread(target=self._run, name="galileo-watchdog", daemon=True)
@@ -430,6 +357,7 @@ class WatchdogService:
         self._tripped = True
         self.trip_detail = detail
         self._emergency_park()
+        detail = self.trip_detail
         if self._event_bus:
             try:
                 from galileo.bus import SafetyUnsafeEvent
@@ -447,12 +375,34 @@ class WatchdogService:
         return device() if callable(device) and not hasattr(device, "park") and not hasattr(device, "close_shutter") else device
 
     def _emergency_park(self) -> None:
-        mount = self._safe_resolve(self._mount)
+        """Park every mount under the roof, then close it only if all are confirmed parked (SAFE-110)."""
         dome = self._safe_resolve(self._dome)
-        if mount is not None:
-            self._run_action("park the mount", mount.park)
-        if dome is not None:
-            self._run_action("close the dome shutter", dome.close_shutter)
+        mounts: list = []
+        listed = True
+        try:
+            if self._roof_mounts is not None:
+                mounts = list(self._roof_mounts())
+        except Exception:
+            logger.exception("Watchdog: could not list the mounts under the roof")
+            listed = False
+        if not mounts:
+            mount = self._safe_resolve(self._mount)
+            mounts = [("this Pier", mount)] if mount is not None else []
+        if not listed:        # park what can be reached, but do not close a roof over mounts nobody can name
+            mounts.append(("the Observatory", None))
+        try:
+            unconfirmed = asyncio.run(park_roof_mounts(mounts))
+        except Exception:
+            logger.exception("Watchdog: failed to park the mounts")
+            unconfirmed = [name for name, _mount in mounts]
+        if dome is None:
+            return
+        if unconfirmed:
+            self.roof_left_open = True
+            self.trip_detail += " " + roof_left_open_message(unconfirmed)
+            logger.error("Watchdog: %s", roof_left_open_message(unconfirmed))
+            return
+        self._run_action("close the dome shutter", dome.close_shutter)
 
     def _safe_resolve(self, device):
         try:

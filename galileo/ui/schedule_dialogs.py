@@ -64,7 +64,7 @@ class _EditTimeDialog(QDialog):
         form.addRow(self.end_check, self.end_edit)
 
         self.duration_spin = QDoubleSpinBox()
-        self.duration_spin.setRange(1.0, 1440.0)
+        self.duration_spin.setRange(1.0, 10080.0)
         self.duration_spin.setSuffix(" min")
         self.duration_spin.setValue(job.duration_minutes or job.DEFAULT_DURATION_MINUTES)
         self.duration_spin.setToolTip("Used to size the block when no end time is set.")

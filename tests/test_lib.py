@@ -898,12 +898,12 @@ def library_menu(window):
 @pytest.mark.requirement("TC-LIB-010")
 @pytest.mark.priority("MVP")
 def test_library_section_menu_lists_the_astrofiler_screens(window):
-    """The Library section opens onto Images, Sessions, Mappings, Dedup, Merge Objects and Cloud."""
+    """The Library section opens onto Images, Sessions, Calibration, Mappings, Dedup, Merge Objects and Cloud."""
     from PySide6 import QtWidgets
 
     page = library_menu(window)
     buttons = [" ".join(b.text().split()) for b in page._secondary_nav.findChildren(QtWidgets.QToolButton)]
-    assert buttons == ["Images", "Sessions", "Mappings", "Dedup", "Merge Objects", "Cloud"]
+    assert buttons == ["Images", "Sessions", "Calibration", "Mappings", "Dedup", "Merge Objects", "Cloud"]
 
 
 @pytest.mark.requirement("TC-LIB-010")
@@ -2272,3 +2272,68 @@ def test_tc_lib_190_origin_listing_walks_rawdata_and_reports_each_fits_file():
     assert [(f["name"], f["path"], f["size"], f["folder_name"]) for f in files] == [
         ("M42_001.fits", "RawData/M42/M42_001.fits", 2048, "M42")]
     assert files[0]["telescope_type"] == "Celestron Origin"
+
+
+@pytest.mark.requirement("TC-LIB-230")
+@pytest.mark.priority("P2")
+def test_tc_lib_230_calibration_screen_builds_only_the_switches_that_apply(qt_app):
+    """LIB-230: the Calibration screen turns its parameters into command-line switches, omitting ignored ones."""
+    from galileo.ui.library.calibration_widget import CalibrationWidget
+
+    widget = CalibrationWidget()
+    widget.dry_run_check.setChecked(True)
+    widget.session_edit.setText("12")
+    assert widget.arguments() == ["--operation", "all"]     # `all` ignores both, so neither is offered
+    assert not widget.dry_run_check.isEnabled() and not widget.session_edit.isEnabled()
+
+    widget.operation_combo.setCurrentIndex(widget.operation_combo.findData("masters"))
+    widget.force_check.setChecked(True)
+    widget.verbose_check.setChecked(True)
+    assert widget.arguments() == ["--operation", "masters", "--session=12", "--dry-run", "--force", "--verbose"]
+
+
+@pytest.mark.requirement("TC-LIB-230")
+@pytest.mark.priority("P2")
+def test_tc_lib_230_calibration_screen_shows_the_command_output(qt_app, monkeypatch):
+    """LIB-230: running the command shows its output and result in the frame on the same screen."""
+    import sys
+    import time
+    from galileo.ui.library.calibration_widget import CalibrationWidget
+
+    widget = CalibrationWidget()
+    monkeypatch.setattr(widget, "command", lambda: (sys.executable, ["-m", "galileo.commands.auto_calibration", "--help"]))
+    widget.run()
+    assert widget.stop_button.isEnabled() and not widget.run_button.isEnabled()
+    deadline = time.monotonic() + 60
+    while widget.is_running() and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.01)
+    assert "--operation" in widget.output.toPlainText()
+    assert widget.status_label.text() == "Finished successfully"
+    assert widget.run_button.isEnabled() and not widget.stop_button.isEnabled()
+
+
+@pytest.mark.requirement("TC-LIB-230")
+@pytest.mark.priority("P2")
+def test_tc_lib_230_clearing_masters_needs_confirmation(qt_app, monkeypatch):
+    """LIB-230: declining the confirmation does not start the destructive clear-masters operation."""
+    from galileo.ui.library.calibration_widget import CalibrationWidget
+
+    widget = CalibrationWidget()
+    widget.operation_combo.setCurrentIndex(widget.operation_combo.findData("clear-masters"))
+    monkeypatch.setattr(widget, "_confirm_clear", lambda: False)
+    widget.run()
+    assert not widget.is_running()
+
+
+@pytest.mark.requirement("TC-LIB-230")
+@pytest.mark.priority("P2")
+def test_tc_lib_230_command_runs_before_any_library_settings_are_saved(monkeypatch):
+    """LIB-230: with no saved settings and no --config, the command uses the default folders, not an error."""
+    from galileo.commands import _common
+
+    monkeypatch.setattr(_common, "config_exists", lambda: False)
+    monkeypatch.setattr(_common, "has_config_override", lambda: False)
+    monkeypatch.setattr(_common, "_load_library_config", lambda: "defaults")
+    monkeypatch.setattr("galileo.library.database.setup_database", lambda *a, **k: None)
+    assert _common.load_config() == "defaults"

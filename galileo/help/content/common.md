@@ -84,3 +84,7 @@ The page-of-text button at the bottom of the sidebar opens a window showing this
 ## Community & support
 
 The speech-bubble button at the bottom of the sidebar, beside Help, opens a menu of community links in your web browser: **Ask the community** (a new question in GitHub Discussions), **Browse discussions**, **Suggest a feature**, and **Report a problem**. Report a problem opens the bug-report form with your Galileo version, operating system, Python version and the screen you were on already filled in. Nothing is sent from Galileo itself; you review and submit the form in your browser.
+
+## Acknowledge safety stop
+
+In the banner under the top bar after a protective stop. It confirms you have seen what happened so that things may be started again. It is refused while conditions are unsafe or have not been safe for long enough, and it starts nothing by itself. The banner says what could not be secured.

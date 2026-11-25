@@ -114,6 +114,7 @@ class GuideSnapshot:
     rms_total: float
     frame: np.ndarray | None = None   # the whole guide frame (a reference, not a copy), once one has been fetched
     frame_version: int = 0            # 0 until there is a frame; changes with each new one
+    calibration_status: str = ""      # live calibration progress/outcome text ("" when none)
 
 
 def _running_stat_update(stat: list, x: float) -> None:
@@ -147,6 +148,8 @@ class GuideModel:
         self.star_pos: tuple[float, float] | None = None
         self.star_image: StarImage | None = None
         self.calibration: dict | None = None
+        self.calibration_status = ""
+        self._cal_phase = ""
         self.frame: np.ndarray | None = None
         self.frame_version = 0
         self._samples: deque[GuideSample] = deque(maxlen=MAX_SAMPLES)
@@ -194,6 +197,7 @@ class GuideModel:
                 calibration_points=list(self._cal_points), calibration=self.calibration,
                 log=list(self._log), unit=self.unit, rms_ra=ra, rms_dec=dec, rms_total=total,
                 frame=self.frame, frame_version=self.frame_version,
+                calibration_status=self.calibration_status,
             )
 
     # --- Writing ----------------------------------------------------------
@@ -272,18 +276,40 @@ class GuideModel:
         self.app_state = "Calibrating"
         self._cal_points = []
         self.calibration = None
+        self._cal_phase = ""
+        self.calibration_status = "Calibration started…"
         self._note("Calibration started.")
 
     def _on_Calibrating(self, e: dict) -> None:
         self.app_state = "Calibrating"
         if "dx" in e and "dy" in e:
             self._cal_points.append(CalibrationPoint(str(e.get("dir", "")), float(e["dx"]), float(e["dy"])))
+        phase = str(e.get("State") or e.get("dir") or "")
+        text = f"Calibrating: {phase}" if phase else "Calibrating"
+        if "step" in e:
+            text += f", step {e['step']}"
+        if "dist" in e:
+            try:
+                text += f" (moved {float(e['dist']):.1f} px)"
+            except (TypeError, ValueError):
+                pass
+        self.calibration_status = text
+        if phase and phase != self._cal_phase:      # one log line per phase, not per step
+            self._cal_phase = phase
+            self._note(f"Calibrating: {phase}.")
 
     def _on_CalibrationComplete(self, e: dict) -> None:
-        self._note("Calibration complete.")
+        self.calibration_status = "Calibration complete."
+        self._cal_phase = ""
+        self._note("Calibration complete — successful.")
 
     def _on_CalibrationFailed(self, e: dict) -> None:
-        self._note(f"Calibration failed: {e.get('Reason', 'unknown reason')}")
+        reason = e.get("Reason", "unknown reason")
+        self.calibration_status = f"Calibration failed: {reason}"
+        self._cal_phase = ""
+        if self.app_state == "Calibrating":
+            self.app_state = "Selected" if self.star_pos else "Stopped"
+        self._note(f"Calibration failed: {reason}")
 
     def _on_CalibrationDataFlipped(self, e: dict) -> None:
         self._note("Calibration data flipped.")
@@ -301,6 +327,11 @@ class GuideModel:
         self._note("Lock position lost.")
 
     def _on_StarLost(self, e: dict) -> None:
+        if self.app_state == "Calibrating":
+            # Calibration deliberately moves the mount, so the star leaves its square; PHD2 ends
+            # the calibration with CalibrationFailed if it really can't continue. Stay in Calibrating.
+            self._note("Guide star left its square during calibration; PHD2 will report if calibration fails.")
+            return
         self.app_state = "LostLock"
         self._note("Lost track of the guide star. Try increasing the square size or reducing pulse duration.")
 
@@ -315,6 +346,7 @@ class GuideModel:
 
     def _on_StartGuiding(self, e: dict) -> None:
         self.app_state = "Guiding"
+        self.calibration_status = ""
         self._samples.clear()
         self._ra_stat = [0, 0.0, 0.0]
         self._dec_stat = [0, 0.0, 0.0]

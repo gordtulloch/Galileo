@@ -47,7 +47,7 @@ Turns azimuth slaving on or off for this Pier. Leave it off for a dome run by in
 
 ## Open/close dome with sessions
 
-When ticked, a session opens the shutter as it starts and closes the shutter and parks the dome as it ends (even if it was stopped or failed). The shutter also stays open through a meridian flip, and the dome re-follows the mount afterwards. Off by default; the Dome Open / Close / Sync blocks work either way.
+When ticked, a session opens the shutter as it starts and closes the shutter and parks the dome as it ends (even if it was stopped or failed). Before closing, every mount under the roof is parked and confirmed parked; if one cannot be confirmed (not connected, park failed, or no park status) the roof is **left open** and you are alerted. It is also left open while another Pier is imaging under it. The **Close** button on this page does none of these checks. Unsafe conditions also park and close by themselves: see the Safety page. The shutter also stays open through a meridian flip, and the dome re-follows the mount afterwards. Off by default; the Dome Open / Close / Sync blocks work either way.
 
 ## Slaving status
 

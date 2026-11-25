@@ -23,6 +23,8 @@ from galileo.ui.qt_helpers import layout_widget, take_widget
 import hashlib
 import json
 import logging
+import math
+from datetime import UTC, datetime
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -45,6 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from galileo.session_estimate import estimate_run, format_duration
 from galileo.ui.session_runner import get_session_controller
 from galileo.ui.session_blocks import (
     BLOCK_CLASSES,
@@ -150,6 +153,19 @@ class SessionRegion:
         # The camera (a Camera DeviceConfigRecord slot id) this session images with. A session
         # belongs to one camera: every action of its run uses it, whatever the top bar is on.
         self.camera_slot: str = "primary"
+        # Filters on the Pier's wheel, for estimating an "All" filters flat capture; set by the screen.
+        self.filter_count: int = 1
+
+    # --- Estimated time (SES-240) ------------------------------------------
+
+    def estimated_seconds(self) -> float:
+        """Planning estimate of how long all the operations in this session take together."""
+        return estimate_run(self.blocks, start=datetime.now(UTC), filter_count=self.filter_count).duration_s
+
+    def estimated_duration_minutes(self) -> float | None:
+        """The estimate as a Schedule duration in whole minutes; ``None`` when nothing in it takes time."""
+        seconds = self.estimated_seconds()
+        return float(math.ceil(seconds / 60.0)) if seconds > 0 else None
 
     # --- Editing state (SES-210) ------------------------------------------
 
@@ -339,6 +355,7 @@ class SessionRegion:
             target_dec=target.dec_deg if target else 0.0,
         )
         job.total_required = estimate_frames(build_tree(self.blocks))
+        job.duration_minutes = self.estimated_duration_minutes()      # SES-240
         return job
 
     def schedule(self) -> None:
@@ -420,6 +437,9 @@ def restore_regions(pier_name: str | None, scheduler: Any) -> list[SessionRegion
             job.sequence = region
             region._job = job
             region.is_scheduled = True
+            if job.duration_minutes is None:        # queued before sessions were estimated (SES-240)
+                job.duration_minutes = region.estimated_duration_minutes()
+                scheduler.save()
         regions.append(region)
     return regions
 
@@ -713,7 +733,7 @@ class BlockListWidget(QListWidget):
         if open_block_parameter_dialog(self, block, self._region, self._window):
             item.setText(block.display_text)
             self._set_item_widget(item, block)
-            self._region.autosave()
+            self._on_changed(None)
 
     def _fit_height_to_contents(self) -> None:
         height = 2 * self.frameWidth()
@@ -922,6 +942,12 @@ class _RegionWidget(QFrame):
 
         self._blocks_list = BlockListWidget(region, palette, self._on_block_change, window)
         layout.addWidget(self._blocks_list)
+
+        # SES-240: how long all the operations in the session are expected to take together.
+        self._estimate_label = QLabel("")
+        self._estimate_label.setObjectName("SessionEstimate")
+        layout.addWidget(self._estimate_label)
+        self._update_estimate()
         self._controller = get_session_controller(window)
         self._apply_boundary_style()
         self.refresh_run_state()
@@ -954,8 +980,15 @@ class _RegionWidget(QFrame):
     def _on_block_change(self, error: str | None) -> None:
         self._region.autosave()
         self._blocks_list.refresh()
+        self._update_estimate()
         if error:
             self._on_reload(error)
+
+    def _update_estimate(self) -> None:
+        from galileo.ui.session_block_dialogs import _wheel_filter_names
+        self._region.filter_count = len(_wheel_filter_names(self._window)) or 1
+        seconds = self._region.estimated_seconds()
+        self._estimate_label.setText(f"Estimated total time: {format_duration(seconds) if seconds else '—'}")
 
     def _apply_boundary_style(self) -> None:
         scheduled = self._region.is_scheduled
@@ -1045,7 +1078,7 @@ class _RegionWidget(QFrame):
         except BlockOrderError as exc:
             QMessageBox.warning(self, "Load from Template", str(exc))
             return
-        self._blocks_list.refresh()
+        self._on_block_change(None)
 
     def _toggle_schedule(self) -> None:
         if self._region.is_scheduled:
