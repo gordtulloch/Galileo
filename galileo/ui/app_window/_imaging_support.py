@@ -175,6 +175,10 @@ class AppWindowImagingSupportMixin:
         self._window.statusBar().showMessage(
             f"Slewing the mount to {obj['name']}." if action == "goto" else f"Mount synced to {obj['name']}.", 4000)
         if action == "goto":
+            # IMG-140: where the mount was sent is now the current object. Without this the solve that follows
+            # (Goto and Centre, Auto-Centre) would slew straight back to the previously selected one.
+            if self._current_pier is not None:
+                self._set_current_object(obj)
             self._track_when_slew_finishes(adapter, obj, then=self._solve_after_goto if then_solve else None)
         return True
 

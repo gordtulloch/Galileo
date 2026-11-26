@@ -880,3 +880,24 @@ async def test_tc_safe_180_desktop_wiring_parks_and_closes(monkeypatch, settings
     assert not host.is_safe() and host.holding()
     assert "SAFETY STOP" in host.banner_text()
 
+
+
+@pytest.mark.requirement("TC-SAFE-130")
+@pytest.mark.priority("MVP")
+async def test_tc_safe_130_no_registered_device_switches_the_safety_system_off(settings_db):
+    """SAFE-130: with no safety device registered nothing is blocked and a left-over stop is cleared; a saved tab
+    with no device name is not a registered device."""
+    from galileo.observatory import create_observatory, registered_safety_slots, save_safety_device_config
+    from galileo.safety_supervisor import MemoryStore, SafetySupervisor, Site, State
+
+    observatory = create_observatory("Shed")
+    save_safety_device_config(observatory, "weather", driver="INDI", server="x", port=7624, device_name=None)
+    assert registered_safety_slots(observatory, "weather") == []
+
+    store = MemoryStore()
+    store.open("", "Weather Station is not connected or cannot be read")
+    supervisor = SafetySupervisor(Site, store=store)
+    assert supervisor.state == State.SECURED and supervisor.acknowledge_blocker()
+    await supervisor.tick()
+    assert supervisor.state == State.READY and supervisor.is_safe()
+    assert store.unacknowledged("") is None

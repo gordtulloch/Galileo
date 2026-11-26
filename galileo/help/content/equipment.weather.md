@@ -13,7 +13,11 @@ How often, in seconds (5–600), Galileo re-reads the weather station. A shorter
 
 ## Add safety device
 
-Adds another weather station or safety monitor in a new tab. The Observatory's own weather station (the first tab) cannot be closed.
+Adds another weather station or safety monitor in a new tab. The Observatory's own weather station (the first tab) cannot be closed; use **Delete** to remove its device.
+
+## Delete
+
+Removes this tab's device: disconnects it and forgets its saved settings and rules, after asking. An added tab goes with it; the first tab stays, blank. With no safety device left the safety system is off: nothing is blocked, parked or closed because of the weather, and a safety stop in force is cleared.
 
 ## Status banner
 

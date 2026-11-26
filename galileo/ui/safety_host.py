@@ -295,13 +295,15 @@ class SafetyHost(QObject):
         if supervisor is None:
             return ""
         status = supervisor.status()
+        blocker = supervisor.acknowledge_blocker()
+        waiting = f" Cannot acknowledge yet: {blocker}." if blocker else ""
         state, problems = status["state"], " ".join(status["problems"])
         if state == State.STOPPING:
             return f"SAFETY STOP — {status['reason']}. Stopping activity, parking and closing…"
         if state == State.SECURED:
-            return f"SAFETY STOP — {status['reason']}. Equipment secured. Nothing starts until you acknowledge."
+            return f"SAFETY STOP — {status['reason']}. Equipment secured. Nothing starts until you acknowledge.{waiting}"
         if state == State.NOT_SECURED:
-            return f"SAFETY STOP NOT COMPLETE — {status['reason']}. {problems}"
+            return f"SAFETY STOP NOT COMPLETE — {status['reason']}. {problems}{waiting}"
         if state == State.AWAITING_ACK:
             return f"Safe again after a stop ({status['reason']}). {problems} Acknowledge to allow starting."
         if status["level"] == "unsafe":
@@ -316,6 +318,9 @@ class SafetyHost(QObject):
         text = self.banner_text()
         self._banner_label.setText(text)
         self._ack_button.setVisible(self.supervisor.state != State.READY)
+        blocker = self.supervisor.acknowledge_blocker()
+        self._ack_button.setEnabled(not blocker)
+        self._ack_button.setToolTip(blocker)
         self.banner.setVisible(bool(text))
 
     def _status_message(self, message: str) -> None:

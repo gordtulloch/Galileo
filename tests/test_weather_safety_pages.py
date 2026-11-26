@@ -317,3 +317,27 @@ def test_tc_obs_140_stale_readings_are_refreshed_before_judging_safety(window, m
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 7200)
     connected, safe, reasons = evaluate()
     assert connected and not safe and any("could not be read" in r for r in reasons)
+
+
+@pytest.mark.requirement("TC-SAFE-130")
+@pytest.mark.priority("MVP")
+def test_tc_safe_130_delete_removes_the_primary_weather_station(window, monkeypatch):
+    """SAFE-130: Delete forgets the saved device and its rules, leaving no registered safety device."""
+    from galileo.observatory import (
+        get_safety_device_config, get_weather_safety_rules, save_safety_device_config, save_weather_safety_rule,
+    )
+    from galileo.safety import WeatherSafetyRule
+
+    observatory = window._current_pier.observatory
+    save_safety_device_config(observatory, "weather", driver="INDI", server="x", port=7624, device_name="Station")
+    save_weather_safety_rule(observatory, WeatherSafetyRule("rain", safety_related=True, operator=">"))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(window, "_startup_autoconnect_allowed", lambda: False)
+    page = window._build_weather_page()
+
+    _button(page, "Delete").click()
+
+    assert get_safety_device_config(observatory, "weather") is None
+    assert get_weather_safety_rules(observatory) == []
+    assert window._device_pages["weather"]["sources"]() == []

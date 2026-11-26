@@ -59,11 +59,11 @@ Makes this the Pier's current object and adds it to the target list.
 
 ## Slew To
 
-Immediately slews the connected mount to this object.
+Immediately slews the connected mount to this object. The object becomes the Pier's current object.
 
 ## Goto and Centre
 
-Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set.
+Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set. The object becomes the Pier's current object.
 
 ## Add to Session
 

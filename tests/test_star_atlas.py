@@ -427,7 +427,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     # Science has no built-in items; Variable Stars comes only from the VSTarget plugin.
     assert SCIENCE_ITEMS == []
     assert [i[:2] for i in LIBRARY_ITEMS] == [
-        ("images", "Images"), ("sessions", "Sessions"), ("calibration", "Calibration"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
+        ("images", "Images"), ("sessions", "Sessions"), ("calibration", "Calibration"), ("masters", "Masters"), ("mappings", "Mappings"), ("dedup", "Dedup"), ("merge", "Merge Objects"), ("cloud", "Cloud"),
     ]
 
     from PySide6 import QtWidgets
@@ -441,7 +441,7 @@ def test_planning_and_science_sections_carry_their_own_menus(window):
     # Installed plugins may append their own items to a core menu (the VSTarget plugin adds "VS Analysis" under
     # Science), so check that the core items come first rather than that the menu is exactly them.
     assert ["What's Up Tonight", "Search", "Targets", "Sessions", "Schedule", "History"] in menus
-    assert ["Images", "Sessions", "Calibration", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
+    assert ["Images", "Sessions", "Calibration", "Masters", "Mappings", "Dedup", "Merge Objects", "Cloud"] in menus
 
 
 @pytest.mark.requirement("TC-UI-020")
@@ -685,6 +685,27 @@ def test_star_atlas_goto_and_sync_command_the_connected_mount(window):
     assert window._mount_to_object("goto", vega)
     _, ra, dec = mount.calls[0]
     assert 0.0 < abs(ra - 279.2347) < 1.0 and 0.0 < abs(dec - 38.7837) < 0.5           # precessed to the epoch of date
+
+
+@pytest.mark.requirement("TC-IMG-140")
+@pytest.mark.priority("P2")
+def test_tc_img_140_goto_makes_the_object_current(window):
+    """IMG-140: a Goto that is sent makes its object the Pier's current object, so a following solve
+    does not slew back to the previous one; a Sync or a refused Goto leaves the current object alone."""
+    from galileo.observatory import create_observatory, create_pier
+    window._current_pier = create_pier(create_observatory("Obs"), "Pier A")
+    vega = {"name": "Vega", "ra_deg": 279.2347, "dec_deg": 38.7837, "alt": 60.0}
+    deneb = {"name": "Deneb", "ra_deg": 310.358, "dec_deg": 45.2803, "alt": 60.0}
+    window._set_current_object(vega)
+    window._device_pages["mount"]["adapter"] = _FakeMount("JNOW")
+
+    assert window._mount_to_object("sync", deneb)
+    assert window._mount_to_object("goto", {**deneb, "alt": -5.0}) is False
+    assert window.current_object().name == "Vega"
+
+    assert window._mount_to_object("goto", deneb, then_solve=True)
+    current = window.current_object()
+    assert (current.name, current.ra_deg, current.dec_deg) == ("Deneb", 310.358, 45.2803)   # J2000, not of date
 
 
 @pytest.mark.requirement("TC-SKYMAP-020")

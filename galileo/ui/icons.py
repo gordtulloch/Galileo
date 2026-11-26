@@ -473,6 +473,18 @@ def _dedup(painter, r):
     painter.drawRoundedRect(QRectF(r.right() - side, r.bottom() - side, side, side), 2, 2)
 
 
+def _masters(painter, r):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    # Frames stacked into one: a diamond-shaped sheet over two more edges.
+    cx, w, h = r.center().x(), r.width() / 2, r.height() * 0.22
+    top = r.top() + h
+    painter.drawPolygon(QPolygonF([QPointF(cx, r.top()), QPointF(cx + w, top),
+                                   QPointF(cx, top + h), QPointF(cx - w, top)]))
+    for y in (r.center().y() + h * 0.4, r.bottom() - h):
+        painter.drawPolyline(QPolygonF([QPointF(cx - w, y), QPointF(cx, y + h), QPointF(cx + w, y)]))
+
+
 def _cloud(painter, r):
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QPainterPath
@@ -582,6 +594,7 @@ ICONS: dict[str, DrawFn] = {
     "sessions": _sessions,
     "mappings": _mappings,
     "calibration": _flat_panel,
+    "masters": _masters,
     "dedup": _dedup,
     "cloud": _cloud,
     "merge": _merge,

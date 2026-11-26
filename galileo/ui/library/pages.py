@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2025-2026 Gord Tulloch
 
-"""The Library section's pages: Images, Sessions, Calibration, Mappings, Dedup, Merge and Cloud.
+"""The Library section's pages: Images, Sessions, Calibration, Masters, Mappings, Dedup, Merge and Cloud.
 
 The screens share state (Images refreshes after a Merge or a Mappings
 change, and asks Sessions to regenerate after an import), so they are built
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from galileo.ui.library.duplicates_widget import DuplicatesWidget
     from galileo.ui.library.images_widget import ImagesWidget
     from galileo.ui.library.mappings_dialog import MappingsWidget
+    from galileo.ui.library.masters_widget import MastersWidget
     from galileo.ui.library.merge_widget import MergeWidget
     from galileo.ui.library.sessions_widget import SessionsWidget
 
@@ -42,6 +43,7 @@ class LibraryScreens:
         self.images: ImagesWidget = None  # type: ignore[assignment]
         self.sessions: SessionsWidget = None  # type: ignore[assignment]
         self.calibration: CalibrationWidget = None  # type: ignore[assignment]
+        self.masters: MastersWidget = None  # type: ignore[assignment]
         self.mappings: MappingsWidget = None  # type: ignore[assignment]
         self.duplicates: DuplicatesWidget = None  # type: ignore[assignment]
         self.merge: MergeWidget = None  # type: ignore[assignment]
@@ -65,12 +67,14 @@ class LibraryScreens:
         from galileo.ui.library.duplicates_widget import DuplicatesWidget
         from galileo.ui.library.images_widget import ImagesWidget
         from galileo.ui.library.mappings_dialog import MappingsWidget
+        from galileo.ui.library.masters_widget import MastersWidget
         from galileo.ui.library.merge_widget import MergeWidget
         from galileo.ui.library.sessions_widget import SessionsWidget
 
         self.images = ImagesWidget()
         self.sessions = SessionsWidget()
         self.calibration = CalibrationWidget()
+        self.masters = MastersWidget()
         self.mappings = MappingsWidget()
         self.duplicates = DuplicatesWidget()
         self.merge = MergeWidget()
@@ -78,6 +82,7 @@ class LibraryScreens:
 
         self.images.sessions_widget = self.sessions
         self.merge.set_images_widget(self.images)
+        self.masters.masters_changed.connect(self.sessions.load_sessions_data)
         self.mappings.mappings_applied.connect(self.images.load_fits_data)
         if self._on_configure is not None:
             self.cloud.configure_requested.connect(self._on_configure)
@@ -86,6 +91,7 @@ class LibraryScreens:
             "images": self.images,
             "sessions": self.sessions,
             "calibration": self.calibration,
+            "masters": self.masters,
             "mappings": self.mappings,
             "dedup": self.duplicates,
             "merge": self.merge,

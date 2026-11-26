@@ -11,6 +11,19 @@ Status values: `Pending` (not yet applied to AstroFiler), `Applied` (with the As
 
 ---
 
+## 2026-11-26 — Masters screen; unique master IDs — Status: Pending
+
+**Change:** New Library > Masters screen to view, recreate or delete a master. Recreation restacks from the source
+session and moves the result into the existing record; deletion removes the file, the record and the session
+references. Also fixes `Masters.create_master_record` raising on a duplicate `master_id` when two masters of one type
+and telescope are made in the same second (a numeric suffix is added), and on a `None` telescope.
+
+**Galileo-specific to translate:** module paths, the settings loader (`galileo.library.config`), `run_in_worker`.
+**Files:** `galileo/library/core/master_actions.py`, `galileo/ui/library/masters_widget.py`,
+`galileo/ui/library/pages.py`, `galileo/library/models/masters.py`.
+
+---
+
 ## 2026-11-14 — Sessions view refreshes after Auto-Calibration — Status: Pending
 
 **Change:** `SessionsRegenerateMixin.run_auto_calibration` called `self.load_sessions_data()` only when

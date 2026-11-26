@@ -383,9 +383,12 @@ class AppWindowWeatherPageMixin:
 
         poll_spin.valueChanged.connect(_poll_interval_changed)
 
-        # --- footer: Save + Log ---------------------------------------------
+        # --- footer: Delete + Save ------------------------------------------
         save_row = QHBoxLayout()
         save_row.addStretch(1)
+        delete_btn = QPushButton("Delete")     # wired by the page, which owns the tabs
+        delete_btn.setToolTip("Remove this safety device and its saved settings and rules from the Observatory.")
+        save_row.addWidget(delete_btn)
         save_btn = QPushButton("Save")
         save_btn.setObjectName("AccentButton")
         save_btn.setToolTip("Save this device's settings and safety rules under the selected Observatory (shared by all its Piers).")
@@ -516,7 +519,7 @@ class AppWindowWeatherPageMixin:
             "adapter": lambda: state.get("adapter"),
             "get_rules": _current_rules,
             "get_latest_readings": lambda: state.get("latest_readings") or {},
-            "device_type": device_type, "slot": slot,
+            "device_type": device_type, "slot": slot, "delete_button": delete_btn,
         }
         reload_page()
         if self._startup_autoconnect_allowed():
@@ -564,6 +567,7 @@ class AppWindowWeatherPageMixin:
             widget, api = self._build_safety_device_panel(device_type, slot)
             api["widget"] = widget
             panels.append(api)
+            api["delete_button"].clicked.connect(lambda _checked=False: _remove_device(api))
             index = tabs.addTab(widget, _SAFETY_DEVICE_TYPES[device_type][0])
             if slot == "primary":  # the Observatory's own weather station can't be closed
                 tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
@@ -585,14 +589,12 @@ class AppWindowWeatherPageMixin:
         # room for a drop-down arrow, which squeezes the "+" out of a 28px button.
         add_btn.clicked.connect(lambda: add_menu.exec(add_btn.mapToGlobal(add_btn.rect().bottomLeft())))
 
-        def _close_tab(index: int) -> None:
-            if not 0 <= index < len(panels):
-                return
-            api = panels[index]
-            if api["slot"] == "primary":
-                return
+        def _remove_device(api: dict) -> None:
+            """Forget one safety device. The primary tab stays, blank; any other tab goes with its device."""
             if QMessageBox.question(
-                self._window, "Remove safety device", "Remove this device and its saved settings?",
+                self._window, "Remove safety device",
+                "Remove this device and its saved settings and rules?\n\nWith no safety device left, the safety "
+                "system is off: nothing is parked or closed in bad weather, and any safety stop is cleared.",
             ) != QMessageBox.StandardButton.Yes:
                 return
             api["disconnect"]()
@@ -601,9 +603,20 @@ class AppWindowWeatherPageMixin:
                 from galileo.observatory import delete_safety_device_config, delete_weather_safety_rules
                 delete_safety_device_config(observatory, api["device_type"], slot=api["slot"])
                 delete_weather_safety_rules(observatory, api["slot"])
-            panels.pop(index)
-            tabs.removeTab(index)
-            api["widget"].deleteLater()
+            if api["slot"] == "primary":
+                api["reload"]()
+            else:
+                index = panels.index(api)
+                panels.pop(index)
+                tabs.removeTab(index)
+                api["widget"].deleteLater()
+            host = getattr(self, "_safety_host", None)
+            if host is not None:
+                host.refresh()      # the safety service hears of it now, not at its next refresh
+
+        def _close_tab(index: int) -> None:
+            if 0 <= index < len(panels) and panels[index]["slot"] != "primary":
+                _remove_device(panels[index])
 
         tabs.tabCloseRequested.connect(_close_tab)
 
@@ -667,9 +680,10 @@ class AppWindowWeatherPageMixin:
         _add_panel("weather", "primary")
 
         def sources() -> list:
-            """Every saved or connected safety device, with the rules **saved** for it (SAFE-130). An unsaved
-            edit on this page has no effect."""
-            from galileo.observatory import get_weather_safety_rules, list_safety_device_slots
+            """Every registered (saved with a device name) or connected safety device, with the rules **saved**
+            for it (SAFE-130). An unsaved edit on this page has no effect. A failure to list the saved devices is
+            raised, not swallowed: an empty list switches the safety system off."""
+            from galileo.observatory import get_weather_safety_rules, registered_safety_slots
             from galileo.safety import default_weather_safety_rules
             from galileo.safety_supervisor import Source
             observatory = self._safety_observatory()
@@ -677,10 +691,7 @@ class AppWindowWeatherPageMixin:
             wanted = {key for key, adapter in adapters.items() if adapter is not None}
             if observatory is not None:
                 for type_id in _SAFETY_DEVICE_TYPES:
-                    try:
-                        wanted |= {(type_id, slot) for slot in list_safety_device_slots(observatory, type_id)}
-                    except Exception:
-                        logger.exception("Could not list saved %s devices", type_id)
+                    wanted |= {(type_id, slot) for slot in registered_safety_slots(observatory, type_id)}
             found = []
             for type_id, slot in sorted(wanted):
                 rules = []

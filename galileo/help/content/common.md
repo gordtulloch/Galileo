@@ -87,4 +87,4 @@ The speech-bubble button at the bottom of the sidebar, beside Help, opens a menu
 
 ## Acknowledge safety stop
 
-In the banner under the top bar after a protective stop. It confirms you have seen what happened so that things may be started again. It is refused while conditions are unsafe or have not been safe for long enough, and it starts nothing by itself. The banner says what could not be secured.
+In the banner under the top bar after a protective stop. It confirms you have seen what happened so that things may be started again. The button is greyed out while conditions are unsafe or have not been safe for long enough (the **Safe for** time on Equipment > Safety); the banner says why and roughly how long is left. The wait starts again if Galileo is restarted. Turning off **Park and stop when unsafe** does not clear a stop already in force. Acknowledging starts nothing by itself. The banner also says what could not be secured. With no safety device registered there is no safety system: no stop, no banner, and a stop left over from a removed device is cleared.

@@ -71,11 +71,11 @@ Makes this the Pier's current object: captured frames are named after it and the
 
 ## Slew To
 
-Immediately slews the connected mount to this object. Needs a connected mount and the Observatory's location set.
+Immediately slews the connected mount to this object. Needs a connected mount and the Observatory's location set. The object becomes the Pier's current object.
 
 ## Goto and Centre
 
-Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set.
+Slews the connected mount to this object, then plate-solves and re-centres on it once the slew has finished. Needs a connected mount, a solver and the Observatory's location set. The object becomes the Pier's current object.
 
 ## Add to Session
 

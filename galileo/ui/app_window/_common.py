@@ -118,6 +118,7 @@ LIBRARY_ITEMS = [
     ("images", "Images", "images"),
     ("sessions", "Sessions", "sessions"),
     ("calibration", "Calibration", "calibration"),
+    ("masters", "Masters", "masters"),
     ("mappings", "Mappings", "mappings"),
     ("dedup", "Dedup", "dedup"),
     ("merge", "Merge Objects", "merge"),

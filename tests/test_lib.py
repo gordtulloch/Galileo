@@ -898,12 +898,12 @@ def library_menu(window):
 @pytest.mark.requirement("TC-LIB-010")
 @pytest.mark.priority("MVP")
 def test_library_section_menu_lists_the_astrofiler_screens(window):
-    """The Library section opens onto Images, Sessions, Calibration, Mappings, Dedup, Merge Objects and Cloud."""
+    """The Library section opens onto Images, Sessions, Calibration, Masters, Mappings, Dedup, Merge Objects and Cloud."""
     from PySide6 import QtWidgets
 
     page = library_menu(window)
     buttons = [" ".join(b.text().split()) for b in page._secondary_nav.findChildren(QtWidgets.QToolButton)]
-    assert buttons == ["Images", "Sessions", "Calibration", "Mappings", "Dedup", "Merge Objects", "Cloud"]
+    assert buttons == ["Images", "Sessions", "Calibration", "Masters", "Mappings", "Dedup", "Merge Objects", "Cloud"]
 
 
 @pytest.mark.requirement("TC-LIB-010")
@@ -2337,3 +2337,77 @@ def test_tc_lib_230_command_runs_before_any_library_settings_are_saved(monkeypat
     monkeypatch.setattr(_common, "_load_library_config", lambda: "defaults")
     monkeypatch.setattr("galileo.library.database.setup_database", lambda *a, **k: None)
     assert _common.load_config() == "defaults"
+
+
+def _make_dark_master(library):
+    """Three catalogued dark frames in one session, and the master stacked from them."""
+    from galileo.library.core.master_manager import MasterFrameManager
+    from galileo.library.models import fitsFile, fitsSession
+
+    session = fitsSession.create(fitsSessionId="dark-session", fitsSessionObjectName="Dark",
+                                 fitsSessionTelescope="TestScope", fitsSessionImager="TestCam",
+                                 fitsSessionExposure="60", fitsSessionBinningX="1", fitsSessionBinningY="1")
+    for i in range(3):
+        path = write_frame(library.incoming, f"dark_{i}.fits", "Dark Frame", "Dark", 60, i, level=100)
+        fitsFile.create(fitsFileId=f"d{i}", fitsFileName=str(path), fitsFileObject="Dark",
+                        fitsFileSession=session.fitsSessionId)
+    master = MasterFrameManager().create_master_from_session(session.fitsSessionId, "dark")
+    assert master is not None
+    return session, master
+
+
+@pytest.mark.requirement("TC-LIB-240")
+@pytest.mark.priority("P2")
+def test_tc_lib_240_recreating_a_master_keeps_its_identity(library):
+    """LIB-240: a master is restacked from its source session's frames and stays the same catalog entry."""
+    from galileo.library.core import master_actions
+    from galileo.library.models import Masters
+
+    _session, master = _make_dark_master(library)
+    Path(master.master_path).unlink()
+
+    again = master_actions.recreate_master(master.id)
+
+    assert (again.id, again.master_id) == (master.id, master.master_id)
+    assert Path(again.master_path).is_file() and again.validate_file_integrity()
+    assert Masters.select().count() == 1
+
+
+@pytest.mark.requirement("TC-LIB-240")
+@pytest.mark.priority("P2")
+def test_tc_lib_240_a_master_without_its_source_frames_is_not_recreated(library):
+    """LIB-240: with the source frames gone, recreation is refused and the master is left alone."""
+    from galileo.library.core import master_actions
+
+    _session, master = _make_dark_master(library)
+    for path in library.incoming.glob("dark_*.fits"):
+        path.unlink()
+
+    with pytest.raises(master_actions.MasterActionError):
+        master_actions.recreate_master(master.id)
+    assert master.validate_file_integrity()
+
+
+@pytest.mark.requirement("TC-LIB-240")
+@pytest.mark.priority("P2")
+def test_tc_lib_240_masters_screen_lists_and_deletes_with_confirmation(qt_app, library, monkeypatch):
+    """LIB-240: the Masters screen lists a master and deletes its file, record and session links only on confirmation."""
+    from galileo.library.models import Masters, fitsSession
+    from galileo.ui.library.masters_widget import MastersWidget
+
+    session, master = _make_dark_master(library)
+    session.fitsDarkMaster = master.master_id
+    session.save()
+    widget = MastersWidget()
+    widget.select(master.id)
+    assert widget.tree.topLevelItemCount() == 1 and widget.recreate_button.isEnabled()
+
+    monkeypatch.setattr(widget, "_confirm", lambda *a: False)
+    widget.delete()
+    assert Path(master.master_path).is_file() and Masters.select().count() == 1
+
+    monkeypatch.setattr(widget, "_confirm", lambda *a: True)
+    widget.delete()
+    assert not Path(master.master_path).exists() and Masters.select().count() == 0
+    assert fitsSession.get_by_id(session.fitsSessionId).fitsDarkMaster is None
+    assert widget.tree.topLevelItemCount() == 0

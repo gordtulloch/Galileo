@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 class AppWindowLibraryEquipmentMixin:
     def _build_library_page(self: AppWindowState) -> QWidget:
-        """Library section: Images, Sessions, Calibration, Mappings, Dedup and Cloud — see
+        """Library section: Images, Sessions, Calibration, Masters, Mappings, Dedup and Cloud — see
         ``galileo.ui.library.pages``. The screens read the whole catalog, so
         they are only built when the section is first opened."""
         from galileo.ui.library.pages import LibraryScreens

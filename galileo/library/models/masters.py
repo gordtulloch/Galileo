@@ -123,8 +123,13 @@ class Masters(BaseModel):
         """
         # Generate unique master ID
         timestamp = datetime.datetime.now().astimezone().strftime('%Y%m%d_%H%M%S')
-        telescope_safe = session_data.get('telescope', 'unknown').replace(' ', '_')
-        master_id = f"{cal_type}_{telescope_safe}_{timestamp}"
+        telescope_safe = (session_data.get('telescope') or 'unknown').replace(' ', '_')
+        master_id = base_id = f"{cal_type}_{telescope_safe}_{timestamp}"
+        # Two masters of one type and telescope can be made within the same second.
+        suffix = 1
+        while cls.select().where(cls.master_id == master_id).exists():
+            suffix += 1
+            master_id = f"{base_id}_{suffix}"
 
         # Calculate file hash if file exists
         file_hash = None

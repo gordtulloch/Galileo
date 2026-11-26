@@ -718,6 +718,13 @@ def list_safety_device_slots(observatory: ObservatoryRecord | None, category: st
     return sorted((row.slot for row in rows), key=_slot_sort_key)
 
 
+def registered_safety_slots(observatory: ObservatoryRecord | None, category: str) -> list[str]:
+    """The saved slots for safety *category* that name a device. A tab saved with no device is not a registered
+    safety device (SAFE-130)."""
+    return [slot for slot in list_safety_device_slots(observatory, category)
+            if (config := get_safety_device_config(observatory, category, slot)) is not None and config.device_name]
+
+
 def get_weather_safety_rules(observatory: ObservatoryRecord | None, slot: str = "primary") -> list[WeatherSafetyRule]:
     """Return *observatory*'s saved per-reading safety rules for the safety device in
     *slot* (Equipment > Safety screen, EQP-WX-020) -- one entry per reading the

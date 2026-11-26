@@ -701,6 +701,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `LIB-210` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-210` |
 | `LIB-220` | MVP | SDD 4.23 `galileo.library` | Test | `TC-LIB-220` |
 | `LIB-230` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-230` |
+| `LIB-240` | P2 | SDD 4.23 `galileo.library` | Test | `TC-LIB-240` |
 
 ### `VST` / `VST-AN` — Moved
 

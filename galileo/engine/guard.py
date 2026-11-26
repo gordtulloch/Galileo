@@ -66,17 +66,14 @@ class Guard:
     async def _observatory_sources(self, observatory: Any) -> list:
         """The Observatory's saved safety devices (OBS-030), connecting any that are not held."""
         if observatory is None:
+            if self.supervisor.scope:      # not found this time is not the same as having no safety devices
+                raise RuntimeError("the engine's Observatory could not be read")
             return []
-        from galileo.observatory import get_safety_device_config, get_weather_safety_rules, list_safety_device_slots
+        from galileo.observatory import get_safety_device_config, get_weather_safety_rules, registered_safety_slots
         from galileo.safety import default_weather_safety_rules
         found = []
         for kind, category in _DEVICE_CATEGORY.items():
-            try:
-                slots = list_safety_device_slots(observatory, kind)
-            except Exception:
-                logger.exception("Could not list the Observatory's safety devices")
-                continue
-            for slot in slots:
+            for slot in registered_safety_slots(observatory, kind):
                 key = f"{kind}:{slot}"
                 adapter = self._observatory_adapters.get(key)
                 if adapter is None or getattr(adapter, "is_connected", True) is False:
@@ -206,7 +203,10 @@ class Guard:
                 if self.watchdog is not None and not self.watchdog.tripped:
                     self.watchdog.heartbeat()
                 if time.monotonic() >= next_check:
-                    await self.check_once()
+                    try:
+                        await self.check_once()
+                    except Exception:
+                        logger.exception("The safety check failed")
                     next_check = time.monotonic() + self._interval_s
                 await asyncio.sleep(1.0)
 

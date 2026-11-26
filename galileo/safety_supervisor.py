@@ -152,6 +152,11 @@ class Evaluator:
         self._seen: set[str] = set()
         self._lost_since: dict[str, float] = {}
 
+    def forget(self) -> None:
+        """Drop what is remembered about devices that are no longer registered."""
+        self._seen.clear()
+        self._lost_since.clear()
+
     async def evaluate(self, sources: list, grace_s: float, now: float) -> Verdict:
         verdict = Verdict()
         if not sources:
@@ -393,17 +398,25 @@ class SafetySupervisor:
 
     # -- acknowledging (SAFE-040) ----------------------------------------------------------------
 
+    def acknowledge_blocker(self) -> str:
+        """Why the stop cannot be acknowledged now, or ``""`` when it can."""
+        with self._lock:
+            if self.state == State.READY:
+                return "there is no safety stop to acknowledge"
+            if self.verdict.blocking:
+                return "conditions are still unsafe: " + "; ".join(self.verdict.reasons)
+            if self.state != State.AWAITING_ACK:
+                minutes = max(1, round(self.seconds_until_stable() / 60))
+                return f"conditions have not been safe for long enough yet (about {minutes} min to go)"
+            return ""
+
     def acknowledge(self, who: str) -> None:
         """Clear a protective stop. Raises ``ValueError`` (with the reason) unless conditions have been safe long
         enough; it restarts nothing."""
         with self._lock:
-            if self.state == State.READY:
-                raise ValueError("there is no safety stop to acknowledge")
-            if self.verdict.blocking:
-                raise ValueError("conditions are still unsafe: " + "; ".join(self.verdict.reasons))
-            if self.state != State.AWAITING_ACK:
-                minutes = max(1, round(self.seconds_until_stable() / 60))
-                raise ValueError(f"conditions have not been safe for long enough yet (about {minutes} min to go)")
+            blocker = self.acknowledge_blocker()
+            if blocker:
+                raise ValueError(blocker)
             self._clear(who)
 
     def _clear(self, who: str) -> None:
@@ -427,6 +440,9 @@ class SafetySupervisor:
     async def _tick(self) -> None:
         settings = self._settings()
         site = self._snapshot()
+        if not site.sources:
+            self._stand_down()
+            return
         now = self._clock()
         verdict = await self._evaluator.evaluate(site.sources, settings.grace_s, now)
         with self._lock:
@@ -453,6 +469,16 @@ class SafetySupervisor:
             with self._lock:
                 self.state = State.AWAITING_ACK
             await self._alert("Conditions are safe again. Acknowledge the safety stop to start anything.")
+
+    def _stand_down(self) -> None:
+        """SAFE-130: with no safety device registered the safety system is off. Nothing is judged, nothing is
+        blocked, and a stop left over from a device since removed is cleared."""
+        self._evaluator.forget()
+        with self._lock:
+            self.verdict, self.checked, self._clean_since = Verdict(), True, None
+            if self.state != State.READY:
+                logger.info("No safety device is registered: clearing the safety stop (%s)", self.reason)
+                self._clear("no safety device registered")
 
     # -- the protective stop (SAFE-150) -----------------------------------------------------------
 
