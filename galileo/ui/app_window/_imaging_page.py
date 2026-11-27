@@ -1141,6 +1141,13 @@ class AppWindowImagingPageMixin:
             save_frame_btn.setEnabled(service.current_frame is not None)
             annotate_btn.setEnabled(service.current_frame is not None)
             _paint_session_status(key)
+            # A flats run reports its own frames (CAL-110), unless a capture or a session owns the line.
+            if (service.status_text and self._imaging_capture_threads.get(key) is None
+                    and _session_status(key) is None):
+                status_label.setText(service.status_text)
+                status_label.setToolTip(service.status_text)
+                if service.series_total:
+                    progress_bar.setValue(int(service.series_done / service.series_total * 1000))
 
         session_frames.arrived.connect(_session_frame_arrived, Qt.ConnectionType.QueuedConnection)
 

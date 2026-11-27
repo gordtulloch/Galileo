@@ -158,6 +158,7 @@ class ImagingService:
         self.stop_requested: bool = False
         self.library_ids: list = []            # catalog ids of the frames added by the last series
         self.library_note: str = ""            # why a frame did not (fully) reach the Library, for the UI
+        self.status_text: str = ""             # status line for frames handed in by present_frame (CAL-110)
         # Live stacking (IMG-160): each frame is registered onto the first and added to a running
         # mean, so the displayed image builds up instead of each exposure replacing the last.
         self.live_stack_enabled: bool = False
@@ -402,6 +403,29 @@ class ImagingService:
             label = f"{duration:g} s {frame_type}" + (f", {filter_name}" if filter_name else "")
             post_notice("exposure.series_complete", "Exposures complete", f"{count} of {count} done: {label}", SUCCESS)
         return list(self.library_ids)
+
+    async def present_frame(self, data, duration: float, filter_name: str, frame_type: str, started,
+                            *, save: bool = True, status: str = "") -> None:
+        """Take a frame exposed by someone else (a flats run, CAL-110) as if captured here: when
+        *save* is set (and ``auto_save_to_library``) file it in the Library with the full header, then
+        show it and announce it to the Imaging screen. *status* starts that screen's status line."""
+        actual = await self._read_gain_offset()
+        self.last_shot = {"started": started, "ended": datetime.datetime.now(datetime.UTC),
+                          "duration": float(duration), "frame_type": frame_type, "filter": filter_name,
+                          "gain": actual["gain"], "offset": actual["offset"]}
+        self.current_frame = self.last_saved_array = data
+        self.library_note = ""
+        if save and self.auto_save_to_library:
+            self.series_done += 1
+            self._auto_save_to_library(self.series_done)
+            added = len(self.library_ids)
+            status += f" — {added} added to the Library" if added else " — none added to the Library"
+            if self.library_note:
+                status += f". {self.library_note}"
+        self.status_text = status
+        await self._detect_bayer_pattern()
+        await self._analyse_current_frame()
+        self._announce_frame()
 
     def _announce_frame(self) -> None:
         """Tell the Imaging screen a frame is ready, when this service was made for a session (it has

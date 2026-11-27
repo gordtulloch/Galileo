@@ -121,9 +121,11 @@ def assemble_context(
     def make_calibration():
         from galileo.calibration import CalibrationService
         from galileo.ui.imaging import ImagingService
+        frames = make_imaging()
+        frames.scratch_dir = ImagingService()._scratch_folder() / "flats"
         return CalibrationService(
             camera=camera, filter_wheel=filter_wheel, flat_panel=flat_panel, mount=mount,
-            output_dir=ImagingService()._scratch_folder() / "flats")
+            output_dir=frames.scratch_dir, frames=frames, pier_name=ctx.pier_name)
 
     ctx.make_imaging = make_imaging
     ctx.make_autofocus = make_autofocus

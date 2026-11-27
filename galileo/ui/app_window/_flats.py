@@ -200,6 +200,12 @@ class AppWindowFlatsMixin:
             summary = f"{run_state['method']} done — {total_frames} frame(s) captured."
             status_label.setText(summary)
             self._window.statusBar().showMessage(f"{summary} ({pier_name})", 6000)
+            images = getattr(getattr(self, "_library_screens", None), "images", None)
+            if images is not None:
+                try:
+                    images.load_fits_data()
+                except Exception:
+                    logger.exception("Could not refresh Library > Images after a flats run")
 
         def failed(message: str) -> None:
             self._flats_threads.pop(key, None)
@@ -253,9 +259,16 @@ class AppWindowFlatsMixin:
                 return
 
             mount = (self._device_pages.get("mount") or {}).get("adapter")
+            from galileo.ui.imaging import ImagingService
+            frames = ImagingService(camera=camera)
+            frames.auto_save_to_library = True
+            frames.pier_key = key       # announces each flat, so the Imaging preview (and remote clients) show it
+            frames.frame_context = self._imaging_frame_context()
+            frames.scratch_dir = service._scratch_folder() / "flats"
             svc = CalibrationService(
                 camera=camera, filter_wheel=wheel, flat_panel=panel if method == "Flat Panel" else None,
-                mount=mount, output_dir=service._scratch_folder() / "flats",
+                mount=mount, output_dir=frames.scratch_dir,
+                frames=frames, pier_name=getattr(self._current_pier, "name", "") or "",
             )
             run_state["service"] = svc
             from galileo.ui.safety_host import register_stopper

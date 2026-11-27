@@ -323,3 +323,48 @@ def test_tc_cal_080_darks_move_the_filter_wheel_before_capturing():
     thread.failed.connect(failures.append)
     thread.run()
     assert failures and "stuck" in failures[0] and not service.capture_series.called
+
+
+@pytest.mark.requirement("TC-CAL-110")
+@pytest.mark.priority("MVP")
+async def test_tc_cal_110_flats_post_notices_and_deliver_frames(mock_indi_camera, tmp_path):
+    """CAL-110: a flats run announces its steps, shows every exposure and saves only the accepted ones."""
+    import numpy as np
+    from galileo.bus import FrameCapturedEvent, get_bus
+    from galileo.calibration import CalibrationService
+    from galileo.notices import NoticeEvent
+    from galileo.ui.imaging import ImagingService
+    state = {"exp": 0.0}
+
+    async def expose(duration, **kw):
+        state["exp"] = duration
+
+    async def frame():
+        return np.full((32, 32), int(20000 * state["exp"]), dtype=np.uint16)
+
+    mock_indi_camera.start_exposure = AsyncMock(side_effect=expose)
+    mock_indi_camera.get_image_array = AsyncMock(side_effect=frame)
+    frames = ImagingService(camera=mock_indi_camera)
+    frames.pier_key, frames.scratch_dir = "pier-1", tmp_path
+    frames.library_registrar = type("R", (), {"register_capture": lambda self, path: path.name})()
+    notices, shown = [], []
+
+    def on_notice(event):
+        notices.append(event.payload["kind"])
+
+    def on_frame(event):
+        shown.append(event.payload["service"].status_text)
+
+    get_bus().subscribe(NoticeEvent, on_notice)
+    get_bus().subscribe(FrameCapturedEvent, on_frame)
+    try:
+        svc = CalibrationService(camera=mock_indi_camera, output_dir=tmp_path, frames=frames)
+        await svc.run_panel_flats_all_filters("Observatory Panel", None, 2, max_well_depth=60000)
+    finally:
+        get_bus().unsubscribe(NoticeEvent, on_notice)
+        get_bus().unsubscribe(FrameCapturedEvent, on_frame)
+
+    assert notices[0] == "flats.started" and notices[-1] == "flats.finished"
+    assert "flats.adjusting" in notices and "flats.frame" in notices
+    assert len(frames.library_ids) == 2
+    assert "not saved" in shown[0] and "2 added to the Library" in shown[-1]

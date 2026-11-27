@@ -330,6 +330,7 @@ This RTM maps every numbered SRS requirement to the SDD component(s) that satisf
 | `CAL-070` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-070` |
 | `CAL-080` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-080` |
 | `CAL-090` | MVP | SDD 4.10 `galileo.calibration` | Test | `TC-CAL-090` |
+| `CAL-110` | MVP | SDD 4.10 `galileo.calibration`; SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-110` |
 | `CAL-100` | MVP | SDD 4.5 `galileo.ui.imaging` | Test | `TC-CAL-100` |
 
 ### `FOC` — Autofocus

@@ -280,6 +280,20 @@ async def test_tc_prev_070_current_frame_follows_the_bus_per_pier(frame_sources)
 
 @pytest.mark.requirement("TC-PREV-070")
 @pytest.mark.priority("MVP")
+async def test_tc_prev_070_autofocus_frames_become_the_current_frame(frame_sources):
+    """PREV-070: an autofocus exposure is the Pier's latest frame, so a client can watch a focus run."""
+    from galileo.bus import FocusFrameEvent
+    frame_sources.bus.publish(FocusFrameEvent("autofocus", pier_key=7, frame=_frame(200, 300)))
+    first = frame_sources.current_version("7")
+    assert first > 0 and frame_sources.current_version("8") == 0
+    frame_sources.bus.publish(FocusFrameEvent("autofocus", pier_key=7, frame=_frame(200, 300, seed=9)))
+    assert frame_sources.current_version("7") > first
+    frame_sources.bus.publish(FocusFrameEvent("autofocus", pier_key=None, frame=_frame(100, 100)))
+    assert frame_sources.current_version("None") == 0
+
+
+@pytest.mark.requirement("TC-PREV-070")
+@pytest.mark.priority("MVP")
 async def test_tc_prev_070_library_frames_render_tile_and_are_read_once(frame_sources):
     """PREV-070: a Library frame is rendered and tiled from its file, read once however many previews are asked for,
     and an unknown frame or a malformed reference is refused."""

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,12 +57,20 @@ class CalibrationService:
         flat_panel=None,
         mount=None,
         output_dir: Path | str = ".",
+        frames=None,
+        pier_name: str = "",
     ) -> None:
+        """*frames*, if given, takes each Sky/panel flat exposure (``present_frame``, as
+        ``galileo.ui.imaging.ImagingService`` provides) so it reaches the Imaging preview and is
+        filed in the Library like any other frame; without it frames are written to *output_dir*.
+        *pier_name* is added to the progress notices."""
         self._camera = camera
         self._fw = filter_wheel
         self._flat_panel = flat_panel
         self._mount = mount
         self._output_dir = Path(output_dir)
+        self._frames = frames
+        self._pier_name = pier_name
         self.stop_requested = False
         self._panel_brightness = _PANEL_START_BRIGHTNESS
 
@@ -158,30 +167,35 @@ class CalibrationService:
         thread to report through, mirroring ``run_flat_wizard``'s own
         callback-free design plus the countdown-style callbacks the Imaging
         page's capture threads already use elsewhere in this codebase."""
-        self._require_twilight(location)
-        names = list(filters) if filters else ([""] if self._fw is None else [None])
-        if names == [None]:
-            names = list(self._fw.filter_names)
-
-        results = []
-        await self._enter_sky_flat_position(location)
         try:
-            for i, filter_name in enumerate(names):
-                if self.stop_requested:
-                    break
-                if on_filter_start is not None:
-                    on_filter_start(filter_name, i + 1, len(names))
-                if self._fw is not None and filter_name:
-                    await self._fw.move_to(self._fw.filter_names.index(filter_name))
-                result = await self.run_sky_flats(
-                    filter_name or "", count, max_well_depth,
-                    measure=measure, exposure_s=exposure_s, exposure_increment_s=exposure_increment_s,
-                    target_fraction=target_fraction, adu_tolerance=adu_tolerance,
-                    on_frame_done=on_frame_done, _skip_twilight_check=True,
-                )
-                results.append(result)
-        finally:
-            await self._leave_sky_flat_position()
+            self._require_twilight(location)
+            names = list(filters) if filters else ([""] if self._fw is None else [None])
+            if names == [None]:
+                names = list(self._fw.filter_names)
+            self._announce_start("Sky Flats", names, count)
+
+            results = []
+            await self._enter_sky_flat_position(location)
+            try:
+                for i, filter_name in enumerate(names):
+                    if self.stop_requested:
+                        break
+                    if on_filter_start is not None:
+                        on_filter_start(filter_name, i + 1, len(names))
+                    await self._select_filter(filter_name, i + 1, len(names))
+                    result = await self.run_sky_flats(
+                        filter_name or "", count, max_well_depth,
+                        measure=measure, exposure_s=exposure_s, exposure_increment_s=exposure_increment_s,
+                        target_fraction=target_fraction, adu_tolerance=adu_tolerance,
+                        on_frame_done=on_frame_done, _skip_twilight_check=True,
+                    )
+                    results.append(result)
+            finally:
+                await self._leave_sky_flat_position()
+        except Exception as exc:
+            self._notify("flats.failed", "Flats failed", str(exc), "error")
+            raise
+        self._announce_end(results)
         return results
 
     async def run_sky_flats(
@@ -227,15 +241,13 @@ class CalibrationService:
             if self.stop_requested:
                 break
             converged = await self._converge_sky_flat_exposure(
-                exposure, target_adu, measure, adu_tolerance, exposure_increment_s,
+                exposure, target_adu, measure, adu_tolerance, exposure_increment_s, filter_name,
             )
             if converged is None:      # stopped mid-convergence, before any frame landed
                 break
-            exposure, data = converged
-            path = self._save_frame(data, "flat", filter_name, i + 1, exposure)
+            exposure, data, started = converged
+            await self._keep_frame(data, filter_name, i + 1, count, exposure, started)
             frames_captured += 1
-            if path is not None:
-                self._register_with_library(path)
             if on_frame_done is not None:
                 on_frame_done(filter_name, i + 1, count)
 
@@ -243,22 +255,25 @@ class CalibrationService:
 
     async def _converge_sky_flat_exposure(
         self, exposure: float, target_adu: float, measure: str, tolerance: float, increment_s: float,
+        filter_name: str = "",
     ):
         """One sky flat: expose, measure, and — while the reading is outside
         *tolerance* of *target_adu* — adjust *exposure* by at least
         *increment_s* and retake, up to a bounded number of attempts.
-        Returns ``(exposure_used, frame_data)`` for the frame that finally
+        Returns ``(exposure_used, frame_data, started)`` for the frame that finally
         landed within tolerance, or ``None`` if ``stop_requested`` was set
         before a frame within tolerance was captured — checked between
         exposures, same as the frame-level Stop check, never mid-exposure."""
         for _ in range(_SKY_FLAT_MAX_ATTEMPTS):
             if self.stop_requested:
                 return None
+            started = datetime.datetime.now(datetime.UTC)
             await self._camera.start_exposure(duration=exposure, frame_type="Flat Field", binning=1)
             data = await self._camera.get_image_array()
             measured = _mean_adu(data) if measure == "Average" else _median_adu(data)
             if target_adu and abs(measured - target_adu) / target_adu <= tolerance:
-                return exposure, data
+                return exposure, data, started
+            await self._reject_frame(data, filter_name, exposure, started, measured, target_adu)
             exposure = _adjust_sky_flat_exposure(exposure, measured, target_adu, increment_s)
             if not (_SKY_FLAT_MIN_EXPOSURE_S <= exposure <= _SKY_FLAT_MAX_EXPOSURE_S):
                 raise FlatCalibrationError(
@@ -315,59 +330,68 @@ class CalibrationService:
         self._panel_brightness = _PANEL_START_BRIGHTNESS
 
         results: list[CalibrationResult] = []
-        if panel is not None:
-            await panel.close_cover()   # park: cover over the scope so the panel is what it sees
-            await panel.light_on()
-            await panel.set_brightness(self._panel_brightness)
+        self._announce_start(method, names, count)
         try:
-            for i, filter_name in enumerate(names):
-                if self.stop_requested:
-                    break
-                if on_filter_start is not None:
-                    on_filter_start(filter_name, i + 1, len(names))
-                if self._fw is not None and filter_name:
-                    await self._fw.move_to(self._fw.filter_names.index(filter_name))
-                got = 0
-                for n in range(count):
+            if panel is not None:
+                self._notify("flats.panel", "Flats", "Preparing the flat panel: cover closed, light on")
+                await panel.close_cover()   # park: cover over the scope so the panel is what it sees
+                await panel.light_on()
+                await panel.set_brightness(self._panel_brightness)
+            try:
+                for i, filter_name in enumerate(names):
                     if self.stop_requested:
                         break
-                    converged = await self._converge_panel_flat_exposure(
-                        panel, exposure, target_adu, measure, adu_tolerance, exposure_increment_s)
-                    if converged is None:
-                        break
-                    exposure, data = converged
-                    path = self._save_frame(data, "flat", filter_name or "", n + 1, exposure)
-                    got += 1
-                    if path is not None:
-                        self._register_with_library(path)
-                    if on_frame_done is not None:
-                        on_frame_done(filter_name or "", n + 1, count)
-                results.append(CalibrationResult(frames_captured=got, final_exposure_s=exposure, filter_name=filter_name or ""))
-        finally:
-            if panel is not None:
-                try:
-                    await panel.light_off()
-                    await panel.open_cover()
-                except Exception:
-                    logger.exception("Could not switch the flat panel off after the flats run")
+                    if on_filter_start is not None:
+                        on_filter_start(filter_name, i + 1, len(names))
+                    await self._select_filter(filter_name, i + 1, len(names))
+                    got = 0
+                    for n in range(count):
+                        if self.stop_requested:
+                            break
+                        converged = await self._converge_panel_flat_exposure(
+                            panel, exposure, target_adu, measure, adu_tolerance, exposure_increment_s,
+                            filter_name or "")
+                        if converged is None:
+                            break
+                        exposure, data, started = converged
+                        await self._keep_frame(data, filter_name or "", n + 1, count, exposure, started)
+                        got += 1
+                        if on_frame_done is not None:
+                            on_frame_done(filter_name or "", n + 1, count)
+                    results.append(CalibrationResult(
+                        frames_captured=got, final_exposure_s=exposure, filter_name=filter_name or ""))
+            finally:
+                if panel is not None:
+                    try:
+                        await panel.light_off()
+                        await panel.open_cover()
+                    except Exception:
+                        logger.exception("Could not switch the flat panel off after the flats run")
+        except Exception as exc:
+            self._notify("flats.failed", "Flats failed", str(exc), "error")
+            raise
+        self._announce_end(results)
         return results
 
     async def _converge_panel_flat_exposure(
         self, panel, exposure: float, target_adu: float, measure: str, tolerance: float, increment_s: float,
+        filter_name: str = "",
     ):
         """One panel flat: expose, measure and retake until within *tolerance* of
         *target_adu*. Out-of-range exposures are clamped and, with a *panel*, the brightness
         is rescaled instead; with no panel (or brightness exhausted) it raises (CAL-050).
-        Returns ``(exposure, data)``, or ``None`` if stopped before a frame landed."""
+        Returns ``(exposure, data, started)``, or ``None`` if stopped before a frame landed."""
         exposure = min(max(exposure, _PANEL_MIN_EXPOSURE_S), _SKY_FLAT_MAX_EXPOSURE_S)
         for _ in range(_SKY_FLAT_MAX_ATTEMPTS):
             if self.stop_requested:
                 return None
+            started = datetime.datetime.now(datetime.UTC)
             await self._camera.start_exposure(duration=exposure, frame_type="Flat Field", binning=1)
             data = await self._camera.get_image_array()
             measured = _mean_adu(data) if measure == "Average" else _median_adu(data)
             if target_adu and abs(measured - target_adu) / target_adu <= tolerance:
-                return exposure, data
+                return exposure, data, started
+            await self._reject_frame(data, filter_name, exposure, started, measured, target_adu)
             wanted = _adjust_sky_flat_exposure(exposure, measured, target_adu, increment_s)
             if _PANEL_MIN_EXPOSURE_S <= wanted <= _SKY_FLAT_MAX_EXPOSURE_S:
                 exposure = wanted
@@ -386,6 +410,7 @@ class CalibrationService:
                     f"within the {_PANEL_MIN_EXPOSURE_S:g}s–{_SKY_FLAT_MAX_EXPOSURE_S:g}s exposure range.")
             self._panel_brightness = new_level
             await panel.set_brightness(new_level)
+            self._notify("flats.brightness", "Flats", f"Panel brightness set to {new_level}")
             exposure = clamped
         raise FlatCalibrationError(
             f"Panel flats: target ADU {target_adu:.0f} not reached after {_SKY_FLAT_MAX_ATTEMPTS} attempts.")
@@ -407,7 +432,9 @@ class CalibrationService:
         from galileo.planning.visibility import altaz_to_radec_deg
         radec = altaz_to_radec_deg(SKY_FLAT_ALTITUDE_DEG, SKY_FLAT_AZIMUTH_DEG, location) if location else None
         if radec is not None:
+            self._notify("flats.position", "Flats", "Slewing to the sky-flat position")
             await self._mount.slew_to_coordinates(radec[0], radec[1])
+        self._notify("flats.position", "Flats", "Turning tracking off")
         await self._mount.set_tracking(False)
 
     async def _leave_sky_flat_position(self) -> None:
@@ -439,6 +466,68 @@ class CalibrationService:
             data = await self._camera.get_image_array()
             self._save_frame(data, "bias", "", i + 1, 0.001)
         return CalibrationResult(frames_captured=count, final_exposure_s=0.001)
+
+    # --- Progress notices and frame delivery (CAL-110) ---------------------
+
+    def _notify(self, kind: str, title: str, message: str = "", severity: str = "info") -> None:
+        from galileo.notices import post_notice
+        if self._pier_name:
+            message = f"{message} — {self._pier_name}" if message else self._pier_name
+        post_notice(kind, title, message, severity, pier=self._pier_name)
+
+    def _announce_start(self, method: str, names: list, count: int) -> None:
+        filters = ", ".join(str(n) for n in names if n)
+        what = f"{method}: {count} frame(s)" + (f" in each of {filters}" if filters else "")
+        self._notify("flats.started", "Flats starting", what)
+        if self._frames is not None:
+            self._frames.series_total, self._frames.series_done = count * len(names), 0
+            self._frames.library_ids = []
+
+    def _announce_end(self, results: list) -> None:
+        total = sum(r.frames_captured for r in results)
+        if self.stop_requested:
+            self._notify("flats.stopped", "Flats stopped", f"{total} frame(s) captured", "warning")
+        else:
+            self._notify("flats.finished", "Flats complete", f"{total} frame(s) captured", "success")
+
+    async def _select_filter(self, filter_name: str, index: int, total: int) -> None:
+        label = f"Filter {filter_name}" if filter_name else "No filter selection"
+        self._notify("flats.filter", "Flats", f"{label} ({index} of {total}): finding the exposure")
+        if self._fw is not None and filter_name:
+            await self._fw.move_to(self._fw.filter_names.index(filter_name))
+
+    async def _reject_frame(self, data, filter_name: str, exposure: float, started, measured: float,
+                            target_adu: float) -> None:
+        """A test exposure outside the ADU tolerance: show it and say why it is being retaken."""
+        reading = f"{exposure:.3g} s gave ADU {measured:.0f}, target {target_adu:.0f}"
+        self._notify("flats.adjusting", "Flats: adjusting exposure", reading)
+        await self._present(data, filter_name, exposure, started, False, f"Flats · test exposure {reading} · not saved")
+
+    async def _keep_frame(self, data, filter_name: str, index: int, count: int, exposure: float, started) -> None:
+        """A flat within tolerance: save it, file it in the Library, show it and report it."""
+        label = f"{filter_name}, " if filter_name else ""
+        what = f"{label}frame {index} of {count}, {exposure:.3g} s"
+        if self._frames is None or data is None:
+            path = self._save_frame(data, "flat", filter_name, index, exposure)
+            if path is not None:
+                self._register_with_library(path)
+            problem = "" if path is not None else "The frame could not be saved — see the log."
+        else:
+            problem = await self._present(data, filter_name, exposure, started, True, f"Flats · {what}")
+        self._notify("flats.frame", "Flat captured", f"{what}. {problem}" if problem else what,
+                     "warning" if problem else "success")
+
+    async def _present(self, data, filter_name: str, exposure: float, started, save: bool, status: str) -> str:
+        """Hand a frame to the Imaging screen's service; returns why it was not saved, if it was not.
+        A preview problem is logged rather than allowed to end the run."""
+        if self._frames is None or data is None:
+            return ""
+        try:
+            await self._frames.present_frame(data, exposure, filter_name, "Flat", started, save=save, status=status)
+        except Exception:
+            logger.exception("Could not show or save a flat frame")
+            return "The frame could not be shown or saved — see the log." if save else ""
+        return self._frames.library_note if save else ""
 
     # --- Private helpers -------------------------------------------------
 
@@ -480,7 +569,6 @@ class CalibrationService:
         ``None`` on failure (logged, not raised — a failed save shouldn't abort
         the rest of a capture run)."""
         try:
-            import datetime
             import numpy as np
             from astropy.io import fits
             if data is None:

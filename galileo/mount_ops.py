@@ -28,7 +28,7 @@ from typing import Any
 
 from galileo.coordinate_format import format_dms, format_hms
 from galileo.device_ops import FAILED, forget, LIMIT, NOT_CONNECTED, OBSTRUCTED, OK, PARKED, UNSUPPORTED, Outcome, scan_devices
-from galileo.exceptions import MountLimitError, MountParkedError, SlewObstructedError
+from galileo.exceptions import DeviceError, MountLimitError, MountParkedError, SlewObstructedError
 from galileo.mount_limits import pier_side_text
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,8 @@ class MountOps:
         self._get = get_adapter
 
     def _call(self, name: str, call: Callable[[Any], Awaitable[Any]], failed: str, *, parked: bool = True,
-              obstructed: bool = False, limit: bool = False, ok_log: str = "", ok_log_args: tuple = ()) -> Outcome:
+              obstructed: bool = False, limit: bool = False, reason: bool = False, ok_log: str = "",
+              ok_log_args: tuple = ()) -> Outcome:
         adapter = self._get()
         if adapter is None:
             return Outcome(False, NOT_CONNECTED)
@@ -57,6 +58,10 @@ class MountOps:
             if limit:
                 return Outcome(False, LIMIT, str(exc))
             logger.exception("Mount %s failed", name)
+        except DeviceError as exc:
+            logger.exception("Mount %s failed", name)
+            if reason:
+                return Outcome(False, FAILED, str(exc))
         except Exception:
             logger.exception("Mount %s failed", name)
         else:
@@ -97,7 +102,7 @@ class MountOps:
 
     def set_park_position(self) -> Outcome:
         return self._call("set park position", lambda a: a.set_park_position(), "Set Park Position failed — see log.",
-                          ok_log="Mount: park position set to current position")
+                          reason=True, ok_log="Mount: park position set to current position")
 
     def set_home_position(self) -> Outcome:
         adapter = self._get()

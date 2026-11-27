@@ -20,9 +20,9 @@ import pytest
 
 from galileo.adapters import indi, indi_client
 from galileo.core.devices import DeviceCategory
-from galileo.exceptions import DeviceConnectionError, DevicePropertyError, MountParkedError
+from galileo.exceptions import DeviceConnectionError, DeviceError, DevicePropertyError, MountParkedError
 
-from tests.indi_fake_server import IMAGE, FakeIndiServer
+from tests.indi_fake_server import IMAGE, FakeIndiServer, text_vec
 
 CCD, MOUNT, WHEEL, FOCUSER = "CCD Simulator", "Telescope Simulator", "Filter Simulator", "Focuser Simulator"
 ROTATOR = "Rotator Simulator"
@@ -371,6 +371,33 @@ async def test_tc_eqp_mnt_010_home_and_park_positions_are_separate(server):
         await mount.set_park_position()
         await sent(server, MOUNT, "TELESCOPE_PARK_OPTION",
                    {"PARK_CURRENT": "On", "PARK_DEFAULT": "Off", "PARK_WRITE_DATA": "Off"})
+    finally:
+        await mount.disconnect()
+
+
+@pytest.mark.requirement("TC-EQP-MNT-010")
+@pytest.mark.priority("MVP")
+@pytest.mark.parametrize("firmware", [None, "1.2.5"])
+async def test_tc_eqp_mnt_010_refused_park_position_is_reported(server, firmware):
+    """EQP-MNT-010: when the driver refuses to store the park position (ZWO AM5 before homing, say), Set Park
+    Position fails with the driver's reason instead of reporting success."""
+    reason = "[ERROR] Mount refused the park position: the mount has to be homed first."
+    server.refusals["TELESCOPE_PARK_OPTION"] = reason
+    if firmware:
+        server.devices[MOUNT]["on_connect"].append(text_vec(MOUNT, "MOUNT_FIRMWARE", {"VERSION": firmware}))
+    mount = make(indi.IndiMountAdapter, server, MOUNT)
+    await mount.connect()
+    try:
+        await mount.unpark()
+
+        async def _unparked():
+            return not (await mount.get_status())["at_park"]
+
+        await eventually(_unparked)
+        with pytest.raises(DeviceError, match="homed first") as refused:
+            await mount.set_park_position()
+        assert f"mount firmware: {firmware or 'not reported by this driver'}" in str(refused.value)
+        assert "INDI driver version:" in str(refused.value)
     finally:
         await mount.disconnect()
 

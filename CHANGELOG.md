@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Set Park Position no longer claims success when the mount refuses (`EQP-MNT-010`).** Over INDI, Galileo sent the command and never read the answer, so a refusal (the ZWO AM5 refuses on old firmware, in alt-az mode, before homing, while moving, or when a park position already exists) looked like success and the next Park went elsewhere. Galileo now waits for the driver's reply and shows its reason in the status bar, with the mount firmware (where the driver reports it) and the INDI driver version. The Mount screen's help lists the AM3/AM5 conditions.
+
+### Added
+
+- **Scripts to build INDI from source on Arch Linux.** `scripts/build_indi_stable.sh` builds INDI and indi-3rdparty at release v2.2.5; `scripts/build_indi_nightly.sh` builds the newest `master` of both. They are adapted from [nou's Debian `astro-soft-build` scripts](https://gitea.nouspiro.space/nou/astro-soft-build) (INDI only: no KStars, StellarSolver or PHD2), install dependencies with `pacman`, and refuse to run over a packaged INDI. Not yet run end to end on an Arch system. A new `.gitattributes` keeps shell scripts' line endings correct when checked out on Windows.
+
+- **A remote capture now uses the filter it names (`CSURF-120`).** `imaging.capture` accepted a filter but only wrote it into the frame's header; the wheel did not move, so a frame could be labelled with a filter it was not taken through. The Master now moves the wheel first (applying the filter's focus offset), refuses a filter the wheel does not have, and, when none is named, records the filter the wheel is on. Needs the Master restarted; no plugin reinstall.
+
+- **Remote clients can watch an autofocus run.** Each autofocus exposure now becomes the Pier's latest frame for previews (`PREV-070`), so the Focus screen picture in the MobileConnect apps updates point by point. The same frame is what other clients' current-frame views show until the next capture. Needs the Master restarted; no plugin reinstall.
+
+- **Flats runs say what they are doing (`CAL-110`).** The Flats Assistant and session Flat Capture blocks now post notices when starting, preparing the mount or flat panel, changing filter, adjusting exposure or panel brightness, capturing each frame, and finishing, stopping or failing.
+
+### Changed
+
+- **Flats appear on the Imaging screen like other frames.** Each exposure is shown in the preview, and the status line reports how many flats reached the Library. Saved flats now carry the full FITS header (telescope, camera, gain, temperature and so on), so the Library no longer files them with those unknown.
+
 ## Releases
 
 | Version | Date | Notes |

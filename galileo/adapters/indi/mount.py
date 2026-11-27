@@ -15,7 +15,7 @@ from galileo.adapters.indi._base import IndiAdapter
 from galileo.core.capabilities import DeviceCapabilities
 from galileo.core.devices import DeviceCategory
 from galileo.core.slew_guard import get_slew_guard
-from galileo.exceptions import DevicePropertyError, MountParkedError
+from galileo.exceptions import DeviceError, DevicePropertyError, MountParkedError
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,25 @@ class IndiMountAdapter(IndiAdapter):
         self._set_sw("TELESCOPE_PARK", {"PARK": False, "UNPARK": True})
 
     async def set_park_position(self) -> None:
-        """Make the mount's current position its park position (TELESCOPE_PARK_OPTION)."""
+        """Make the mount's current position its park position (TELESCOPE_PARK_OPTION). Waits for the driver's
+        answer and raises ``DeviceError`` with its reason if it refuses: the ZWO AM5, for one, does so on old
+        firmware, in alt-az mode, before homing and when a park position is already set."""
         self._refuse_if_parked("set_park_position")
         self._log_interaction("set_park_position")
+        self._require("TELESCOPE_PARK_OPTION")
+        seq = self._c().blob_seq(self.device_name, "TELESCOPE_PARK_OPTION")
         self._select("TELESCOPE_PARK_OPTION", "PARK_CURRENT")
+        try:
+            await self._wait_not_busy("TELESCOPE_PARK_OPTION", 10.0, "set park position", after_seq=seq)
+        except DeviceError as exc:
+            raise type(exc)(f"{exc} ({self._versions_text()})") from exc
+
+    def _versions_text(self) -> str:
+        """Mount firmware and driver versions, for error messages. Only some drivers publish the firmware
+        (``MOUNT_FIRMWARE``; the ZWO AM5 from driver 1.6), and Galileo cannot ask the mount itself."""
+        firmware = self._txt("MOUNT_FIRMWARE", "VERSION") or "not reported by this driver"
+        driver = self._driver_info().get("driver_version") or "unknown"
+        return f"mount firmware: {firmware}; INDI driver version: {driver}"
 
     async def find_home(self) -> None:
         """Send the mount to its home position. Drivers with a homing sensor expose ``FIND`` (search for
