@@ -62,7 +62,11 @@ logger = logging.getLogger(__name__)
 MEASURE_POINTS = 3                    # solves taken while rotating, before adjusting begins
 MIN_SEPARATION_DEG = 0.25             # solves closer together than this cannot fix the axis
 SIDEREAL_DEG_PER_S = 360.98564736629 / 86400.0
-_MAX_FAILED_ADJUST_SOLVES = 3         # consecutive failures that end the adjust phase
+_ADJUST_GIVE_UP_S = 600.0             # adjusting ends after this long without a usable reading
+_ADJUST_RETRY_PAUSE_S = 2.0           # pause after a failed adjusting solve, so a dead camera is not hammered
+_WEAK_SEPARATION = 0.2                # |north component| of the field below this: altitude and azimuth hard to tell apart
+_WEAK_ALTITUDE_RESPONSE = 0.5         # share of an altitude-knob turn the field must show for it to be seen well
+DEFAULT_STEP_DEG = 30.0               # turn between the measuring solves; half this is about four times as noisy
 _TRAVEL_WARN_FRACTION = 0.9           # warn if the mount turned less than this share of what was asked
 _POLE_NEIGHBOURHOOD_DEG = 2.0         # within this of a pole a meridian flip is no concern
 _ZENITH_PASSES = 3                    # solve-sync-reslew rounds spent getting the mount onto the zenith
@@ -300,11 +304,28 @@ def axis_after_adjustment(axis: np.ndarray, anchor: np.ndarray, new: np.ndarray,
     return _rotate_z(_rotate_y(axis, turns[0]), turns[1])
 
 
+def pointing_warnings(vector: np.ndarray) -> list[str]:
+    """What is wrong with adjusting while the camera points along *vector* (horizon frame), as warnings for the user.
+
+    The altitude knob turns about the east-west horizontal axis, so a field near that axis (low in the east or west)
+    hardly moves when it is turned. And both knobs move a field in the east-west vertical plane (due east or west, or
+    overhead) the same way, so :func:`knob_adjustment` cannot tell them apart and magnifies any other disturbance."""
+    north, up = float(vector[0]), float(vector[2])
+    if math.hypot(north, up) < _WEAK_ALTITUDE_RESPONSE:
+        return ["Poor pointing: the camera will be low in the east or west, where turning the altitude adjuster barely "
+                "moves the picture. Start from a field higher up, towards the south or north."]
+    if abs(north) < _WEAK_SEPARATION:
+        return ["Poor pointing: the camera will be near due east, due west or overhead, where altitude and azimuth "
+                "adjustments are hard to tell apart and the live figures can jump. Start from a field further towards "
+                "the south or north."]
+    return []
+
+
 @dataclass
 class PolarAlignSettings(SolveSettings):
     """One polar-alignment run's settings. ``exposure_s``, ``settle_s`` and ``scale_hint_arcsec_px``
     are those of :class:`~galileo.platesolve.SolveSettings`."""
-    step_deg: float = 15.0            # how far the mount turns in RA between the measuring solves
+    step_deg: float = DEFAULT_STEP_DEG  # how far the mount turns in RA between the measuring solves
     direction: str = "east"           # "east" or "west": which way the RA axis turns
     refraction: bool = True           # raise solved altitudes by atmospheric refraction
     slew_from_zenith: bool = False    # True: slew to the zenith, check it by solving, and measure from there. False: solve where the mount already points (the first
@@ -326,6 +347,13 @@ class PolarAlignProgress:
     target_offset: tuple[float, float] | None = None
     # The same in the frame's own pixels, for drawing the circle and cross over the picture of that frame.
     geometry: TargetGeometry | None = None
+    # Which reading the current error is (1: the measurement; then one more for each adjusting solve that updated it)
+    # and when its frame was taken, so a screen can show that it is fresh and how old it is.
+    reading: int = 0
+    measured_at: dt.datetime | None = None
+    stale: bool = False               # the latest attempt did not update the error
+    problem: str = ""                 # why, when stale
+    warnings: tuple[str, ...] = ()    # poor-pointing warnings for this run
 
 
 class PolarAlignWorkflow(SolveWorkflow):
@@ -346,17 +374,38 @@ class PolarAlignWorkflow(SolveWorkflow):
         self.latitude, self.longitude = latitude, longitude
         self._on_progress = on_progress or (lambda progress: None)
         self.error: PolarError | None = None      # the latest
+        self.end_reason = ""                      # why live adjustment ended by itself, if it did
+        self.warnings: tuple[str, ...] = ()
+        self._reading = 0
+        self._measured_at: dt.datetime | None = None
+        self._failure = ""                        # why the last _capture_solve gave nothing
 
     async def align(self, settings: PolarAlignSettings) -> None:
-        """Measure, then adjust until :meth:`stop` is called (or solving keeps failing)."""
+        """Measure, then adjust until :meth:`stop` is called (or the error can no longer be updated, in which case
+        :attr:`end_reason` says why)."""
+        self.error, self.end_reason, self.warnings = None, "", ()
+        self._reading, self._measured_at = 0, None
         await self._run(self._align(settings))
 
     def _report(self, phase: str, message: str, step: int = 0, error: PolarError | None = None,
-                geometry: TargetGeometry | None = None) -> None:
+                geometry: TargetGeometry | None = None, stale: bool = False, problem: str = "") -> None:
         self._log(message)
         self._on_progress(PolarAlignProgress(
             phase, message, step=step, error=error, geometry=geometry,
-            target_offset=None if geometry is None else geometry.offset_arcmin))
+            target_offset=None if geometry is None else geometry.offset_arcmin, reading=self._reading,
+            measured_at=self._measured_at, stale=stale, problem=problem, warnings=self.warnings))
+
+    def _end_adjusting(self, reason: str) -> None:
+        self.end_reason = reason
+        logger.warning("Polar alignment ended: %s", reason)
+        self._report("adjusting", reason, MEASURE_POINTS, stale=True, problem=reason)
+
+    async def _tracking_off(self) -> bool:
+        """Whether the mount says it is not tracking. A mount that does not say is taken to be tracking."""
+        try:
+            return (await self.mount.get_status() or {}).get("tracking") is False
+        except Exception:
+            return False
 
     def _crosses_meridian(self, start_ra: float, dec: float, offsets: list[float],
                           on_meridian: bool = False) -> bool:
@@ -521,6 +570,13 @@ class PolarAlignWorkflow(SolveWorkflow):
                                       "across the meridian, where it would flip. Turn the other way, or start further "
                                       "from the meridian.")
             return
+        last = mount_frame_to_j2000((start_ra + offsets[-1]) % 360.0, dec, system)
+        self.warnings = tuple(pointing_warnings(horizon_vector(
+            *j2000_to_mount_frame(*last, None), dt.datetime.now(dt.UTC), self.latitude, self.longitude,
+            refract=False)))
+        for warning in self.warnings:
+            logger.warning("Polar alignment: %s", warning)
+            self._report("measuring", warning)
         vectors: list[np.ndarray] = []
         stamps: list[dt.datetime] = []
         hint = mount_frame_to_j2000(start_ra, dec, system)
@@ -551,42 +607,76 @@ class PolarAlignWorkflow(SolveWorkflow):
             self._report("measuring", str(exc), MEASURE_POINTS)
             return
         self.error = polar_error(axis, self.latitude)
+        self._reading, self._measured_at = 1, stamps[-1]
+        self._log_reading(vectors[-1], self.error)
         self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole. "
                                   "Turn the altitude and azimuth adjusters to bring the X into the circle.",
                      MEASURE_POINTS, self.error,
                      target_geometry(solved[2], axis, stamps[-1], self.latitude, self.longitude))
+        await self._adjust(settings, hint, attempt, axis, vectors[-1], stamps[-1])
 
-        anchor, anchor_time = vectors[-1], stamps[-1]
+    def _log_reading(self, field: np.ndarray, error: PolarError) -> None:
+        """One line per reading in the log file, so a night's adjusting can be worked through afterwards."""
+        alt, az = vector_altaz(field)
+        logger.info("Polar alignment reading %d: field alt %.4f deg az %.4f deg; axis error total %.0f arcsec, "
+                    "altitude %+.0f, azimuth %+.0f", self._reading, alt, az, error.total_arcsec,
+                    error.altitude_arcsec, error.azimuth_arcsec)
+
+    async def _adjust(self, settings: PolarAlignSettings, hint, attempt: int, axis: np.ndarray, anchor: np.ndarray,
+                      anchor_time: dt.datetime) -> None:
+        """Keep solving where the measuring ended and update the error from how the field has moved. A frame that
+        gives no reading leaves the last one, marked stale with the reason, and is retried."""
+        loop = asyncio.get_running_loop()
+        last_good = loop.time()
         failures = 0
         while True:
             fresh = await self._capture_solve(settings, hint, attempt)
             attempt += 1
-            if fresh is None:
+            # Checked after the frame, so one taken while tracking was off is never read as a turn of the knobs.
+            if await self._tracking_off():
+                self._end_adjusting("The mount is not tracking, so the error can no longer be updated. Turn tracking on "
+                                    "and start polar alignment again.")
+                return
+            adjusted = None
+            problem = self._failure
+            if fresh is not None:
+                adjusted = axis_after_adjustment(axis, anchor, fresh[0], (fresh[1] - anchor_time).total_seconds(),
+                                                 self.latitude)
+                problem = "The picture moved in a way the altitude and azimuth adjusters cannot explain."
+            if fresh is None or adjusted is None:
                 failures += 1
-                if failures >= _MAX_FAILED_ADJUST_SOLVES:
-                    self._report("adjusting", "Solving keeps failing, so live adjustment has stopped.", MEASURE_POINTS)
+                logger.warning("Polar alignment: no new reading (%d in a row): %s", failures, problem)
+                if loop.time() - last_good >= _ADJUST_GIVE_UP_S:
+                    self._end_adjusting(f"No new reading for {_ADJUST_GIVE_UP_S / 60.0:.0f} minutes, so live adjustment "
+                                        f"has stopped. Last problem: {problem}")
                     return
+                self._report("adjusting", f"Not updated: {problem} Still trying ({failures} in a row); the figures "
+                                          f"are from reading {self._reading}.", MEASURE_POINTS, stale=True,
+                             problem=problem)
+                await asyncio.sleep(_ADJUST_RETRY_PAUSE_S)
                 continue
-            failures = 0
-            adjusted = axis_after_adjustment(axis, anchor, fresh[0], (fresh[1] - anchor_time).total_seconds(),
-                                             self.latitude)
-            if adjusted is None:
-                self._log("The mount has moved in a way the altitude and azimuth knobs cannot explain; waiting.")
-                continue
+            failures, last_good = 0, loop.time()
             self.error = polar_error(adjusted, self.latitude)
-            self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole.",
+            self._reading, self._measured_at = self._reading + 1, fresh[1]
+            self._log_reading(fresh[0], self.error)
+            self._report("adjusting", f"Polar axis is {format_angle(self.error.total_arcsec)} from the pole "
+                                      f"(reading {self._reading}).",
                          MEASURE_POINTS, self.error,
                          target_geometry(fresh[2], adjusted, fresh[1], self.latitude, self.longitude))
 
     async def _capture_solve(self, settings: PolarAlignSettings, hint, attempt: int) -> tuple[np.ndarray, dt.datetime, object] | None:
         """One frame, solved: where it points in the horizon frame, when (mid-exposure) and the solver's result,
         or ``None`` if either step failed."""
+        self._failure = ""
         frame = await self._capture(settings, attempt)
         if frame is None:
+            self._failure = "The camera did not give a frame."
             return None
         stamp = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=settings.exposure_s / 2.0)
         result = await self._solve(frame, hint, settings)
         if not result.success or result.ra_deg is None or result.dec_deg is None:
+            reason = (result.failure_reason or "no solution").rstrip(".")
+            self._failure = f"The frame did not solve: {reason}."
             return None
         ra, dec = j2000_to_mount_frame(result.ra_deg, result.dec_deg, None)       # coordinates of date
         return horizon_vector(ra, dec, stamp, self.latitude, self.longitude, settings.refraction), stamp, result

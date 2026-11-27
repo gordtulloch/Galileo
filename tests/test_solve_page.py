@@ -790,7 +790,7 @@ def _polar_solutions(count: int) -> list[SolveResult]:
 def test_tc_plt_080_polar_alignment_tab_has_its_controls(page):
     """PLT-080: The Polar Alignment tab offers a start button, the rotation step and direction and the refraction option, and starts idle."""
     assert page.polar_start_btn.isEnabled() and page.polar_start_btn.text() == "Start Polar Alignment"
-    assert page.polar_step_spin.value() == 15 and not page.polar_from_zenith.isChecked()
+    assert page.polar_step_spin.value() == 30 and not page.polar_from_zenith.isChecked()
     assert [page.polar_direction.itemData(i) for i in range(page.polar_direction.count())] == ["east", "west"]
     assert page.polar_refraction.isChecked()
     assert page.polar_status.text() == "Not started." and page.polar_total.text() == "—"

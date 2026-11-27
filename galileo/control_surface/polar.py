@@ -14,6 +14,9 @@ feed needs no polling) and the same dictionary from ``polar.status``:
 * ``error``: ``total_arcsec``, ``altitude_arcsec`` (positive = axis too high), ``azimuth_arcsec`` (positive = move the
   axis west), ``azimuth_rotation_arcsec``, the two plain-English instructions, ``quality`` (``good``/``fair``/``poor``)
   and a ``trend`` of the last few totals so a client can show whether the knobs are helping;
+* ``reading`` (counts up each time the error is updated; 0 before there is one), ``measured_at`` (when its frame was
+  taken, seconds since 1970 UTC), ``stale`` and ``problem`` (the latest attempt did not update the error, and why) and
+  ``warnings`` (poor-pointing warnings for the run);
 * ``target_offset_arcmin``: where the pole lies relative to the axis in the latest frame (x right, y down), or null
   when the solver gives no field geometry;
 * ``log``: the last lines of the workflow's own log.
@@ -75,7 +78,7 @@ def register_polar_operations(registry: Registry, access: PolarAccess) -> None:
         (Arg("exposure_s", "float", required=False, default=5.0, minimum=0.001, maximum=600, unit="s"),
          Arg("settle_s", "float", required=False, default=5.0, minimum=0, maximum=60, unit="s",
              description="Pause once the mount has stopped, before each frame"),
-         Arg("step_deg", "float", required=False, default=15.0, minimum=5, maximum=60, unit="deg",
+         Arg("step_deg", "float", required=False, default=30.0, minimum=5, maximum=60, unit="deg",
              description="How far the mount turns in RA between the three measuring solves"),
          Arg("direction", "enum", required=False, default="east", choices=("east", "west"),
              description="Which way the RA axis turns"),

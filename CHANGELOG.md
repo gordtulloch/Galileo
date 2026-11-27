@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Polar alignment no longer leaves an old error on screen without saying so (`PLT-080`).** While adjusting, each update is now a numbered reading shown with its age, and a solve that fails, or a field movement the adjusters cannot explain, marks the figures **out of date** with the reason. Adjusting used to end after three failed solves, with phones showing only "Finished"; it now keeps retrying and gives up only after ten minutes without a reading, saying why. It also ends, saying why, if the mount reports it is not tracking, since the drift would be read as a turn of the knobs.
+
 - **Set Park Position no longer claims success when the mount refuses (`EQP-MNT-010`).** Over INDI, Galileo sent the command and never read the answer, so a refusal (the ZWO AM5 refuses on old firmware, in alt-az mode, before homing, while moving, or when a park position already exists) looked like success and the next Park went elsewhere. Galileo now waits for the driver's reply and shows its reason in the status bar, with the mount firmware (where the driver reports it) and the INDI driver version. The Mount screen's help lists the AM3/AM5 conditions.
 
 ### Added
@@ -25,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Flats runs say what they are doing (`CAL-110`).** The Flats Assistant and session Flat Capture blocks now post notices when starting, preparing the mount or flat panel, changing filter, adjusting exposure or panel brightness, capturing each frame, and finishing, stopping or failing.
 
 ### Changed
+
+- **Polar alignment turns 30° between measuring frames by default, not 15°.** In simulation with a few arcseconds of solve noise, 15° steps gave a typical error of over a minute of arc on a perfectly aligned mount; 30° gave about a quarter of that. The two turns now need 60° of clear sky before the meridian or a mount limit.
+
+- **Polar alignment rates the error in words and warns about poor pointing.** The total now reads **Good**, **Fair** or **Poor** as well as being coloured (night-theme colours cannot be told apart). A warning appears when the measuring will end low in the east or west, or near due east, due west or overhead, where live adjustment works badly. Each reading and failure is written to the application log. Remote clients get the new `polar.state` fields `reading`, `measured_at`, `stale`, `problem` and `warnings`; the Master needs restarting, the WebConnect plugin reinstalling and the phone apps updating to show them.
 
 - **Flats appear on the Imaging screen like other frames.** Each exposure is shown in the preview, and the status line reports how many flats reached the Library. Saved flats now carry the full FITS header (telescope, camera, gain, temperature and so on), so the Library no longer files them with those unknown.
 

@@ -69,6 +69,12 @@ def _error_dict(error: Any, trend: list[float]) -> dict[str, Any]:
             "quality": quality(error.total_arcsec), "trend": list(trend)}
 
 
+def _blank_picture() -> dict[str, Any]:
+    return {"running": False, "phase": "idle", "message": "", "step": 0, "steps": 3, "error": None,
+            "target_offset_arcmin": None, "frame": None, "log": [], "stopped": False, "reading": 0,
+            "measured_at": None, "stale": False, "problem": "", "warnings": []}
+
+
 class EnginePolar:
     """``PolarAccess`` (``galileo.control_surface.polar``) over the device service and session runner."""
 
@@ -114,12 +120,12 @@ class EnginePolar:
         from galileo.polaralign import PolarAlignSettings
         log: list[str] = []
         trend: deque[float] = deque(maxlen=TREND_KEPT)
-        picture: dict[str, Any] = {"running": True, "phase": "measuring", "message": "Starting…", "step": 0,
-                                   "steps": 3, "error": None, "target_offset_arcmin": None, "frame": None,
-                                   "log": log, "stopped": False}
+        picture: dict[str, Any] = {**_blank_picture(), "running": True, "phase": "measuring", "message": "Starting…",
+                                   "log": log}
         self._picture[pier] = picture
 
         def note(message: str) -> None:
+            logger.info("Polar alignment (Pier %s): %s", pier, message)
             log.append(message)
             del log[:-LOG_KEPT]
             # Whatever the workflow says it is doing (slewing, capturing, solving...) is what the client shows, so a
@@ -128,7 +134,11 @@ class EnginePolar:
             self._publish(pier)
 
         def on_progress(update: Any) -> None:
-            picture.update(phase=update.phase, message=update.message, step=update.step, steps=update.steps)
+            measured_at = update.measured_at
+            picture.update(phase=update.phase, message=update.message, step=update.step, steps=update.steps,
+                           reading=update.reading, stale=update.stale, problem=update.problem,
+                           warnings=list(update.warnings),
+                           measured_at=None if measured_at is None else measured_at.timestamp())
             if update.error is not None:
                 trend.append(round(update.error.total_arcsec, 1))
                 picture["error"] = _error_dict(update.error, list(trend))
@@ -172,12 +182,15 @@ class EnginePolar:
                 # It ended without measuring anything (a slew refused as obstructed, a frame that would not solve):
                 # that is a failure the client is told about, in the workflow's own words, not a quiet success.
                 raise Refused(f"polar alignment did not complete: {picture['message']}")
-            return {"error": picture["error"], "stopped": stopped, "log": list(log)}
+            return {"error": picture["error"], "stopped": stopped, "log": list(log),
+                    "end_reason": getattr(workflow, "end_reason", "")}
         finally:
             self._workflows.pop(pier, None)
             stopped = bool(getattr(workflow, "stopped", False))
             # Once it has ended, the message says so, rather than keeping the last step as if it were still going.
+            end_reason = getattr(workflow, "end_reason", "")
             ended = ("Polar alignment stopped." if stopped else
+                     f"Polar alignment ended. {end_reason}" if end_reason else
                      "Polar alignment finished." if picture["error"] is not None else
                      f"Polar alignment ended without a result. Last step: {picture['message']}")
             picture.update(running=False, phase="finished", log=list(log), stopped=stopped, message=ended)
@@ -191,9 +204,7 @@ class EnginePolar:
         return True
 
     def status(self, pier: str) -> dict[str, Any]:
-        picture = self._picture.get(pier) or {"running": False, "phase": "idle", "message": "", "step": 0,
-                                              "steps": 3, "error": None, "target_offset_arcmin": None,
-                                              "frame": None, "log": [], "stopped": False}
+        picture = self._picture.get(pier) or _blank_picture()
         return {**picture, "running": pier in self._workflows, "why_not": self.why_not(pier) or ""}
 
 

@@ -1312,18 +1312,22 @@ class _FakePolarWorkflow:
         self.gate.set()
 
     async def align(self, settings):
+        import datetime as dt
+
         import numpy as np
         from galileo.polaralign import PolarAlignProgress, PolarError, TargetGeometry
         self.settings = settings
         self.log("Moving the mount to the zenith to start…")
         self.on_progress(PolarAlignProgress("measuring", "Solving position 1 of 3…", step=1))
-        for total in (900.0, 240.0, 30.0):
+        for reading, total in enumerate((900.0, 240.0, 30.0), start=1):
             error = PolarError(axis=(1.0, 0.0, 0.0), total_arcsec=total, altitude_arcsec=total * 0.6,
                                azimuth_arcsec=-total * 0.8, azimuth_rotation_arcsec=-total * 0.9)
             self.on_frame(np.zeros((100, 200), dtype=np.uint16))
             geometry = TargetGeometry((total / 60.0, -1.5), (4.0, 2.0), (4.0 + total / 60.0 / 0.5, 2.0 - 3.0), 0.5)
             self.on_progress(PolarAlignProgress("adjusting", "Polar axis moved", step=3, error=error,
-                                                target_offset=(total / 60.0, -1.5), geometry=geometry))
+                                                target_offset=(total / 60.0, -1.5), geometry=geometry,
+                                                reading=reading, warnings=("Poor",),
+                                                measured_at=dt.datetime.fromtimestamp(1_000_000 + reading, dt.UTC)))
         await asyncio.get_running_loop().run_in_executor(None, self.gate.wait, 5)
 
 
@@ -1383,6 +1387,9 @@ async def test_tc_csurf_145_polar_alignment_runs_live_and_stops(registry, bus):
     assert made[0].settings.step_deg == 20 and made[0].settings.direction == "west"
     assert made[0].settings.refraction is False and made[0].settings.slew_from_zenith is False
     assert made[0].settings.settle_s == 5.0                     # the default pause before a frame
+    assert next(a for a in cat["polar.start"]["args"] if a["name"] == "step_deg")["default"] == 30.0
+    assert (picture["reading"], picture["stale"], picture["problem"], picture["warnings"]) == (3, False, "", ["Poor"])
+    assert picture["measured_at"] == 1_000_003.0
     assert picture["log"] == ["Moving the mount to the zenith to start…"]
 
     second = await registry.invoke("polar.start", {}, "p1", "web")

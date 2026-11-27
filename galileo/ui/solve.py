@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import datetime as dt
 import logging
 import threading
 import time
@@ -202,6 +203,10 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.mount_position.connect(self._on_mount_position)
         self.run_finished.connect(self._on_run_finished)
         self.polar_progress.connect(self._on_polar_progress)
+        self._polar_last: PolarAlignProgress | None = None      # the latest with a reading, for its age
+        self._polar_age_timer = QTimer(self)
+        self._polar_age_timer.setInterval(1000)
+        self._polar_age_timer.timeout.connect(self._tick_polar_reading)
         self.exposure_changed.connect(self._on_exposure_changed)
 
         self._mount_timer = QTimer(self)
@@ -887,6 +892,10 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
         self.polar_status.setText("Starting…")
         self.polar_total.setText("—")
         self.polar_total.setStyleSheet("")
+        self._polar_last = None
+        self.polar_reading.clear()
+        self.polar_warning.clear()
+        self.polar_warning.setVisible(False)
         self.polar_altitude.clear()
         self.polar_azimuth.clear()
         self.polar_target_hint.clear()
@@ -900,12 +909,18 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             self.polar_status.setText(f"Measuring ({progress.step} of {progress.steps}): {progress.message}")
         else:
             self.polar_status.setText(progress.message)
+        self.polar_warning.setText("\n".join(progress.warnings))
+        self.polar_warning.setVisible(bool(progress.warnings))
+        if progress.reading:
+            self._polar_last = progress
+            self._polar_age_timer.start()
+            self._tick_polar_reading()
         error = progress.error
         if error is None:
             return
-        self.polar_total.setText(format_angle(error.total_arcsec))
-        color = ("#31c24a" if error.total_arcsec < _POLAR_GOOD_ARCSEC
-                 else "#e0c030" if error.total_arcsec < _POLAR_FAIR_ARCSEC else "#d63a3a")
+        quality, color = (("Good", "#31c24a") if error.total_arcsec < _POLAR_GOOD_ARCSEC
+                          else ("Fair", "#e0c030") if error.total_arcsec < _POLAR_FAIR_ARCSEC else ("Poor", "#d63a3a"))
+        self.polar_total.setText(f"{format_angle(error.total_arcsec)}  {quality}")
         self.polar_total.setStyleSheet(f"color: {color};")
         self.polar_altitude.setText(error.altitude_advice())
         self.polar_azimuth.setText(error.azimuth_advice())
@@ -914,6 +929,21 @@ class SolvePage(SolveResultsMixin, SolveBuildMixin, QWidget):
             "Turn the altitude and azimuth adjusters to bring the X (the pole) into the circle (where the axis points)."
             if progress.target_offset is not None else
             "This solver gives no field geometry, so the X and circle can't be drawn; follow the adjustments above.")
+
+    def _tick_polar_reading(self) -> None:
+        """Which reading the figures are, how old it is, and whether the latest attempt failed to replace it."""
+        last = self._polar_last
+        if last is None or last.measured_at is None:
+            self._polar_age_timer.stop()
+            return
+        age = max(0, round((dt.datetime.now(dt.UTC) - last.measured_at).total_seconds()))
+        text = f"Reading {last.reading}, taken {age} s ago."
+        if last.stale:
+            text = f"OUT OF DATE. {text} {last.problem}"
+        elif not self._running.get(self._pier_key()):
+            text = f"Reading {last.reading}. Alignment is not running, so this will not update."
+            self._polar_age_timer.stop()
+        self.polar_reading.setText(text)
 
     def stop(self) -> None:
         # Stops whichever Pier is currently displayed's own run — a different

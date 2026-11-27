@@ -208,7 +208,7 @@ Aborts the polar alignment run immediately. Enabled only while a run is in progr
 
 ## Rotate
 
-How far the mount turns in RA between the three measuring frames, 10–90°. The default is 15°. A bigger turn is more accurate but needs more clear sky. Beside it you choose the direction.
+How far the mount turns in RA between the three measuring frames, 10–90°. The default is 30°. A bigger turn is more accurate but needs more clear sky; at 15° the measured error is about four times as noisy as at 30°, which can be more than a minute of arc. Beside it you choose the direction.
 
 ## Direction
 
@@ -228,7 +228,15 @@ What the procedure is doing now, or why it stopped.
 
 ## Total error
 
-How far the polar axis is from the pole, in arcminutes and arcseconds. Aim for under a few arcminutes.
+How far the polar axis is from the pole, in arcminutes and arcseconds, with a rating in words: **Good** under 1′ (green), **Fair** under 5′ (amber), otherwise **Poor** (red). Aim for under a few arcminutes.
+
+## Reading
+
+Which reading the figures are and how old its frame is. The number goes up each time a solve updates the error, even if the error is unchanged, so after turning an adjuster wait for a reading taken after you finished. It starts **OUT OF DATE** when the latest attempt did not update the figures, followed by the reason (the frame did not solve, the camera gave no frame, or the picture moved in a way the adjusters cannot explain). Galileo keeps retrying; after ten minutes with no usable reading, or if the mount reports it is not tracking, adjusting ends and the status says why.
+
+## Pointing warning
+
+Shown when the measuring positions will end somewhere the live adjustment works badly: low in the east or west, where the altitude adjuster barely moves the picture; or near due east, due west or overhead, where altitude and azimuth movements are hard to tell apart and the figures can jump. The run carries on; to fix it, press **End Alignment** and start from a field further towards the south or north.
 
 ## Altitude correction
 

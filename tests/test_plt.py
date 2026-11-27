@@ -1226,13 +1226,13 @@ async def test_tc_plt_080_unsynced_mount_is_synced_to_the_zenith_solve_and_sent_
 
 @pytest.mark.requirement("TC-PLT-080")
 @pytest.mark.priority("P2")
-async def test_tc_plt_080_default_run_measures_where_the_mount_points_and_turns_15_degrees(tmp_path):
+async def test_tc_plt_080_default_run_measures_where_the_mount_points_and_turns_30_degrees(tmp_path):
     """PLT-080: By default the run does not go to the zenith: it solves where the mount already points, then turns
-    15° in RA for each of the other two measuring frames, at the same declination."""
+    30° in RA for each of the other two measuring frames, at the same declination."""
     from galileo.polaralign import PolarAlignSettings
     defaults = PolarAlignSettings()
-    assert defaults.slew_from_zenith is False and defaults.step_deg == 15.0 and defaults.settle_s >= 5.0
-    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 15.0, 3)
+    assert defaults.slew_from_zenith is False and defaults.step_deg == 30.0 and defaults.settle_s >= 5.0
+    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
     seen: list = []
 
     def on_progress(progress):
@@ -1248,7 +1248,7 @@ async def test_tc_plt_080_default_run_measures_where_the_mount_points_and_turns_
     workflow, slews, _ = _polar_rig(tmp_path, results, on_progress, hour_angle_deg=-90.0, dec=70.0)
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, direction="west", refraction=False))
     assert len(slews) == 2 and all(dec == pytest.approx(70.0, abs=0.01) for _, dec in slews)   # the first needs none
-    assert [round((start_ra - ra) % 360.0) for ra, _ in slews] == [15, 30]
+    assert [round((start_ra - ra) % 360.0) for ra, _ in slews] == [30, 60]
     assert not any("zenith" in p.message for p in seen)
 
 
@@ -1288,6 +1288,88 @@ async def test_tc_plt_080_workflow_stops_when_a_solve_fails(tmp_path):
     await workflow.align(PolarAlignSettings(exposure_s=0.1, settle_s=0.0, direction="west"))
     assert workflow.error is None
     assert "did not solve" in seen[-1].message and seen[-1].error is None
+
+
+def _adjusting_run(tmp_path, adjusting_results, stop_when):
+    """A zenith-start run whose solves after the three measuring ones are *adjusting_results*; stops when
+    *stop_when(progress so far)* is true."""
+    vectors = _swing(_axis_off_pole(0.2, 0.3), 35.0, 30.0, 3)
+    results = _zenith_solution() + _sky_solutions(vectors) + adjusting_results(vectors)
+    seen: list = []
+
+    def on_progress(progress):
+        seen.append(progress)
+        if stop_when(seen):
+            workflow.stop()
+
+    workflow, _, _ = _polar_rig(tmp_path, results, on_progress)
+    return workflow, seen
+
+
+def _zenith_settings():
+    from galileo.polaralign import PolarAlignSettings
+    return PolarAlignSettings(exposure_s=0.1, settle_s=0.0, step_deg=30.0, direction="west", refraction=False,
+                              slew_from_zenith=True)
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_failed_adjusting_solves_are_marked_stale_and_retried(tmp_path, monkeypatch):
+    """PLT-080: Adjusting solves that fail, however many in a row, leave the last error marked stale with the reason
+    and are retried; the next good one is a new, fresh reading."""
+    from galileo import polaralign
+    from galileo.platesolve import SolveResult
+    monkeypatch.setattr(polaralign, "_ADJUST_RETRY_PAUSE_S", 0.0)
+    failed = SolveResult(success=False, failure_reason="No stars.")
+    workflow, seen = _adjusting_run(
+        tmp_path, lambda vectors: [failed] * 10 + _sky_solutions(vectors[2:]),       # 5 attempts: each retries blind
+        lambda so_far: so_far[-1].reading >= 2)
+    await workflow.align(_zenith_settings())
+    stale = [p for p in seen if p.stale]
+    assert len(stale) >= 5 and all(p.reading == 1 and p.error is None for p in stale)
+    assert "No stars" in stale[0].problem and "Still trying" in stale[0].message
+    assert seen[-1].reading == 2 and not seen[-1].stale and seen[-1].measured_at is not None
+    assert workflow.end_reason == ""
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_adjusting_gives_up_with_a_reason_after_a_long_run_of_failures(tmp_path, monkeypatch):
+    """PLT-080: With no usable reading for the give-up time, adjusting ends and says why."""
+    from galileo import polaralign
+    from galileo.platesolve import SolveResult
+    monkeypatch.setattr(polaralign, "_ADJUST_GIVE_UP_S", 0.0)
+    failed = SolveResult(success=False, failure_reason="No stars.")
+    workflow, seen = _adjusting_run(tmp_path, lambda vectors: [failed] * 2, lambda so_far: False)
+    await workflow.align(_zenith_settings())
+    assert "No new reading" in workflow.end_reason and "No stars" in workflow.end_reason
+    assert seen[-1].stale and seen[-1].message == workflow.end_reason
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+async def test_tc_plt_080_adjusting_ends_if_the_mount_is_not_tracking(tmp_path):
+    """PLT-080: A mount that reports it is not tracking would drift, which would read as a turn of the knobs, so no
+    reading is made from it and the run ends saying so."""
+    workflow, seen = _adjusting_run(tmp_path, lambda vectors: _sky_solutions(vectors[2:]), lambda so_far: False)
+    where_it_is = workflow.mount.get_status.side_effect
+
+    async def not_tracking():
+        return {**await where_it_is(), "tracking": False}
+    workflow.mount.get_status = AsyncMock(side_effect=not_tracking)
+    await workflow.align(_zenith_settings())
+    assert "not tracking" in workflow.end_reason and seen[-1].stale and seen[-1].reading == 1
+
+
+@pytest.mark.requirement("TC-PLT-080")
+@pytest.mark.priority("P2")
+def test_tc_plt_080_poor_pointing_is_warned_about():
+    """PLT-080: A field low in the east or west, or near due east, due west or overhead, is warned about."""
+    from galileo.polaralign import altaz_vector, pointing_warnings
+    assert "barely" in pointing_warnings(altaz_vector(10.0, 94.0))[0]
+    assert "hard to tell apart" in pointing_warnings(altaz_vector(60.0, 270.0))[0]
+    assert "hard to tell apart" in pointing_warnings(altaz_vector(89.0, 0.0))[0]
+    assert pointing_warnings(altaz_vector(45.0, 180.0)) == [] == pointing_warnings(altaz_vector(51.0, 0.0))
 
 
 # ---------------------------------------------------------------------------
