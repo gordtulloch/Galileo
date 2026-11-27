@@ -153,6 +153,7 @@ class FakeIndiServer:
         self.received: list[tuple[str, str, str, dict[str, str]]] = []
         self.blob_enabled: set[str] = set()
         self.exposure_delay = 0.15
+        self.refusals: dict[str, str] = {}   # property name -> driver message sent with an Alert reply
         self._clients: list[socket.socket] = []
         self._lock = threading.Lock()
         self._listener = socket.socket()
@@ -258,7 +259,10 @@ class FakeIndiServer:
             body = "".join(f'<{one} name={quoteattr(k)}>{v}</{one}>' for k, v in values.items())
             self._send(sock, f'<set{kind}Vector device={quoteattr(dev)} name={quoteattr(name)} state="{state}">{body}</set{kind}Vector>')
 
-        if name in self._SLOW:
+        if name in self.refusals:
+            self._send(sock, f'<message device={quoteattr(dev)} message={quoteattr(self.refusals[name])}/>')
+            send("Alert")
+        elif name in self._SLOW:
             send("Busy")
             threading.Timer(0.2, send, args=("Ok",)).start()
         else:

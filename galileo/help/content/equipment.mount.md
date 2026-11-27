@@ -173,7 +173,9 @@ Releases the mount from its parked state so it can slew and track again.
 
 ## Set Park Position
 
-Makes wherever the mount is pointing right now its park position, so the next **Park** returns here. Slew the mount to the position you want first. Unavailable while the mount is parked, and only works where the driver supports setting a park position.
+Makes wherever the mount is pointing right now its park position, so the next **Park** returns here. Slew the mount to the position you want first. Unavailable while the mount is parked, and only works where the driver supports setting a park position. If the driver or mount refuses, its reason is shown in the status bar, with the mount firmware (where the driver reports it) and the INDI driver version.
+
+On a **ZWO AM3/AM5** over INDI this needs mount firmware 1.3.0 or later and INDI AM5 driver 1.6 or later (added upstream in October 2026; older drivers answer "Parking is not supported" and do not report the firmware). The mount must be in equatorial mode, homed since power-up and not moving. The mount holds only one park position and refuses a second; clear the existing one with ZWO's own software first. Without a stored position, **Park** sends the mount home.
 
 ## Park status
 

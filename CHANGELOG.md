@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Set Park Position no longer claims success when the mount refuses (`EQP-MNT-010`).** Over INDI, Galileo sent the command and never read the answer, so a refusal (the ZWO AM5 refuses on old firmware, in alt-az mode, before homing, while moving, or when a park position already exists) looked like success and the next Park went elsewhere. Galileo now waits for the driver's reply and shows its reason in the status bar, with the mount firmware (where the driver reports it) and the INDI driver version. The Mount screen's help lists the AM3/AM5 conditions.
+
 ## Releases
 
 | Version | Date | Notes |
