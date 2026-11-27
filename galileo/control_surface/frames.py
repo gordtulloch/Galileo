@@ -6,7 +6,8 @@
 The preview service (``galileo.preview``) renders whatever its *sources* hand it; until now none were registered, so
 nothing could ask it for a picture. :class:`FrameSources` is that registration. It follows the bus for finished
 frames (a remote capture and a running session both announce theirs) and keeps the latest frame of each Pier, and it
-reads a Library frame from disk on request. :class:`FramePreviews` puts the two behind the calls a plugin needs: a
+reads a Library frame from disk on request. An autofocus exposure counts as the Pier's latest frame too, so a
+client can watch a focus run. :class:`FramePreviews` puts the two behind the calls a plugin needs: a
 preview, a tile, the facts about a frame, and a list of recent Library frames to choose from.
 
 A reference is ``current:<pier>`` (the text of the Pier's database id, as everywhere in the Control Surface; the
@@ -29,7 +30,7 @@ from typing import Any
 
 import numpy as np
 
-from galileo.bus import EventBus, FrameCapturedEvent, get_bus
+from galileo.bus import EventBus, FocusFrameEvent, FrameCapturedEvent, get_bus
 from galileo.preview import Preview, PreviewError, PreviewParams, PreviewService
 
 logger = logging.getLogger(__name__)
@@ -54,9 +55,11 @@ class FrameSources:
         self._loaded: OrderedDict[str, tuple[str, np.ndarray]] = OrderedDict()
         self._lock = threading.Lock()
         self._bus.subscribe(FrameCapturedEvent, self._on_frame)
+        self._bus.subscribe(FocusFrameEvent, self._on_focus_frame)
 
     def close(self) -> None:
         self._bus.unsubscribe(FrameCapturedEvent, self._on_frame)
+        self._bus.unsubscribe(FocusFrameEvent, self._on_focus_frame)
         with self._lock:
             self._latest.clear()
             self._stacks.clear()
@@ -87,6 +90,15 @@ class FrameSources:
                 self._stacks[pier] = (self._counter, np.asarray(stacked))
             else:
                 self._stacks.pop(pier, None)
+
+    def _on_focus_frame(self, event: Any) -> None:
+        """An autofocus exposure (measured, not saved) becomes the Pier's latest frame."""
+        pier, frame = event.payload.get("pier_key"), event.payload.get("frame")
+        if pier is None or frame is None:
+            return
+        with self._lock:
+            self._counter += 1
+            self._latest[str(pier)] = (self._counter, np.asarray(frame))
 
     def _current(self, ref: str) -> tuple[str, np.ndarray] | None:
         with self._lock:

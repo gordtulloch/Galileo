@@ -53,7 +53,9 @@ class EngineImaging:
             raise Refused(reason)
         self._busy.add(pier)
         try:
-            service = (await build_context(self._devices, pier, camera_slot)).make_imaging()
+            context = await build_context(self._devices, pier, camera_slot)
+            filter_name = await _select_filter(context, filter_name)
+            service = context.make_imaging()
             service.gain, service.offset, service.binning = gain, offset, binning
             service.live_stack_enabled = live_stack
             self._services[pier] = service
@@ -133,6 +135,34 @@ class EngineImaging:
                             "stats": _plain(service.get_frame_stats()), "histogram": _plain(service.get_histogram()),
                             "shot": _plain(service.last_shot)}
         return out
+
+
+async def _select_filter(context: Any, name: str) -> str:
+    """Move the wheel to *name* before a capture and return the filter the frames are taken through, for their
+    headers. With no name the wheel stays put and its current filter is returned; with no wheel the name is only a
+    label."""
+    wheel = getattr(context, "filter_wheel", None)
+    if wheel is None:
+        return name
+    names = [str(n) for n in (getattr(wheel, "filter_names", None) or [])]
+    position = getattr(wheel, "position", None)
+    current = names[position] if isinstance(position, int) and 0 <= position < len(names) else ""
+    if not name:
+        return current
+    lookup = {n.lower(): i for i, n in enumerate(names)}
+    if name.lower() not in lookup:
+        from galileo.control_surface import Refused
+        raise Refused(f"filter {name!r} is not on the wheel ({', '.join(names) or 'no filters known'})")
+    wanted = names[lookup[name.lower()]]
+    if wanted != current:
+        await wheel.move_to(lookup[name.lower()])
+        offset = getattr(context, "apply_filter_focus_offset", None)
+        if offset is not None:
+            try:
+                await offset(current or None, wanted)
+            except Exception:
+                logger.exception("Could not apply the focus offset for %s", wanted)
+    return wanted
 
 
 def _plain(value: Any) -> Any:

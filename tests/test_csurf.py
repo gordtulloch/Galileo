@@ -1623,3 +1623,32 @@ async def test_tc_csurf_120_capture_takes_binning(registry, bus):
     _, done = await _finish(registry, bus, "imaging.capture", {"seconds": 1, "binning": 2})
     assert done["outcome"] == "ok" and seen["binning"] == 2
     assert (await registry.invoke("imaging.capture", {"seconds": 1, "binning": 9}, "p1", "web")).status == "invalid"
+
+
+@pytest.mark.requirement("TC-CSURF-120")
+@pytest.mark.priority("MVP")
+async def test_tc_csurf_120_a_capture_moves_the_filter_wheel():
+    """CSURF-120: a capture that names a filter moves the wheel to it first; one that names none records the filter
+    the wheel is on; a filter the wheel does not have is refused."""
+    from types import SimpleNamespace
+
+    from galileo.control_surface import Refused
+    from galileo.engine.imaging import _select_filter
+    moves, offsets = [], []
+
+    async def move_to(index):
+        moves.append(index)
+        wheel.position = index
+
+    async def offset(old, new):
+        offsets.append((old, new))
+
+    wheel = SimpleNamespace(filter_names=["L", "Ha"], position=0, move_to=move_to)
+    context = SimpleNamespace(filter_wheel=wheel, apply_filter_focus_offset=offset)
+    assert await _select_filter(context, "") == "L" and not moves
+    assert await _select_filter(context, "ha") == "Ha"
+    assert moves == [1] and offsets == [("L", "Ha")]
+    assert await _select_filter(context, "Ha") == "Ha" and moves == [1]
+    with pytest.raises(Refused):
+        await _select_filter(context, "OIII")
+    assert await _select_filter(SimpleNamespace(filter_wheel=None), "L") == "L"
