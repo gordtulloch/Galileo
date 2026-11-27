@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Scripts to build INDI from source on Arch Linux.** `scripts/build_indi_stable.sh` builds INDI and indi-3rdparty at release v2.2.5; `scripts/build_indi_nightly.sh` builds the newest `master` of both. They are adapted from [nou's Debian `astro-soft-build` scripts](https://gitea.nouspiro.space/nou/astro-soft-build) (INDI only: no KStars, StellarSolver or PHD2), install dependencies with `pacman`, and refuse to run over a packaged INDI. Not yet run end to end on an Arch system. A new `.gitattributes` keeps shell scripts' line endings correct when checked out on Windows.
+
 - **A remote capture now uses the filter it names (`CSURF-120`).** `imaging.capture` accepted a filter but only wrote it into the frame's header; the wheel did not move, so a frame could be labelled with a filter it was not taken through. The Master now moves the wheel first (applying the filter's focus offset), refuses a filter the wheel does not have, and, when none is named, records the filter the wheel is on. Needs the Master restarted; no plugin reinstall.
 
 - **Remote clients can watch an autofocus run.** Each autofocus exposure now becomes the Pier's latest frame for previews (`PREV-070`), so the Focus screen picture in the MobileConnect apps updates point by point. The same frame is what other clients' current-frame views show until the next capture. Needs the Master restarted; no plugin reinstall.
