@@ -42,7 +42,11 @@ step() {
 check_system() {
     command -v pacman >/dev/null || die "pacman not found; this script is for Arch Linux."
     [ "$(id -u)" -ne 0 ] || die "Run as a normal user; sudo is used where needed."
+}
 
+# Run only after the dependencies are in place, so nobody is told to remove a
+# working INDI on a system that then turns out to be unable to build one.
+check_conflicts() {
     # 'make install' into /usr would silently overwrite files pacman owns.
     local packaged
     packaged=$(pacman -Qq | grep -E '^(libindi(-git)?|indi-.+|lib(apogee|asi|atik|fli|playerone|qhy|qhyccd|sbig|svbony|toupcam)(-git)?)$' || true)
@@ -60,7 +64,7 @@ install_dependencies() {
     fi
     step "Installing build dependencies"
     # -Syu, not -Sy: Arch does not support partial upgrades.
-    sudo pacman -Syu --needed "${ARCH_DEPS[@]}"
+    sudo pacman -Syu --needed "${ARCH_DEPS[@]}" || die "Could not install the dependencies. Check that the Arch repositories are enabled in /etc/pacman.conf and that the pacman keyring is set up."
 }
 
 choose_jobs() {
@@ -114,6 +118,7 @@ build_component() {
 build_indi() {
     check_system
     install_dependencies
+    check_conflicts
     choose_jobs
 
     export CFLAGS="-march=native -w -Wno-psabi -D_FILE_OFFSET_BITS=64"
