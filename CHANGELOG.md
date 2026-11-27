@@ -10,14 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The scripts to build INDI from source on Arch Linux are gone** (`build_indi_stable.sh`, `build_indi_nightly.sh`, `indi_build_common.sh`). They were never part of a release, and Arch Linux / StellarMate OS is no longer a platform we are pursuing for this. The wiki's Installation page no longer mentions them.
+
 ### Fixed
 
-- **The Arch INDI build scripts no longer ask you to remove packages before they know they can build.** Dependencies are now installed first, and the check for a conflicting packaged INDI runs only if that succeeds. A failed dependency install now says to check the pacman repositories and keyring (seen on StellarMate OS, where only its own repository answered).
 - **Set Park Position no longer claims success when the mount refuses (`EQP-MNT-010`).** Over INDI, Galileo sent the command and never read the answer, so a refusal (the ZWO AM5 refuses on old firmware, in alt-az mode, before homing, while moving, or when a park position already exists) looked like success and the next Park went elsewhere. Galileo now waits for the driver's reply and shows its reason in the status bar, with the mount firmware (where the driver reports it) and the INDI driver version. The Mount screen's help lists the AM3/AM5 conditions.
 
 ### Added
-
-- **Scripts to build INDI from source on Arch Linux.** `scripts/build_indi_stable.sh` builds INDI and indi-3rdparty at release v2.2.5; `scripts/build_indi_nightly.sh` builds the newest `master` of both. They are adapted from [nou's Debian `astro-soft-build` scripts](https://gitea.nouspiro.space/nou/astro-soft-build) (INDI only: no KStars, StellarSolver or PHD2), install dependencies with `pacman`, and refuse to run over a packaged INDI. Not yet run end to end on an Arch system. A new `.gitattributes` keeps shell scripts' line endings correct when checked out on Windows.
 
 - **A remote capture now uses the filter it names (`CSURF-120`).** `imaging.capture` accepted a filter but only wrote it into the frame's header; the wheel did not move, so a frame could be labelled with a filter it was not taken through. The Master now moves the wheel first (applying the filter's focus offset), refuses a filter the wheel does not have, and, when none is named, records the filter the wheel is on. Needs the Master restarted; no plugin reinstall.
 
